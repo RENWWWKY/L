@@ -8,6 +8,7 @@ import type {
 import { emitWeChatStorageChanged, personaDb } from './idb'
 import { DEFAULT_WORLD_BACKGROUND_ID } from './worldBackgroundConstants'
 import { uid } from './utils'
+import { migrateLegacyRootPublicUrl } from '../../../publicAssetUrl'
 
 export const CHARACTER_BUNDLE_KIND = 'lumi-phone-character-bundle' as const
 export const CHARACTER_BUNDLE_VERSION = 5 as const
@@ -43,6 +44,33 @@ function jsonVersionMatches(x: unknown, expected: number): boolean {
 
 function bundleKindMatches(kind: unknown, expected: string): boolean {
   return typeof kind === 'string' && kind.trim() === expected
+}
+
+function migrateCharacterPublicUrls(input: Character): Character {
+  const out: Character = { ...input }
+  if (typeof out.avatarUrl === 'string') out.avatarUrl = migrateLegacyRootPublicUrl(out.avatarUrl)
+  if (typeof out.momentsCoverUrl === 'string') out.momentsCoverUrl = migrateLegacyRootPublicUrl(out.momentsCoverUrl)
+  if (typeof out.chatBackground === 'string') out.chatBackground = migrateLegacyRootPublicUrl(out.chatBackground)
+  return out
+}
+
+function migrateWorldBackgroundPublicUrls(input: WorldBackground): WorldBackground {
+  const out: WorldBackground = { ...input }
+  const map = out.map
+  if (map && typeof map === 'object') {
+    const imageUrl = typeof map.imageUrl === 'string' ? migrateLegacyRootPublicUrl(map.imageUrl) : map.imageUrl
+    out.map = { ...map, imageUrl }
+  }
+  return out
+}
+
+function migrateBundlePublicUrls(bundle: CharacterBundleV5): CharacterBundleV5 {
+  return {
+    ...bundle,
+    mainCharacter: migrateCharacterPublicUrls(bundle.mainCharacter),
+    npcs: bundle.npcs.map(migrateCharacterPublicUrls),
+    worldBackground: bundle.worldBackground ? migrateWorldBackgroundPublicUrls(bundle.worldBackground) : null,
+  }
 }
 
 export async function buildCharacterExportBundle(data: Character): Promise<CharacterBundleV5> {
@@ -273,6 +301,7 @@ export async function importCharacterBundle(
   bundle: CharacterBundleV5,
   mode: 'new' | 'overwrite',
 ): Promise<{ rootId: string; mode: 'new' | 'overwrite' }> {
+  bundle = migrateBundlePublicUrls(bundle)
   const cliqueOld = new Set([bundle.rootCharacterId, ...bundle.npcs.map((n) => n.id)])
 
   if (mode === 'new') {
