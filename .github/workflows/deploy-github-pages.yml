@@ -24,7 +24,8 @@ jobs:
         with:
           node-version: '22'
           cache: npm
-      - run: npm ci
+      # 不用 npm ci：锁文件在 Windows 与 Linux 可选依赖（Tailwind oxide / @emnapi）上易不同步导致 EUSAGE
+      - run: npm install --no-audit --no-fund
       - run: npm run build
       - uses: actions/upload-pages-artifact@v3
         with:
