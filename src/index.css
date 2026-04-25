@@ -66,8 +66,7 @@ select {
  * 全屏/锁定模式（data-phone-layout 由 CustomizationProvider 切换）
  * — 禁止整页/浏览器层上下滚动与橡皮筋回弹
  */
-html[data-phone-layout='fullscreen'],
-html[data-phone-layout='locked'] {
+html[data-phone-layout='fullscreen'] {
   width: 100vw;
   height: 100vh;
   min-height: 100vh;
@@ -78,8 +77,7 @@ html[data-phone-layout='locked'] {
   overscroll-behavior: none;
 }
 
-html[data-phone-layout='fullscreen'] body,
-html[data-phone-layout='locked'] body {
+html[data-phone-layout='fullscreen'] body {
   width: 100vw;
   height: 100vh;
   min-height: 100vh;
@@ -92,12 +90,48 @@ html[data-phone-layout='locked'] body {
   overscroll-behavior: none;
 }
 
-html[data-phone-layout='fullscreen'] #root,
-html[data-phone-layout='locked'] #root {
+html[data-phone-layout='fullscreen'] #root {
   width: 100vw;
   height: 100vh;
   min-height: 100vh;
   max-height: 100vh;
+  position: fixed;
+  inset: 0;
+  overflow: hidden;
+}
+
+/**
+ * 非全屏锁定：同样禁止整页滚动，但高度用 --app-vh（visualViewport）避免 iOS 地址栏显隐造成 100vh 抖动
+ */
+html[data-phone-layout='locked'] {
+  width: 100vw;
+  height: var(--app-vh, 100dvh);
+  min-height: var(--app-vh, 100dvh);
+  max-height: var(--app-vh, 100dvh);
+  margin: 0;
+  padding: 0;
+  overflow: hidden;
+  overscroll-behavior: none;
+}
+
+html[data-phone-layout='locked'] body {
+  width: 100vw;
+  height: var(--app-vh, 100dvh);
+  min-height: var(--app-vh, 100dvh);
+  max-height: var(--app-vh, 100dvh);
+  margin: 0;
+  padding: 0;
+  position: fixed;
+  inset: 0;
+  overflow: hidden;
+  overscroll-behavior: none;
+}
+
+html[data-phone-layout='locked'] #root {
+  width: 100vw;
+  height: var(--app-vh, 100dvh);
+  min-height: var(--app-vh, 100dvh);
+  max-height: var(--app-vh, 100dvh);
   position: fixed;
   inset: 0;
   overflow: hidden;

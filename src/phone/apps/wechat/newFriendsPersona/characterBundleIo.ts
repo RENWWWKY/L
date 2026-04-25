@@ -8,7 +8,7 @@ import type {
 import { emitWeChatStorageChanged, personaDb } from './idb'
 import { DEFAULT_WORLD_BACKGROUND_ID } from './worldBackgroundConstants'
 import { uid } from './utils'
-import { migrateLegacyRootPublicUrl } from '../../../publicAssetUrl'
+import { migrateLegacyRootPublicUrl } from '../../../../publicAssetUrl'
 
 export const CHARACTER_BUNDLE_KIND = 'lumi-phone-character-bundle' as const
 export const CHARACTER_BUNDLE_VERSION = 5 as const
