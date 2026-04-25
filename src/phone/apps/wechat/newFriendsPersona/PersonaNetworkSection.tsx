@@ -1,0 +1,1912 @@
+import { ChevronDown, Loader2 } from 'lucide-react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
+import type { CSSProperties, PointerEvent } from 'react'
+import type { Character, PlayerNetworkLink, Relationship } from './types'
+import { personaDb } from './idb'
+import { DEFAULT_WORLD_BACKGROUND_ID } from './worldBackgroundConstants'
+import { formatWorldBackgroundForPrompt } from './worldBackgroundFormat'
+import { generateNpcNetworkWithAi } from './npcNetworkGenerate'
+import { uid } from './utils'
+import type { ApiConfig } from '../../api/types'
+import { useCustomization } from '../../../CustomizationContext'
+
+const REL_BIAS_OPTIONS = ['家人', '朋友', '同事', '同学', '恋人', '敌人', '陌生人', '合作伙伴'] as const
+
+function genderLabel(g: Character['gender']) {
+  return g === 'male' ? '男' : g === 'female' ? '女' : '其他'
+}
+
+const GRAPH_W = 880
+const GRAPH_H = Math.round(520 * (2 / 3))
+
+/** 关系图中操作者节点虚拟 id（不对应 Character 表） */
+const PLAYER_GRAPH_NODE_ID = '__graph_you__'
+
+/** 手动编辑关系图弹窗：黑白灰排版 */
+const GE = {
+  overlay: 'rgba(0,0,0,0.5)',
+  canvas: '#f5f5f5',
+  card: '#ffffff',
+  border: '#e5e5e5',
+  text: '#000000',
+  sub: '#666666',
+  faint: '#999999',
+  shadow: '0 1px 3px rgba(0,0,0,0.06)',
+  shadowLg: '0 8px 30px rgba(0,0,0,0.12)',
+} as const
+
+/** 与身份页「兴趣爱好」等下拉一致：圆角、阴影、展开/收起动画 */
+function GraphEditorInlineDropdown({
+  label,
+  valueText,
+  open,
+  onToggle,
+  children,
+}: {
+  label: string
+  valueText: string
+  open: boolean
+  onToggle: () => void
+  children: React.ReactNode
+}) {
+  return (
+    <div className="relative min-w-0 flex-1">
+      <button
+        type="button"
+        className="relative flex w-full min-h-[44px] items-center justify-center gap-1 rounded-[10px] border bg-white px-3 py-2.5 text-[13px] outline-none transition-all duration-200 ease-out"
+        style={{ borderColor: GE.border, color: GE.text }}
+        onClick={onToggle}
+        aria-expanded={open}
+        aria-label={label}
+      >
+        <span className="pointer-events-none max-w-[calc(100%-28px)] select-none truncate text-center">{valueText}</span>
+        <ChevronDown
+          className={`pointer-events-none absolute right-2 top-1/2 size-4 shrink-0 -translate-y-1/2 transition-transform duration-200 ease-out ${
+            open ? 'rotate-180' : 'rotate-0'
+          }`}
+          style={{ color: GE.sub }}
+          strokeWidth={1.75}
+        />
+      </button>
+      <div
+        className={`absolute inset-x-0 top-full z-[1220] mt-1 origin-top rounded-2xl border bg-white transition-[opacity,transform,max-height] duration-200 ease-out ${
+          open ? 'max-h-72 translate-y-0 opacity-100' : 'pointer-events-none max-h-0 -translate-y-1 opacity-0'
+        }`}
+        style={{ borderColor: GE.border, overflow: 'hidden', boxShadow: '0 10px 30px rgba(0,0,0,0.18)' }}
+      >
+        <div className="max-h-72 overflow-y-auto py-1 [scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden">
+          {children}
+        </div>
+      </div>
+    </div>
+  )
+}
+
+function pairFromPlayerLink(link: PlayerNetworkLink): {
+  aId: string
+  bId: string
+  ab: Relationship
+  ba: Relationship
+} {
+  const YOU = PLAYER_GRAPH_NODE_ID
+  const c = link.characterId
+  const aId = YOU < c ? YOU : c
+  const bId = YOU < c ? c : YOU
+  const ab: Relationship =
+    YOU < c
+      ? {
+          id: `${link.id}-ab`,
+          fromCharacterId: YOU,
+          toCharacterId: c,
+          relation: link.relationYouToThem,
+          fromPerspective: link.youSeeThem,
+          toPerspective: link.theySeeYou,
+        }
+      : {
+          id: `${link.id}-ab`,
+          fromCharacterId: c,
+          toCharacterId: YOU,
+          relation: link.relationThemToYou,
+          fromPerspective: link.theySeeYou,
+          toPerspective: link.youSeeThem,
+        }
+  const ba: Relationship =
+    YOU < c
+      ? {
+          id: `${link.id}-ba`,
+          fromCharacterId: c,
+          toCharacterId: YOU,
+          relation: link.relationThemToYou,
+          fromPerspective: link.theySeeYou,
+          toPerspective: link.youSeeThem,
+        }
+      : {
+          id: `${link.id}-ba`,
+          fromCharacterId: YOU,
+          toCharacterId: c,
+          relation: link.relationYouToThem,
+          fromPerspective: link.youSeeThem,
+          toPerspective: link.theySeeYou,
+        }
+  return { aId, bId, ab, ba }
+}
+
+function ringRForGraphHeight(graphH: number) {
+  return Math.min(200, Math.max(90, Math.floor(graphH / 2 - 50)))
+}
+
+/** 与主角编辑页「新建角色」一致的空白卡，并标记为当前主角下的 NPC */
+function newBlankNpcForMain(main: Character): Character {
+  const now = Date.now()
+  return {
+    id: uid('ch'),
+    createdAt: now,
+    updatedAt: now,
+    name: '',
+    gender: 'female',
+    age: null,
+    birthdayMD: '',
+    zodiac: '',
+    identity: '学生',
+    mbti: '',
+    bio: '',
+    avatarUrl: '',
+    worldBooks: [],
+    generatedForCharacterId: main.id,
+    playerIdentityId: main.playerIdentityId,
+    worldBackgroundId: main.worldBackgroundId?.trim() || DEFAULT_WORLD_BACKGROUND_ID,
+  }
+}
+
+function computeRadialLayout(
+  focalId: string,
+  allIds: string[],
+  graphW: number,
+  graphH: number,
+  ringR: number,
+): Record<string, { x: number; y: number }> {
+  const cx = graphW / 2
+  const cy = graphH / 2
+  const others = allIds.filter((id) => id !== focalId).sort()
+  const next: Record<string, { x: number; y: number }> = {}
+  next[focalId] = { x: cx, y: cy }
+  others.forEach((id, i) => {
+    const ang = (i / Math.max(others.length, 1)) * Math.PI * 2 - Math.PI / 2
+    next[id] = { x: cx + ringR * Math.cos(ang), y: cy + ringR * Math.sin(ang) }
+  })
+  return next
+}
+
+function positionsMatchNetwork(
+  positions: Record<string, { x: number; y: number }>,
+  allIds: string[],
+): boolean {
+  if (allIds.length === 0) return false
+  for (const id of allIds) {
+    const p = positions[id]
+    if (!p || typeof p.x !== 'number' || typeof p.y !== 'number') return false
+  }
+  return true
+}
+
+function centerPanForFocal(focalX: number, focalY: number, viewW: number, viewH: number, s: number) {
+  return { x: viewW / 2 - focalX * s, y: viewH / 2 - focalY * s }
+}
+
+type Props = {
+  main: Character
+  apiConfig: ApiConfig | null
+  onApiMissing: () => void
+  /** 第二个参数为草稿时：仅打开编辑页，不写入 IndexedDB，直至用户点击保存 */
+  onOpenNpcEdit: (npcId: string, draft?: Character) => void
+}
+
+export function PersonaNetworkSection({ main, apiConfig, onApiMissing, onOpenNpcEdit }: Props) {
+  const { state } = useCustomization()
+  const playerAvatarUrl = state.profile.avatarImageUrl || ''
+  const [count, setCount] = useState(3)
+  const [biases, setBiases] = useState<string[]>([])
+  const [customNote, setCustomNote] = useState('')
+  const [subTab, setSubTab] = useState<'npcs' | 'graph'>('npcs')
+  const [npcs, setNpcs] = useState<Character[]>([])
+  /** 与当前主角存在跨人设连线的其他根角色（非 NPC） */
+  const [linkedRoots, setLinkedRoots] = useState<Character[]>([])
+  const [rels, setRels] = useState<Relationship[]>([])
+  const [playerLinks, setPlayerLinks] = useState<PlayerNetworkLink[]>([])
+  const [generating, setGenerating] = useState(false)
+  const [graphEditorOpen, setGraphEditorOpen] = useState(false)
+  const [draftRels, setDraftRels] = useState<Relationship[]>([])
+  const [draftPlayerLinks, setDraftPlayerLinks] = useState<PlayerNetworkLink[]>([])
+  const [relIdsOnOpen, setRelIdsOnOpen] = useState<Set<string>>(new Set())
+  const [graphEditorSaving, setGraphEditorSaving] = useState(false)
+  const [newRelFrom, setNewRelFrom] = useState('')
+  const [newRelTo, setNewRelTo] = useState('')
+  const [newRelRelation, setNewRelRelation] = useState('')
+  const [newRelFromSee, setNewRelFromSee] = useState('')
+  const [newRelToSee, setNewRelToSee] = useState('')
+  const [newPlCharId, setNewPlCharId] = useState('')
+  const [graphDdOpen, setGraphDdOpen] = useState<null | 'plChar' | 'relFrom' | 'relTo'>(null)
+  /** 手动编辑关系图：你与角色 | 角色与 NPC（有向关系） */
+  const [graphEditorTab, setGraphEditorTab] = useState<'you' | 'between'>('you')
+  type EdgeDetail = {
+    aId: string
+    bId: string
+    ab?: Relationship
+    ba?: Relationship
+  }
+  const [edgeDetail, setEdgeDetail] = useState<EdgeDetail | null>(null)
+  const [draftYouRel, setDraftYouRel] = useState('')
+  const [draftYouSee, setDraftYouSee] = useState('')
+  const [savingPlayerView, setSavingPlayerView] = useState(false)
+
+  const playerLinkCharIdForModal = useMemo(() => {
+    if (!edgeDetail) return null
+    const { aId, bId } = edgeDetail
+    if (aId !== PLAYER_GRAPH_NODE_ID && bId !== PLAYER_GRAPH_NODE_ID) return null
+    return aId === PLAYER_GRAPH_NODE_ID ? bId : aId
+  }, [edgeDetail])
+
+  useEffect(() => {
+    if (!playerLinkCharIdForModal) return
+    const link = playerLinks.find((l) => l.characterId === playerLinkCharIdForModal)
+    if (link) {
+      setDraftYouRel(link.relationYouToThem)
+      setDraftYouSee(link.youSeeThem)
+    }
+  }, [playerLinkCharIdForModal, playerLinks])
+
+  const reload = useCallback(async () => {
+    const list = await personaDb.listNpcsFor(main.id)
+    const allRoots = await personaDb.listRootCharacters()
+    const rootIdSet = new Set(allRoots.map((c) => c.id))
+    const allRelsFull = await personaDb.listAllRelationships()
+    const linkedRootIds = new Set<string>()
+    for (const rel of allRelsFull) {
+      if (rel.isPlayerIdentity) continue
+      const a = rel.fromCharacterId
+      const b = rel.toCharacterId
+      if (!a || !b || a === b) continue
+      if (a === main.id && rootIdSet.has(b) && b !== main.id) linkedRootIds.add(b)
+      else if (b === main.id && rootIdSet.has(a) && a !== main.id) linkedRootIds.add(a)
+    }
+    const linked = allRoots.filter((c) => linkedRootIds.has(c.id))
+    const ids = [main.id, ...list.map((n) => n.id), ...linked.map((x) => x.id)]
+    const r = await personaDb.listRelationshipsInNetwork(ids)
+    const pl = await personaDb.getPlayerNetworkLinks(main.id)
+    setNpcs(list)
+    setLinkedRoots(linked)
+    setRels(r)
+    setPlayerLinks(pl.filter((l) => ids.includes(l.characterId)))
+  }, [main.id])
+
+  useEffect(() => {
+    void reload()
+  }, [reload])
+
+  const characterIdToName = useMemo(() => {
+    const m = new Map<string, string>()
+    m.set(PLAYER_GRAPH_NODE_ID, '你')
+    m.set(main.id, (main.name || '未命名').trim() || '未命名')
+    for (const n of npcs) m.set(n.id, (n.name || '未命名').trim() || '未命名')
+    for (const lr of linkedRoots) m.set(lr.id, (lr.name || '未命名').trim() || '未命名')
+    return m
+  }, [main.id, main.name, npcs, linkedRoots])
+
+  const networkCharIds = useMemo(
+    () => [main.id, ...npcs.map((n) => n.id), ...linkedRoots.map((x) => x.id)],
+    [main.id, npcs, linkedRoots],
+  )
+
+  const availPlCharIds = useMemo(
+    () => networkCharIds.filter((id) => !draftPlayerLinks.some((l) => l.characterId === id)),
+    [networkCharIds, draftPlayerLinks],
+  )
+
+  /** 删除「你」的连线后，原 select 的 value 可能仍指向已有连线的角色，导致无匹配 option、无法添加；此处始终同步到可选列表 */
+  useEffect(() => {
+    if (!graphEditorOpen) {
+      setGraphDdOpen(null)
+      return
+    }
+    setNewPlCharId((prev) => {
+      const avail = networkCharIds.filter((id) => !draftPlayerLinks.some((l) => l.characterId === id))
+      if (avail.length === 0) return ''
+      if (prev && avail.includes(prev)) return prev
+      return avail[0]
+    })
+  }, [graphEditorOpen, draftPlayerLinks, networkCharIds])
+
+  const relMap = useMemo(() => {
+    const m = new Map<string, Relationship>()
+    for (const r of rels) m.set(`${r.fromCharacterId}::${r.toCharacterId}`, r)
+    return m
+  }, [rels])
+
+  const [graphFocalId, setGraphFocalId] = useState(main.id)
+
+  useEffect(() => {
+    setGraphFocalId(main.id)
+  }, [main.id])
+
+  useEffect(() => {
+    const ids = [main.id, ...npcs.map((n) => n.id)]
+    if (!ids.includes(graphFocalId)) setGraphFocalId(main.id)
+  }, [main.id, npcs, graphFocalId])
+
+  const toggleBias = (b: string) => {
+    setBiases((prev) => (prev.includes(b) ? prev.filter((x) => x !== b) : [...prev, b]))
+  }
+
+  const clearOldNpcs = async () => {
+    const old = await personaDb.listNpcsFor(main.id)
+    for (const n of old) {
+      await personaDb.deleteCharacterNpcOnly(n.id)
+    }
+    await personaDb.putPlayerNetworkLinks(main.id, [])
+  }
+
+  const onGenerate = async () => {
+    if (!apiConfig?.apiUrl || !apiConfig?.apiKey || !apiConfig?.modelId) {
+      onApiMissing()
+      return
+    }
+    const n = Math.max(1, Math.min(10, Math.floor(count) || 3))
+    setGenerating(true)
+    try {
+      const playerIdentity =
+        main.playerIdentityId && main.playerIdentityId.trim()
+          ? await personaDb.getPlayerIdentity(main.playerIdentityId)
+          : await personaDb.getCurrentIdentity()
+      const wbgRow = await personaDb.getWorldBackground(main.worldBackgroundId?.trim() || DEFAULT_WORLD_BACKGROUND_ID)
+      const worldBackgroundSummary = formatWorldBackgroundForPrompt(wbgRow)
+      await clearOldNpcs()
+      const { characters, relationships, playerLinks: nextPl } = await generateNpcNetworkWithAi(apiConfig, {
+        main,
+        playerIdentity,
+        count: n,
+        relationBiases: biases,
+        customNote,
+        worldBackgroundSummary,
+      })
+      for (const c of characters) {
+        await personaDb.upsertCharacter(c)
+      }
+      await personaDb.bulkPutRelationships(relationships)
+      await personaDb.putPlayerNetworkLinks(main.id, nextPl)
+      if (main.playerIdentityId?.trim()) {
+        const identity = await personaDb.getPlayerIdentity(main.playerIdentityId)
+        for (const npc of characters) {
+          await personaDb.upsertPlayerIdentityBindings({
+            identityId: main.playerIdentityId,
+            characterId: npc.id,
+            identityName: identity?.name || '你',
+            characterName: npc.name || '角色',
+          })
+        }
+      }
+      await reload()
+      setSubTab('npcs')
+    } finally {
+      setGenerating(false)
+    }
+  }
+
+  const onDeleteNpc = async (npcId: string) => {
+    await personaDb.deleteCharacterNpcOnly(npcId)
+    await reload()
+  }
+
+  const openGraphEditor = () => {
+    setDraftRels(rels.map((r) => ({ ...r })))
+    setDraftPlayerLinks(playerLinks.map((l) => ({ ...l })))
+    setRelIdsOnOpen(new Set(rels.map((r) => r.id)))
+    setNewRelFrom(main.id)
+    setNewRelTo(npcs[0]?.id ?? linkedRoots[0]?.id ?? main.id)
+    setNewRelRelation('')
+    setNewRelFromSee('')
+    setNewRelToSee('')
+    setGraphEditorTab('you')
+    setGraphEditorOpen(true)
+  }
+
+  const saveGraphEditor = async () => {
+    setGraphEditorSaving(true)
+    try {
+      for (const id of relIdsOnOpen) {
+        if (!draftRels.some((r) => r.id === id)) {
+          await personaDb.deleteRelationshipById(id)
+        }
+      }
+      await personaDb.bulkPutRelationships(draftRels.map((r) => ({ ...r, isPlayerIdentity: r.isPlayerIdentity ?? false })))
+      await personaDb.putPlayerNetworkLinks(main.id, draftPlayerLinks)
+      await reload()
+      setGraphEditorOpen(false)
+    } finally {
+      setGraphEditorSaving(false)
+    }
+  }
+
+  const onManualAddNpc = () => {
+    const npc = newBlankNpcForMain(main)
+    onOpenNpcEdit(npc.id, npc)
+  }
+
+  return (
+    <>
+    <div
+      className="mt-4 rounded-2xl bg-white p-5"
+      style={{ borderRadius: 16, padding: 20 }}
+    >
+      <p className="text-[16px] font-semibold" style={{ color: '#262626' }}>
+        人脉关系生成
+      </p>
+
+      <div className="mt-4 space-y-4">
+        <label className="block">
+          <span className="text-[13px]" style={{ color: '#8e8e8e' }}>
+            生成数量（1-10）
+          </span>
+          <input
+            type="number"
+            min={1}
+            max={10}
+            value={count}
+            onChange={(e) => setCount(Number(e.target.value))}
+            className="mt-2 w-full rounded-xl border bg-white px-4 py-3 text-[15px] outline-none"
+            style={{ borderColor: '#dbdbdb', color: '#262626' }}
+          />
+        </label>
+
+        <div>
+          <p className="text-[13px]" style={{ color: '#8e8e8e' }}>
+            关系偏向（多选）
+          </p>
+          <div className="mt-2 flex flex-wrap gap-2">
+            {REL_BIAS_OPTIONS.map((b) => {
+              const on = biases.includes(b)
+              return (
+                <button
+                  key={b}
+                  type="button"
+                  onClick={() => toggleBias(b)}
+                  className="rounded-xl border px-3 py-2 text-[12px] transition-all duration-200"
+                  style={{
+                    borderColor: '#dbdbdb',
+                    background: on ? '#111827' : '#fff',
+                    color: on ? '#fff' : '#262626',
+                  }}
+                >
+                  {b}
+                </button>
+              )
+            })}
+          </div>
+        </div>
+
+        <label className="block">
+          <span className="text-[13px]" style={{ color: '#8e8e8e' }}>
+            自定义补充说明
+          </span>
+          <textarea
+            value={customNote}
+            onChange={(e) => setCustomNote(e.target.value)}
+            placeholder="补充要求：比如希望有一个严厉的姐姐、一个调皮的弟弟、一个暗恋主角的同事等"
+            rows={3}
+            className="mt-2 w-full rounded-xl border bg-white px-4 py-3 text-[14px] outline-none"
+            style={{ borderColor: '#dbdbdb', color: '#262626' }}
+          />
+        </label>
+
+        <div className="flex gap-2">
+          <button
+            type="button"
+            disabled={generating}
+            onClick={() => void onGenerate()}
+            className="min-w-0 flex-1 rounded-xl px-4 py-3 text-[14px] font-medium text-white transition-all duration-200 disabled:opacity-50"
+            style={{ background: '#111827', borderRadius: 12, padding: '12px 16px' }}
+          >
+            {generating ? '生成中…' : '生成人脉与 NPC'}
+          </button>
+          <button
+            type="button"
+            disabled={generating}
+            onClick={onManualAddNpc}
+            className="min-w-0 flex-1 rounded-xl border bg-white px-4 py-3 text-[14px] font-medium transition-all duration-200 disabled:opacity-50"
+            style={{ borderColor: '#dbdbdb', color: '#262626', borderRadius: 12 }}
+          >
+            手动添加 NPC
+          </button>
+        </div>
+      </div>
+
+      <div className="mt-6 border-t pt-4" style={{ borderColor: '#dbdbdb' }}>
+        <div className="flex gap-8 border-b" style={{ borderColor: '#dbdbdb' }}>
+          <button
+            type="button"
+            onClick={() => setSubTab('npcs')}
+            className="pb-2 text-[14px] font-medium transition-all duration-200"
+            style={{
+              color: '#262626',
+              borderBottom: subTab === 'npcs' ? '2px solid #111827' : '2px solid transparent',
+            }}
+          >
+            NPC列表
+          </button>
+          <button
+            type="button"
+            onClick={() => setSubTab('graph')}
+            className="pb-2 text-[14px] font-medium transition-all duration-200"
+            style={{
+              color: '#262626',
+              borderBottom: subTab === 'graph' ? '2px solid #111827' : '2px solid transparent',
+            }}
+          >
+            人脉关系图
+          </button>
+        </div>
+
+        {subTab === 'npcs' ? (
+          <div className="mt-4 space-y-3">
+            {npcs.length === 0 ? (
+              <p className="text-center text-[13px]" style={{ color: '#8e8e8e' }}>
+                暂无 NPC。可点击「手动添加 NPC」创建空白人设，或使用上方「生成人脉与 NPC」。
+              </p>
+            ) : (
+              npcs.map((npc) => (
+                <NpcCard key={npc.id} npc={npc} onEdit={() => onOpenNpcEdit(npc.id)} onDelete={() => void onDeleteNpc(npc.id)} />
+              ))
+            )}
+          </div>
+        ) : (
+          <div className="mt-4 space-y-3">
+            <button
+              type="button"
+              onClick={openGraphEditor}
+              className="w-full rounded-xl border bg-white px-4 py-3 text-[14px] font-medium transition-all duration-200"
+              style={{ borderColor: '#111827', color: '#111827' }}
+            >
+              手动编辑关系图（全部关系可改）
+            </button>
+            <RelationshipGraph
+              rootMainId={main.id}
+              focalId={graphFocalId}
+              onFocalChange={setGraphFocalId}
+              main={main}
+              npcs={npcs}
+              linkedRoots={linkedRoots}
+              rels={rels}
+              playerLinks={playerLinks}
+              playerAvatarUrl={playerAvatarUrl}
+              onNodeDblClick={(id) => {
+                if (id === PLAYER_GRAPH_NODE_ID) return
+                if (id !== main.id) onOpenNpcEdit(id)
+              }}
+              onEdgeClick={(aId, bId) => {
+                let ab = relMap.get(`${aId}::${bId}`)
+                let ba = relMap.get(`${bId}::${aId}`)
+                if (aId === PLAYER_GRAPH_NODE_ID || bId === PLAYER_GRAPH_NODE_ID) {
+                  const charId = aId === PLAYER_GRAPH_NODE_ID ? bId : aId
+                  const link = playerLinks.find((l) => l.characterId === charId)
+                  if (link) {
+                    const p = pairFromPlayerLink(link)
+                    if (p.aId === aId && p.bId === bId) {
+                      ab = p.ab
+                      ba = p.ba
+                    }
+                  }
+                }
+                setEdgeDetail({ aId, bId, ab, ba })
+              }}
+            />
+          </div>
+        )}
+      </div>
+
+      {edgeDetail ? (
+        (() => {
+          const fromName = characterIdToName.get(edgeDetail.aId) ?? '未知角色'
+          const toName = characterIdToName.get(edgeDetail.bId) ?? '未知角色'
+          const abRel = edgeDetail.ab?.relation || '—'
+          const baRel = edgeDetail.ba?.relation || '—'
+          const abText = edgeDetail.ab?.fromPerspective || edgeDetail.ba?.toPerspective || '—'
+          const baText = edgeDetail.ba?.fromPerspective || edgeDetail.ab?.toPerspective || '—'
+          const plink =
+            playerLinkCharIdForModal != null
+              ? playerLinks.find((l) => l.characterId === playerLinkCharIdForModal)
+              : null
+          const charNameForYou = playerLinkCharIdForModal
+            ? (characterIdToName.get(playerLinkCharIdForModal) ?? '未知角色')
+            : ''
+
+          if (playerLinkCharIdForModal && plink) {
+            return (
+              <div
+                className="fixed inset-0 z-[1200] flex items-center justify-center px-4"
+                style={{ background: 'rgba(0,0,0,0.45)' }}
+                onClick={() => setEdgeDetail(null)}
+              >
+                <div
+                  className="w-full max-w-md rounded-2xl border bg-white p-5"
+                  style={{ borderColor: '#dbdbdb' }}
+                  onClick={(e) => e.stopPropagation()}
+                >
+                  <p className="text-center text-[15px] font-semibold" style={{ color: '#262626' }}>
+                    「你」与「{charNameForYou}」
+                  </p>
+                  <p className="mt-2 text-center text-[11px]" style={{ color: '#8e8e8e' }}>
+                    以下为生成内容（对方视角）；你对对方的看法请在下方填写并保存。
+                  </p>
+                  <div className="mt-4 rounded-xl border bg-[#fafafa] p-3" style={{ borderColor: '#e5e5e5' }}>
+                    <p className="text-[12px] font-medium" style={{ color: '#525252' }}>
+                      【{charNameForYou}看「你」】（只读）
+                    </p>
+                    <p className="mt-2 text-[13px] leading-relaxed" style={{ color: '#262626' }}>
+                      {plink.theySeeYou.trim() || '—'}
+                    </p>
+                    <p className="mt-3 text-[12px]" style={{ color: '#8e8e8e' }}>
+                      关系词（对方→你）：「{plink.relationThemToYou.trim() || '—'}」
+                    </p>
+                  </div>
+                  <div className="mt-4">
+                    <p className="text-[12px] font-medium" style={{ color: '#262626' }}>
+                      【你看{charNameForYou}】
+                    </p>
+                    <textarea
+                      value={draftYouSee}
+                      onChange={(e) => setDraftYouSee(e.target.value)}
+                      rows={3}
+                      placeholder="填写你对该角色的看法…"
+                      className="mt-2 w-full rounded-xl border bg-white px-3 py-2 text-[13px] outline-none"
+                      style={{ borderColor: '#dbdbdb', color: '#262626' }}
+                    />
+                    <p className="mt-3 text-[12px] font-medium" style={{ color: '#262626' }}>
+                      关系词（你→对方，连线中间显示）
+                    </p>
+                    <input
+                      type="text"
+                      value={draftYouRel}
+                      onChange={(e) => setDraftYouRel(e.target.value)}
+                      placeholder="如：朋友、熟人…"
+                      className="mt-2 w-full rounded-xl border bg-white px-3 py-2 text-[13px] outline-none"
+                      style={{ borderColor: '#dbdbdb', color: '#262626' }}
+                    />
+                  </div>
+                  <button
+                    type="button"
+                    disabled={savingPlayerView}
+                    className="mt-4 w-full rounded-xl py-2.5 text-[13px] font-medium text-white disabled:opacity-50"
+                    style={{ background: '#000000' }}
+                    onClick={() => {
+                      void (async () => {
+                        setSavingPlayerView(true)
+                        try {
+                          const next = playerLinks.map((l) =>
+                            l.characterId === playerLinkCharIdForModal
+                              ? {
+                                  ...l,
+                                  relationYouToThem: draftYouRel.trim(),
+                                  youSeeThem: draftYouSee.trim(),
+                                }
+                              : l,
+                          )
+                          await personaDb.putPlayerNetworkLinks(main.id, next)
+                          setPlayerLinks(next)
+                        } finally {
+                          setSavingPlayerView(false)
+                        }
+                      })()
+                    }}
+                  >
+                    {savingPlayerView ? '保存中…' : '保存你对对方的看法'}
+                  </button>
+                  <button
+                    type="button"
+                    className="mt-2 w-full rounded-xl border py-2 text-[13px]"
+                    style={{ borderColor: '#dbdbdb', color: '#262626' }}
+                    onClick={() => setEdgeDetail(null)}
+                  >
+                    关闭
+                  </button>
+                </div>
+              </div>
+            )
+          }
+
+          if (playerLinkCharIdForModal && !plink) {
+            return (
+              <div
+                className="fixed inset-0 z-[1200] flex items-center justify-center px-4"
+                style={{ background: 'rgba(0,0,0,0.45)' }}
+                onClick={() => setEdgeDetail(null)}
+              >
+                <div
+                  className="w-full max-w-md rounded-2xl border bg-white p-5 text-center text-[13px]"
+                  style={{ borderColor: '#dbdbdb', color: '#8e8e8e' }}
+                  onClick={(e) => e.stopPropagation()}
+                >
+                  未找到该连线的存档数据。
+                  <button
+                    type="button"
+                    className="mt-4 w-full rounded-xl border py-2 text-[13px]"
+                    style={{ borderColor: '#dbdbdb', color: '#262626' }}
+                    onClick={() => setEdgeDetail(null)}
+                  >
+                    关闭
+                  </button>
+                </div>
+              </div>
+            )
+          }
+
+          return (
+            <div
+              className="fixed inset-0 z-[1200] flex items-center justify-center px-4"
+              style={{ background: 'rgba(0,0,0,0.45)' }}
+              onClick={() => setEdgeDetail(null)}
+            >
+              <div
+                className="w-full max-w-md rounded-2xl border bg-white p-5"
+                style={{ borderColor: '#dbdbdb' }}
+                onClick={(e) => e.stopPropagation()}
+              >
+                <p className="text-center text-[15px] font-semibold" style={{ color: '#262626' }}>
+                  双向关系
+                </p>
+                <p className="mt-3 text-[13px] leading-relaxed" style={{ color: '#262626' }}>
+                  【{fromName}看{toName}】：{abText}
+                </p>
+                <p className="mt-2 text-[13px] leading-relaxed" style={{ color: '#262626' }}>
+                  【{toName}看{fromName}】：{baText}
+                </p>
+                <p className="mt-2 text-center text-[12px]" style={{ color: '#8e8e8e' }}>
+                  关系：{fromName}→{toName}「{abRel}」 · {toName}→{fromName}「{baRel}」
+                </p>
+                <button
+                  type="button"
+                  className="mt-4 w-full rounded-xl border py-2 text-[13px]"
+                  style={{ borderColor: '#dbdbdb', color: '#262626' }}
+                  onClick={() => setEdgeDetail(null)}
+                >
+                  关闭
+                </button>
+              </div>
+            </div>
+          )
+        })()
+      ) : null}
+
+      {graphEditorOpen ? (
+        <div
+          className="fixed inset-0 z-[1210] flex items-end justify-center px-0 sm:items-center sm:px-4"
+          style={{ background: GE.overlay }}
+          onClick={() => {
+            if (!graphEditorSaving) setGraphEditorOpen(false)
+          }}
+        >
+          <div
+            className="flex max-h-[90vh] w-full max-w-xl flex-col overflow-hidden rounded-t-[16px] border sm:max-h-[88vh] sm:rounded-[16px]"
+            style={{
+              borderColor: GE.border,
+              background: GE.card,
+              boxShadow: GE.shadowLg,
+            }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <header
+              className="shrink-0 border-b px-5 py-4"
+              style={{ borderColor: GE.border, background: GE.card }}
+            >
+              <p className="text-center text-[17px] font-bold tracking-tight" style={{ color: GE.text }}>
+                手动编辑关系图
+              </p>
+              <p className="mx-auto mt-2 max-w-md text-center text-[12px] leading-relaxed" style={{ color: GE.sub }}>
+                编辑「你」与各角色的连线文案，以及角色之间的有向关系。保存后画布与连线标签会同步。
+              </p>
+            </header>
+
+            <div className="shrink-0 px-4 pt-3 sm:px-5" style={{ background: GE.canvas }}>
+              <div
+                className="flex gap-2 rounded-[12px] border p-2"
+                style={{ borderColor: GE.border, background: GE.card, boxShadow: GE.shadow }}
+              >
+                <button
+                  type="button"
+                  onClick={() => {
+                    setGraphEditorTab('you')
+                    setGraphDdOpen(null)
+                  }}
+                  className="min-w-0 flex-1 rounded-[10px] px-3 py-2.5 text-[13px] font-medium transition-all duration-200 ease-out"
+                  style={{
+                    border: '1px solid ' + GE.border,
+                    background: graphEditorTab === 'you' ? GE.text : GE.card,
+                    color: graphEditorTab === 'you' ? '#ffffff' : GE.text,
+                  }}
+                >
+                  你与角色
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setGraphEditorTab('between')
+                    setGraphDdOpen(null)
+                  }}
+                  className="min-w-0 flex-1 rounded-[10px] px-3 py-2.5 text-[13px] font-medium transition-all duration-200 ease-out"
+                  style={{
+                    border: '1px solid ' + GE.border,
+                    background: graphEditorTab === 'between' ? GE.text : GE.card,
+                    color: graphEditorTab === 'between' ? '#ffffff' : GE.text,
+                  }}
+                >
+                  角色与 NPC
+                </button>
+              </div>
+            </div>
+
+            <div
+              className="min-h-0 flex-1 overflow-y-auto px-4 py-4 sm:px-5 [scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden"
+              style={{ background: GE.canvas }}
+            >
+              {graphEditorTab === 'you' ? (
+                <section
+                  className="rounded-[12px] border p-4"
+                  style={{ borderColor: GE.border, background: GE.card, boxShadow: GE.shadow }}
+                >
+                  <div className="flex flex-col gap-2 border-b pb-4 sm:flex-row sm:items-end" style={{ borderColor: GE.border }}>
+                    {availPlCharIds.length > 0 ? (
+                      <div className="min-w-0 flex-1">
+                        <p className="mb-1.5 text-[11px] font-medium" style={{ color: GE.sub }}>
+                          为角色添加「你」的连线
+                        </p>
+                        <GraphEditorInlineDropdown
+                          label="选择要添加连线的角色"
+                          valueText={
+                            newPlCharId && availPlCharIds.includes(newPlCharId)
+                              ? (characterIdToName.get(newPlCharId) ?? newPlCharId)
+                              : '请选择角色'
+                          }
+                          open={graphDdOpen === 'plChar'}
+                          onToggle={() => setGraphDdOpen((o) => (o === 'plChar' ? null : 'plChar'))}
+                        >
+                          {availPlCharIds.map((id) => {
+                            const active = id === newPlCharId
+                            return (
+                              <button
+                                key={id}
+                                type="button"
+                                className={`flex w-full items-center justify-center px-3 py-2.5 text-[13px] transition-all duration-200 ease-out ${
+                                  active ? '' : 'hover:bg-[#f5f5f5]'
+                                }`}
+                                style={{
+                                  color: active ? '#ffffff' : GE.text,
+                                  background: active ? GE.text : 'transparent',
+                                }}
+                                onClick={() => {
+                                  setNewPlCharId(id)
+                                  setGraphDdOpen(null)
+                                }}
+                              >
+                                {characterIdToName.get(id) ?? id}
+                              </button>
+                            )
+                          })}
+                        </GraphEditorInlineDropdown>
+                      </div>
+                    ) : (
+                      <p className="flex-1 text-[12px]" style={{ color: GE.faint }}>
+                        当前人脉中的角色均已配置「你」的连线。
+                      </p>
+                    )}
+                    <button
+                      type="button"
+                      disabled={!newPlCharId || availPlCharIds.length === 0 || !availPlCharIds.includes(newPlCharId)}
+                      className="shrink-0 rounded-[10px] px-4 py-2.5 text-[13px] font-semibold text-white transition-all duration-200 ease-out disabled:opacity-40"
+                      style={{ background: GE.text }}
+                      onClick={() => {
+                        if (!newPlCharId || !availPlCharIds.includes(newPlCharId)) return
+                        const nextLinks: PlayerNetworkLink[] = [
+                          ...draftPlayerLinks,
+                          {
+                            id: uid('pl'),
+                            characterId: newPlCharId,
+                            relationYouToThem: '',
+                            relationThemToYou: '',
+                            youSeeThem: '',
+                            theySeeYou: '',
+                          },
+                        ]
+                        setDraftPlayerLinks(nextLinks)
+                        setGraphDdOpen(null)
+                      }}
+                    >
+                      添加连线
+                    </button>
+                  </div>
+                  <div className="mt-4 mb-3 flex items-center gap-2">
+                    <span className="h-4 w-1 shrink-0 rounded-full" style={{ background: GE.text }} aria-hidden />
+                    <h3 className="text-[14px] font-semibold" style={{ color: GE.text }}>
+                      已有「你」的连线
+                    </h3>
+                  </div>
+                  <p className="mb-3 text-[11px] leading-relaxed" style={{ color: GE.faint }}>
+                    每条对应关系图中「你」与该角色之间的连线；可移除或新增尚未配置连线的角色。
+                  </p>
+                  <div className="space-y-3">
+                    {draftPlayerLinks.map((link) => {
+                      const nm = characterIdToName.get(link.characterId) ?? link.characterId
+                      return (
+                        <div
+                          key={link.id}
+                          className="rounded-[10px] border p-3"
+                          style={{ borderColor: GE.border, background: '#fafafa' }}
+                        >
+                          <div className="flex items-center justify-between gap-2">
+                            <p className="text-[13px] font-semibold" style={{ color: GE.text }}>
+                              你 ↔ {nm}
+                            </p>
+                            <button
+                              type="button"
+                              className="rounded-lg px-2 py-1 text-[12px] transition-all duration-200 ease-out hover:bg-black/[0.04]"
+                              style={{ color: GE.sub }}
+                              onClick={() => setDraftPlayerLinks((prev) => prev.filter((l) => l.id !== link.id))}
+                            >
+                              移除
+                            </button>
+                          </div>
+                          <div className="mt-3 grid gap-3 sm:grid-cols-2">
+                            <label className="block text-[11px] font-medium" style={{ color: GE.sub }}>
+                              关系词（你→对方）
+                              <input
+                                value={link.relationYouToThem}
+                                onChange={(e) =>
+                                  setDraftPlayerLinks((prev) =>
+                                    prev.map((l) => (l.id === link.id ? { ...l, relationYouToThem: e.target.value } : l)),
+                                  )
+                                }
+                                className="mt-1.5 w-full rounded-[10px] border bg-white px-3 py-2 text-[13px] outline-none transition-all duration-200 ease-out"
+                                style={{ borderColor: GE.border, color: GE.text }}
+                              />
+                            </label>
+                            <label className="block text-[11px] font-medium" style={{ color: GE.sub }}>
+                              关系词（对方→你）
+                              <input
+                                value={link.relationThemToYou}
+                                onChange={(e) =>
+                                  setDraftPlayerLinks((prev) =>
+                                    prev.map((l) => (l.id === link.id ? { ...l, relationThemToYou: e.target.value } : l)),
+                                  )
+                                }
+                                className="mt-1.5 w-full rounded-[10px] border bg-white px-3 py-2 text-[13px] outline-none transition-all duration-200 ease-out"
+                                style={{ borderColor: GE.border, color: GE.text }}
+                              />
+                            </label>
+                          </div>
+                          <label className="mt-3 block text-[11px] font-medium" style={{ color: GE.sub }}>
+                            你看对方
+                            <textarea
+                              value={link.youSeeThem}
+                              onChange={(e) =>
+                                setDraftPlayerLinks((prev) =>
+                                  prev.map((l) => (l.id === link.id ? { ...l, youSeeThem: e.target.value } : l)),
+                                )
+                              }
+                              rows={2}
+                              className="mt-1.5 w-full resize-y rounded-[10px] border bg-white px-3 py-2 text-[13px] leading-relaxed outline-none transition-all duration-200 ease-out"
+                              style={{ borderColor: GE.border, color: GE.text }}
+                            />
+                          </label>
+                          <label className="mt-3 block text-[11px] font-medium" style={{ color: GE.sub }}>
+                            对方看你
+                            <textarea
+                              value={link.theySeeYou}
+                              onChange={(e) =>
+                                setDraftPlayerLinks((prev) =>
+                                  prev.map((l) => (l.id === link.id ? { ...l, theySeeYou: e.target.value } : l)),
+                                )
+                              }
+                              rows={2}
+                              className="mt-1.5 w-full resize-y rounded-[10px] border bg-white px-3 py-2 text-[13px] leading-relaxed outline-none transition-all duration-200 ease-out"
+                              style={{ borderColor: GE.border, color: GE.text }}
+                            />
+                          </label>
+                        </div>
+                      )
+                    })}
+                  </div>
+                </section>
+              ) : (
+                <>
+                  <section
+                    className="rounded-[12px] border p-4"
+                    style={{ borderColor: GE.border, background: GE.card, boxShadow: GE.shadow }}
+                  >
+                    <div className="mb-3 flex items-center gap-2">
+                      <span className="h-4 w-1 shrink-0 rounded-full" style={{ background: GE.text }} aria-hidden />
+                      <h3 className="text-[14px] font-semibold" style={{ color: GE.text }}>
+                        新增有向关系
+                      </h3>
+                    </div>
+                    <div className="grid gap-3 sm:grid-cols-2">
+                      <div>
+                        <p className="mb-1.5 text-[11px] font-medium" style={{ color: GE.sub }}>
+                          起点
+                        </p>
+                        <GraphEditorInlineDropdown
+                          label="选择关系起点角色"
+                          valueText={(characterIdToName.get(newRelFrom) ?? newRelFrom) || '请选择'}
+                          open={graphDdOpen === 'relFrom'}
+                          onToggle={() => setGraphDdOpen((o) => (o === 'relFrom' ? null : 'relFrom'))}
+                        >
+                          {networkCharIds.map((id) => {
+                            const active = id === newRelFrom
+                            return (
+                              <button
+                                key={id}
+                                type="button"
+                                className={`flex w-full items-center justify-center px-3 py-2.5 text-[13px] transition-all duration-200 ease-out ${
+                                  active ? '' : 'hover:bg-[#f5f5f5]'
+                                }`}
+                                style={{
+                                  color: active ? '#ffffff' : GE.text,
+                                  background: active ? GE.text : 'transparent',
+                                }}
+                                onClick={() => {
+                                  setNewRelFrom(id)
+                                  setGraphDdOpen(null)
+                                }}
+                              >
+                                {characterIdToName.get(id) ?? id}
+                              </button>
+                            )
+                          })}
+                        </GraphEditorInlineDropdown>
+                      </div>
+                      <div>
+                        <p className="mb-1.5 text-[11px] font-medium" style={{ color: GE.sub }}>
+                          终点
+                        </p>
+                        <GraphEditorInlineDropdown
+                          label="选择关系终点角色"
+                          valueText={(characterIdToName.get(newRelTo) ?? newRelTo) || '请选择'}
+                          open={graphDdOpen === 'relTo'}
+                          onToggle={() => setGraphDdOpen((o) => (o === 'relTo' ? null : 'relTo'))}
+                        >
+                          {networkCharIds.map((id) => {
+                            const active = id === newRelTo
+                            return (
+                              <button
+                                key={id}
+                                type="button"
+                                className={`flex w-full items-center justify-center px-3 py-2.5 text-[13px] transition-all duration-200 ease-out ${
+                                  active ? '' : 'hover:bg-[#f5f5f5]'
+                                }`}
+                                style={{
+                                  color: active ? '#ffffff' : GE.text,
+                                  background: active ? GE.text : 'transparent',
+                                }}
+                                onClick={() => {
+                                  setNewRelTo(id)
+                                  setGraphDdOpen(null)
+                                }}
+                              >
+                                {characterIdToName.get(id) ?? id}
+                              </button>
+                            )
+                          })}
+                        </GraphEditorInlineDropdown>
+                      </div>
+                    </div>
+                    <input
+                      value={newRelRelation}
+                      onChange={(e) => setNewRelRelation(e.target.value)}
+                      placeholder="关系词"
+                      className="mt-3 w-full rounded-[10px] border bg-white px-3 py-2.5 text-[13px] outline-none transition-all duration-200 ease-out"
+                      style={{ borderColor: GE.border, color: GE.text }}
+                    />
+                    <textarea
+                      value={newRelFromSee}
+                      onChange={(e) => setNewRelFromSee(e.target.value)}
+                      placeholder="起点视角叙述"
+                      rows={2}
+                      className="mt-2 w-full resize-y rounded-[10px] border bg-white px-3 py-2.5 text-[13px] leading-relaxed outline-none transition-all duration-200 ease-out"
+                      style={{ borderColor: GE.border, color: GE.text }}
+                    />
+                    <textarea
+                      value={newRelToSee}
+                      onChange={(e) => setNewRelToSee(e.target.value)}
+                      placeholder="终点视角叙述"
+                      rows={2}
+                      className="mt-2 w-full resize-y rounded-[10px] border bg-white px-3 py-2.5 text-[13px] leading-relaxed outline-none transition-all duration-200 ease-out"
+                      style={{ borderColor: GE.border, color: GE.text }}
+                    />
+                    <button
+                      type="button"
+                      className="mt-3 w-full rounded-[10px] border py-2.5 text-[13px] font-semibold transition-all duration-200 ease-out hover:bg-[#fafafa]"
+                      style={{ borderColor: GE.text, color: GE.text, background: GE.card }}
+                      onClick={() => {
+                        if (!newRelFrom || !newRelTo || newRelFrom === newRelTo) return
+                        setDraftRels((prev) => [
+                          ...prev,
+                          {
+                            id: uid('rel'),
+                            fromCharacterId: newRelFrom,
+                            toCharacterId: newRelTo,
+                            relation: newRelRelation.trim(),
+                            fromPerspective: newRelFromSee.trim(),
+                            toPerspective: newRelToSee.trim(),
+                          },
+                        ])
+                        setNewRelRelation('')
+                        setNewRelFromSee('')
+                        setNewRelToSee('')
+                      }}
+                    >
+                      加入列表
+                    </button>
+                  </section>
+
+                  <section
+                    className="mt-4 rounded-[12px] border p-4"
+                    style={{ borderColor: GE.border, background: GE.card, boxShadow: GE.shadow }}
+                  >
+                    <div className="mb-1 flex items-center gap-2">
+                      <span className="h-4 w-1 shrink-0 rounded-full" style={{ background: GE.text }} aria-hidden />
+                      <h3 className="text-[14px] font-semibold" style={{ color: GE.text }}>
+                        角色间有向关系
+                      </h3>
+                    </div>
+                    <p className="mb-3 text-[11px] leading-relaxed" style={{ color: GE.faint }}>
+                      A→B 与 B→A 为两条独立记录，可分别编辑关系词与两侧叙述。
+                    </p>
+                    <div className="space-y-3">
+                      {draftRels.map((r) => (
+                        <div
+                          key={r.id}
+                          className="rounded-[10px] border p-3"
+                          style={{ borderColor: GE.border, background: '#fafafa' }}
+                        >
+                          <div className="flex items-center justify-between gap-2">
+                            <p className="text-[13px] font-semibold" style={{ color: GE.text }}>
+                              {characterIdToName.get(r.fromCharacterId) ?? r.fromCharacterId}
+                              <span style={{ color: GE.faint }}> → </span>
+                              {characterIdToName.get(r.toCharacterId) ?? r.toCharacterId}
+                            </p>
+                            <button
+                              type="button"
+                              className="rounded-lg px-2 py-1 text-[12px] transition-all duration-200 ease-out hover:bg-black/[0.04]"
+                              style={{ color: GE.sub }}
+                              onClick={() => setDraftRels((prev) => prev.filter((x) => x.id !== r.id))}
+                            >
+                              删除
+                            </button>
+                          </div>
+                          <label className="mt-3 block text-[11px] font-medium" style={{ color: GE.sub }}>
+                            关系词（连线中间）
+                            <input
+                              value={r.relation}
+                              onChange={(e) =>
+                                setDraftRels((prev) => prev.map((x) => (x.id === r.id ? { ...x, relation: e.target.value } : x)))
+                              }
+                              className="mt-1.5 w-full rounded-[10px] border bg-white px-3 py-2 text-[13px] outline-none transition-all duration-200 ease-out"
+                              style={{ borderColor: GE.border, color: GE.text }}
+                            />
+                          </label>
+                          <label className="mt-3 block text-[11px] font-medium" style={{ color: GE.sub }}>
+                            起点视角
+                            <textarea
+                              value={r.fromPerspective}
+                              onChange={(e) =>
+                                setDraftRels((prev) => prev.map((x) => (x.id === r.id ? { ...x, fromPerspective: e.target.value } : x)))
+                              }
+                              rows={2}
+                              className="mt-1.5 w-full resize-y rounded-[10px] border bg-white px-3 py-2 text-[13px] leading-relaxed outline-none transition-all duration-200 ease-out"
+                              style={{ borderColor: GE.border, color: GE.text }}
+                            />
+                          </label>
+                          <label className="mt-3 block text-[11px] font-medium" style={{ color: GE.sub }}>
+                            终点视角
+                            <textarea
+                              value={r.toPerspective}
+                              onChange={(e) =>
+                                setDraftRels((prev) => prev.map((x) => (x.id === r.id ? { ...x, toPerspective: e.target.value } : x)))
+                              }
+                              rows={2}
+                              className="mt-1.5 w-full resize-y rounded-[10px] border bg-white px-3 py-2 text-[13px] leading-relaxed outline-none transition-all duration-200 ease-out"
+                              style={{ borderColor: GE.border, color: GE.text }}
+                            />
+                          </label>
+                        </div>
+                      ))}
+                    </div>
+                  </section>
+                </>
+              )}
+            </div>
+
+            <footer
+              className="shrink-0 border-t px-4 py-3 sm:px-5"
+              style={{ borderColor: GE.border, background: GE.card, paddingBottom: 'max(12px, env(safe-area-inset-bottom, 0px))' }}
+            >
+              <div className="flex gap-2">
+                <button
+                  type="button"
+                  disabled={graphEditorSaving}
+                  className="flex-1 rounded-[12px] border py-3 text-[13px] font-medium transition-all duration-200 ease-out hover:bg-[#fafafa] disabled:opacity-50"
+                  style={{ borderColor: GE.border, color: GE.text, background: GE.card }}
+                  onClick={() => setGraphEditorOpen(false)}
+                >
+                  取消
+                </button>
+                <button
+                  type="button"
+                  disabled={graphEditorSaving}
+                  className="flex-1 rounded-[12px] py-3 text-[13px] font-semibold text-white transition-all duration-200 ease-out disabled:opacity-50"
+                  style={{ background: GE.text }}
+                  onClick={() => void saveGraphEditor()}
+                >
+                  {graphEditorSaving ? '保存中…' : '保存到本地'}
+                </button>
+              </div>
+            </footer>
+          </div>
+        </div>
+      ) : null}
+    </div>
+    {generating
+      ? createPortal(
+          <div
+            className="fixed inset-0 z-[5000] flex items-center justify-center px-6"
+            role="alertdialog"
+            aria-modal="true"
+            aria-busy="true"
+            aria-labelledby="npc-gen-loading-title"
+          >
+            <div className="absolute inset-0 bg-black/50" aria-hidden />
+            <div
+              className="relative w-full max-w-[320px] rounded-2xl border bg-white px-6 py-8 text-center shadow-[0_12px_40px_rgba(0,0,0,0.2)]"
+              style={{ borderColor: '#e5e5e5' }}
+            >
+              <Loader2 className="mx-auto size-10 animate-spin" strokeWidth={1.75} style={{ color: '#111827' }} aria-hidden />
+              <p id="npc-gen-loading-title" className="mt-4 text-[16px] font-semibold" style={{ color: '#111827' }}>
+                正在生成 NPC
+              </p>
+              <p className="mt-2 text-[13px] leading-relaxed" style={{ color: '#6b7280' }}>
+                正在清空旧人脉并由 AI 生成新角色与关系，请稍候…
+              </p>
+            </div>
+          </div>,
+          document.body,
+        )
+      : null}
+    </>
+  )
+}
+
+function NpcCard({ npc, onEdit, onDelete }: { npc: Character; onEdit: () => void; onDelete: () => void }) {
+  const interests = npc.interests ?? []
+  const painPoints = npc.painPoints ?? []
+  return (
+    <div
+      className="rounded-xl border bg-white p-4"
+      style={{ borderColor: '#dbdbdb', borderRadius: 12, padding: 16 }}
+    >
+      <div className="flex items-start gap-3">
+        {npc.avatarUrl?.trim() ? (
+          <img
+            src={npc.avatarUrl}
+            alt=""
+            className="size-10 shrink-0 rounded-full border object-cover"
+            style={{ borderColor: '#dbdbdb' }}
+          />
+        ) : (
+          <div className="size-10 shrink-0 rounded-full border border-dashed bg-[#fafafa]" style={{ borderColor: '#dbdbdb' }} />
+        )}
+        <div className="min-w-0 flex-1">
+          <div className="flex flex-wrap items-baseline gap-2">
+            <span className="text-[16px] font-semibold" style={{ color: '#262626' }}>
+              {npc.name}
+            </span>
+            <span className="text-[12px]" style={{ color: '#8e8e8e' }}>
+              {genderLabel(npc.gender)}
+            </span>
+          </div>
+          <p className="mt-1 text-[14px]" style={{ color: '#8e8e8e' }}>
+            {npc.identity} | {npc.mbti || '—'}
+          </p>
+          <div className="mt-2 flex flex-wrap gap-1.5">
+            {interests.map((t) => (
+              <span key={t} className="rounded-lg bg-[#f4f4f5] px-2 py-0.5 text-[12px]" style={{ color: '#262626' }}>
+                {t}
+              </span>
+            ))}
+            {painPoints.map((t) => (
+              <span key={t} className="rounded-lg bg-[#e5e5e5] px-2 py-0.5 text-[12px]" style={{ color: '#262626' }}>
+雷：{t}
+              </span>
+            ))}
+          </div>
+          <p className="mt-2 line-clamp-3 text-[14px] leading-relaxed" style={{ color: '#262626' }}>
+            {npc.bio || '—'}
+          </p>
+        </div>
+      </div>
+      <div className="mt-3 flex flex-wrap gap-2">
+        <button
+          type="button"
+          onClick={onEdit}
+          className="rounded-xl border px-4 py-2 text-[13px]"
+          style={{ borderColor: '#dbdbdb', color: '#262626' }}
+        >
+          查看完整人设
+        </button>
+        <button
+          type="button"
+          onClick={onDelete}
+          className="rounded-xl border px-4 py-2 text-[13px]"
+          style={{ borderColor: '#dbdbdb', color: '#8e8e8e' }}
+        >
+          删除
+        </button>
+      </div>
+    </div>
+  )
+}
+
+function RelationshipGraph({
+  rootMainId,
+  focalId,
+  onFocalChange,
+  main,
+  npcs,
+  linkedRoots,
+  rels,
+  playerLinks,
+  playerAvatarUrl,
+  onNodeDblClick,
+  onEdgeClick,
+}: {
+  rootMainId: string
+  focalId: string
+  onFocalChange: (characterId: string) => void
+  main: Character
+  npcs: Character[]
+  /** 与当前主角有跨人设连线的其他根角色 */
+  linkedRoots: Character[]
+  rels: Relationship[]
+  playerLinks: PlayerNetworkLink[]
+  playerAvatarUrl: string
+  onNodeDblClick: (id: string) => void
+  onEdgeClick: (aId: string, bId: string) => void
+}) {
+  const relDirMap = useMemo(() => {
+    const m = new Map<string, Relationship>()
+    for (const r of rels) m.set(`${r.fromCharacterId}::${r.toCharacterId}`, r)
+    return m
+  }, [rels])
+
+  const pairEdges = useMemo(() => {
+    const seen = new Set<string>()
+    const out: { aId: string; bId: string; ab?: Relationship; ba?: Relationship }[] = []
+    for (const r of rels) {
+      const aId = r.fromCharacterId
+      const bId = r.toCharacterId
+      if (!aId || !bId || aId === bId) continue
+      const key = aId < bId ? `${aId}::${bId}` : `${bId}::${aId}`
+      if (seen.has(key)) continue
+      seen.add(key)
+      const a = aId < bId ? aId : bId
+      const b = aId < bId ? bId : aId
+      out.push({
+        aId: a,
+        bId: b,
+        ab: relDirMap.get(`${a}::${b}`),
+        ba: relDirMap.get(`${b}::${a}`),
+      })
+    }
+    for (const link of playerLinks) {
+      const p = pairFromPlayerLink(link)
+      const key = `${p.aId}::${p.bId}`
+      if (seen.has(key)) continue
+      seen.add(key)
+      out.push({ aId: p.aId, bId: p.bId, ab: p.ab, ba: p.ba })
+    }
+    return out
+  }, [rels, relDirMap, playerLinks])
+  const linkedIdSet = useMemo(() => new Set(linkedRoots.map((c) => c.id)), [linkedRoots])
+  const nodes = useMemo(() => [main, ...npcs, ...linkedRoots], [main, npcs, linkedRoots])
+  const charIdsSorted = useMemo(
+    () => [main.id, ...npcs.map((n) => n.id), ...linkedRoots.map((x) => x.id)].sort(),
+    [main.id, npcs, linkedRoots],
+  )
+  const layoutNetworkKey = useMemo(
+    () => `${charIdsSorted.join(',')}|${playerLinks.map((l) => l.characterId).sort().join(',')}`,
+    [charIdsSorted, playerLinks],
+  )
+  const allNodeIds = useMemo(() => {
+    if (!playerLinks.length) return charIdsSorted
+    return [...charIdsSorted, PLAYER_GRAPH_NODE_ID].sort()
+  }, [charIdsSorted, playerLinks])
+  const focalName = useMemo(() => nodes.find((n) => n.id === focalId)?.name ?? '—', [nodes, focalId])
+
+  const [pos, setPos] = useState<Record<string, { x: number; y: number }>>({})
+  const [scale, setScale] = useState(1)
+  const [pan, setPan] = useState({ x: 0, y: 0 })
+  const panRef = useRef(pan)
+  panRef.current = pan
+  const graphWrapRef = useRef<HTMLDivElement>(null)
+  const svgRef = useRef<SVGSVGElement | null>(null)
+  const loadSeqRef = useRef(0)
+
+  const dragRef = useRef<
+    | { kind: 'node'; id: string; sx: number; sy: number; ox: number; oy: number }
+    | { kind: 'pan'; sx: number; sy: number; ox: number; oy: number }
+    | null
+  >(null)
+
+  const pointersRef = useRef(new Map<number, { x: number; y: number }>())
+  const pinchRef = useRef<null | { dist: number; scale: number; pan: { x: number; y: number } }>(null)
+  const nodeDragMovedRef = useRef(false)
+
+  const lastTapRef = useRef<{ id: string; t: number } | null>(null)
+  const singleTapTimerRef = useRef<ReturnType<typeof window.setTimeout> | null>(null)
+
+  useEffect(() => {
+    return () => {
+      if (singleTapTimerRef.current) window.clearTimeout(singleTapTimerRef.current)
+    }
+  }, [])
+
+  const handleNodeTap = useCallback(
+    (id: string) => {
+      if (id === PLAYER_GRAPH_NODE_ID) return
+      const now = Date.now()
+      const prev = lastTapRef.current
+      if (prev && prev.id === id && now - prev.t < 320) {
+        if (singleTapTimerRef.current) {
+          window.clearTimeout(singleTapTimerRef.current)
+          singleTapTimerRef.current = null
+        }
+        lastTapRef.current = null
+        onNodeDblClick(id)
+        return
+      }
+      lastTapRef.current = { id, t: now }
+      if (singleTapTimerRef.current) window.clearTimeout(singleTapTimerRef.current)
+      singleTapTimerRef.current = window.setTimeout(() => {
+        singleTapTimerRef.current = null
+        lastTapRef.current = null
+        onFocalChange(id)
+      }, 280)
+    },
+    [onFocalChange, onNodeDblClick],
+  )
+
+  useEffect(() => {
+    const seq = ++loadSeqRef.current
+    const ringR = ringRForGraphHeight(GRAPH_H)
+    void (async () => {
+      const stored = await personaDb.getNetworkGraphView(rootMainId, focalId)
+      if (seq !== loadSeqRef.current) return
+      if (stored && positionsMatchNetwork(stored.positions, allNodeIds)) {
+        setPos(stored.positions)
+        setScale(stored.scale)
+        setPan(stored.pan)
+        return
+      }
+      const layout = computeRadialLayout(focalId, charIdsSorted, GRAPH_W, GRAPH_H, ringR)
+      if (playerLinks.length > 0) {
+        layout[PLAYER_GRAPH_NODE_ID] = { x: GRAPH_W / 2, y: GRAPH_H / 2 + ringR + 82 }
+      }
+      setPos(layout)
+      setScale(1)
+      requestAnimationFrame(() => {
+        if (seq !== loadSeqRef.current) return
+        const el = graphWrapRef.current
+        if (!el) return
+        const box = el.getBoundingClientRect()
+        const fp = layout[focalId]
+        if (!fp) return
+        setPan(centerPanForFocal(fp.x, fp.y, box.width, box.height, 1))
+      })
+    })()
+  }, [rootMainId, focalId, layoutNetworkKey, charIdsSorted, allNodeIds, playerLinks.length])
+
+  useEffect(() => {
+    if (!positionsMatchNetwork(pos, allNodeIds)) return
+    const t = window.setTimeout(() => {
+      void personaDb.putNetworkGraphView({
+        id: `${rootMainId}::${focalId}`,
+        rootCharacterId: rootMainId,
+        perspectiveCharacterId: focalId,
+        scale,
+        pan,
+        positions: Object.fromEntries(allNodeIds.map((id) => [id, pos[id]!])),
+        updatedAt: Date.now(),
+      })
+    }, 450)
+    return () => window.clearTimeout(t)
+  }, [pos, pan, scale, focalId, rootMainId, allNodeIds])
+
+  const resetToDefaultLayout = useCallback(() => {
+    const ringR = ringRForGraphHeight(GRAPH_H)
+    const layout = computeRadialLayout(focalId, charIdsSorted, GRAPH_W, GRAPH_H, ringR)
+    if (playerLinks.length > 0) {
+      layout[PLAYER_GRAPH_NODE_ID] = { x: GRAPH_W / 2, y: GRAPH_H / 2 + ringR + 82 }
+    }
+    setPos(layout)
+    setScale(1)
+    requestAnimationFrame(() => {
+      const el = graphWrapRef.current
+      if (!el) return
+      const box = el.getBoundingClientRect()
+      const fp = layout[focalId]
+      if (!fp) return
+      const panNext = centerPanForFocal(fp.x, fp.y, box.width, box.height, 1)
+      setPan(panNext)
+      void personaDb.putNetworkGraphView({
+        id: `${rootMainId}::${focalId}`,
+        rootCharacterId: rootMainId,
+        perspectiveCharacterId: focalId,
+        scale: 1,
+        pan: panNext,
+        positions: layout,
+        updatedAt: Date.now(),
+      })
+    })
+  }, [focalId, rootMainId, allNodeIds, charIdsSorted, playerLinks.length])
+
+  useEffect(() => {
+    const el = graphWrapRef.current
+    if (!el) return
+    const onWheel = (e: WheelEvent) => {
+      e.preventDefault()
+      e.stopPropagation()
+      const d = e.deltaY > 0 ? -0.08 : 0.08
+      setScale((s) => Math.min(2.2, Math.max(0.45, s + d)))
+    }
+    el.addEventListener('wheel', onWheel, { passive: false })
+    return () => el.removeEventListener('wheel', onWheel)
+  }, [])
+
+  /** 平移/缩放/拖节点时不要出现系统文字选取框或图片拖拽幽灵 */
+  useEffect(() => {
+    const el = graphWrapRef.current
+    if (!el) return
+    const block = (e: Event) => e.preventDefault()
+    el.addEventListener('selectstart', block)
+    el.addEventListener('dragstart', block)
+    return () => {
+      el.removeEventListener('selectstart', block)
+      el.removeEventListener('dragstart', block)
+    }
+  }, [])
+
+  const onPointerDownBg = (e: PointerEvent<SVGRectElement>) => {
+    if (e.button !== 0) return
+    e.preventDefault()
+    e.stopPropagation()
+    window.getSelection?.()?.removeAllRanges?.()
+    ;(e.currentTarget as unknown as SVGElement).setPointerCapture(e.pointerId)
+    pointersRef.current.set(e.pointerId, { x: e.clientX, y: e.clientY })
+    pinchRef.current = null
+    const p = panRef.current
+    dragRef.current = { kind: 'pan', sx: e.clientX, sy: e.clientY, ox: p.x, oy: p.y }
+  }
+
+  const onPointerDownNode = (id: string, ox: number, oy: number) => (e: PointerEvent<SVGGElement>) => {
+    if (e.button !== 0) return
+    e.preventDefault()
+    e.stopPropagation()
+    window.getSelection?.()?.removeAllRanges?.()
+    nodeDragMovedRef.current = false
+    e.currentTarget.setPointerCapture(e.pointerId)
+    pointersRef.current.set(e.pointerId, { x: e.clientX, y: e.clientY })
+    pinchRef.current = null
+    dragRef.current = { kind: 'node', id, sx: e.clientX, sy: e.clientY, ox, oy }
+  }
+
+  const onPointerMove = (e: PointerEvent<SVGSVGElement>) => {
+    if (!pointersRef.current.has(e.pointerId)) return
+    e.preventDefault()
+    pointersRef.current.set(e.pointerId, { x: e.clientX, y: e.clientY })
+
+    if (pointersRef.current.size >= 2) {
+      const pts = Array.from(pointersRef.current.values())
+      const a = pts[0]
+      const b = pts[1]
+      const dx = a.x - b.x
+      const dy = a.y - b.y
+      const dist = Math.hypot(dx, dy) || 1
+      if (!pinchRef.current) {
+        pinchRef.current = { dist, scale, pan: panRef.current }
+        dragRef.current = null
+        return
+      }
+      const base = pinchRef.current
+      const nextScale = Math.min(2.2, Math.max(0.45, (base.scale * dist) / base.dist))
+      setScale(nextScale)
+      return
+    }
+
+    const d = dragRef.current
+    if (!d) return
+    if (d.kind === 'node') {
+      if (Math.hypot(e.clientX - d.sx, e.clientY - d.sy) > 12) nodeDragMovedRef.current = true
+      const dx = (e.clientX - d.sx) / scale
+      const dy = (e.clientY - d.sy) / scale
+      setPos((p) => ({ ...p, [d.id]: { x: d.ox + dx, y: d.oy + dy } }))
+    } else {
+      setPan({
+        x: d.ox + (e.clientX - d.sx),
+        y: d.oy + (e.clientY - d.sy),
+      })
+    }
+  }
+
+  const endPointer = (e: PointerEvent<SVGSVGElement>) => {
+    pointersRef.current.delete(e.pointerId)
+    if (pointersRef.current.size < 2) pinchRef.current = null
+    if (pointersRef.current.size === 0) dragRef.current = null
+  }
+
+  const finishNodePointer = (id: string, e: PointerEvent<SVGGElement>, treatAsTap: boolean) => {
+    if (e.type === 'pointerup' && e.button !== 0) return
+    e.stopPropagation()
+    try {
+      e.currentTarget.releasePointerCapture(e.pointerId)
+    } catch {
+      /* ignore */
+    }
+    const wasNode = dragRef.current?.kind === 'node' && dragRef.current.id === id
+    const moved = nodeDragMovedRef.current
+    pointersRef.current.delete(e.pointerId)
+    if (pointersRef.current.size < 2) pinchRef.current = null
+    if (pointersRef.current.size === 0) dragRef.current = null
+    nodeDragMovedRef.current = false
+    if (treatAsTap && wasNode && !moved) handleNodeTap(id)
+  }
+
+  const onNodePointerUp = (id: string) => (e: PointerEvent<SVGGElement>) => {
+    finishNodePointer(id, e, true)
+  }
+
+  const onNodePointerCancel = (id: string) => (e: PointerEvent<SVGGElement>) => {
+    finishNodePointer(id, e, false)
+  }
+
+  return (
+    <div className="overflow-hidden rounded-xl bg-white p-5" style={{ background: '#fff' }}>
+      <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+        <p className="text-[12px]" style={{ color: '#8e8e8e' }}>
+          视角中心：<span style={{ color: '#262626' }}>{focalName}</span>
+        </p>
+        <button
+          type="button"
+          onClick={resetToDefaultLayout}
+          className="rounded-lg border px-3 py-1.5 text-[12px] font-medium"
+          style={{ borderColor: '#dbdbdb', color: '#262626' }}
+        >
+          恢复默认排版
+        </button>
+      </div>
+      <div
+        ref={graphWrapRef}
+        className="max-w-full"
+        style={{
+          touchAction: 'none',
+          width: GRAPH_W,
+          maxWidth: '100%',
+          userSelect: 'none',
+          WebkitUserSelect: 'none',
+          MozUserSelect: 'none',
+          msUserSelect: 'none',
+        }}
+      >
+      <svg
+        ref={svgRef}
+        width={GRAPH_W}
+        height={GRAPH_H}
+        className="touch-none select-none [&_text]:select-none"
+        style={{ WebkitUserSelect: 'none', userSelect: 'none' } as CSSProperties}
+        onPointerMove={onPointerMove}
+        onPointerUp={endPointer}
+        onPointerCancel={endPointer}
+      >
+        <defs>
+          {playerLinks.length > 0 ? (
+            <clipPath id={`cp-${PLAYER_GRAPH_NODE_ID}`}>
+              <circle cx={0} cy={0} r={20} />
+            </clipPath>
+          ) : null}
+          {nodes.map((n) => (
+            <clipPath key={`cp-${n.id}`} id={`cp-${n.id}`}>
+              <circle cx={0} cy={0} r={20} />
+            </clipPath>
+          ))}
+          <marker id="arrEnd" markerWidth="8" markerHeight="8" refX="6" refY="4" orient="auto" markerUnits="strokeWidth">
+            <path d="M0,0 L8,4 L0,8 Z" fill="#111827" />
+          </marker>
+          <marker id="arrStart" markerWidth="8" markerHeight="8" refX="2" refY="4" orient="auto" markerUnits="strokeWidth">
+            <path d="M8,0 L0,4 L8,8 Z" fill="#111827" />
+          </marker>
+        </defs>
+        <g transform={`translate(${pan.x},${pan.y}) scale(${scale})`}>
+          <rect
+            x={0}
+            y={0}
+            width={GRAPH_W}
+            height={GRAPH_H}
+            fill="transparent"
+            style={{ cursor: 'grab' }}
+            onPointerDown={onPointerDownBg}
+          />
+          {pairEdges.map((pair) => {
+            const a = pos[pair.aId]
+            const b = pos[pair.bId]
+            if (!a || !b) return null
+            const mx = (a.x + b.x) / 2
+            const my = (a.y + b.y) / 2
+            const label =
+              focalId === pair.aId
+                ? pair.ab?.relation ?? pair.ba?.relation ?? ''
+                : focalId === pair.bId
+                  ? pair.ba?.relation ?? pair.ab?.relation ?? ''
+                  : pair.ab?.relation ?? pair.ba?.relation ?? ''
+            return (
+              <g key={`${pair.aId}::${pair.bId}`}>
+                <line
+                  x1={a.x}
+                  y1={a.y}
+                  x2={b.x}
+                  y2={b.y}
+                  stroke="transparent"
+                  strokeWidth={16}
+                  style={{ cursor: 'pointer' }}
+                  onClick={() => onEdgeClick(pair.aId, pair.bId)}
+                />
+                <line
+                  x1={a.x}
+                  y1={a.y}
+                  x2={b.x}
+                  y2={b.y}
+                  stroke="#111827"
+                  strokeWidth={1}
+                  markerEnd="url(#arrEnd)"
+                  markerStart="url(#arrStart)"
+                  pointerEvents="none"
+                />
+                <rect
+                  x={mx - 56}
+                  y={my - 10}
+                  width={112}
+                  height={20}
+                  rx={6}
+                  fill="rgba(255,255,255,0.92)"
+                  stroke="#dbdbdb"
+                  strokeWidth={1}
+                  style={{ cursor: 'pointer' }}
+                  onClick={(e) => {
+                    e.stopPropagation()
+                    onEdgeClick(pair.aId, pair.bId)
+                  }}
+                />
+                <text
+                  x={mx}
+                  y={my + 4}
+                  textAnchor="middle"
+                  fontSize={12}
+                  fill="#262626"
+                  style={{ cursor: 'pointer', pointerEvents: 'none', userSelect: 'none', WebkitUserSelect: 'none' }}
+                >
+                  {label}
+                </text>
+              </g>
+            )
+          })}
+          {playerLinks.length > 0 && pos[PLAYER_GRAPH_NODE_ID] ? (
+            <g
+              key={PLAYER_GRAPH_NODE_ID}
+              transform={`translate(${pos[PLAYER_GRAPH_NODE_ID].x},${pos[PLAYER_GRAPH_NODE_ID].y})`}
+              onPointerDown={onPointerDownNode(
+                PLAYER_GRAPH_NODE_ID,
+                pos[PLAYER_GRAPH_NODE_ID].x,
+                pos[PLAYER_GRAPH_NODE_ID].y,
+              )}
+              onPointerUp={onNodePointerUp(PLAYER_GRAPH_NODE_ID)}
+              onPointerCancel={onNodePointerCancel(PLAYER_GRAPH_NODE_ID)}
+              style={{ cursor: 'grab' }}
+            >
+              {playerAvatarUrl.trim() ? (
+                <>
+                  <image
+                    href={playerAvatarUrl}
+                    x={-20}
+                    y={-20}
+                    width={40}
+                    height={40}
+                    clipPath={`url(#cp-${PLAYER_GRAPH_NODE_ID})`}
+                    preserveAspectRatio="xMidYMid slice"
+                    style={{ WebkitUserDrag: 'none', userSelect: 'none' } as CSSProperties}
+                  />
+                  <circle r={20} fill="none" stroke="#000000" strokeWidth={2} />
+                </>
+              ) : (
+                <circle r={20} fill="#ffffff" stroke="#000000" strokeWidth={2} />
+              )}
+              <text
+                y={36}
+                textAnchor="middle"
+                fontSize={12}
+                fill="#262626"
+                style={{ userSelect: 'none', WebkitUserSelect: 'none', pointerEvents: 'none' }}
+              >
+                你
+              </text>
+            </g>
+          ) : null}
+          {nodes.map((n) => {
+            const p = pos[n.id]
+            if (!p) return null
+            const isFocal = n.id === focalId
+            return (
+              <g
+                key={n.id}
+                transform={`translate(${p.x},${p.y})`}
+                onPointerDown={onPointerDownNode(n.id, p.x, p.y)}
+                onPointerUp={onNodePointerUp(n.id)}
+                onPointerCancel={onNodePointerCancel(n.id)}
+                style={{ cursor: 'grab' }}
+              >
+                {n.avatarUrl?.trim() ? (
+                  <>
+                    <image
+                      href={n.avatarUrl}
+                      x={-20}
+                      y={-20}
+                      width={40}
+                      height={40}
+                      clipPath={`url(#cp-${n.id})`}
+                      preserveAspectRatio="xMidYMid slice"
+                      style={{ WebkitUserDrag: 'none', userSelect: 'none' } as CSSProperties}
+                    />
+                    <circle r={20} fill="none" stroke="#dbdbdb" strokeWidth={1} />
+                    {isFocal ? <circle r={23} fill="none" stroke="#111827" strokeWidth={1.5} /> : null}
+                  </>
+                ) : (
+                  <>
+                    <circle r={20} fill="#fafafa" stroke="#dbdbdb" strokeWidth={1} />
+                    {isFocal ? <circle r={23} fill="none" stroke="#111827" strokeWidth={1.5} /> : null}
+                  </>
+                )}
+                <text
+                  y={36}
+                  textAnchor="middle"
+                  fontSize={12}
+                  fill="#262626"
+                  style={{ userSelect: 'none', WebkitUserSelect: 'none', pointerEvents: 'none' }}
+                >
+                  {n.name}
+                </text>
+                {linkedIdSet.has(n.id) ? (
+                  <text
+                    y={52}
+                    textAnchor="middle"
+                    fontSize={10}
+                    fill="#8e8e8e"
+                    style={{ userSelect: 'none', WebkitUserSelect: 'none', pointerEvents: 'none' }}
+                  >
+                    跨主角
+                  </text>
+                ) : null}
+              </g>
+            )
+          })}
+        </g>
+      </svg>
+      </div>
+      <p className="mt-2 text-center text-[11px]" style={{ color: '#8e8e8e' }}>
+        单击头像切换视角中心（「你」不可切视角）· 连点打开人设 · 拖节点 / 空白平移 · 捏合或滚轮缩放 · 点击连线或中间关系词标签查看；含「你」的连线可编辑你对对方的描述与关系词。完整编辑请用上方「手动编辑关系图」。
+      </p>
+    </div>
+  )
+}

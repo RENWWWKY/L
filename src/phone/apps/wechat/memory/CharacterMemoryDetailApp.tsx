@@ -1,0 +1,488 @@
+import { ArrowLeft, BookOpen, Edit, Trash2 } from 'lucide-react'
+import { useCallback, useEffect, useState } from 'react'
+import { WECHAT_LUMI_ASSISTANT_CONTACT } from '../../../../components/WeChatContactsInstagram'
+import { Pressable } from '../../../components/Pressable'
+import { personaDb } from '../newFriendsPersona/idb'
+import type { CharacterMemory, WeChatChatMessage } from '../newFriendsPersona/types'
+import { uid } from '../newFriendsPersona/utils'
+import { WECHAT_LUMI_PEER_CHARACTER_ID, wechatConversationKey } from '../wechatConversationKey'
+import { MemoryContentWithSourceBadges } from './memorySourceBadges'
+
+const COLORS = {
+  bg: '#f5f5f5',
+  card: '#ffffff',
+  text: '#000000',
+  sub: '#666666',
+  faint: '#999999',
+  border: '#e5e5e5',
+  danger: '#ff3b30',
+} as const
+
+function TopBar({
+  title,
+  onBack,
+  right,
+}: {
+  title: string
+  onBack: () => void
+  right?: React.ReactNode
+}) {
+  return (
+    <div
+      className="sticky top-0 z-30 shrink-0 border-b"
+      style={{
+        borderColor: COLORS.border,
+        background: COLORS.card,
+        paddingTop: 'max(10px, env(safe-area-inset-top,0px))',
+        boxShadow: '0 1px 3px rgba(0,0,0,0.05)',
+      }}
+    >
+      <div className="flex items-center px-4 py-3">
+        <Pressable
+          type="button"
+          onClick={onBack}
+          className="flex h-10 w-10 items-center justify-center rounded-[12px] transition-all duration-200 ease-out hover:bg-[#f5f5f5]"
+          aria-label="返回"
+        >
+          <ArrowLeft className="size-5" color={COLORS.text} strokeWidth={1.75} />
+        </Pressable>
+        <p className="min-w-0 flex-1 truncate px-2 text-center text-[18px] font-bold" style={{ color: COLORS.text }}>
+          {title}
+        </p>
+        <div className="flex min-w-[52px] justify-end">{right}</div>
+      </div>
+    </div>
+  )
+}
+
+function ModalBackdrop({ children, onClose }: { children: React.ReactNode; onClose: () => void }) {
+  return (
+    <div
+      className="fixed inset-0 z-[100] flex items-center justify-center px-4"
+      style={{ background: 'rgba(0,0,0,0.5)' }}
+      role="presentation"
+      onClick={onClose}
+    >
+      <div role="dialog" aria-modal className="w-full max-w-[400px]" onClick={(e) => e.stopPropagation()}>
+        {children}
+      </div>
+    </div>
+  )
+}
+
+function formatMsgTime(ts: number): string {
+  const d = new Date(ts)
+  return d.toLocaleString('zh-CN', {
+    month: 'numeric',
+    day: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+  })
+}
+
+export function CharacterMemoryDetailApp({
+  characterId,
+  titleRemark,
+  playerIdentityId,
+  onBack,
+}: {
+  characterId: string
+  /** 通讯录备注名（与列表一致） */
+  titleRemark?: string
+  /** 与聊天相同：null 表示身份尚未从 IndexedDB 就绪 */
+  playerIdentityId: string | null
+  onBack: () => void
+}) {
+  const [displayName, setDisplayName] = useState('')
+  const [list, setList] = useState<CharacterMemory[]>([])
+  const [chatMessages, setChatMessages] = useState<WeChatChatMessage[]>([])
+  const [chatSourceLabel, setChatSourceLabel] = useState<'current' | 'all' | 'clique' | 'alias'>('current')
+  const [loading, setLoading] = useState(true)
+
+  const [editOpen, setEditOpen] = useState(false)
+  const [editDraft, setEditDraft] = useState('')
+  const [editingId, setEditingId] = useState<string | null>(null)
+
+  const [viewOpen, setViewOpen] = useState(false)
+  const [viewText, setViewText] = useState('')
+
+  const [deleteTarget, setDeleteTarget] = useState<CharacterMemory | null>(null)
+
+  const reload = useCallback(async () => {
+    setLoading(true)
+    try {
+      const pid = playerIdentityId === null ? '__none__' : playerIdentityId.trim() || '__none__'
+      const conversationKey = wechatConversationKey(characterId, pid)
+
+      const [mems, ch, msgsCurrent] = await Promise.all([
+        personaDb.listCharacterMemoriesForCharacter(characterId),
+        personaDb.getCharacter(characterId),
+        playerIdentityId === null
+          ? Promise.resolve([] as WeChatChatMessage[])
+          : personaDb.listWeChatChatMessagesRecent({ conversationKey, limit: 50 }),
+      ])
+      let msgs = msgsCurrent
+      let source: 'current' | 'all' | 'clique' | 'alias' = 'current'
+      if (playerIdentityId !== null && msgsCurrent.length === 0) {
+        const byCharacter = await personaDb.listWeChatChatMessagesRecentByCharacter({ characterId, limit: 50 })
+        if (byCharacter.length > 0) {
+          msgs = byCharacter
+          source = 'all'
+        } else {
+          const rootId = ch?.generatedForCharacterId?.trim() || characterId
+          const npcs = await personaDb.listNpcsFor(rootId)
+          const cliqueIds = [rootId, ...npcs.map((x) => x.id)].filter(Boolean)
+          const byClique = await personaDb.listWeChatChatMessagesByCharacterIds(cliqueIds)
+          if (byClique.length > 0) {
+            msgs = byClique.slice(-50)
+            source = 'clique'
+          } else {
+            const allCharacters = await personaDb.listCharacters()
+            const aliases = new Set(
+              [titleRemark, ch?.name, ch?.wechatNickname, ch?.remark]
+                .map((x) => String(x ?? '').trim())
+                .filter(Boolean),
+            )
+            const aliasIds = allCharacters
+              .filter((x) => {
+                if (x.id === characterId) return false
+                const vals = [x.name, x.wechatNickname, x.remark].map((v) => String(v ?? '').trim())
+                return vals.some((v) => !!v && aliases.has(v))
+              })
+              .map((x) => x.id)
+            if (aliasIds.length > 0) {
+              const byAlias = await personaDb.listWeChatChatMessagesByCharacterIds([characterId, ...aliasIds])
+              if (byAlias.length > 0) {
+                msgs = byAlias.slice(-50)
+                source = 'alias'
+              }
+            }
+          }
+        }
+      }
+      setList(mems)
+      setChatMessages(msgs)
+      setChatSourceLabel(source)
+
+      if (titleRemark?.trim()) {
+        setDisplayName(titleRemark.trim())
+      } else if (characterId === WECHAT_LUMI_PEER_CHARACTER_ID) {
+        setDisplayName(WECHAT_LUMI_ASSISTANT_CONTACT.remarkName)
+      } else if (ch) {
+        setDisplayName(ch.name || ch.wechatNickname || '未命名')
+      } else {
+        setDisplayName('角色')
+      }
+    } finally {
+      setLoading(false)
+    }
+  }, [characterId, playerIdentityId, titleRemark])
+
+  useEffect(() => {
+    void reload()
+  }, [reload])
+
+  useEffect(() => {
+    const onEvt = () => void reload()
+    window.addEventListener('wechat-storage-changed', onEvt)
+    return () => window.removeEventListener('wechat-storage-changed', onEvt)
+  }, [reload])
+
+  const openAdd = () => {
+    setEditingId(null)
+    setEditDraft('')
+    setEditOpen(true)
+  }
+
+  const openEdit = (m: CharacterMemory) => {
+    setEditingId(m.id)
+    setEditDraft(m.content)
+    setEditOpen(true)
+  }
+
+  const saveEdit = async () => {
+    const text = editDraft.trim()
+    if (!text) return
+    const now = Date.now()
+    if (editingId) {
+      const prev = list.find((x) => x.id === editingId)
+      if (!prev) return
+      await personaDb.upsertCharacterMemory({
+        ...prev,
+        content: text,
+        updatedAt: now,
+        isAutoGenerated: false,
+      })
+    } else {
+      await personaDb.upsertCharacterMemory({
+        id: uid('mem'),
+        characterId,
+        content: text,
+        createdAt: now,
+        updatedAt: now,
+        isAutoGenerated: false,
+      })
+    }
+    setEditOpen(false)
+    await reload()
+  }
+
+  const confirmDelete = async () => {
+    if (!deleteTarget) return
+    await personaDb.deleteCharacterMemory(deleteTarget.id)
+    setDeleteTarget(null)
+    await reload()
+  }
+
+  const title = displayName ? `${displayName}的记忆` : '记忆'
+
+  return (
+    <div className="flex h-full min-h-0 flex-col overflow-hidden" style={{ background: COLORS.bg }}>
+      <TopBar
+        title={title}
+        onBack={onBack}
+        right={
+          <button
+            type="button"
+            onClick={openAdd}
+            className="rounded-[12px] px-2 py-1.5 text-[16px] font-semibold transition-all duration-200 ease-out hover:opacity-80"
+            style={{ color: COLORS.text }}
+          >
+            添加
+          </button>
+        }
+      />
+
+      <div
+        className="min-h-0 flex-1 overflow-y-auto [scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden"
+        style={{ paddingBottom: 'max(16px, env(safe-area-inset-bottom,0px))' }}
+      >
+        {loading ? (
+          <div
+            className="mx-4 mt-4 rounded-[12px] border bg-white px-5 py-8 text-center text-[14px]"
+            style={{ borderColor: COLORS.border, color: COLORS.sub }}
+          >
+            加载中…
+          </div>
+        ) : (
+          <>
+            <p className="mx-4 mt-4 text-[16px] font-semibold" style={{ color: COLORS.text }}>
+              长期记忆
+            </p>
+            {list.length === 0 ? (
+              <div
+                className="mx-4 mt-2 flex flex-col items-center rounded-[12px] border bg-white px-6 py-10"
+                style={{ borderColor: COLORS.border, boxShadow: '0 1px 3px rgba(0,0,0,0.05)' }}
+              >
+                <BookOpen className="size-10" color={COLORS.faint} strokeWidth={1.5} aria-hidden />
+                <p className="mt-3 text-[15px]" style={{ color: COLORS.sub }}>
+                  暂无记忆
+                </p>
+                <p className="mt-1 text-center text-[13px] leading-relaxed" style={{ color: COLORS.faint }}>
+                  和该角色聊天后，系统会自动生成记忆
+                </p>
+              </div>
+            ) : (
+              <div
+                className="mx-4 mt-2 overflow-hidden rounded-[12px] border bg-white"
+                style={{ borderColor: COLORS.border, boxShadow: '0 1px 3px rgba(0,0,0,0.05)' }}
+              >
+                <ul>
+                  {list.map((m, idx) => (
+                    <li key={m.id} style={{ borderTop: idx === 0 ? 'none' : `1px solid ${COLORS.border}` }}>
+                      <div className="flex items-stretch gap-2 px-4 py-4">
+                        <Pressable
+                          onClick={() => {
+                            setViewText(m.content)
+                            setViewOpen(true)
+                          }}
+                          className="min-w-0 flex-1 text-left transition-opacity duration-200 ease-out hover:opacity-80"
+                        >
+                          <p className="line-clamp-2 text-[16px] leading-snug" style={{ color: COLORS.text }}>
+                            <MemoryContentWithSourceBadges content={m.content} bodyClassName="break-words" />
+                          </p>
+                        </Pressable>
+                        <div className="flex shrink-0 items-center gap-2">
+                          <Pressable
+                            onClick={() => openEdit(m)}
+                            className="flex h-9 w-9 items-center justify-center rounded-[10px] transition-all duration-200 ease-out hover:bg-[#f5f5f5]"
+                            aria-label="编辑"
+                          >
+                            <Edit className="size-[18px]" color={COLORS.sub} strokeWidth={1.75} />
+                          </Pressable>
+                          <Pressable
+                            onClick={() => setDeleteTarget(m)}
+                            className="flex h-9 w-9 items-center justify-center rounded-[10px] transition-all duration-200 ease-out hover:bg-[#f5f5f5]"
+                            aria-label="删除"
+                          >
+                            <Trash2 className="size-[18px]" color={COLORS.sub} strokeWidth={1.75} />
+                          </Pressable>
+                        </div>
+                      </div>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
+
+            <p className="mx-4 mt-6 text-[16px] font-semibold" style={{ color: COLORS.text }}>
+              最近对话
+            </p>
+            <p className="mx-4 mt-1 text-[13px]" style={{ color: COLORS.sub }}>
+              {chatSourceLabel === 'all'
+                ? '当前身份暂无记录，已展示该角色跨身份最近50条'
+                : chatSourceLabel === 'clique'
+                  ? '当前角色暂无记录，已展示同人脉圈最近50条'
+                  : chatSourceLabel === 'alias'
+                    ? '当前ID暂无记录，已展示同名/同备注角色最近50条'
+                  : '当前微信身份下最多50条，按时间正序'}
+            </p>
+            {playerIdentityId === null ? (
+              <div
+                className="mx-4 mt-2 rounded-[12px] border bg-white px-4 py-6 text-center text-[14px]"
+                style={{ borderColor: COLORS.border, color: COLORS.sub }}
+              >
+                正在加载身份…
+              </div>
+            ) : chatMessages.length === 0 ? (
+              <div
+                className="mx-4 mt-2 rounded-[12px] border bg-white px-4 py-8 text-center text-[14px]"
+                style={{ borderColor: COLORS.border, color: COLORS.sub }}
+              >
+                暂无聊天记录
+              </div>
+            ) : (
+              <div
+                className="mx-4 mt-2 space-y-3 rounded-[12px] border bg-white px-3 py-4"
+                style={{ borderColor: COLORS.border, boxShadow: '0 1px 3px rgba(0,0,0,0.05)' }}
+              >
+                {chatMessages.map((m) => {
+                  const self = m.type === 'player'
+                  return (
+                    <div key={m.id} className={`flex w-full ${self ? 'justify-end' : 'justify-start'}`}>
+                      <div
+                        className="max-w-[88%] rounded-[12px] border px-3 py-2 transition-all duration-200 ease-out"
+                        style={{
+                          borderColor: COLORS.border,
+                          background: self ? '#f5f5f5' : COLORS.card,
+                        }}
+                      >
+                        <p className="text-[11px] leading-tight" style={{ color: COLORS.faint }}>
+                          {self ? '我' : '对方'} · {formatMsgTime(m.timestamp)}
+                        </p>
+                        <p className="mt-1 whitespace-pre-wrap break-words text-[15px] leading-snug" style={{ color: COLORS.text }}>
+                          {m.content}
+                        </p>
+                      </div>
+                    </div>
+                  )
+                })}
+              </div>
+            )}
+          </>
+        )}
+      </div>
+
+      {editOpen ? (
+        <ModalBackdrop onClose={() => setEditOpen(false)}>
+          <div
+            className="overflow-hidden rounded-[16px] bg-white px-5 pb-5 pt-5"
+            style={{ boxShadow: '0 1px 3px rgba(0,0,0,0.05)' }}
+          >
+            <p className="text-center text-[18px] font-bold" style={{ color: COLORS.text }}>
+              {editingId ? '编辑记忆' : '添加记忆'}
+            </p>
+            <textarea
+              value={editDraft}
+              onChange={(e) => setEditDraft(e.target.value)}
+              placeholder="输入记忆内容"
+              rows={5}
+              className="mt-4 w-full resize-none rounded-[12px] border px-4 py-3 text-[16px] leading-relaxed outline-none transition-all duration-200 ease-out focus:border-black"
+              style={{ borderColor: COLORS.border, background: COLORS.card, color: COLORS.text, minHeight: 120 }}
+            />
+            <div className="mt-4 flex gap-3">
+              <button
+                type="button"
+                onClick={() => setEditOpen(false)}
+                className="flex-1 rounded-[12px] border px-3 py-3 text-[16px] font-medium transition-all duration-200 ease-out hover:bg-[#f5f5f5]"
+                style={{ borderColor: COLORS.text, color: COLORS.text, background: COLORS.card }}
+              >
+                取消
+              </button>
+              <button
+                type="button"
+                onClick={() => void saveEdit()}
+                className="flex-1 rounded-[12px] px-3 py-3 text-[16px] font-medium text-white transition-all duration-200 ease-out hover:opacity-90"
+                style={{ background: COLORS.text }}
+              >
+                保存
+              </button>
+            </div>
+          </div>
+        </ModalBackdrop>
+      ) : null}
+
+      {viewOpen ? (
+        <ModalBackdrop onClose={() => setViewOpen(false)}>
+          <div
+            className="overflow-hidden rounded-[16px] bg-white px-5 pb-5 pt-5"
+            style={{ boxShadow: '0 1px 3px rgba(0,0,0,0.05)' }}
+          >
+            <p className="text-center text-[18px] font-bold" style={{ color: COLORS.text }}>
+              记忆详情
+            </p>
+            <p className="mt-5 px-1 text-[16px] leading-[1.6]" style={{ color: COLORS.text }}>
+              <MemoryContentWithSourceBadges
+                content={viewText}
+                size="md"
+                bodyClassName="whitespace-pre-wrap break-words"
+              />
+            </p>
+            <button
+              type="button"
+              onClick={() => setViewOpen(false)}
+              className="mt-6 w-full rounded-[12px] px-3 py-3 text-[16px] font-medium text-white transition-all duration-200 ease-out hover:opacity-90"
+              style={{ background: COLORS.text }}
+            >
+              关闭
+            </button>
+          </div>
+        </ModalBackdrop>
+      ) : null}
+
+      {deleteTarget ? (
+        <ModalBackdrop onClose={() => setDeleteTarget(null)}>
+          <div
+            className="mx-auto w-full max-w-[350px] overflow-hidden rounded-[16px] bg-white px-5 pb-5 pt-5"
+            style={{ boxShadow: '0 1px 3px rgba(0,0,0,0.05)' }}
+          >
+            <p className="text-center text-[18px] font-bold" style={{ color: COLORS.text }}>
+              确认删除
+            </p>
+            <p className="mt-4 text-[16px] leading-relaxed" style={{ color: COLORS.sub }}>
+              确定要删除这条记忆吗？删除后无法恢复
+            </p>
+            <div className="mt-5 flex gap-3">
+              <button
+                type="button"
+                onClick={() => setDeleteTarget(null)}
+                className="flex-1 rounded-[12px] border px-3 py-3 text-[16px] font-medium transition-all duration-200 ease-out hover:bg-[#f5f5f5]"
+                style={{ borderColor: COLORS.text, color: COLORS.text, background: COLORS.card }}
+              >
+                取消
+              </button>
+              <button
+                type="button"
+                onClick={() => void confirmDelete()}
+                className="flex-1 rounded-[12px] px-3 py-3 text-[16px] font-medium text-white transition-all duration-200 ease-out hover:opacity-90"
+                style={{ background: COLORS.danger }}
+              >
+                删除
+              </button>
+            </div>
+          </div>
+        </ModalBackdrop>
+      ) : null}
+    </div>
+  )
+}

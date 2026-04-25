@@ -1,0 +1,31 @@
+.spy-red-vignette {
+  box-shadow: inset 0 0 20px rgba(255, 0, 0, 0.12);
+  background:
+    radial-gradient(closest-side at 50% 0%, rgba(255, 0, 0, 0.06), transparent 62%),
+    radial-gradient(closest-side at 0% 50%, rgba(255, 0, 0, 0.06), transparent 62%),
+    radial-gradient(closest-side at 100% 50%, rgba(255, 0, 0, 0.06), transparent 62%),
+    radial-gradient(closest-side at 50% 100%, rgba(255, 0, 0, 0.06), transparent 62%);
+  animation: spyRedBreath 3.8s ease-in-out infinite;
+}
+
+@keyframes spyRedBreath {
+  0% {
+    opacity: 0.65;
+    box-shadow:
+      inset 0 0 18px rgba(255, 0, 0, 0.07),
+      inset 0 0 52px rgba(255, 0, 0, 0.05);
+  }
+  50% {
+    opacity: 0.95;
+    box-shadow:
+      inset 0 0 24px rgba(255, 0, 0, 0.14),
+      inset 0 0 72px rgba(255, 0, 0, 0.07);
+  }
+  100% {
+    opacity: 0.65;
+    box-shadow:
+      inset 0 0 18px rgba(255, 0, 0, 0.07),
+      inset 0 0 52px rgba(255, 0, 0, 0.05);
+  }
+}
+

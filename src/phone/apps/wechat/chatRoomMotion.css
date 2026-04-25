@@ -1,0 +1,74 @@
+/**
+ * 微信聊天室动效 — 仅作用于 [data-wx-chat-motion-scope] 内，不污染全局。
+ * 仅使用 opacity / translateY / scale / box-shadow（阴影为反馈的一部分）。
+ */
+
+[data-wx-chat-motion-scope] .wx-chat-sending-dot {
+  position: absolute;
+  right: 6px;
+  bottom: 5px;
+  width: 4px;
+  height: 4px;
+  border-radius: 9999px;
+  background: rgba(0, 0, 0, 0.42);
+  pointer-events: none;
+  animation: wx-chat-dot-breathe 1s ease-in-out infinite;
+}
+
+@keyframes wx-chat-dot-breathe {
+  0%,
+  100% {
+    opacity: 0.5;
+  }
+  50% {
+    opacity: 1;
+  }
+}
+
+[data-wx-chat-motion-scope] .wx-chat-history-dots {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  padding: 8px 0;
+}
+
+[data-wx-chat-motion-scope] .wx-chat-history-dot {
+  width: 4px;
+  height: 4px;
+  border-radius: 9999px;
+  background: rgba(0, 0, 0, 0.28);
+  opacity: 0.25;
+  animation: wx-chat-history-dot-wave 1.2s ease-out infinite;
+}
+
+[data-wx-chat-motion-scope] .wx-chat-history-dot:nth-child(2) {
+  animation-delay: 0.15s;
+}
+
+[data-wx-chat-motion-scope] .wx-chat-history-dot:nth-child(3) {
+  animation-delay: 0.3s;
+}
+
+@keyframes wx-chat-history-dot-wave {
+  0%,
+  100% {
+    opacity: 0.2;
+  }
+  33% {
+    opacity: 1;
+  }
+  66% {
+    opacity: 0.35;
+  }
+}
+
+[data-wx-chat-motion-scope] .wx-chat-fail-btn {
+  transition:
+    opacity 200ms ease-out,
+    transform 150ms ease-out;
+}
+
+[data-wx-chat-motion-scope] .wx-chat-fail-btn:active {
+  transform: scale(0.95);
+}
