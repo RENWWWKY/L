@@ -603,14 +603,14 @@ export function CustomizationProvider({ children }: { children: ReactNode }) {
     styleEl.textContent = state.gestureEffects.customCss || ''
   }, [state.gestureEffects.customCss])
 
-  /** 全屏模式：锁定文档层滚动，仅允许应用内可滚动区域滑动（解决 PWA 未铺满、整页上下拖动） */
+  /**
+   * 锁定文档层滚动，仅允许应用内可滚动区域滑动。
+   * - 全屏：防止整页上下拖动
+   * - 非全屏：防止“预览壳”整体跟随页面滚动（你期望固定容器，只缩放手机内容）
+   */
   useEffect(() => {
     const root = document.documentElement
-    if (state.ui.fullScreen) {
-      root.setAttribute('data-phone-layout', 'fullscreen')
-    } else {
-      root.removeAttribute('data-phone-layout')
-    }
+    root.setAttribute('data-phone-layout', state.ui.fullScreen ? 'fullscreen' : 'locked')
     return () => {
       root.removeAttribute('data-phone-layout')
     }

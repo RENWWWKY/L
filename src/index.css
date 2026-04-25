@@ -63,10 +63,11 @@ select {
 }
 
 /**
- * 全屏模式（data-phone-layout 由 CustomizationProvider 切换）
- * — 禁止整页/浏览器层上下滚动与橡皮筋回弹，高度与视口一致（含 PWA standalone）
+ * 全屏/锁定模式（data-phone-layout 由 CustomizationProvider 切换）
+ * — 禁止整页/浏览器层上下滚动与橡皮筋回弹
  */
-html[data-phone-layout='fullscreen'] {
+html[data-phone-layout='fullscreen'],
+html[data-phone-layout='locked'] {
   width: 100vw;
   height: 100vh;
   min-height: 100vh;
@@ -77,7 +78,8 @@ html[data-phone-layout='fullscreen'] {
   overscroll-behavior: none;
 }
 
-html[data-phone-layout='fullscreen'] body {
+html[data-phone-layout='fullscreen'] body,
+html[data-phone-layout='locked'] body {
   width: 100vw;
   height: 100vh;
   min-height: 100vh;
@@ -90,7 +92,8 @@ html[data-phone-layout='fullscreen'] body {
   overscroll-behavior: none;
 }
 
-html[data-phone-layout='fullscreen'] #root {
+html[data-phone-layout='fullscreen'] #root,
+html[data-phone-layout='locked'] #root {
   width: 100vw;
   height: 100vh;
   min-height: 100vh;
