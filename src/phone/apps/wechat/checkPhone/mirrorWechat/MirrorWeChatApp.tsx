@@ -13,7 +13,12 @@ import {
 
 import { Pressable } from '../../../../components/Pressable'
 import { useCurrentApiConfig } from '../../../api/ApiSettingsContext'
-import { DEFAULT_CUSTOMIZATION, type CustomizationState, type WeChatBubbleTheme } from '../../../../types'
+import {
+  DEFAULT_CUSTOMIZATION,
+  DEFAULT_PUBLIC_AVATAR_URL,
+  type CustomizationState,
+  type WeChatBubbleTheme,
+} from '../../../../types'
 import { formatWeChatChatTimestamp, shouldRenderWeChatTimestamp } from '../../time/wechatTimeUtils'
 import { RedPacketBubble } from '../../redPacket/RedPacketBubble'
 import { TransferBubble } from '../../transfer/TransferBubble'
@@ -177,7 +182,7 @@ function Main({
   const indexNavRef = useRef<HTMLDivElement | null>(null)
 
   const currentChat = useMemo(() => state.contacts.find((item) => item.id === chatOpenId) || null, [chatOpenId, state.contacts])
-  const roleAvatarUrl = useMemo(() => state.profile?.avatarUrl || '/image/个人名片默认头像1.png', [state.profile?.avatarUrl])
+  const roleAvatarUrl = useMemo(() => state.profile?.avatarUrl || DEFAULT_PUBLIC_AVATAR_URL, [state.profile?.avatarUrl])
   const mirrorBubbleTheme: WeChatBubbleTheme = DEFAULT_CUSTOMIZATION.wechatTheme.bubbleGlobal
   const bubblePrefs = useMemo(() => readBubblePrefsLite(), [])
   const starredContacts = useMemo(
@@ -522,7 +527,7 @@ function Main({
                     const showAvatarColumn =
                       bubblePrefs.showAvatar &&
                       (!bubblePrefs.mergeConsecutiveAvatarGroup || !prev || prev.from !== msg.from)
-                    const leftAvatar = currentChat.avatarUrl || '/image/个人名片默认头像1.png'
+                    const leftAvatar = currentChat.avatarUrl || DEFAULT_PUBLIC_AVATAR_URL
                     const rightAvatar = roleAvatarUrl
                     return (
                       <Fragment key={`${msg.timestamp}-${index}`}>

@@ -1,3 +1,5 @@
+import { publicAssetUrl } from '../publicAssetUrl'
+
 export type PhoneTheme = {
   background: string
   /** 桌面壁纸（URL 或 dataURL） */
@@ -327,10 +329,16 @@ export type CustomizationState = {
   gestureEffects: GestureEffectsSettings
 }
 
-export const DEFAULT_WALLPAPER_URL = '/image/手机壁纸1.png'
+export const DEFAULT_WALLPAPER_URL = publicAssetUrl('/image/手机壁纸1.png')
 
-/** 微信「信息」列表与聊天会话页默认背景图（需放在 `public/image/`，构建后访问 `/image/…`） */
-export const DEFAULT_WECHAT_CHAT_WALLPAPER_URL = '/image/聊天壁纸默认1.jpg'
+/** 微信「信息」列表与聊天会话页默认背景图（放在 `public/image/`，经 {@link publicAssetUrl} 带 base） */
+export const DEFAULT_WECHAT_CHAT_WALLPAPER_URL = publicAssetUrl('/image/聊天壁纸默认1.jpg')
+
+/** 个人名片默认头像 URL（与 {@link DEFAULT_CUSTOMIZATION} 中 profile 一致，供查手机等模块复用） */
+export const DEFAULT_PUBLIC_AVATAR_URL = publicAssetUrl('/image/个人名片默认头像1.png')
+
+/** 个人名片页上半身背景图 */
+export const DEFAULT_PERSONAL_CARD_BG_URL = publicAssetUrl('/image/个人名片背景图1.png')
 
 /** 微信各 Tab 未单独覆盖时使用的默认页背景（与聊天壁纸一致） */
 export const DEFAULT_WECHAT_TAB_PAGE_BG: WxFillStyle = {
@@ -383,7 +391,7 @@ export const DEFAULT_CUSTOMIZATION: CustomizationState = {
     displayName: '未命名',
     signature: '心臟跳動的頻率是多少...₊⁺☆ *',
     avatarEmoji: '✦',
-    avatarImageUrl: '/image/个人名片默认头像1.png',
+    avatarImageUrl: DEFAULT_PUBLIC_AVATAR_URL,
   },
   music: {
     trackTitle: '静候播放',

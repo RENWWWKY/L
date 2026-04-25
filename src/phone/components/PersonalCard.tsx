@@ -1,4 +1,5 @@
 import { useCustomization } from '../CustomizationContext'
+import { DEFAULT_PERSONAL_CARD_BG_URL } from '../types'
 
 function formatDate(d: Date) {
   const w = ['周日', '周一', '周二', '周三', '周四', '周五', '周六'][d.getDay()]
@@ -40,7 +41,7 @@ export function PersonalCard() {
         className="h-1/2 w-full"
         style={{
           backgroundImage:
-            "linear-gradient(135deg, rgba(255,255,255,0.08) 0%, rgba(255,255,255,0.2) 100%), url('/image/个人名片背景图1.png')",
+            `linear-gradient(135deg, rgba(255,255,255,0.08) 0%, rgba(255,255,255,0.2) 100%), url(${JSON.stringify(DEFAULT_PERSONAL_CARD_BG_URL)})`,
           backgroundPosition: 'center',
           backgroundRepeat: 'no-repeat',
           backgroundSize: 'cover',

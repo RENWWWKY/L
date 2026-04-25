@@ -33,6 +33,7 @@ import {
   type GestureEffectsSettings,
   normalizeGestureEffects,
 } from './types'
+import { migrateLegacyRootPublicUrl } from '../publicAssetUrl'
 
 const STORAGE_KEY = 'lumi-phone-custom-v3'
 const LEGACY_STORAGE_KEY_V2 = 'lumi-phone-custom-v2'
@@ -115,15 +116,18 @@ function syncBubbleByRoleWithNewGlobal(
 
 function normalizeState(raw: Partial<CustomizationState>): CustomizationState {
   const theme = { ...DEFAULT_CUSTOMIZATION.theme, ...raw.theme }
+  theme.wallpaperUrl = migrateLegacyRootPublicUrl(theme.wallpaperUrl)
   // 迁移：旧默认正文字体自动升级到更明显的乙女风默认字体
   if (theme.fontFamily === LEGACY_STORY_FONT) {
     theme.fontFamily = DEFAULT_CUSTOMIZATION.theme.fontFamily
   }
   const wechatTheme = normalizeWeChatTheme(raw.wechatTheme)
   const musicMerged = { ...DEFAULT_CUSTOMIZATION.music, ...raw.music }
+  const profile = { ...DEFAULT_CUSTOMIZATION.profile, ...raw.profile }
+  profile.avatarImageUrl = migrateLegacyRootPublicUrl(profile.avatarImageUrl)
   return {
     theme,
-    profile: { ...DEFAULT_CUSTOMIZATION.profile, ...raw.profile },
+    profile,
     music: {
       ...musicMerged,
       playMode: normalizeMusicPlayMode(musicMerged.playMode),
@@ -179,7 +183,7 @@ function normalizeWeChatTheme(parsed: unknown): WeChatTheme {
       gradientTo: pick(r.gradientTo, fallback.gradientTo),
       gradientAngle: clamp(r.gradientAngle, 0, 360, fallback.gradientAngle),
       gradientNaturalness: clamp(r.gradientNaturalness, 0, 100, fallback.gradientNaturalness),
-      imageUrl: pick(r.imageUrl, fallback.imageUrl),
+      imageUrl: migrateLegacyRootPublicUrl(pick(r.imageUrl, fallback.imageUrl)),
       layerOpacity: clamp(r.layerOpacity, 0, 100, fallback.layerOpacity),
       glassEnabled: bool(r.glassEnabled, fallback.glassEnabled),
       glassOpacity: clamp(r.glassOpacity, 0, 100, fallback.glassOpacity),
@@ -268,7 +272,7 @@ function normalizeWeChatTheme(parsed: unknown): WeChatTheme {
         id: r.id as WeChatTabId,
         label: pick(r.label, fallback.find((x) => x.id === r.id)?.label ?? String(r.id)),
         en: pick(r.en, fallback.find((x) => x.id === r.id)?.en ?? ''),
-        iconUrl: pick(r.iconUrl, ''),
+        iconUrl: migrateLegacyRootPublicUrl(pick(r.iconUrl, '')),
         labelActiveColor: pick(r.labelActiveColor, ''),
         labelInactiveColor: pick(r.labelInactiveColor, ''),
       })
@@ -355,12 +359,20 @@ function normalizeAppPageStyles(parsed: unknown): CustomizationState['appPageSty
   ) {
     appearanceMerged.pageBgImageUrl = def.appearance.pageBgImageUrl
   }
+  const migrateAppPage = (s: AppPageStyle): AppPageStyle => ({
+    ...s,
+    headerBgImageUrl: migrateLegacyRootPublicUrl(
+      typeof s.headerBgImageUrl === 'string' ? s.headerBgImageUrl : '',
+    ),
+    pageBgImageUrl: migrateLegacyRootPublicUrl(typeof s.pageBgImageUrl === 'string' ? s.pageBgImageUrl : ''),
+    cardBgImageUrl: migrateLegacyRootPublicUrl(typeof s.cardBgImageUrl === 'string' ? s.cardBgImageUrl : ''),
+  })
   return {
-    wechat: wechatMerged,
-    takeout: { ...DEFAULT_APP_PAGE_STYLE, ...record.takeout },
-    weibo: { ...DEFAULT_APP_PAGE_STYLE, ...record.weibo },
-    api: { ...DEFAULT_APP_PAGE_STYLE, ...record.api },
-    appearance: appearanceMerged,
+    wechat: migrateAppPage(wechatMerged),
+    takeout: migrateAppPage({ ...DEFAULT_APP_PAGE_STYLE, ...record.takeout }),
+    weibo: migrateAppPage({ ...DEFAULT_APP_PAGE_STYLE, ...record.weibo }),
+    api: migrateAppPage({ ...DEFAULT_APP_PAGE_STYLE, ...record.api }),
+    appearance: migrateAppPage(appearanceMerged),
   }
 }
 
@@ -398,7 +410,9 @@ function normalizeDockStyle(parsed: unknown): DockStyle {
       typeof raw.gradientAngle === 'number' && Number.isFinite(raw.gradientAngle)
         ? Math.max(0, Math.min(360, raw.gradientAngle))
         : base.gradientAngle,
-    bgImageUrl: typeof raw.bgImageUrl === 'string' ? raw.bgImageUrl : base.bgImageUrl,
+    bgImageUrl: migrateLegacyRootPublicUrl(
+      typeof raw.bgImageUrl === 'string' ? raw.bgImageUrl : base.bgImageUrl,
+    ),
     glass: typeof raw.glass === 'boolean' ? raw.glass : base.glass,
     blur:
       typeof raw.blur === 'number' && Number.isFinite(raw.blur)
@@ -423,6 +437,8 @@ function normalizeApps(parsedApps: unknown): AppSlot[] {
     // 防止历史超大 dataURL 造成渲染与存储问题
     if (iconImageUrl.length > 350_000) {
       iconImageUrl = ''
+    } else {
+      iconImageUrl = migrateLegacyRootPublicUrl(iconImageUrl)
     }
     const iconRadius =
       found && typeof found.iconRadius === 'number' && Number.isFinite(found.iconRadius)

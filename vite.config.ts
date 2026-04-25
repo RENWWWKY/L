@@ -1,14 +1,33 @@
+import fs from 'node:fs'
+import path from 'node:path'
+import { fileURLToPath } from 'node:url'
+
 import tailwindcss from '@tailwindcss/vite'
 import react from '@vitejs/plugin-react'
 import basicSsl from '@vitejs/plugin-basic-ssl'
-import { defineConfig } from 'vite'
+import { defineConfig, type Plugin } from 'vite'
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url))
+
+/** 将仓库根目录 `image/` 同步到 `dist/image/`，与默认 URL `/image/…`（经 base）一致，避免仅依赖 public 时漏拷 */
+function copyRootImageDirToDist(): Plugin {
+  return {
+    name: 'copy-root-image-dir-to-dist',
+    closeBundle() {
+      const src = path.resolve(__dirname, 'image')
+      const dest = path.resolve(__dirname, 'dist', 'image')
+      if (!fs.existsSync(src) || !fs.statSync(src).isDirectory()) return
+      fs.cpSync(src, dest, { recursive: true })
+    },
+  }
+}
 
 // https://vite.dev/config/
 // 与 GitHub 仓库名一致，默认站点为 https://<用户>.github.io/Lumi-Phone/
 // 绑定自定义域名并只用域名访问时，可改为 base: '/' 后重新构建部署
 export default defineConfig({
   base: '/Lumi-Phone/',
-  plugins: [react(), tailwindcss(), basicSsl()],
+  plugins: [react(), tailwindcss(), basicSsl(), copyRootImageDirToDist()],
   /** 监听 0.0.0.0，同一局域网（同一 WiFi）内设备可通过本机 IP 访问 */
   server: {
     host: true,

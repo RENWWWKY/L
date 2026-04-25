@@ -2,7 +2,7 @@ import type { ApiConfig } from '../../api/types'
 import { openAiCompatibleChat } from '../newFriendsPersona/ai'
 import { personaDb } from '../newFriendsPersona/idb'
 import type { Character, PlayerIdentity } from '../newFriendsPersona/types'
-import { DEFAULT_CUSTOMIZATION, type CustomizationState } from '../../../types'
+import { DEFAULT_CUSTOMIZATION, DEFAULT_PUBLIC_AVATAR_URL, type CustomizationState } from '../../../types'
 import { loadOfflineDatingPlotsPromptBlock } from '../dating/loadOfflineDatingPlotsForWechatPrompt'
 import { formatWorldBackgroundForPrompt } from '../newFriendsPersona/worldBackgroundFormat'
 import { buildSystemContent } from '../wechatChatAi'
@@ -1147,7 +1147,7 @@ ${JSON.stringify(boundNpcSeedList, null, 2)}
     if (!avatarUrl) avatarUrl = pickFromPoolAvoid(EXTRA_AVATAR_URLS, c.id, npcAvatarReserved) || ''
     // 防御：无论何种情况，都不允许远程 URL 覆盖“查手机”本地头像设定
     if (avatarUrl && isRemoteUrl(avatarUrl)) avatarUrl = ''
-    if (!avatarUrl) avatarUrl = '/image/个人名片默认头像1.png'
+    if (!avatarUrl) avatarUrl = DEFAULT_PUBLIC_AVATAR_URL
     mergedContacts.push({ ...c, nickname, avatarUrl: avatarUrl || undefined })
   }
 
@@ -1162,7 +1162,7 @@ ${JSON.stringify(boundNpcSeedList, null, 2)}
         characterId: npc.id,
         nickname: normalizeWechatNickname((npc.wechatNickname || '').trim(), (npc.name || '联系人').trim()),
         remarkName: (npc.wechatNickname || npc.name || '联系人').trim(),
-        avatarUrl: (npc.avatarUrl || pickFromPool(EXTRA_AVATAR_URLS, npc.id) || '/image/个人名片默认头像1.png').trim(),
+        avatarUrl: (npc.avatarUrl || pickFromPool(EXTRA_AVATAR_URLS, npc.id) || DEFAULT_PUBLIC_AVATAR_URL).trim(),
         isStarred: npc.isStarred ?? undefined,
         blocked: npc.isBlocked ?? undefined,
         messages: [],
@@ -1264,7 +1264,7 @@ ${JSON.stringify(boundNpcSeedList, null, 2)}
       characterId: undefined,
       nickname: playerWechatNickname || '你',
       remarkName: (preferModelRemark || playerWechatNickname || '你').trim(),
-      avatarUrl: playerWechatAvatarUrl || '/image/个人名片默认头像1.png',
+      avatarUrl: playerWechatAvatarUrl || DEFAULT_PUBLIC_AVATAR_URL,
       isStarred: existing?.isStarred,
       blocked: existing?.blocked,
       // 强制以真实私聊记录覆盖，防止混入生成出来的伪“用户会话”。
