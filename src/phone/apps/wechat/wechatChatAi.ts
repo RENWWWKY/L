@@ -238,6 +238,7 @@ export type WeChatPeerReplyResult = {
   bubbles: string[]
   thinking?: string
 }
+export const WECHAT_RECALL_ACTION_TOKEN = '[__RECALL__]'
 
 const FORCE_VISIBLE_THINKING_APPENDIX = `
 【强制可见思维链（兼容前端折叠展示）】
@@ -247,6 +248,19 @@ const FORCE_VISIBLE_THINKING_APPENDIX = `
 </thinking>
 - 然后再输出最终给用户可见的聊天正文。
 - 不要省略 thinking 标签，不要改写标签名称，不要用其他格式替代。
+`.trim()
+
+// 【角色撤回机制】
+// 你有权在对话中用“撤回消息”表达真实人性。推荐时机：
+// 1) 手滑/错乱：把不该发的话发出来后立刻撤回；
+// 2) 情绪失控：说了重话或泄露隐私后反悔；
+// 3) 暧昧冲动：冲动表白后害羞撤回并转移话题；
+// 4) 试探反悔：发出邀约/资源后突然傲娇反悔。
+const WECHAT_CHARACTER_RECALL_GUIDE = `
+【角色撤回机制行为指导】
+- 你可以在自然语境中触发“发送后撤回”，用来表现犹豫、傲娇、慌乱、后悔等细腻情绪。
+- 当你触发撤回时，务必遵守输出协议中的 <msg> + <action>recall</action> 格式。
+- 撤回应服务剧情推进，而非打断交流；撤回后通常应给出一句掩饰或转场内容。
 `.trim()
 
 /**
@@ -261,14 +275,46 @@ export function parseWeChatPeerReplyWithThinking(raw: string): WeChatPeerReplyRe
   const t0 = stripAssistantFence(raw)
   if (!t0) return { bubbles: [] }
   const { visible, thinking } = extractThinkingBlock(t0)
-  const t = visible.trim()
+  // 兼容模型把换行输出成转义文本 "\\n"，避免多条消息/指令被粘成一行。
+  const t = visible.replace(/\\n/g, '\n').trim()
   if (!t) return { bubbles: [], thinking }
   const lines = t
     .split(/\r?\n/)
     .map((s) => stripMessageIdMeta(s))
     .filter((s) => s.length > 0)
-  const bubbles = lines.length !== 1 ? lines : splitSingleLineWechatBubble(lines[0]!)
+  const expanded = lines.flatMap((line) => expandRecallProtocolLine(line))
+  const source = expanded.length ? expanded : lines
+  const bubbles =
+    source.length !== 1
+      ? source
+      : source[0] === WECHAT_RECALL_ACTION_TOKEN
+        ? [WECHAT_RECALL_ACTION_TOKEN]
+        : splitSingleLineWechatBubble(source[0]!)
   return { bubbles, thinking }
+}
+
+function expandRecallProtocolLine(line: string): string[] {
+  const src = String(line ?? '').trim()
+  if (!src) return []
+  const tagRe = /<(msg|action)>([\s\S]*?)<\/\1>/gi
+  const out: string[] = []
+  let matched = false
+  let cursor = 0
+  for (const m of src.matchAll(tagRe)) {
+    matched = true
+    const index = m.index ?? 0
+    const leading = src.slice(cursor, index).trim()
+    if (leading) out.push(leading)
+    const tag = String(m[1] ?? '').toLowerCase()
+    const body = String(m[2] ?? '').trim()
+    if (tag === 'msg' && body) out.push(body)
+    if (tag === 'action' && body.toLowerCase() === 'recall') out.push(WECHAT_RECALL_ACTION_TOKEN)
+    cursor = index + m[0].length
+  }
+  if (!matched) return [src]
+  const tail = src.slice(cursor).trim()
+  if (tail) out.push(tail)
+  return out
 }
 
 /** @deprecated 请使用 `parseWeChatPeerPlainReply` */
@@ -326,7 +372,7 @@ export async function requestWeChatPeerReplyBubbles(params: {
 忙碌期间用户发送的消息：${JSON.stringify(params.busyContext.busyMessages)}`
     : ''
   const stickerCat = buildStickerCatalogPromptBlock()
-  const system = `${busyPrefix ? `${busyPrefix}\n\n` : ''}${base}\n\n${WECHAT_REPLY_OUTPUT_APPENDIX}${
+  const system = `${busyPrefix ? `${busyPrefix}\n\n` : ''}${base}\n\n${WECHAT_CHARACTER_RECALL_GUIDE}\n\n${WECHAT_REPLY_OUTPUT_APPENDIX}${
     params.includeThinkingChain ? `\n\n${WECHAT_THINKING_CHAIN_APPENDIX}` : ''
   }\n\n${stickerCat}`
 
@@ -538,7 +584,7 @@ export async function requestWeChatPeerReplyBubblesWithImage(params: {
 忙碌期间用户发送的消息：${JSON.stringify(params.busyContext.busyMessages)}`
     : ''
   const stickerCat = buildStickerCatalogPromptBlock()
-  const system = `${busyPrefix ? `${busyPrefix}\n\n` : ''}${base}\n\n---\n【图片消息附加要求】\n${imgRules}\n\n${WECHAT_REPLY_OUTPUT_APPENDIX}${
+  const system = `${busyPrefix ? `${busyPrefix}\n\n` : ''}${base}\n\n${WECHAT_CHARACTER_RECALL_GUIDE}\n\n---\n【图片消息附加要求】\n${imgRules}\n\n${WECHAT_REPLY_OUTPUT_APPENDIX}${
     params.includeThinkingChain ? `\n\n${WECHAT_THINKING_CHAIN_APPENDIX}` : ''
   }\n\n${stickerCat}`
 

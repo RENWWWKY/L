@@ -1,6 +1,7 @@
 import { useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import {
+  CornerUpLeft,
   CheckSquare,
   Copy,
   Edit,
@@ -21,6 +22,7 @@ export type WeChatMessageActionId =
   | 'quote'
   | 'translate'
   | 'edit'
+  | 'recall'
 
 type Action = {
   id: WeChatMessageActionId
@@ -57,6 +59,7 @@ const ACTIONS: Action[] = [
   { id: 'quote', label: '引用', Icon: QuoteRightSvg },
   { id: 'translate', label: '翻译', Icon: Languages },
   { id: 'edit', label: '编辑', Icon: Edit },
+  { id: 'recall', label: '撤回', Icon: CornerUpLeft },
 ]
 
 export type PanelAnchor = {
@@ -68,10 +71,12 @@ export function WeChatMessageActionPanel({
   open,
   anchor,
   onAction,
+  actionIds,
 }: {
   open: boolean
   anchor: PanelAnchor | null
   onAction: (id: WeChatMessageActionId) => void
+  actionIds?: WeChatMessageActionId[]
 }) {
   const panelRef = useRef<HTMLDivElement>(null)
   const [panelSize, setPanelSize] = useState<{ w: number; h: number }>({ w: 0, h: 0 })
@@ -128,7 +133,7 @@ export function WeChatMessageActionPanel({
       >
         <style>{`@keyframes wxActionPanelIn { from { opacity: 0; transform: scale(0.95); } to { opacity: 1; transform: scale(1); } }`}</style>
         <div className="grid grid-cols-4 gap-1">
-          {ACTIONS.map(({ id, label, Icon }) => {
+          {(actionIds?.length ? ACTIONS.filter((a) => actionIds.includes(a.id)) : ACTIONS).map(({ id, label, Icon }) => {
             return (
               <Pressable
                 key={id}

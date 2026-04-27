@@ -34,6 +34,25 @@ export default defineConfig({
     port: 5173,
     // 通过 basicSsl() 启用 https；这里按 ServerOptions 传对象即可
     https: {},
+    proxy: {
+      /**
+       * MiniMax：前端直连大概率遇到 CORS，这里提供 dev proxy。
+       * - /minimax/* -> https://api.minimax.chat/*
+       * - /minimaxi/* -> https://api.minimaxi.com/*
+       */
+      '/minimax': {
+        target: 'https://api.minimax.chat',
+        changeOrigin: true,
+        secure: true,
+        rewrite: (p) => p.replace(/^\/minimax/, ''),
+      },
+      '/minimaxi': {
+        target: 'https://api.minimaxi.com',
+        changeOrigin: true,
+        secure: true,
+        rewrite: (p) => p.replace(/^\/minimaxi/, ''),
+      },
+    },
   },
   preview: {
     host: true,

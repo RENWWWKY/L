@@ -98,7 +98,7 @@ export type DockStyle = {
 }
 
 export type AppSlot = {
-  id: 'wechat' | 'takeout' | 'weibo' | 'api' | 'appearance'
+  id: 'wechat' | 'takeout' | 'weibo' | 'api' | 'voiceprint' | 'appearance'
   label: string
   /** 可选：自定义图标图片 URL（优先于线框 SVG） */
   iconImageUrl: string
@@ -409,6 +409,7 @@ export const DEFAULT_CUSTOMIZATION: CustomizationState = {
     { id: 'takeout', label: '外卖', iconImageUrl: '', iconRadius: 18 },
     { id: 'weibo', label: '微博', iconImageUrl: '', iconRadius: 18 },
     { id: 'api', label: 'API设置', iconImageUrl: '', iconRadius: 18 },
+    { id: 'voiceprint', label: '声纹档案', iconImageUrl: '', iconRadius: 18 },
     { id: 'appearance', label: '外观', iconImageUrl: '', iconRadius: 18 },
   ],
   ui: {
@@ -425,6 +426,7 @@ export const DEFAULT_CUSTOMIZATION: CustomizationState = {
     takeout: { ...DEFAULT_APP_PAGE_STYLE },
     weibo: { ...DEFAULT_APP_PAGE_STYLE },
     api: { ...DEFAULT_APP_PAGE_STYLE },
+    voiceprint: { ...DEFAULT_APP_PAGE_STYLE, pageBg: '#ffffff' },
     /** 「外观与文案」页本身底图：与微信默认聊天壁纸一致，避免与微信 Tab 纯色底冲突观感 */
     appearance: {
       ...DEFAULT_APP_PAGE_STYLE,

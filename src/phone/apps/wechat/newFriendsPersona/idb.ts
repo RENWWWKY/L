@@ -25,6 +25,7 @@ import type {
   WeChatRedPacketPayload,
   WeChatTransferPayload,
   WeChatCallStatusPayload,
+  WeChatVoicePayload,
   WeChatTimeConfig,
   WeChatGlobalSettingsRow,
   WeChatMessageSearchIndexRow,
@@ -794,6 +795,37 @@ function normalizeWeChatChatMessage(input: unknown): WeChatChatMessage | null {
     const durationSec = Number.isFinite(durationRaw) ? Math.max(0, Math.floor(durationRaw)) : undefined
     return status === 'duration' ? { status, durationSec } : { status }
   })()
+  const rawVoice = (m as { voice?: unknown }).voice
+  const voice: WeChatVoicePayload | undefined = (() => {
+    if (!rawVoice || typeof rawVoice !== 'object') return undefined
+    const r = rawVoice as Record<string, unknown>
+    const rawDuration = typeof r.durationSec === 'number' ? r.durationSec : Number.NaN
+    if (!Number.isFinite(rawDuration) || rawDuration <= 0) return undefined
+    const durationSec = Math.max(1, Math.floor(rawDuration))
+    const emotionAnalyzed = !!r.emotionAnalyzed
+    const emotionLabel = typeof r.emotionLabel === 'string' ? r.emotionLabel.trim().slice(0, 16) : ''
+    const ttsScript = typeof r.ttsScript === 'string' ? r.ttsScript.trim().slice(0, 2000) : ''
+    const audioUrl = typeof r.audioUrl === 'string' ? r.audioUrl.trim() : ''
+    const transcriptText = typeof r.transcriptText === 'string' ? r.transcriptText.trim() : ''
+    return {
+      durationSec,
+      emotionAnalyzed,
+      emotionLabel: emotionLabel || undefined,
+      ttsScript: ttsScript || undefined,
+      audioUrl: audioUrl || undefined,
+      transcriptText: transcriptText || undefined,
+    }
+  })()
+  const originalContent =
+    typeof (m as { originalContent?: unknown }).originalContent === 'string'
+      ? String((m as { originalContent?: unknown }).originalContent).slice(0, 8000)
+      : undefined
+  const isRecalled = typeof (m as { isRecalled?: unknown }).isRecalled === 'boolean' ? !!(m as { isRecalled?: boolean }).isRecalled : undefined
+  const recallRaw = (m as { recallTimestamp?: unknown }).recallTimestamp
+  const recallTimestamp =
+    typeof recallRaw === 'number' && Number.isFinite(recallRaw) ? Math.max(0, Math.floor(recallRaw)) : undefined
+  const recalledByRaw = (m as { recalledBy?: unknown }).recalledBy
+  const recalledBy = recalledByRaw === 'player' || recalledByRaw === 'character' ? recalledByRaw : undefined
   return {
     id: m.id,
     characterId: m.characterId,
@@ -804,9 +836,14 @@ function normalizeWeChatChatMessage(input: unknown): WeChatChatMessage | null {
     redPacket,
     transfer,
     callStatus,
+    voice,
     images: images.length ? images : undefined,
     isFavorite,
     replyTo,
+    originalContent,
+    isRecalled,
+    recallTimestamp,
+    recalledBy,
     timestamp,
     isRead,
     conversationKey,
@@ -1786,7 +1823,12 @@ export class PersonaDb {
   /** 局部更新一条聊天消息（如红包拆封状态），写入后广播 wechat-storage-changed */
   async patchWeChatChatMessageById(
     messageId: string,
-    patch: Partial<Pick<WeChatChatMessage, 'content' | 'replyTo' | 'images' | 'isRead'>> & {
+    patch: Partial<
+      Pick<
+        WeChatChatMessage,
+        'content' | 'replyTo' | 'images' | 'isRead' | 'originalContent' | 'isRecalled' | 'recallTimestamp' | 'recalledBy'
+      >
+    > & {
       redPacket?: Partial<WeChatRedPacketPayload>
     },
   ): Promise<void> {

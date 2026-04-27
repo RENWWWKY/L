@@ -8,10 +8,11 @@ import {
   type ComponentProps,
   type CSSProperties,
   type KeyboardEvent as ReactKeyboardEvent,
+  type PointerEvent as ReactPointerEvent,
   type ReactNode,
 } from 'react'
 import { AnimatePresence, motion } from 'framer-motion'
-import { ChevronDown, Mic, Plus, Smile, X } from 'lucide-react'
+import { ChevronDown, X } from 'lucide-react'
 
 import { useCustomization } from '../../CustomizationContext'
 import { Pressable } from '../../components/Pressable'
@@ -46,6 +47,7 @@ import {
   requestWeChatPeerReplyBubblesWithImage,
   requestWeChatVoiceCallReplyText,
   requestWeChatVoiceCallDecision,
+  WECHAT_RECALL_ACTION_TOKEN,
   type BusyRuntimeContext,
   type ChatTranscriptTurn,
   type WeChatPeerReplyResult,
@@ -87,6 +89,12 @@ import { VoiceCallPanel } from './voiceCall/VoiceCallPanel'
 import { requestSiliconflowTranscription } from './voiceCall/siliconflowAsr'
 import { StickerPickerPanel } from './stickers/StickerPickerPanel'
 import { getKnownStickerUrlSet } from './stickers/stickerStore'
+import { ChatInputBar } from './voiceInput/ChatInputBar'
+import { VoiceOverlay, type VoiceGestureZone } from './voiceInput/VoiceOverlay'
+import { VoiceMessageBubble } from './VoiceMessageBubble'
+import { createMiniMaxT2ASyncAudioBlob } from '../voiceprint/services/minimaxApi'
+import { RecallNotice } from './RecallNotice'
+import { RecallHistoryModal, type RecallHistoryRecord } from './RecallHistoryModal'
 import './chatRoomMotion.css'
 import { useConsoleLogger } from './useConsoleLogger'
 
@@ -102,7 +110,31 @@ const ENTER_DOUBLE_TAP_WINDOW_MS = 220
 const ENTER_SINGLE_COMMIT_DELAY_MS = 80
 const CHAT_VISIBLE_MSG_INITIAL = 30
 const CHAT_VISIBLE_MSG_STEP = 30
-
+const hasSpeechRecognitionApi = true
+const VOICE_HOLD_START_MS = 180
+const VOICE_TAP_MOVE_THRESHOLD_PX = 12
+const VOICE_ALLOWED_TONE_TOKENS = new Set([
+  'clear-throat',
+  'laughs',
+  'chuckle',
+  'coughs',
+  'groans',
+  'breath',
+  'pant',
+  'inhale',
+  'exhale',
+  'gasps',
+  'sniffs',
+  'sighs',
+  'snorts',
+  'burps',
+  'lip-smacking',
+  'humming',
+  'hissing',
+  'emm',
+  'sneezes',
+])
+const VOICE_ALLOWED_EMOTIONS = ['happy', 'sad', 'angry', 'fearful', 'disgusted', 'surprised', 'neutral', 'fluent'] as const
 function makeStableLumiOpeningId(conversationKey: string, index: number): string {
   const key = conversationKey
     .trim()
@@ -125,6 +157,13 @@ function itemsToTranscript(items: ChatItem[]): ChatTranscriptTurn[] {
   return items
     .filter((x): x is ChatMsg => x.kind === 'msg')
     .map((m) => {
+      if (m.voice) {
+        const txt = m.voice.transcriptText?.trim() || m.text?.trim() || '（语音）'
+        const emo = m.voice.emotionLabel?.trim()
+        const who = m.from === 'self' ? '用户语音' : '对方语音'
+        const voiceText = emo ? `（${who}，情绪：${emo}）${txt}` : `（${who}）${txt}`
+        return { id: m.id, from: m.from, text: voiceText }
+      }
       const text = m.text?.trim()
       if (text) return { id: m.id, from: m.from, text }
       if (m.images?.length) return { id: m.id, from: m.from, text: '（发送了一张图片）' }
@@ -149,6 +188,115 @@ function sleep(ms: number) {
   })
 }
 
+function sanitizeVoiceTranscriptDisplay(input: string): string {
+  return String(input ?? '')
+    .replace(/<[^>]*>/g, ' ')
+    .replace(/\([^)]*\)/g, ' ')
+    .replace(/\{\/?(happy|sad|angry|fearful|disgusted|surprised|neutral|fluent)\}/gi, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+}
+
+function sanitizeVoiceControlForTextBubble(input: string): string {
+  return String(input ?? '')
+    .replace(/<#\s*[\d.]+\s*#>/g, ' ')
+    .replace(/\(([a-zA-Z][a-zA-Z\- ]{0,24})\)/g, ' ')
+    .replace(/\{\/?(happy|sad|angry|fearful|disgusted|surprised|neutral|fluent)\}/gi, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+}
+
+function normalizeVoiceScriptForTts(input: string): string {
+  let s = String(input ?? '').replace(/\s+/g, ' ').trim()
+  if (!s) return '{neutral}(breath)<#0.4#>嗯。{/neutral}'
+
+  // 仅保留白名单语气词，其他括号内容清除，避免读出奇怪英文词。
+  s = s.replace(/\(([^)]*)\)/g, (_m, inner: string) => {
+    const token = String(inner || '').trim().toLowerCase()
+    return VOICE_ALLOWED_TONE_TOKENS.has(token) ? `(${token})` : ' '
+  })
+
+  // 清理非白名单情绪标签，避免错误标签被朗读
+  s = s.replace(/\{\/?([a-zA-Z]+)\}/g, (m, tag: string) => {
+    const t = String(tag || '').toLowerCase()
+    return (VOICE_ALLOWED_EMOTIONS as readonly string[]).includes(t) ? m.toLowerCase() : ' '
+  })
+
+  const plain = sanitizeVoiceControlForTextBubble(s)
+  const guessEmotion = () => {
+    const t = plain
+    // 轻量启发式：问号/“真的假的/啊？”偏惊讶；撒娇/喜欢偏开心；明显负向偏伤感；强烈否定偏生气
+    const surprised = /真的假的|真的吗|不会吧|啊\?|诶\?|哎\?|震惊|？！|\?!|\?！/u.test(t) || /[?？]/u.test(t)
+    const happy = /喜欢|求求|拜托|太好了|好耶|开心|嘿嘿|嘻嘻|~|么|嘛/u.test(t)
+    const sad = /难过|委屈|想哭|呜呜|唉|算了吧|对不起/u.test(t)
+    const angry = /气死|烦死|别闹|够了|离谱|你干嘛/u.test(t)
+    if (angry) return 'angry' as const
+    if (sad) return 'sad' as const
+    if (surprised && !happy) return 'surprised' as const
+    if (happy) return 'happy' as const
+    // 句子更长且较顺滑时偏 fluent
+    if (t.length >= 26 && /[，。,.]/u.test(t) && !/[!?？！]/u.test(t)) return 'fluent' as const
+    return 'neutral' as const
+  }
+  const guessTone = (emo: (typeof VOICE_ALLOWED_EMOTIONS)[number]) => {
+    const t = plain
+    if (emo === 'surprised') return 'gasps'
+    if (emo === 'happy') return /…|\.{2,}|\.\.\./u.test(t) ? 'chuckle' : 'laughs'
+    if (emo === 'sad') return 'sighs'
+    if (emo === 'angry') return 'breath'
+    // 有“...”/停顿感时用 chuckle，不然 breath
+    if (/…|\.{2,}|\.\.\./u.test(t)) return 'chuckle'
+    return 'breath'
+  }
+
+  // 停顿更“像人”：省略号/波浪号/标点插入不同停顿
+  if (!/<#\s*[\d.]+\s*#>/.test(s)) {
+    s = s
+      .replace(/(\.\.\.|…+)/g, `<#0.5#>$1<#0.5#>`)
+      .replace(/([，,])/g, `$1<#0.35#>`)
+      .replace(/([。；;])/g, `$1<#0.5#>`)
+      .replace(/([！？!?])/g, `$1<#0.6#>`)
+      .replace(/(~+)/g, `$1<#0.25#>`)
+      .replace(/\s+/g, ' ')
+      .trim()
+    if (!/<#\s*[\d.]+\s*#>/.test(s)) s = `<#0.4#>${s}`
+  }
+
+  // 没有语气词就按情绪智能补一个
+  const hasTone = /\(([^)]*)\)/.test(s)
+  if (!hasTone) {
+    const emo = guessEmotion()
+    const tone = guessTone(emo)
+    s = `(${tone})${s}`
+  }
+
+  // 没有情绪标签就按内容猜一个（不再默认 neutral）
+  const hasEmotionTag = /\{(happy|sad|angry|fearful|disgusted|surprised|neutral|fluent)\}/i.test(s)
+  if (!hasEmotionTag) {
+    const emo = guessEmotion()
+    s = `{${emo}}${s}{/${emo}}`
+  }
+
+  // 再次收敛空白
+  return s.replace(/\s+/g, ' ').trim()
+}
+
+function stripEmotionTagsForTts(input: string): string {
+  // iOS/部分模型会把 {happy} 读出来：这里将情绪标签“转译”为更稳的语气词，再去除标签本体
+  return String(input ?? '')
+    .replace(/\{happy\}/gi, ' (laughs) ')
+    .replace(/\{sad\}/gi, ' (sighs) ')
+    .replace(/\{angry\}/gi, ' (breath) ')
+    .replace(/\{fearful\}/gi, ' (inhale) ')
+    .replace(/\{disgusted\}/gi, ' (groans) ')
+    .replace(/\{surprised\}/gi, ' (gasps) ')
+    .replace(/\{neutral\}/gi, ' (breath) ')
+    .replace(/\{fluent\}/gi, ' (breath) ')
+    .replace(/\{\/(happy|sad|angry|fearful|disgusted|surprised|neutral|fluent)\}/gi, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+}
+
 function mapWeChatMessagesToChatItems(msgs: WeChatChatMessage[]): ChatMsg[] {
   if (msgs.length === 0) {
     return []
@@ -167,6 +315,11 @@ function mapWeChatMessagesToChatItems(msgs: WeChatChatMessage[]): ChatMsg[] {
       redPacket: m.redPacket,
       transfer: m.transfer,
       callStatus: m.callStatus,
+      voice: m.voice,
+      originalText: m.originalContent,
+      isRecalled: m.isRecalled,
+      recallTimestamp: m.recallTimestamp,
+      recalledBy: m.recalledBy === 'character' ? 'other' : m.recalledBy === 'player' ? 'self' : undefined,
       status: 'sent',
     })
   }
@@ -193,9 +346,10 @@ function rebuildChatItemsWithTimestamps(msgs: ChatMsg[], formatWxTimeLabel: (ts:
   return next
 }
 
-function messagePlainPreview(msg: Pick<ChatMsg, 'text' | 'images' | 'redPacket' | 'transfer' | 'callStatus'>): string {
+function messagePlainPreview(msg: Pick<ChatMsg, 'text' | 'images' | 'redPacket' | 'transfer' | 'callStatus' | 'voice'>): string {
   if (msg.transfer) return '[转账]'
   if (msg.callStatus) return '[通话]'
+  if (msg.voice) return `[语音] ${Math.max(1, Math.round(msg.voice.durationSec || 1))}"`
   const rp = msg.redPacket
   if (rp) {
     const r = rp.remark?.trim()
@@ -310,7 +464,7 @@ function parseCharacterStickerLine(line: string): { url: string } | null {
   const t = String(line ?? '').trim()
   const m = /^\[表情包\]\s*(.+)$/.exec(t)
   if (!m) return null
-  let url = m[1]!.trim().replace(/^['"`「」]+|['"`」]+$/g, '').trim()
+  const url = m[1]!.trim().replace(/^['"`「」]+|['"`」]+$/g, '').trim()
   if (!url) return null
   return { url }
 }
@@ -414,6 +568,12 @@ function arrayBufferToBase64(buf: ArrayBuffer): string {
   return btoa(binary)
 }
 
+async function blobToDataUrl(blob: Blob): Promise<string> {
+  const mime = (blob.type || 'audio/mpeg').trim().toLowerCase()
+  const base64 = arrayBufferToBase64(await blob.arrayBuffer())
+  return `data:${mime};base64,${base64}`
+}
+
 function loadImageElement(src: string): Promise<HTMLImageElement> {
   return new Promise((resolve, reject) => {
     const img = new Image()
@@ -511,11 +671,23 @@ type ChatMsg = {
   redPacket?: WeChatRedPacketPayload
   transfer?: WeChatTransferPayload
   callStatus?: { status: 'rejected' | 'no_answer' | 'duration'; durationSec?: number }
+  voice?: {
+    durationSec: number
+    emotionAnalyzed?: boolean
+    emotionLabel?: string
+    ttsScript?: string
+    audioUrl?: string
+    transcriptText?: string
+  }
   status?: MsgStatus
   /** 为 true 时播放对方消息入场动效 */
   otherAnimated?: boolean
   /** 为 true 时播放己方消息入场动效（与对方相同） */
   selfAnimated?: boolean
+  originalText?: string
+  isRecalled?: boolean
+  recallTimestamp?: number
+  recalledBy?: 'self' | 'other'
 }
 
 type ChatTime = { id: string; kind: 'time'; text: string }
@@ -556,25 +728,6 @@ function consecutiveSameSpeaker(items: ChatItem[], index: number): boolean {
   const prev = items[index - 1]
   if (cur.kind !== 'msg' || prev.kind !== 'msg') return false
   return cur.from === prev.from
-}
-
-function SendPlaneIcon({ color }: { color: string }) {
-  return (
-    <svg
-      width={20}
-      height={20}
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke={color}
-      strokeWidth={2}
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      aria-hidden
-    >
-      <path d="m22 2-7 20-4-9-9-4Z" />
-      <path d="M22 2 11 13" />
-    </svg>
-  )
 }
 
 /** 极简入场：轻微上移 + 微缩放 + 渐显，避免弹跳感。 */
@@ -850,6 +1003,29 @@ export function ChatRoom({
   const conversationKey = useMemo(
     () => wechatConversationKey(conversationCharacterId, playerIdentityId),
     [conversationCharacterId, playerIdentityId],
+  )
+  const synthCharacterVoiceAudioUrl = useCallback(
+    async (ttsScript: string): Promise<string> => {
+      try {
+        const apiKey = String(localStorage.getItem('minimax:apiKey') || '').trim()
+        if (!apiKey) return ''
+        const groupId = String(localStorage.getItem('minimax:groupId') || '').trim()
+        const speechModel = String(localStorage.getItem('minimax:speechModel') || 'speech-2.8-hd').trim() || 'speech-2.8-hd'
+        const rawMap = localStorage.getItem('minimax:characterVoiceMap') || '{}'
+        const map = JSON.parse(rawMap) as Record<string, unknown>
+        const voiceId = String(map?.[conversationCharacterId] ?? '').trim()
+        if (!voiceId) return ''
+        const blob = await createMiniMaxT2ASyncAudioBlob(
+          { apiKey, groupId },
+          { voice_id: voiceId, text: ttsScript, model: speechModel },
+        )
+        return await blobToDataUrl(blob)
+      } catch (e) {
+        logger.log('error', `角色语音合成失败: ${e instanceof Error ? e.message : String(e)}`)
+        return ''
+      }
+    },
+    [conversationCharacterId, logger],
   )
 
   const [peerAvatarResolved, setPeerAvatarResolved] = useState<string | undefined>(undefined)
@@ -1320,6 +1496,15 @@ export function ChatRoom({
   const [draft, setDraft] = useState('')
   const [sendBusy, setSendBusy] = useState(false)
   const [inputMode, setInputMode] = useState<'text' | 'voice'>('text')
+  const [voiceOverlayOpen, setVoiceOverlayOpen] = useState(false)
+  const [voiceGestureZone, setVoiceGestureZone] = useState<VoiceGestureZone>('send')
+  const [voicePressing, setVoicePressing] = useState(false)
+  const [voiceSessionStartMs, setVoiceSessionStartMs] = useState<number | null>(null)
+  const [voiceThumbOrigin, setVoiceThumbOrigin] = useState<{ x: number; y: number } | null>(null)
+  const [mockVoiceInputOpen, setMockVoiceInputOpen] = useState(false)
+  const [mockVoiceInputDraft, setMockVoiceInputDraft] = useState('')
+  const [voiceConfigAlertOpen, setVoiceConfigAlertOpen] = useState(false)
+  const [voiceConfigAlertMessage, setVoiceConfigAlertMessage] = useState('未配置语音识别 API Key')
   const [stubPanel, setStubPanel] = useState<null | 'emoji'>(null)
   const [plusMenuOpen, setPlusMenuOpen] = useState(false)
   const [retryReplyPromptOpen, setRetryReplyPromptOpen] = useState(false)
@@ -1361,13 +1546,17 @@ export function ChatRoom({
   const [actionMessageId, setActionMessageId] = useState<string | null>(null)
   const [actionMessageIsSelf, setActionMessageIsSelf] = useState<boolean>(false)
   const [actionMessageText, setActionMessageText] = useState<string>('')
+  const [actionMessageCanRecall, setActionMessageCanRecall] = useState(false)
   const [confirmDeleteOpen, setConfirmDeleteOpen] = useState(false)
+  const aiCallingRef = useRef(false)
+  const lastUserAiTriggerTsRef = useRef<number>(0)
 
   const closeActionPanel = useCallback(() => {
     setActionPanelOpen(false)
     setActionAnchor(null)
     setActionMessageId(null)
     setActionMessageText('')
+    setActionMessageCanRecall(false)
     setConfirmDeleteOpen(false)
   }, [])
 
@@ -1391,6 +1580,17 @@ export function ChatRoom({
   const [selectedMessageIds, setSelectedMessageIds] = useState<string[]>([])
   const selectedSet = useMemo(() => new Set(selectedMessageIds), [selectedMessageIds])
   const [multiDeleteConfirmOpen, setMultiDeleteConfirmOpen] = useState(false)
+  const [recallModalOpen, setRecallModalOpen] = useState(false)
+  const [recallModalRecord, setRecallModalRecord] = useState<RecallHistoryRecord | null>(null)
+  const pendingRecalledUserTextRef = useRef<string | null>(null)
+  const [recallAnimatingIds, setRecallAnimatingIds] = useState<Set<string>>(() => new Set())
+  const activeVoicePointerIdRef = useRef<number | null>(null)
+  const voiceHoldTimerRef = useRef<number | null>(null)
+  const voiceDownPosRef = useRef<{ x: number; y: number } | null>(null)
+  const voiceLongPressAttemptedRef = useRef(false)
+  const voiceRecorderRef = useRef<MediaRecorder | null>(null)
+  const voiceStreamRef = useRef<MediaStream | null>(null)
+  const voiceChunksRef = useRef<Blob[]>([])
   const [forwardModeSheetOpen, setForwardModeSheetOpen] = useState(false)
   const [checkPhoneOpen, setCheckPhoneOpen] = useState(false)
 
@@ -1482,17 +1682,47 @@ export function ChatRoom({
   )
 
   const openActionPanelFor = useCallback(
-    (params: { id: string; isSelf: boolean; text: string; anchorRect: DOMRect }) => {
+    (params: { id: string; isSelf: boolean; text: string; ts: number; anchorRect: DOMRect }) => {
       const preferBelow = params.anchorRect.top < 100
       setActionMessageId(params.id)
       setActionMessageIsSelf(params.isSelf)
       setActionMessageText(params.text)
+      const msgs = extractMessages(itemsRef.current)
+      const last = msgs.length ? msgs[msgs.length - 1] : null
+      const canRecall = !!(params.isSelf && last?.id === params.id && !last.isRecalled)
+      setActionMessageCanRecall(canRecall)
       setActionAnchor({ rect: params.anchorRect, preferBelow })
       setActionPanelOpen(true)
       setConfirmDeleteOpen(false)
     },
-    [],
+    [extractMessages],
   )
+
+  const scrollToBottomSmooth = useCallback((opts?: { force?: boolean }) => {
+    const el = scrollRef.current
+    if (!el) return
+    const force = opts?.force === true
+    if (!force) {
+      const atBottomNow = isScrollNearBottom(el)
+      const browsingHistory = userScrolledRef.current && !atBottomNow
+      if (!atBottomNow || browsingHistory) return
+    }
+    requestAnimationFrame(() => {
+      requestAnimationFrame(() => {
+        const now = scrollRef.current
+        if (!now) return
+        now.scrollTo({ top: now.scrollHeight, behavior: 'smooth' })
+        isAtBottomRef.current = true
+        setIsAtBottom(true)
+        setPendingNewCount(0)
+        window.setTimeout(() => {
+          const latest = scrollRef.current
+          if (!latest) return
+          latest.scrollTo({ top: latest.scrollHeight, behavior: 'auto' })
+        }, 240)
+      })
+    })
+  }, [])
 
   const onActionPanelAction = useCallback(
     async (id: WeChatMessageActionId) => {
@@ -1586,6 +1816,44 @@ export function ChatRoom({
           focusComposer()
           return
         }
+        case 'recall': {
+          if (!actionMessageCanRecall || !actionMessageIsSelf) {
+            showCenterToast('该消息当前不可撤回')
+            return
+          }
+          const row = await personaDb.getWeChatChatMessageById(mid)
+          if (!row || row.type !== 'player') {
+            showCenterToast('原消息不存在或已被删除')
+            return
+          }
+          const recalledAt = getCurrentTimeMs()
+          const original = row.content?.trim() || row.originalContent?.trim() || ''
+          pendingRecalledUserTextRef.current = original
+          await personaDb.patchWeChatChatMessageById(mid, {
+            isRecalled: true,
+            recalledBy: 'player',
+            recallTimestamp: recalledAt,
+            originalContent: original,
+          })
+          setItems((prev) => {
+            const next = rebuildWithCurrentTime(
+              extractMessages(prev).map((msg) => {
+                if (msg.id !== mid) return msg
+                return {
+                  ...msg,
+                  text: '',
+                  isRecalled: true,
+                  recalledBy: 'self',
+                  recallTimestamp: recalledAt,
+                  originalText: original,
+                }
+              }),
+            )
+            itemsRef.current = next
+            return next
+          })
+          return
+        }
         default:
           return
       }
@@ -1596,8 +1864,12 @@ export function ChatRoom({
       actionMessageText,
       closeActionPanel,
       showCenterToast,
+      actionMessageCanRecall,
       buildReplyMetaById,
       onRequestForwardMessage,
+      getCurrentTimeMs,
+      rebuildWithCurrentTime,
+      extractMessages,
     ],
   )
 
@@ -1726,32 +1998,7 @@ export function ChatRoom({
     }
   }, [typingVisible, onOtherTypingChange])
 
-  const scrollToBottomSmooth = useCallback((opts?: { force?: boolean }) => {
-    const el = scrollRef.current
-    if (!el) return
-    const force = opts?.force === true
-    if (!force) {
-      const atBottomNow = isScrollNearBottom(el)
-      const browsingHistory = userScrolledRef.current && !atBottomNow
-      if (!atBottomNow || browsingHistory) return
-    }
-    // 等待本轮 DOM 提交后再滚动，避免“旧 scrollHeight”导致滚不到最新底部
-    requestAnimationFrame(() => {
-      requestAnimationFrame(() => {
-        const now = scrollRef.current
-        if (!now) return
-        now.scrollTo({ top: now.scrollHeight, behavior: 'smooth' })
-        isAtBottomRef.current = true
-        setIsAtBottom(true)
-        setPendingNewCount(0)
-        window.setTimeout(() => {
-          const latest = scrollRef.current
-          if (!latest) return
-          latest.scrollTo({ top: latest.scrollHeight, behavior: 'auto' })
-        }, 240)
-      })
-    })
-  }, [])
+  // moved earlier
 
   const jumpToBottom = useCallback(() => {
     scrollToBottomSmooth({ force: true })
@@ -1964,6 +2211,7 @@ export function ChatRoom({
     }
     if (flushAiRepliesBusyRef.current) return
     flushAiRepliesBusyRef.current = true
+    aiCallingRef.current = true
     setAwaitingAiKick(false)
     setFlushUiBusy(true)
     const peerName = playerDisplayName.trim() || state.profile.displayName.trim() || '朋友'
@@ -2049,6 +2297,19 @@ export function ChatRoom({
             const nowTs = getCurrentTimeMs()
             const busyStillActive = !!busyRow?.isBusy && (busyRow.busyEndTime ?? 0) > nowTs
             clearBusyAfterReply = !!busySwitchEnabled && !!busyRow?.isBusy && !busyStillActive
+            if (clearBusyAfterReply) {
+              // 关键：忙碌已过期时先解除 busy，避免后续 AI 失败时被“过期忙碌”反复触发重试。
+              await personaDb.putCharacterBusySettings({
+                characterId: conversationCharacterId,
+                isBusy: false,
+                busyReason: '',
+                busyStartTime: 0,
+                busyEndTime: 0,
+                busyDurationMinutes: busyRow?.busyDurationMinutes ?? 15,
+                busyMessages: [],
+              })
+              clearBusyAfterReply = false
+            }
             if (busySwitchEnabled && busyStillActive) {
               showCenterToast(buildBusyToastText(peerNotifyTitle || '对方', busyRow?.busyReason || '处理点事情', busyRow?.busyEndTime ?? nowTs, nowTs))
               pendingAiRepliesRef.current = 0
@@ -2057,6 +2318,28 @@ export function ChatRoom({
             const reversed = [...itemsRef.current].reverse()
             const lastSelf = reversed.find((x) => x.kind === 'msg' && x.from === 'self') as ChatMsg | undefined
             const lastOther = reversed.find((x) => x.kind === 'msg' && x.from === 'other') as ChatMsg | undefined
+            const lastSelfVoice = reversed.find((x) => x.kind === 'msg' && x.from === 'self' && !!x.voice) as ChatMsg | undefined
+            const voiceEmotionBias = (() => {
+              const v = lastSelfVoice?.voice
+              if (!v) return ''
+              const emotion = v.emotionLabel?.trim()
+              const transcript = v.transcriptText?.trim() || lastSelfVoice?.text?.trim() || ''
+              if (!emotion && !transcript) return ''
+              const chunks: string[] = ['【语音情绪权重提示】']
+              if (emotion) chunks.push(`- 用户上一条语音情绪倾向：${emotion}。`)
+              if (transcript) chunks.push(`- 语音转写要点：${transcript}`)
+              chunks.push('- 回复时先做情绪承接，再给出内容回应；语气自然、克制、贴近真实聊天。')
+              return chunks.join('\n')
+            })()
+            const mergedReplyBias = [roundReplyBias, voiceEmotionBias].filter((x) => x.trim()).join('\n\n')
+            const recallPreview = pendingRecalledUserTextRef.current?.trim() || ''
+            const recallBias = recallPreview
+              ? Math.random() < 0.2
+                ? `[系统提示] 用户刚刚撤回了一条消息，内容是：'${recallPreview}'。你的眼速很快，在撤回前看到了这句话。请在接下来的回复中，根据你的人设，选择是故意戳穿ta、暗暗窃喜，还是装作没看见。`
+                : `[系统提示] 用户刚刚撤回了一条消息，但你没看清内容。你可以选择好奇地追问“你刚才撤回了什么？”，或者不予理会。`
+              : ''
+            const finalReplyBias = [mergedReplyBias, recallBias].filter((x) => x.trim()).join('\n\n')
+            pendingRecalledUserTextRef.current = null
             // 关键：如果玩家在发图后又补了一句文字（例如“你看不见吗”），则最后一条 self 可能是纯文本。
             // 为确保模型能对“最近一次发的图片”做出反应，这里改为：优先取“最近一次 self 图片消息”，但仅限于发生在最近一次 other 消息之后（即本轮玩家侧发送的图）。
             const lastSelfWithImage = reversed.find((x) => {
@@ -2113,7 +2396,7 @@ export function ChatRoom({
                   longTermMemoryNotes: memoryNotesForPrompt.trim() || undefined,
                   worldBackgroundPrompt,
                   offlineDatingPlotsContext: offlineDatingPlotsContext || undefined,
-                  replyBias: roundReplyBias || undefined,
+                  replyBias: finalReplyBias || undefined,
                   busyContext,
                   includeThinkingChain,
                 })
@@ -2131,7 +2414,7 @@ export function ChatRoom({
                   longTermMemoryNotes: memoryNotesForPrompt.trim() || undefined,
                   worldBackgroundPrompt,
                   offlineDatingPlotsContext: offlineDatingPlotsContext || undefined,
-                  replyBias: roundReplyBias || undefined,
+                  replyBias: finalReplyBias || undefined,
                   busyContext,
                   includeThinkingChain,
                 })
@@ -2147,7 +2430,7 @@ export function ChatRoom({
                 longTermMemoryNotes: memoryNotesForPrompt.trim() || undefined,
                 worldBackgroundPrompt,
                 offlineDatingPlotsContext: offlineDatingPlotsContext || undefined,
-                replyBias: roundReplyBias || undefined,
+                replyBias: finalReplyBias || undefined,
                 busyContext,
                 includeThinkingChain,
               })
@@ -2215,13 +2498,152 @@ export function ChatRoom({
         let pendingReplyMessageId: string | undefined
         let thinkingAttached = false
         const emittedThisRound = new Set<string>()
+        const emittedMessageIdsThisRound = new Set<string>()
+        const emittedMessageOrderThisRound: string[] = []
+        const emittedMessageMetaThisRound = new Map<string, { timestamp: number; preview: string }>()
+        const markEmittedThisRound = (id: string, timestamp: number, preview: string) => {
+          emittedMessageIdsThisRound.add(id)
+          emittedMessageOrderThisRound.push(id)
+          emittedMessageMetaThisRound.set(id, { timestamp, preview })
+        }
         for (let i = 0; i < bubbles.length; i += 1) {
           try {
             if (opponentQueueStopRef.current) break
             const rawLine = String(bubbles[i] ?? '').trim()
-            const rpDirective = parseRedPacketDirective(rawLine)
-            const tfDirective = parseTransferDirective(rawLine)
-            const vcDirective = parseVoiceCallDirective(rawLine)
+            const normalizedRawLine = rawLine.replace(/\\n/g, '\n').trim()
+            const expandedLines = normalizedRawLine
+              .split(/\r?\n/)
+              .map((line) => line.trim())
+              .filter(Boolean)
+            if (expandedLines.length > 1) {
+              bubbles.splice(i, 1, ...expandedLines)
+              i -= 1
+              continue
+            }
+            const currentLine = expandedLines[0] ?? normalizedRawLine
+            if (!currentLine) continue
+            if (currentLine === WECHAT_RECALL_ACTION_TOKEN) {
+              const lastId = emittedMessageOrderThisRound.length ? emittedMessageOrderThisRound[emittedMessageOrderThisRound.length - 1] : ''
+              if (!lastId) continue
+              const emittedMeta = emittedMessageMetaThisRound.get(lastId)
+              setRecallAnimatingIds((prev) => new Set(prev).add(lastId))
+              await sleep(randomBetween(1100, 1800))
+              const recalledAt = getCurrentTimeMs()
+              let original = emittedMeta?.preview?.trim() || ''
+              try {
+                const fromDb = await personaDb.getWeChatChatMessageById(lastId)
+                if (fromDb) {
+                  original = fromDb.originalContent?.trim() || fromDb.content?.trim() || original
+                } else if (!original) {
+                  const local = extractMessages(itemsRef.current).find((x) => x.id === lastId)
+                  original = local?.originalText?.trim() || local?.text?.trim() || ''
+                }
+                await personaDb.patchWeChatChatMessageById(lastId, {
+                  isRecalled: true,
+                  recalledBy: 'character',
+                  recallTimestamp: recalledAt,
+                  originalContent: original,
+                })
+              } catch (e) {
+                logger.log('error', `角色撤回落库失败 id=${lastId} err=${e instanceof Error ? e.message : String(e)}`)
+              }
+              setItems((prev) => {
+                const next = rebuildWithCurrentTime(
+                  extractMessages(prev).map((msg) =>
+                    msg.id !== lastId
+                      ? msg
+                      : {
+                          ...msg,
+                          text: '',
+                          isRecalled: true,
+                          recalledBy: 'other',
+                          recallTimestamp: recalledAt,
+                          originalText: original,
+                        },
+                  ),
+                )
+                itemsRef.current = next
+                return next
+              })
+              setRecallAnimatingIds((prev) => {
+                const next = new Set(prev)
+                next.delete(lastId)
+                return next
+              })
+              continue
+            }
+            const voiceLineMatch = currentLine.match(/^(?:\[语音\]|【语音】)\s*(.*)$/)
+            if (voiceLineMatch) {
+              const rawScript = String(voiceLineMatch[1] ?? '').trim()
+              if (!rawScript) continue
+              const normalizedScript = normalizeVoiceScriptForTts(rawScript)
+              const seg = sanitizeVoiceTranscriptDisplay(normalizedScript)
+              const ttsPlayableScript = stripEmotionTagsForTts(normalizedScript)
+              const audioUrl = await synthCharacterVoiceAudioUrl(ttsPlayableScript)
+              const ts = getCurrentTimeMs()
+              const oid = `wxm-${ts}-ov-${i}-${Math.random().toString(36).slice(2, 6)}`
+              const replyToMeta = pendingReplyMessageId ? await buildReplyMetaById(pendingReplyMessageId) : null
+              pendingReplyMessageId = undefined
+              const voice = {
+                durationSec: Math.max(1, Math.min(30, Math.round(seg.length / 6))),
+                emotionAnalyzed: true,
+                ttsScript: normalizedScript,
+                transcriptText: seg || '（语音）',
+                audioUrl: audioUrl || undefined,
+              }
+              try {
+                await withTimeout(
+                  personaDb.appendWeChatChatMessage({
+                    id: oid,
+                    characterId: conversationCharacterId,
+                    playerIdentityId,
+                    type: 'character',
+                    content: seg || '[语音]',
+                    thinking: !thinkingAttached ? thinking : undefined,
+                    replyTo: replyToMeta ?? undefined,
+                    timestamp: ts,
+                    isRead: true,
+                    conversationKey,
+                    notifyPeerTitle: peerNotifyTitle.trim() || undefined,
+                    voice,
+                  }),
+                  2000,
+                )
+              } catch {
+                /* ignore */
+              }
+              const incoming: ChatMsg = {
+                id: oid,
+                kind: 'msg',
+                from: 'other',
+                text: seg || '[语音]',
+                thinking: !thinkingAttached ? thinking : undefined,
+                timestamp: ts,
+                replyTo: replyToMeta ?? undefined,
+                voice,
+                otherAnimated: true,
+              }
+              if (!thinkingAttached && thinking) thinkingAttached = true
+              const el = scrollRef.current
+              const atBottomNow = el ? isScrollNearBottom(el) : isAtBottomRef.current
+              const browsingHistory = !!el && userScrolledRef.current && !atBottomNow
+              const shouldStickToBottom = atBottomNow && !browsingHistory
+              isAtBottomRef.current = shouldStickToBottom
+              setIsAtBottom(shouldStickToBottom)
+              setItems((prev) => {
+                const next = mergeIncomingMessage(prev, incoming)
+                itemsRef.current = next
+                return next
+              })
+              markEmittedThisRound(oid, ts, seg || '[语音]')
+              if (shouldStickToBottom) scrollToBottomSmooth()
+              else setPendingNewCount((c) => c + 1)
+              await sleep(randomBetween(120, 260))
+              continue
+            }
+            const rpDirective = parseRedPacketDirective(currentLine)
+            const tfDirective = parseTransferDirective(currentLine)
+            const vcDirective = parseVoiceCallDirective(currentLine)
             if (rpDirective || tfDirective || vcDirective) {
               const ts = getCurrentTimeMs()
               const mid = `wxm-${ts}-o-${i}-${Math.random().toString(36).slice(2, 6)}`
@@ -2266,6 +2688,7 @@ export function ChatRoom({
                   itemsRef.current = next
                   return next
                 })
+                markEmittedThisRound(mid, ts, seg)
                 scrollToBottomSmooth()
                 await sleep(randomBetween(120, 240))
                 continue
@@ -2316,13 +2739,14 @@ export function ChatRoom({
                   itemsRef.current = next
                   return next
                 })
+                markEmittedThisRound(mid, ts, seg)
                 scrollToBottomSmooth()
                 await sleep(randomBetween(120, 240))
                 continue
               }
             }
 
-            const charSticker = parseCharacterStickerLine(rawLine)
+            const charSticker = parseCharacterStickerLine(currentLine)
             if (charSticker) {
               const url = charSticker.url
               if (!getKnownStickerUrlSet().has(url)) {
@@ -2384,6 +2808,7 @@ export function ChatRoom({
                   itemsRef.current = next
                   return next
                 })
+                markEmittedThisRound(oidSticker, tsSticker, '[表情包]')
                 if (shouldStickToBottomSt) scrollToBottomSmooth()
                 else setPendingNewCount((c) => c + 1)
                 await sleep(randomBetween(120, 260))
@@ -2393,14 +2818,16 @@ export function ChatRoom({
               continue
             }
 
-            const parsed = parseReplyMarker(rawLine)
+            const parsed = parseReplyMarker(currentLine)
             if (parsed.replyMessageId) {
               pendingReplyMessageId = parsed.replyMessageId
             }
-            const seg = parsed.text.trim()
+            const segRaw = parsed.text.trim()
+            const seg = sanitizeVoiceControlForTextBubble(segRaw) || segRaw
             if (!seg) continue
+            const nextIsRecall = bubbles[i + 1] === WECHAT_RECALL_ACTION_TOKEN
             const dedupeKey = seg.replace(/\s+/g, ' ').trim()
-            if (emittedThisRound.has(dedupeKey)) {
+            if (!nextIsRecall && emittedThisRound.has(dedupeKey)) {
               logger.log('ai', `跳过重复分段#${i + 1}: ${seg}`)
               continue
             }
@@ -2444,9 +2871,12 @@ export function ChatRoom({
                 `分段落库异常#${i + 1} id=${oid} err=${err instanceof Error ? err.message : String(err)}`,
               )
             }
+            // 关键：无论后续是否因“近邻重复渲染”跳过 UI，都必须把本条写入 emitted 序列，
+            // 否则紧随其后的撤回 token 将找不到要撤回的目标消息。
+            markEmittedThisRound(oid, ts, seg)
 
             const lastOther = [...itemsRef.current].reverse().find((x) => x.kind === 'msg' && x.from === 'other') as ChatMsg | undefined
-            if (lastOther?.text?.trim() === seg) {
+            if (!nextIsRecall && lastOther?.text?.trim() === seg) {
               logger.log('ai', `跳过近邻重复渲染#${i + 1}`)
               continue
             }
@@ -2525,6 +2955,7 @@ export function ChatRoom({
       flushAiRepliesBusyRef.current = false
       setFlushUiBusy(false)
       setTypingVisible(false)
+      aiCallingRef.current = pendingAiRepliesRef.current > 0
       if (pendingAiRepliesRef.current > 0) {
         queueMicrotask(() => {
           void flushAiReplies()
@@ -2557,17 +2988,17 @@ export function ChatRoom({
     getCurrentTimeMs,
   ])
 
+  const busyExpireHandledEndRef = useRef(0)
   useEffect(() => {
     if (!globalDm?.busyEnabled) return
     const busySwitchEnabled = globalDm.busyMode === 'character' ? (peerBusyRow?.enabled ?? true) : globalModeBusyEnabled
     if (!busySwitchEnabled) return
-    if (!peerBusyRow?.isBusy || peerBusyRow.busyEndTime <= 0) return
-    const ms = peerBusyRow.busyEndTime - currentTimeMs
-    if (ms <= 0) {
-      pendingAiRepliesRef.current += 1
-      void flushAiReplies()
+    if (!peerBusyRow?.isBusy || peerBusyRow.busyEndTime <= 0) {
+      busyExpireHandledEndRef.current = 0
       return
     }
+    const ms = peerBusyRow.busyEndTime - currentTimeMs
+    if (ms <= 0) return
     const t = window.setTimeout(() => {
       pendingAiRepliesRef.current += 1
       void flushAiReplies()
@@ -2575,7 +3006,6 @@ export function ChatRoom({
     return () => window.clearTimeout(t)
   }, [globalDm?.busyEnabled, globalDm?.busyMode, peerBusyRow, globalModeBusyEnabled, flushAiReplies, currentTimeMs])
 
-  const busyExpireHandledEndRef = useRef(0)
   useEffect(() => {
     if (!peerBusyRow?.isBusy || peerBusyRow.busyEndTime <= 0) {
       busyExpireHandledEndRef.current = 0
@@ -2696,6 +3126,8 @@ export function ChatRoom({
         }
       }, 260)
       if (triggerAi) {
+        aiCallingRef.current = true
+        lastUserAiTriggerTsRef.current = ts
         setAwaitingAiKick(true)
         window.setTimeout(() => {
           pendingAiRepliesRef.current += 1
@@ -2707,6 +3139,64 @@ export function ChatRoom({
   )
 
   commitSendRef.current = commitSend
+
+  const appendVoiceMessage = useCallback(
+    async (opts: {
+      durationSec: number
+      audioBlob?: Blob | null
+      transcriptText?: string
+      emotion?: string
+    }) => {
+      const ts = getCurrentTimeMs()
+      const id = `wxm-${ts}-voice-${Math.random().toString(36).slice(2, 8)}`
+      const audioUrl = opts.audioBlob ? await blobToDataUrl(opts.audioBlob) : ''
+      const transcriptText = sanitizeVoiceTranscriptDisplay(opts.transcriptText?.trim() || '')
+      const emotionLabel = opts.emotion?.trim() || ''
+      const voice = {
+        durationSec: Math.max(1, opts.durationSec),
+        emotionAnalyzed: true,
+        emotionLabel: emotionLabel || undefined,
+        ttsScript: undefined,
+        audioUrl: audioUrl || undefined,
+        transcriptText: transcriptText || undefined,
+      }
+      const persistedContent = transcriptText || '[语音]'
+      try {
+        await personaDb.appendWeChatChatMessage({
+          id,
+          characterId: conversationCharacterId,
+          playerIdentityId,
+          type: 'player',
+          content: persistedContent,
+          voice,
+          timestamp: ts,
+          isRead: true,
+          conversationKey,
+        })
+      } catch {
+        // ignore
+      }
+      setItems((prev) => {
+        const next = rebuildWithCurrentTime([
+          ...extractMessages(prev),
+          {
+            id,
+            kind: 'msg',
+            from: 'self',
+            text: persistedContent,
+            timestamp: ts,
+            voice,
+            status: 'sent',
+            selfAnimated: true,
+          },
+        ])
+        itemsRef.current = next
+        return next
+      })
+      scrollToBottomSmooth()
+    },
+    [conversationCharacterId, conversationKey, extractMessages, getCurrentTimeMs, playerIdentityId, rebuildWithCurrentTime, scrollToBottomSmooth],
+  )
 
   const commitSendImage = useCallback(
     (base64: string, triggerAi: boolean, mime: WeChatImageMime = 'image/jpeg', contentCaption = '') => {
@@ -2797,6 +3287,8 @@ export function ChatRoom({
         opponentQueueStopRef.current = false
       }, 260)
       if (triggerAi) {
+        aiCallingRef.current = true
+        lastUserAiTriggerTsRef.current = ts
         setAwaitingAiKick(true)
         window.setTimeout(() => {
           pendingAiRepliesRef.current += 1
@@ -2849,13 +3341,206 @@ export function ChatRoom({
     }
   }, [canNudgeAiReply, commitSend, draft, flushAiReplies, sendBusy])
 
+  const openApiSettings = useCallback(() => {
+    window.dispatchEvent(new CustomEvent('phone:open-app', { detail: { id: 'api' } }))
+  }, [])
+
+  const startVoiceRecordingOrWarn = useCallback(
+    (origin: { x: number; y: number }) => {
+      voiceLongPressAttemptedRef.current = true
+      const hasSenseVoiceSmallKey = Boolean(voiceAsrEnabled && voiceAsrApiConfig?.apiKey?.trim())
+      if (!hasSpeechRecognitionApi || !hasSenseVoiceSmallKey) {
+        setVoiceConfigAlertMessage(
+          '当前未配置 SenseVoiceSmall 的 API Key，无法使用录音语音功能。请先前往 API 设置完成配置。你也可以单击“按住说话”按钮，改为语音内容的纯文字输入。',
+        )
+        setVoiceConfigAlertOpen(true)
+        return
+      }
+      setVoicePressing(true)
+      setVoiceOverlayOpen(true)
+      setVoiceGestureZone('send')
+      setVoiceThumbOrigin(origin)
+      void (async () => {
+        try {
+          const stream = await navigator.mediaDevices.getUserMedia({ audio: true })
+          voiceStreamRef.current = stream
+          const recorder = new MediaRecorder(stream)
+          voiceChunksRef.current = []
+          recorder.ondataavailable = (ev) => {
+            if (ev.data && ev.data.size > 0) voiceChunksRef.current.push(ev.data)
+          }
+          recorder.start(120)
+          voiceRecorderRef.current = recorder
+        } catch (err) {
+          setVoicePressing(false)
+          setVoiceOverlayOpen(false)
+          setVoiceGestureZone('send')
+          setVoiceThumbOrigin(null)
+          showComposerToast(err instanceof Error ? `麦克风不可用：${err.message}` : '麦克风不可用')
+        }
+      })()
+    },
+    [showComposerToast, voiceAsrApiConfig?.apiKey, voiceAsrEnabled],
+  )
+
+  const resolveVoiceZone = useCallback((clientX: number, clientY: number): VoiceGestureZone => {
+    const origin = voiceThumbOrigin
+    if (!origin) return 'send'
+    const dx = clientX - origin.x
+    const dy = clientY - origin.y
+    const distance = Math.hypot(dx, dy)
+    if (distance < 56) return 'send'
+    const angle = (Math.atan2(dy, dx) * 180) / Math.PI
+    const inCancelSector = angle >= -165 && angle <= -105
+    const inToTextSector = angle >= -75 && angle <= -15
+    if (distance >= 68 && inCancelSector) return 'cancel'
+    if (distance >= 68 && inToTextSector) return 'toText'
+    return 'send'
+  }, [voiceThumbOrigin])
+
+  const onVoicePointerDown = useCallback(
+    (e: ReactPointerEvent<HTMLButtonElement>) => {
+      e.preventDefault()
+      e.currentTarget.setPointerCapture(e.pointerId)
+      activeVoicePointerIdRef.current = e.pointerId
+      voiceLongPressAttemptedRef.current = false
+      voiceDownPosRef.current = { x: e.clientX, y: e.clientY }
+      if (voiceHoldTimerRef.current != null) {
+        window.clearTimeout(voiceHoldTimerRef.current)
+        voiceHoldTimerRef.current = null
+      }
+      voiceHoldTimerRef.current = window.setTimeout(() => {
+        startVoiceRecordingOrWarn({ x: e.clientX, y: e.clientY })
+      }, VOICE_HOLD_START_MS)
+      setVoiceSessionStartMs(Date.now())
+    },
+    [startVoiceRecordingOrWarn],
+  )
+
+  const onVoicePointerMove = useCallback(
+    (e: ReactPointerEvent<HTMLButtonElement>) => {
+      e.preventDefault()
+      if (activeVoicePointerIdRef.current !== e.pointerId) return
+      const down = voiceDownPosRef.current
+      if (down && !voicePressing) {
+        const moved = Math.hypot(e.clientX - down.x, e.clientY - down.y)
+        if (moved > VOICE_TAP_MOVE_THRESHOLD_PX && voiceHoldTimerRef.current != null) {
+          window.clearTimeout(voiceHoldTimerRef.current)
+          voiceHoldTimerRef.current = null
+          startVoiceRecordingOrWarn({ x: down.x, y: down.y })
+        }
+      }
+      if (!voicePressing) return
+      setVoiceGestureZone(resolveVoiceZone(e.clientX, e.clientY))
+    },
+    [resolveVoiceZone, startVoiceRecordingOrWarn, voicePressing],
+  )
+
+  const onVoicePointerUp = useCallback(
+    (e: ReactPointerEvent<HTMLButtonElement>) => {
+      e.preventDefault()
+      if (activeVoicePointerIdRef.current !== e.pointerId) return
+      if (voiceHoldTimerRef.current != null) {
+        window.clearTimeout(voiceHoldTimerRef.current)
+        voiceHoldTimerRef.current = null
+      }
+      if (e.currentTarget.hasPointerCapture(e.pointerId)) {
+        e.currentTarget.releasePointerCapture(e.pointerId)
+      }
+      const zone = resolveVoiceZone(e.clientX, e.clientY)
+      const durationSec = Math.max(1, Math.round((Date.now() - (voiceSessionStartMs ?? Date.now())) / 1000))
+      const wasPressing = voicePressing
+      setVoicePressing(false)
+      setVoiceOverlayOpen(false)
+      setVoiceSessionStartMs(null)
+      setVoiceThumbOrigin(null)
+      voiceDownPosRef.current = null
+      activeVoicePointerIdRef.current = null
+      setVoiceGestureZone('send')
+      const longPressAttempted = voiceLongPressAttemptedRef.current
+      voiceLongPressAttemptedRef.current = false
+      if (!wasPressing) {
+        if (longPressAttempted) return
+        setMockVoiceInputOpen(true)
+        return
+      }
+      const recorder = voiceRecorderRef.current
+      const stream = voiceStreamRef.current
+      const settleRecordedAudio = async (): Promise<Blob | null> => {
+        if (!recorder) return null
+        if (recorder.state !== 'inactive') {
+          await new Promise<void>((resolve) => {
+            recorder.onstop = () => resolve()
+            recorder.stop()
+          })
+        }
+        const blob = voiceChunksRef.current.length
+          ? new Blob(voiceChunksRef.current, { type: recorder.mimeType || 'audio/webm' })
+          : null
+        voiceRecorderRef.current = null
+        voiceChunksRef.current = []
+        if (stream) {
+          stream.getTracks().forEach((t) => t.stop())
+          voiceStreamRef.current = null
+        }
+        return blob
+      }
+      if (zone === 'cancel') {
+        void settleRecordedAudio()
+        return
+      }
+      if (zone === 'toText') {
+        void (async () => {
+          try {
+            const audioBlob = await settleRecordedAudio()
+            if (!audioBlob) {
+              showComposerToast('录音为空，请重试')
+              return
+            }
+            const asr = await requestSiliconflowTranscription(voiceAsrApiConfig, audioBlob)
+            const text = asr.text.trim() || `（语音转文字）${durationSec}秒录音未识别到清晰文本`
+            setDraft(text)
+            setInputMode('text')
+            showComposerToast('已转文字，可编辑后发送')
+          } catch (err) {
+            showComposerToast(err instanceof Error ? `转写失败：${err.message}` : '转写失败')
+          }
+        })()
+        return
+      }
+      void (async () => {
+        try {
+          const audioBlob = await settleRecordedAudio()
+          if (!audioBlob) {
+            showComposerToast('录音为空，请重试')
+            return
+          }
+          let transcriptText = ''
+          let emotion = ''
+          try {
+            const asr = await requestSiliconflowTranscription(voiceAsrApiConfig, audioBlob)
+            transcriptText = asr.text.trim()
+            emotion = asr.emotion || ''
+          } catch {
+            // 发送语音不强依赖转写，失败可忽略
+          }
+          await appendVoiceMessage({ durationSec, audioBlob, transcriptText, emotion })
+        } catch (err) {
+          showComposerToast(err instanceof Error ? `录音处理失败：${err.message}` : '录音处理失败')
+        }
+      })()
+    },
+    [appendVoiceMessage, resolveVoiceZone, showComposerToast, voiceAsrApiConfig, voicePressing, voiceSessionStartMs],
+  )
+
   const runRetryReply = useCallback(
     async (biasRaw: string) => {
       const bias = biasRaw.trim()
       const msgs = extractMessages(itemsRef.current)
       const lastSelfIdx = (() => {
         for (let i = msgs.length - 1; i >= 0; i -= 1) {
-          if (msgs[i]?.from === 'self') return i
+          const m = msgs[i]
+          if (m?.from === 'self') return i
         }
         return -1
       })()
@@ -3118,6 +3803,7 @@ export function ChatRoom({
           timestamp: m.timestamp,
           replyTo: m.replyTo,
           images: m.images,
+          voice: m.voice,
           status: 'sent',
         })
       }
@@ -3355,19 +4041,34 @@ export function ChatRoom({
       }
 
       const isSelf = m.from === 'self'
+      if (m.isRecalled) {
+        const noticeText = isSelf ? '你撤回了一条消息' : `${peerNotifyTitle.trim() || '对方'}撤回了一条消息`
+        return (
+          <div key={m.id} className={gap} data-wx-msg-id={m.id}>
+            <RecallNotice
+              text={noticeText}
+              onClick={() => {
+                setRecallModalRecord({
+                  sender: isSelf ? 'self' : 'other',
+                  senderName: peerNotifyTitle.trim() || '对方',
+                  sentAt: m.timestamp,
+                  recalledAt: m.recallTimestamp,
+                  originalText: m.originalText || '（无内容）',
+                })
+                setRecallModalOpen(true)
+              }}
+            />
+          </div>
+        )
+      }
       // 系统通知条：居中展示，像时间戳一样（用于“领取/退还/到期”等事件提示）
       if (typeof m.text === 'string' && m.text.trim().startsWith('【系统】')) {
-        const text = m.text.trim().replace(/^【系统】\s*/, '')
+        const raw = m.text.trim()
+        const text = raw.replace(/^【系统】\s*/, '')
         return (
           <div key={m.id} className={gap}>
             <div className="flex justify-center">
-              <span
-                className="rounded-full bg-[#f2f2f2] px-3 py-1 text-[12px]"
-                style={{
-                  color: '#999999',
-                  lineHeight: 1.1,
-                }}
-              >
+              <span className="rounded-full bg-[#f2f2f2] px-3 py-1 text-[12px]" style={{ color: '#999999', lineHeight: 1.1 }}>
                 {text}
               </span>
             </div>
@@ -3378,10 +4079,11 @@ export function ChatRoom({
       const wrap = (node: ReactNode, replyNode?: ReactNode) => {
         const hi = highlightedMessageId === m.id
         const hiCls = hi ? 'rounded-[8px] bg-black/5 transition-colors duration-300' : ''
+        const recallAnimCls = recallAnimatingIds.has(m.id) ? 'animate-[wxRecallShake_420ms_ease-in-out]' : ''
         const thinkingNode = m.kind === 'msg' ? renderThinkingFold(m, isSelf, i) : null
         if (!isMultiSelectMode) {
           return (
-            <div key={m.id} className={`${gap} ${hiCls}`} data-wx-msg-id={m.id}>
+            <div key={m.id} className={`${gap} ${hiCls} ${recallAnimCls}`} data-wx-msg-id={m.id}>
               {thinkingNode}
               {node}
               {replyNode}
@@ -3391,7 +4093,7 @@ export function ChatRoom({
         return (
           <div
             key={m.id}
-            className={`${gap} ${hiCls}`}
+            className={`${gap} ${hiCls} ${recallAnimCls}`}
             data-wx-msg-id={m.id}
             onClickCapture={(e) => {
               e.stopPropagation()
@@ -3446,6 +4148,100 @@ export function ChatRoom({
         return wrap(card)
       }
 
+      if (m.voice) {
+        const d = Math.max(1, Math.round(m.voice.durationSec || 1))
+        const showAvatarVisual = showAvatar && (isSelf ? showAvatarColumnSelf : showAvatarColumnOther)
+        const reserveAvatarGutter = showAvatar
+        const avatarNode = (
+          <img
+            src={(isSelf ? sharedMsgProps.chatSelfAvatarUrl : sharedMsgProps.chatOtherAvatarUrl) || ''}
+            alt=""
+            width={40}
+            height={40}
+            className="h-10 w-10 shrink-0 object-cover"
+            style={{
+              borderRadius: `${bubble.avatarRadiusPx}px`,
+              border: '1px solid color-mix(in oklab, var(--wx-border) 70%, transparent)',
+            }}
+            aria-hidden
+          />
+        )
+        const avatarPlaceholder = <div className="h-10 w-10 shrink-0" aria-hidden />
+        const bubbleNode = (
+          <VoiceMessageBubble
+            isUser={isSelf}
+            duration={d}
+            audioUrl={m.voice.audioUrl || ''}
+            transcriptText={m.voice.transcriptText || '（暂未生成转写文本）'}
+                onTranscriptToggle={() => {
+                  if (!isAtBottomRef.current) return
+                  requestAnimationFrame(() => {
+                    scrollToBottomSmooth({ force: true })
+                    window.setTimeout(() => {
+                      scrollToBottomSmooth({ force: true })
+                    }, 240)
+                  })
+                }}
+          />
+        )
+        const voiceRow = (
+          isSelf ? (
+            <div className="flex w-[100vw] max-w-[100vw] shrink-0 items-end justify-end overflow-x-hidden">
+              {!showAvatar ? (
+                <div className="mr-[24px] ml-auto min-w-0">{bubbleNode}</div>
+              ) : showAvatarVisual ? (
+                <div className="mr-[24px] ml-auto flex max-w-full flex-row items-start gap-[12px]">
+                  {bubbleNode}
+                  {sharedMsgProps.chatSelfAvatarUrl ? avatarNode : (
+                    <div
+                      className="h-10 w-10 shrink-0"
+                      style={{ borderRadius: `${bubble.avatarRadiusPx}px`, background: 'rgba(0,0,0,0.04)' }}
+                      aria-hidden
+                    />
+                  )}
+                </div>
+              ) : reserveAvatarGutter ? (
+                <div className="mr-[24px] ml-auto flex max-w-full flex-row items-start gap-[12px]">
+                  {bubbleNode}
+                  {avatarPlaceholder}
+                </div>
+              ) : (
+                <div className="mr-[24px] ml-auto min-w-0">{bubbleNode}</div>
+              )}
+            </div>
+          ) : (
+            <div className="w-[100vw] max-w-[100vw] shrink-0 overflow-x-hidden">
+              {!showAvatar ? (
+                <div className="ml-[24px] mr-auto min-w-0">{bubbleNode}</div>
+              ) : showAvatarVisual ? (
+                <div className="ml-[24px] mr-auto flex max-w-full flex-row items-start gap-[12px]">
+                  {sharedMsgProps.chatOtherAvatarUrl ? avatarNode : (
+                    <div
+                      className="h-10 w-10 shrink-0"
+                      style={{
+                        borderRadius: `${bubble.avatarRadiusPx}px`,
+                        background: 'rgba(0,0,0,0.06)',
+                        border: '1px solid color-mix(in oklab, var(--wx-border) 70%, transparent)',
+                      }}
+                      aria-hidden
+                    />
+                  )}
+                  {bubbleNode}
+                </div>
+              ) : reserveAvatarGutter ? (
+                <div className="ml-[24px] mr-auto flex max-w-full flex-row items-start gap-[12px]">
+                  {avatarPlaceholder}
+                  {bubbleNode}
+                </div>
+              ) : (
+                <div className="ml-[24px] mr-auto min-w-0">{bubbleNode}</div>
+              )}
+            </div>
+          )
+        )
+        return wrap(voiceRow, renderDetachedReply(m, isSelf))
+      }
+
       if (m.redPacket) {
         const rp = m.redPacket
         const rowInner = (
@@ -3495,6 +4291,7 @@ export function ChatRoom({
                       id: m.id,
                       isSelf,
                       text: messagePlainPreview(m),
+                      ts: m.timestamp,
                       anchorRect: rect,
                     })
             }
@@ -3536,6 +4333,7 @@ export function ChatRoom({
                       id: m.id,
                       isSelf,
                       text: messagePlainPreview(m),
+                      ts: m.timestamp,
                       anchorRect: rect,
                     })
             }
@@ -3619,6 +4417,7 @@ export function ChatRoom({
                         id: m.id,
                         isSelf,
                         text: messagePlainPreview(m),
+                        ts: m.timestamp,
                         anchorRect: rect,
                       })
               }
@@ -3638,7 +4437,7 @@ export function ChatRoom({
                 onBubbleLongPress={
                   isMultiSelectMode
                     ? undefined
-                    : (rect) => openActionPanelFor({ id: m.id, isSelf: false, text: messagePlainPreview(m), anchorRect: rect })
+                    : (rect) => openActionPanelFor({ id: m.id, isSelf: false, text: messagePlainPreview(m), ts: m.timestamp, anchorRect: rect })
                 }
               />,
             renderDetachedReply(m, false),
@@ -3659,7 +4458,7 @@ export function ChatRoom({
               onBubbleLongPress={
                 isMultiSelectMode
                   ? undefined
-                  : (rect) => openActionPanelFor({ id: m.id, isSelf: false, text: messagePlainPreview(m), anchorRect: rect })
+                  : (rect) => openActionPanelFor({ id: m.id, isSelf: false, text: messagePlainPreview(m), ts: m.timestamp, anchorRect: rect })
               }
             />,
           renderDetachedReply(m, false),
@@ -3682,7 +4481,7 @@ export function ChatRoom({
               onBubbleLongPress={
                 isMultiSelectMode
                   ? undefined
-                  : (rect) => openActionPanelFor({ id: m.id, isSelf: true, text: messagePlainPreview(m), anchorRect: rect })
+                  : (rect) => openActionPanelFor({ id: m.id, isSelf: true, text: messagePlainPreview(m), ts: m.timestamp, anchorRect: rect })
               }
             />
         ) : (
@@ -3701,7 +4500,7 @@ export function ChatRoom({
               onBubbleLongPress={
                 isMultiSelectMode
                   ? undefined
-                  : (rect) => openActionPanelFor({ id: m.id, isSelf: true, text: messagePlainPreview(m), anchorRect: rect })
+                  : (rect) => openActionPanelFor({ id: m.id, isSelf: true, text: messagePlainPreview(m), ts: m.timestamp, anchorRect: rect })
               }
             />
         ),
@@ -3738,6 +4537,7 @@ export function ChatRoom({
     getCurrentTimeMs,
     expandedThinkingIds,
     toggleThinkingFold,
+    recallAnimatingIds,
   ])
 
   const btnPx = chatTheme.inputBar.buttonSize
@@ -3746,6 +4546,13 @@ export function ChatRoom({
   useEffect(() => {
     return () => {
       if (enterDebounceTimerRef.current != null) window.clearTimeout(enterDebounceTimerRef.current)
+      if (voiceHoldTimerRef.current != null) window.clearTimeout(voiceHoldTimerRef.current)
+      if (voiceRecorderRef.current && voiceRecorderRef.current.state !== 'inactive') {
+        voiceRecorderRef.current.stop()
+      }
+      if (voiceStreamRef.current) {
+        voiceStreamRef.current.getTracks().forEach((t) => t.stop())
+      }
     }
   }, [])
 
@@ -3770,6 +4577,7 @@ export function ChatRoom({
 
   return (
     <div className="relative flex h-full min-h-0 flex-1 flex-col" data-wx-chat-motion-scope>
+      <style>{`@keyframes wxRecallShake { 0% { transform: translateX(0); opacity: 1; } 25% { transform: translateX(-2px); } 50% { transform: translateX(2px); } 75% { transform: translateX(-1px); } 100% { transform: translateX(0); opacity: 0.75; } }`}</style>
       <div
         ref={scrollRef}
         onScroll={onScrollPane}
@@ -4011,94 +4819,38 @@ export function ChatRoom({
             }}
           />
         ) : null}
-        <div className="flex w-full max-w-full items-end gap-2">
-          <Pressable
-            type="button"
-            aria-label={inputMode === 'text' ? '切换为语音输入' : '切换为文字输入'}
-            onClick={() => {
-              setInputMode((m) => (m === 'text' ? 'voice' : 'text'))
-              setStubPanel(null)
-              setPlusMenuOpen(false)
-            }}
-            className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full"
-            style={{ color: btnColor }}
-          >
-            <Mic size={btnPx} strokeWidth={2} aria-hidden />
-          </Pressable>
-
-          {inputMode === 'voice' ? (
-            <div
-              className="flex min-h-[44px] min-w-0 flex-1 items-center justify-center text-[15px]"
-              style={{
-                borderRadius: chatTheme.inputBar.borderRadius,
-                background: '#ffffff',
-                border: `1px solid ${chatTheme.inputBar.borderColor}`,
-                color: 'var(--wx-text-muted)',
-              }}
-            >
-              按住说话（示意）
-            </div>
-          ) : (
-            <textarea
-              ref={textareaRef}
-              className="min-h-[44px] min-w-0 flex-1 resize-none bg-white text-[16px] leading-snug outline-none"
-              style={{
-                borderRadius: chatTheme.inputBar.borderRadius,
-                border: `1px solid ${chatTheme.inputBar.borderColor}`,
-                padding: '10px 16px',
-                color: 'var(--wx-text)',
-                maxHeight: 120,
-              }}
-              placeholder="输入消息..."
-              aria-label="输入消息"
-              rows={1}
-              value={draft}
-              onChange={(e) => {
-                setDraft(e.target.value)
-              }}
-              onKeyDown={onComposerKeyDown}
-            />
-          )}
-
-          <Pressable
-            type="button"
-            aria-label="表情"
-            onClick={() => {
-              setPlusMenuOpen(false)
-              setStubPanel((p) => (p === 'emoji' ? null : 'emoji'))
-            }}
-            className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full"
-            style={{ color: btnColor }}
-          >
-            <Smile size={btnPx} strokeWidth={2} aria-hidden />
-          </Pressable>
-          <Pressable
-            type="button"
-            aria-label={plusMenuOpen ? '收起更多功能' : '更多功能'}
-            onClick={() => {
-              setStubPanel(null)
-              setCameraOpen(false)
-              setPlusMenuOpen((v) => !v)
-            }}
-            className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full"
-          >
-            <Plus
-              size={20}
-              strokeWidth={2}
-              className={`text-black transition-transform duration-200 ease-out ${plusMenuOpen ? 'rotate-45' : ''}`}
-              aria-hidden
-            />
-          </Pressable>
-          <Pressable
-            type="button"
-            onClick={onSendButtonClick}
-            disabled={sendBusy || !planeCanAct}
-            className="mb-[2px] flex h-9 w-9 shrink-0 items-center justify-center rounded-full disabled:opacity-40"
-            aria-label={draft.trim() ? '发送并请求回复' : '请求 AI 回复'}
-          >
-            <SendPlaneIcon color={!planeCanAct || sendBusy ? '#a3a3a3' : btnColor} />
-          </Pressable>
-        </div>
+        <ChatInputBar
+          inputMode={inputMode}
+          btnPx={btnPx}
+          btnColor={btnColor}
+          borderRadius={chatTheme.inputBar.borderRadius}
+          borderColor={chatTheme.inputBar.borderColor}
+          draft={draft}
+          sendBusy={sendBusy}
+          planeCanAct={planeCanAct}
+          plusMenuOpen={plusMenuOpen}
+          onToggleInputMode={() => {
+            setInputMode((m) => (m === 'text' ? 'voice' : 'text'))
+            setStubPanel(null)
+            setPlusMenuOpen(false)
+          }}
+          textareaRef={textareaRef}
+          onVoicePointerDown={onVoicePointerDown}
+          onVoicePointerMove={onVoicePointerMove}
+          onVoicePointerUp={onVoicePointerUp}
+          onDraftChange={(v) => setDraft(v)}
+          onComposerKeyDown={onComposerKeyDown}
+          onToggleEmoji={() => {
+            setPlusMenuOpen(false)
+            setStubPanel((p) => (p === 'emoji' ? null : 'emoji'))
+          }}
+          onTogglePlus={() => {
+            setStubPanel(null)
+            setCameraOpen(false)
+            setPlusMenuOpen((v) => !v)
+          }}
+          onSend={onSendButtonClick}
+        />
 
         <motion.div
           initial={false}
@@ -4113,6 +4865,67 @@ export function ChatRoom({
       </div>
         </>
       )}
+
+      <AnimatePresence>
+        {voiceOverlayOpen ? (
+          <VoiceOverlay
+            open={voiceOverlayOpen}
+            activeZone={voiceGestureZone}
+            durationSec={Math.max(1, Math.round((Date.now() - (voiceSessionStartMs ?? Date.now())) / 1000))}
+            thumbOrigin={voiceThumbOrigin}
+          />
+        ) : null}
+      </AnimatePresence>
+
+      <AnimatePresence>
+        {mockVoiceInputOpen ? (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 z-[125] bg-black/20"
+            onClick={() => setMockVoiceInputOpen(false)}
+          >
+            <motion.div
+              initial={{ y: 30, opacity: 0.7 }}
+              animate={{ y: 0, opacity: 1 }}
+              exit={{ y: 16, opacity: 0 }}
+              className="absolute inset-x-3 bottom-3 rounded-[20px] border border-[#ece7da] bg-[#fffdfa] p-4 shadow-xl"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <div className="text-[13px] leading-relaxed text-[#555]">
+                当前未配置语音 API，请直接输入您的台词，并可使用括号标注语气（例如：*(温柔地) 你好*）
+              </div>
+              <textarea
+                className="mt-3 min-h-[96px] w-full resize-none rounded-[12px] border border-[#e9e4d8] bg-white px-3 py-2 text-[14px] outline-none"
+                placeholder="请输入要发送的文本..."
+                value={mockVoiceInputDraft}
+                onChange={(e) => setMockVoiceInputDraft(e.target.value)}
+              />
+              <div className="mt-3 flex justify-end gap-2">
+                <Pressable
+                  className="rounded-[10px] border border-[#e5e5e5] bg-white px-3 py-1.5 text-[13px]"
+                  onClick={() => setMockVoiceInputOpen(false)}
+                >
+                  取消
+                </Pressable>
+                <Pressable
+                  className="rounded-[10px] bg-[#f4efe3] px-3 py-1.5 text-[13px] text-[#2f2f2f]"
+                  onClick={() => {
+                    const text = mockVoiceInputDraft.trim()
+                    if (!text) return
+                    commitSend(text, true)
+                    setMockVoiceInputDraft('')
+                    setMockVoiceInputOpen(false)
+                  }}
+                >
+                  发送文本
+                </Pressable>
+              </div>
+            </motion.div>
+          </motion.div>
+        ) : null}
+      </AnimatePresence>
 
       <AnimatePresence>
         {cameraOpen ? (
@@ -4391,6 +5204,11 @@ export function ChatRoom({
         open={actionPanelOpen}
         anchor={actionAnchor}
         onAction={onActionPanelAction}
+        actionIds={
+          actionMessageCanRecall
+            ? ['copy', 'forward', 'favorite', 'delete', 'multiSelect', 'quote', 'translate', 'edit', 'recall']
+            : ['copy', 'forward', 'favorite', 'delete', 'multiSelect', 'quote', 'translate', 'edit']
+        }
       />
       {retryReplyPromptOpen ? (
         <div className="fixed inset-0 z-[1210] flex items-center justify-center bg-black/50 px-4" role="presentation">
@@ -4434,6 +5252,18 @@ export function ChatRoom({
           </div>
         </div>
       ) : null}
+      <WeChatConfirmDialog
+        open={voiceConfigAlertOpen}
+        title="语音录音不可用"
+        description={voiceConfigAlertMessage}
+        cancelText="知道了"
+        confirmText="去配置"
+        onCancel={() => setVoiceConfigAlertOpen(false)}
+        onConfirm={() => {
+          setVoiceConfigAlertOpen(false)
+          openApiSettings()
+        }}
+      />
       <WeChatConfirmDialog
         open={confirmDeleteOpen}
         title="删除消息"
@@ -4497,6 +5327,14 @@ export function ChatRoom({
         useLumiProjectAssistantPrompt={useLumiProjectAssistantPrompt}
         onToast={showComposerToast}
         onClose={() => setCheckPhoneOpen(false)}
+      />
+      <RecallHistoryModal
+        open={recallModalOpen}
+        record={recallModalRecord}
+        onClose={() => {
+          setRecallModalOpen(false)
+          setRecallModalRecord(null)
+        }}
       />
       <WeChatCenterToast message={centerToast} />
 

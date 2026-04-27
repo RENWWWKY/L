@@ -70,11 +70,24 @@ export function IconAppearance(props: SVGProps<SVGSVGElement>) {
   )
 }
 
+/** 声纹：麦克风 + 声波线 */
+export function IconVoiceprint(props: SVGProps<SVGSVGElement>) {
+  return (
+    <svg {...base} {...props}>
+      <path d="M12 13.8a2.6 2.6 0 0 0 2.6-2.6V7.6a2.6 2.6 0 0 0-5.2 0v3.6A2.6 2.6 0 0 0 12 13.8z" />
+      <path d="M7.8 11.1a4.2 4.2 0 0 0 8.4 0" />
+      <path d="M12 16.2v3.3" />
+      <path d="M9.4 19.5h5.2" />
+    </svg>
+  )
+}
+
 const map = {
   wechat: IconWeChat,
   takeout: IconTakeout,
   weibo: IconWeibo,
   api: IconApi,
+  voiceprint: IconVoiceprint,
   appearance: IconAppearance,
 } as const
 

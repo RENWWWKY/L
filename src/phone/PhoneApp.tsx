@@ -7,6 +7,7 @@ import { PhoneShell } from './components/PhoneShell'
 import { useCustomization } from './CustomizationContext'
 import { ApiSettingsProvider } from './apps/api/ApiSettingsContext'
 import { ApiSettingsApp } from './apps/api/ApiSettingsApp'
+import { VoiceprintHubApp } from './apps/voiceprint/VoiceprintHubApp'
 import { WeChatApp } from './apps/wechat/WeChatApp'
 import type { AppSlot } from './types'
 
@@ -77,6 +78,8 @@ export function PhoneApp() {
                   <WeChatApp onBack={goHome} />
                 ) : route.id === 'api' ? (
                   <ApiSettingsApp onBack={goHome} />
+                ) : route.id === 'voiceprint' ? (
+                  <VoiceprintHubApp onBack={goHome} />
                 ) : (
                   <AppPlaceholderScreen appId={route.id} onBack={goHome} />
                 )}

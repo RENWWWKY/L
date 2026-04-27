@@ -331,6 +331,16 @@ export type WeChatCallStatusPayload = {
   durationSec?: number
 }
 
+export type WeChatVoicePayload = {
+  durationSec: number
+  emotionAnalyzed?: boolean
+  emotionLabel?: string
+  /** 语音合成脚本（允许包含 () 与 <...> 控制片段），用于后续 TTS */
+  ttsScript?: string
+  audioUrl?: string
+  transcriptText?: string
+}
+
 export type WeChatChatMessage = {
   id: string
   characterId: string
@@ -345,12 +355,22 @@ export type WeChatChatMessage = {
   transfer?: WeChatTransferPayload
   /** 通话状态气泡：与 content 并存 */
   callStatus?: WeChatCallStatusPayload
+  /** 语音消息：与 content 并存 */
+  voice?: WeChatVoicePayload
   /** 图片消息：纯图片时 content 允许为空串 */
   images?: { base64: string; type: WeChatImageMime }[]
   /** 是否收藏 */
   isFavorite?: boolean
   /** 引用消息结构化快照（兼容旧版 string id） */
   replyTo?: WeChatReplyToMeta
+  /** 撤回后保留原始内容快照（用于撤回记录查看） */
+  originalContent?: string
+  /** 消息是否已撤回 */
+  isRecalled?: boolean
+  /** 撤回时间戳 */
+  recallTimestamp?: number
+  /** 发起撤回的身份 */
+  recalledBy?: 'player' | 'character'
   timestamp: number
   isRead: boolean
   /** `${characterId}::${playerIdentityId}`，便于索引 */

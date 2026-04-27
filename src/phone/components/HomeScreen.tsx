@@ -52,6 +52,7 @@ const APP_POSITIONS: Record<AppSlot['id'], { col: number; row: number }> = {
   takeout: { col: 4, row: 4 },
   weibo: { col: 3, row: 5 },
   api: { col: 4, row: 5 },
+  voiceprint: { col: 2, row: 6 },
   appearance: { col: 1, row: 6 },
 }
 
