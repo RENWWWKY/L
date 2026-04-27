@@ -1,5 +1,11 @@
 export type MiniMaxCredentials = { apiKey: string; groupId: string }
 
+function toDetachedArrayBuffer(bytes: Uint8Array): ArrayBuffer {
+  const copied = new Uint8Array(bytes.byteLength)
+  copied.set(bytes)
+  return copied.buffer
+}
+
 export type MiniMaxVoiceInfo = {
   voice_id: string
   voice_name?: string
@@ -226,7 +232,7 @@ export async function createMiniMaxT2ASyncAudioBlob(
   if (!hexAudio) throw new Error('同步合成未返回音频数据')
   const bytes = hexToBytes(hexAudio)
   if (!bytes.length) throw new Error('同步合成音频数据格式无效')
-  const ab = bytes.buffer instanceof ArrayBuffer ? bytes.buffer : bytes.slice().buffer
+  const ab = toDetachedArrayBuffer(bytes)
   return new Blob([ab], { type: 'audio/mpeg' })
 }
 
@@ -423,10 +429,10 @@ export async function retrieveMiniMaxAudioFileUrl(
       const hit = candidates.find((c) => c.mime === mime)
       if (!hit) continue
       if (isIOS && mime === 'audio/ogg') continue
-      return new Blob([hit.fileBytes], { type: hit.mime })
+      return new Blob([toDetachedArrayBuffer(hit.fileBytes)], { type: hit.mime })
     }
     // iOS 下若只有 ogg，直接返回 null，让上层给出清晰错误提示而不是 “Load failed”。
-    return isIOS ? null : new Blob([candidates[0].fileBytes], { type: candidates[0].mime })
+    return isIOS ? null : new Blob([toDetachedArrayBuffer(candidates[0].fileBytes)], { type: candidates[0].mime })
   }
 
   const ensurePlayableAudioBlob = async (blob: Blob) => {
