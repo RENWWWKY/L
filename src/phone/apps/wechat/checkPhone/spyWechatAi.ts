@@ -228,6 +228,7 @@ export async function generateSpyWechatData(params: {
   playerIdentityId: string
   playerDisplayName: string
   useLumiProjectAssistantPrompt: boolean
+  scope?: 'contacts' | 'chats' | 'moments' | 'me'
   options: SpyWechatGenerateOptions
 }): Promise<SpyWechatGeneratedData> {
   const cfg = params.apiConfig
