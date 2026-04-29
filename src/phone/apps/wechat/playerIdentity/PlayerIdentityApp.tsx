@@ -11,6 +11,13 @@ import { InlineDropdown } from '../newFriendsPersona/InlineDropdown'
 import { WorldBooksEditor } from '../newFriendsPersona/WorldBooksEditor'
 import type { ScheduleTable } from '../newFriendsPersona/types'
 import { ScheduleEditorScreen } from '../schedule/ScheduleEditorScreen'
+import {
+  buildMbtiPersonalityWorldBook,
+  buildMbtiPersonalityWorldBookItems,
+  getMbtiPersonalityWorldBookName,
+  isMbtiPersonalityWorldBookName,
+  normalizeMbti,
+} from '../mbtiPersonalityWorldBook'
 
 const COLORS = {
   bg: '#f5f5f5',
@@ -716,6 +723,36 @@ function IdentityEditPage({
     setData((prev) => ({ ...prev, [k]: v, updatedAt: Date.now() }))
   }
 
+  const syncMbtiPersonalityWorldBooks = (prev: PlayerIdentity, nextMbti: string): PlayerIdentity => {
+    const now = Date.now()
+    const k = normalizeMbti(nextMbti)
+    const targetName = k ? getMbtiPersonalityWorldBookName(k) : ''
+    const prevBooks = Array.isArray(prev.worldBooks) ? prev.worldBooks : []
+
+    let foundTarget = false
+    const nextBooks = prevBooks.map((w) => {
+      if (!isMbtiPersonalityWorldBookName(w.name)) return w
+      if (k && w.name === targetName) {
+        foundTarget = true
+        const hasEnabledContent = (w.items ?? []).some((it) => Boolean(it.enabled) && String(it.content || '').trim())
+        if (!hasEnabledContent) {
+          return {
+            ...w,
+            enabled: true,
+            collapsed: true,
+            items: buildMbtiPersonalityWorldBookItems(k, now),
+          }
+        }
+        return { ...w, enabled: true }
+      }
+      // 非当前 MBTI 的“人格设定”册默认关闭，避免页面/提示词里混入多种人格。
+      return { ...w, enabled: false }
+    })
+
+    const books = k && !foundTarget ? [buildMbtiPersonalityWorldBook(k, now), ...nextBooks] : nextBooks
+    return { ...prev, mbti: nextMbti, worldBooks: books, updatedAt: now }
+  }
+
   const onSave = async () => {
     const mbtiAvatar = data.mbti?.trim() ? resolveMbtiImageUrl(data.mbti) : ''
     const next: PlayerIdentity = {
@@ -1023,7 +1060,8 @@ function IdentityEditPage({
                                 color: active ? '#ffffff' : '#000000',
                               }}
                               onClick={() => {
-                                setField('mbti', m)
+                                setDirty(true)
+                                setData((prev) => syncMbtiPersonalityWorldBooks(prev, m))
                                 setMbtiOpen(false)
                               }}
                             >
@@ -1054,7 +1092,8 @@ function IdentityEditPage({
                           className="w-full rounded-xl border bg-white px-3 py-2 text-[12px] transition-all duration-200 ease-out hover:bg-[#fafafa]"
                           style={{ borderColor: '#e5e5e5', color: '#666666' }}
                           onClick={() => {
-                            setField('mbti', '')
+                            setDirty(true)
+                            setData((prev) => syncMbtiPersonalityWorldBooks(prev, ''))
                             setMbtiOpen(false)
                           }}
                         >

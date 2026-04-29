@@ -1,6 +1,6 @@
 import { AnimatePresence, motion } from 'framer-motion'
 import { Pause, Play, ChevronDown } from 'lucide-react'
-import { useEffect, useMemo, useRef, useState, type MouseEvent } from 'react'
+import { useEffect, useMemo, useRef, useState, type MouseEvent, type PointerEvent as ReactPointerEvent } from 'react'
 
 export type VoiceMessageBubbleProps = {
   isUser: boolean
@@ -9,6 +9,7 @@ export type VoiceMessageBubbleProps = {
   transcriptText: string
   onTranscriptToggle?: (expanded: boolean) => void
   onRequestAudio?: () => Promise<string>
+  onLongPress?: (anchorRect: DOMRect) => void
 }
 
 const SPRING = { type: 'spring', stiffness: 300, damping: 30 } as const
@@ -28,6 +29,7 @@ export function VoiceMessageBubble({
   transcriptText,
   onTranscriptToggle,
   onRequestAudio,
+  onLongPress,
 }: VoiceMessageBubbleProps) {
   const [isPlaying, setIsPlaying] = useState(false)
   const [isTranscribing, setIsTranscribing] = useState(false)
@@ -37,6 +39,9 @@ export function VoiceMessageBubble({
   const audioRef = useRef<HTMLAudioElement | null>(null)
   const boundAudioUrlRef = useRef('')
   const fallbackTimerRef = useRef<number | null>(null)
+  const longPressTimerRef = useRef<number | null>(null)
+  const longPressTriggeredRef = useRef(false)
+  const pressStartRef = useRef<{ x: number; y: number } | null>(null)
 
   const waveBars = useMemo(() => buildWaveHeights(duration || 1), [duration])
 
@@ -96,8 +101,49 @@ export function VoiceMessageBubble({
         window.clearInterval(fallbackTimerRef.current)
         fallbackTimerRef.current = null
       }
+      if (longPressTimerRef.current != null) {
+        window.clearTimeout(longPressTimerRef.current)
+        longPressTimerRef.current = null
+      }
     }
   }, [])
+
+  const clearLongPressTimer = () => {
+    if (longPressTimerRef.current != null) {
+      window.clearTimeout(longPressTimerRef.current)
+      longPressTimerRef.current = null
+    }
+  }
+
+  const onBubblePointerDown = (e: ReactPointerEvent<HTMLButtonElement>) => {
+    if (!onLongPress) return
+    clearLongPressTimer()
+    longPressTriggeredRef.current = false
+    pressStartRef.current = { x: e.clientX, y: e.clientY }
+    const el = e.currentTarget
+    const pid = e.pointerId
+    longPressTimerRef.current = window.setTimeout(() => {
+      longPressTriggeredRef.current = true
+      onLongPress(el.getBoundingClientRect())
+      try {
+        if (el.hasPointerCapture(pid)) el.releasePointerCapture(pid)
+      } catch {
+        /* ignore */
+      }
+    }, 420)
+  }
+
+  const onBubblePointerMove = (e: ReactPointerEvent<HTMLButtonElement>) => {
+    const start = pressStartRef.current
+    if (!start) return
+    const moved = Math.hypot(e.clientX - start.x, e.clientY - start.y)
+    if (moved > 10) clearLongPressTimer()
+  }
+
+  const onBubblePointerEnd = () => {
+    pressStartRef.current = null
+    clearLongPressTimer()
+  }
 
   const togglePlay = async () => {
     if (isGeneratingAudio) return
@@ -180,8 +226,16 @@ export function VoiceMessageBubble({
       <motion.button
         type="button"
         onClick={() => {
+          if (longPressTriggeredRef.current) {
+            longPressTriggeredRef.current = false
+            return
+          }
           void togglePlay()
         }}
+        onPointerDown={onBubblePointerDown}
+        onPointerMove={onBubblePointerMove}
+        onPointerUp={onBubblePointerEnd}
+        onPointerCancel={onBubblePointerEnd}
         whileTap={{ scale: 0.985 }}
         transition={SPRING}
         className={`w-full rounded-[18px] border px-2.5 pt-3 text-left ${bubbleClass}`}

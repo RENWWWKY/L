@@ -1,5 +1,6 @@
 import { ArrowLeft, ChevronRight, Dice5, Download, Globe, Plus, Save, Upload, ChevronDown, Trash2, User, UserPlus, X } from 'lucide-react'
 import { AnimatePresence } from 'framer-motion'
+import { createPortal } from 'react-dom'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { personaDb } from './idb'
 import type { Character, Gender, PlayerIdentity, Relationship } from './types'
@@ -25,6 +26,13 @@ import { formatWorldBackgroundForPrompt } from './worldBackgroundFormat'
 import { WorldBackgroundEditPage, WorldBackgroundPickerPage } from './WorldBackgroundScreens'
 import { NewFriendsList, type FriendRequest } from './NewFriendsList'
 import { RequestDetail } from './RequestDetail'
+import {
+  buildMbtiPersonalityWorldBook,
+  buildMbtiPersonalityWorldBookItems,
+  getMbtiPersonalityWorldBookName,
+  isMbtiPersonalityWorldBookName,
+  normalizeMbti,
+} from '../mbtiPersonalityWorldBook'
 
 const bg = '#f5f5f5'
 const card = '#ffffff'
@@ -126,14 +134,43 @@ function InlineDropdown({
           style={{ color: sub }}
         />
       </button>
-      <div
-        className={`absolute inset-x-0 top-full z-20 mt-1 origin-top rounded-2xl border bg-white shadow-[0_10px_30px_rgba(0,0,0,0.18)] transition-[opacity,transform,max-height] duration-200 ease-out ${
-          open ? 'opacity-100 translate-y-0 max-h-64' : 'pointer-events-none opacity-0 -translate-y-1 max-h-0'
-        }`}
-        style={{ borderColor: border, overflow: 'hidden' }}
-      >
-        <div className="max-h-64 overflow-y-auto py-1 [scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden">{children}</div>
-      </div>
+      {open && !disabled && typeof document !== 'undefined'
+        ? createPortal(
+            <div
+              className="fixed inset-0 z-[1000] flex items-center justify-center bg-black/35 px-4"
+              onMouseDown={() => onToggle()}
+            >
+              <div
+                className="w-full max-w-[520px] overflow-hidden rounded-2xl border bg-white shadow-[0_10px_30px_rgba(0,0,0,0.22)]"
+                style={{ borderColor: border }}
+                onMouseDown={(e) => e.stopPropagation()}
+              >
+                <div className="flex items-center justify-between gap-3 border-b px-4 py-3" style={{ borderColor: '#f0f0f0' }}>
+                  <div className="min-w-0 flex-1">
+                    <p className="truncate text-[14px] font-semibold" style={{ color: text }}>
+                      {label}
+                    </p>
+                    <p className="mt-0.5 truncate text-[12px]" style={{ color: sub, fontWeight: 300 }}>
+                      {valueText}
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    className="rounded-xl px-3 py-1.5 text-[12px] transition-all duration-200 ease-out hover:bg-[#fafafa]"
+                    style={{ color: sub }}
+                    onClick={() => onToggle()}
+                  >
+                    关闭
+                  </button>
+                </div>
+                <div className="max-h-[70vh] overflow-y-auto py-1 [scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden">
+                  {children}
+                </div>
+              </div>
+            </div>,
+            document.body,
+          )
+        : null}
     </div>
   )
 }
@@ -1140,6 +1177,36 @@ function PersonaEditPage({
     setData((s) => (s ? { ...s, [k]: v, updatedAt: Date.now() } : s))
   }
 
+  const syncMbtiPersonalityWorldBooks = (prev: Character, nextMbti: string): Character => {
+    const now = Date.now()
+    const k = normalizeMbti(nextMbti)
+    const targetName = k ? getMbtiPersonalityWorldBookName(k) : ''
+    const prevBooks = Array.isArray(prev.worldBooks) ? prev.worldBooks : []
+
+    let foundTarget = false
+    const nextBooks = prevBooks.map((w) => {
+      if (!isMbtiPersonalityWorldBookName(w.name)) return w
+      if (k && w.name === targetName) {
+        foundTarget = true
+        const hasEnabledContent = (w.items ?? []).some((it) => Boolean(it.enabled) && String(it.content || '').trim())
+        if (!hasEnabledContent) {
+          return {
+            ...w,
+            enabled: true,
+            collapsed: true,
+            items: buildMbtiPersonalityWorldBookItems(k, now),
+          }
+        }
+        return { ...w, enabled: true }
+      }
+      // 非当前 MBTI 的“人格设定”册默认关闭，避免页面/提示词里混入多种人格。
+      return { ...w, enabled: false }
+    })
+
+    const books = k && !foundTarget ? [buildMbtiPersonalityWorldBook(k, now), ...nextBooks] : nextBooks
+    return { ...prev, mbti: nextMbti, worldBooks: books, updatedAt: now }
+  }
+
   const birthdayParts = useMemo(() => {
     const v = data?.birthdayMD || ''
     const m = Number(v.slice(0, 2))
@@ -1855,7 +1922,9 @@ function PersonaEditPage({
                             color: active ? '#ffffff' : text,
                           }}
                           onClick={() => {
-                            setField('mbti', m)
+                            if (!data) return
+                            setDirty(true)
+                            setData((prev) => (prev ? syncMbtiPersonalityWorldBooks(prev, m) : prev))
                             setMbtiOpen(false)
                           }}
                         >
@@ -1886,7 +1955,9 @@ function PersonaEditPage({
                       className="w-full rounded-xl border bg-white px-3 py-2 text-[12px] transition-all duration-200 ease-out hover:bg-[#fafafa]"
                       style={{ borderColor: border, color: sub }}
                       onClick={() => {
-                        setField('mbti', '')
+                        if (!data) return
+                        setDirty(true)
+                        setData((prev) => (prev ? syncMbtiPersonalityWorldBooks(prev, '') : prev))
                         setMbtiOpen(false)
                       }}
                     >

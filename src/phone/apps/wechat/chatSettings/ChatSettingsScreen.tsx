@@ -428,18 +428,6 @@ export function ChatSettingsScreen({
             <WxSwitch on={effectiveBusyEnabled} onToggle={() => void toggleBusy()} />
           </ListRow>
           <ListRow borderBottom>
-            <span className="text-[16px] text-black">输出思维链</span>
-            <WxSwitch
-              on={effective.showThinkingChain}
-              onToggle={() => void personaDb.upsertChatConversationSettings({
-                conversationKey,
-                peerCharacterId,
-                playerIdentityId,
-                showThinkingChain: !effective.showThinkingChain,
-              }).then(load)}
-            />
-          </ListRow>
-          <ListRow borderBottom>
             <span className="text-[16px] text-black">置顶聊天</span>
             <WxSwitch on={effective.isPinned} onToggle={() => void togglePin()} />
           </ListRow>

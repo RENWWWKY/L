@@ -43,6 +43,7 @@ import type {
 } from './newFriendsPersona/types'
 import {
   requestWeChatHeartWhisper,
+  requestWeChatDanmakuVarietyShow,
   requestWeChatPeerReplyBubbles,
   requestWeChatPeerReplyBubblesWithImage,
   requestWeChatVoiceCallReplyText,
@@ -54,7 +55,7 @@ import {
 } from './wechatChatAi'
 import { loadOfflineDatingPlotsPromptBlock } from './dating/loadOfflineDatingPlotsForWechatPrompt'
 import { runUnifiedAutoMemorySummaryAfterThreshold } from './unifiedMemoryAutoSummary'
-import { useWeChatDanmakuAi } from './hooks/useWeChatDanmakuAi'
+import { DanmakuOverlay } from './DanmakuOverlay'
 import { useWeChatCurrentTime } from './time/useWeChatCurrentTime'
 import { formatWeChatChatTimestamp, shouldRenderWeChatTimestamp } from './time/wechatTimeUtils'
 import { WECHAT_LUMI_PEER_CHARACTER_ID, wechatConversationKey } from './wechatConversationKey'
@@ -134,6 +135,18 @@ const VOICE_ALLOWED_TONE_TOKENS = new Set([
   'emm',
   'sneezes',
 ])
+
+function isSameApiConfigShape(
+  a: ReturnType<typeof useCurrentApiConfig>,
+  b: ReturnType<typeof useCurrentApiConfig>,
+): boolean {
+  if (!a || !b) return false
+  return (
+    String(a.apiUrl || '').trim() === String(b.apiUrl || '').trim() &&
+    String(a.apiKey || '').trim() === String(b.apiKey || '').trim() &&
+    String(a.modelId || '').trim() === String(b.modelId || '').trim()
+  )
+}
 const VOICE_ALLOWED_EMOTIONS = ['happy', 'sad', 'angry', 'fearful', 'disgusted', 'surprised', 'neutral', 'fluent'] as const
 function makeStableLumiOpeningId(conversationKey: string, index: number): string {
   const key = conversationKey
@@ -166,12 +179,12 @@ function itemsToTranscript(items: ChatItem[]): ChatTranscriptTurn[] {
         const emo = m.voice.emotionLabel?.trim()
         const who = m.from === 'self' ? '用户语音' : '对方语音'
         const voiceText = emo ? `（${who}，情绪：${emo}）${txt}` : `（${who}）${txt}`
-        return { id: m.id, from: m.from, text: voiceText }
+        return { id: m.id, from: m.from, text: voiceText, replyTo: m.replyTo }
       }
       const text = m.text?.trim()
-      if (text) return { id: m.id, from: m.from, text }
-      if (m.images?.length) return { id: m.id, from: m.from, text: '（发送了一张图片）' }
-      return { id: m.id, from: m.from, text: '' }
+      if (text) return { id: m.id, from: m.from, text, replyTo: m.replyTo }
+      if (m.images?.length) return { id: m.id, from: m.from, text: '（发送了一张图片）', replyTo: m.replyTo }
+      return { id: m.id, from: m.from, text: '', replyTo: m.replyTo }
     })
     .filter((t) => t.text.trim())
 }
@@ -197,6 +210,8 @@ function sanitizeVoiceTranscriptDisplay(input: string): string {
     .replace(/<[^>]*>/g, ' ')
     .replace(/\([^)]*\)/g, ' ')
     .replace(/\{\/?(happy|sad|angry|fearful|disgusted|surprised|neutral|fluent)\}/gi, ' ')
+    // 去掉独立口癖（如“啧”“哈...”），避免显示在语音转写文本中
+    .replace(/(^|[\s，。！？!?,、；;:：])(啧+|哈+)(?:\s*(?:\.{2,}|…+|~+|～+))?(?=$|[\s，。！？!?,、；;:：])/gu, '$1')
     .replace(/\s+/g, ' ')
     .trim()
 }
@@ -226,6 +241,12 @@ function normalizeVoiceScriptForTts(input: string): string {
     return (VOICE_ALLOWED_EMOTIONS as readonly string[]).includes(t) ? m.toLowerCase() : ' '
   })
 
+  // 去掉独立口癖语气词（如“啧”“哈...”），避免生成无意义口头音。
+  s = s.replace(
+    /(^|[\s，。！？!?,、；;:：])(啧+|哈+)(?:\s*(?:\.{2,}|…+|~+|～+))?(?=$|[\s，。！？!?,、；;:：])/gu,
+    '$1',
+  )
+
   const plain = sanitizeVoiceControlForTextBubble(s)
   const guessEmotion = () => {
     const t = plain
@@ -242,17 +263,6 @@ function normalizeVoiceScriptForTts(input: string): string {
     if (t.length >= 26 && /[，。,.]/u.test(t) && !/[!?？！]/u.test(t)) return 'fluent' as const
     return 'neutral' as const
   }
-  const guessTone = (emo: (typeof VOICE_ALLOWED_EMOTIONS)[number]) => {
-    const t = plain
-    if (emo === 'surprised') return 'gasps'
-    if (emo === 'happy') return /…|\.{2,}|\.\.\./u.test(t) ? 'chuckle' : 'laughs'
-    if (emo === 'sad') return 'sighs'
-    if (emo === 'angry') return 'breath'
-    // 有“...”/停顿感时用 chuckle，不然 breath
-    if (/…|\.{2,}|\.\.\./u.test(t)) return 'chuckle'
-    return 'breath'
-  }
-
   // 停顿更“像人”：省略号/波浪号/标点插入不同停顿
   if (!/<#\s*[\d.]+\s*#>/.test(s)) {
     s = s
@@ -264,14 +274,6 @@ function normalizeVoiceScriptForTts(input: string): string {
       .replace(/\s+/g, ' ')
       .trim()
     if (!/<#\s*[\d.]+\s*#>/.test(s)) s = `<#0.4#>${s}`
-  }
-
-  // 没有语气词就按情绪智能补一个
-  const hasTone = /\(([^)]*)\)/.test(s)
-  if (!hasTone) {
-    const emo = guessEmotion()
-    const tone = guessTone(emo)
-    s = `(${tone})${s}`
   }
 
   // 没有情绪标签就按内容猜一个（不再默认 neutral）
@@ -470,10 +472,77 @@ function parseVoiceCallDirective(raw: string): AiVoiceCallDirective | null {
 function parseCharacterStickerLine(line: string): { url: string } | null {
   const t = String(line ?? '').trim()
   const m = /^\[表情包\]\s*(.+)$/.exec(t)
-  if (!m) return null
-  const url = m[1]!.trim().replace(/^['"`「」]+|['"`」]+$/g, '').trim()
+  const raw = m ? m[1]! : t
+  let url = raw.trim().replace(/^['"`「」]+|['"`」]+$/g, '').trim()
+  url = url.replace(/^\/+/, '').trim()
+  // 兼容模型偶发漏前缀：如 `Lumi-Phone/image/...`、`Phone/image/...`
+  url = url
+    .replace(/^lumi[-_]?phone\/image\//i, 'Phone/image/')
+    .replace(/^lumi[-:：\s]*/i, '')
+    .trim()
+  // 去掉 URL 末尾常见标点，避免命中失败
+  url = url.replace(/[，。！？!?,、；;:：）\])》】]+$/g, '').trim()
   if (!url) return null
+  // 仅把“看起来像 URL/资源路径”的行当作表情包候选，避免误吞普通文本。
+  if (!/^https?:\/\/\S+$/i.test(url) && !/^(?:\.{0,2}\/)?(?:Lumi-)?Phone\/image\/\S+$/i.test(url)) {
+    return null
+  }
   return { url }
+}
+
+function resolveKnownStickerUrl(rawUrl: string): string | null {
+  const set = getKnownStickerUrlSet()
+  if (!set.size) return null
+  const src = String(rawUrl || '').trim()
+  if (!src) return null
+  const candidates = [
+    src,
+    src.replace(/^\/+/, ''),
+    `/${src.replace(/^\/+/, '')}`,
+    src.replace(/^\/?Lumi-Phone\/image\//i, 'Phone/image/'),
+    src.replace(/^\/?Phone\/image\//i, 'Lumi-Phone/image/'),
+  ]
+  for (const c of candidates) {
+    if (set.has(c)) return c
+  }
+  return null
+}
+
+function extractDanmakuFromBubbleText(lines: string[]): { cleaned: string[]; danmakuLines: string[] } {
+  const input = (lines ?? []).map((s) => String(s ?? '')).join('\n')
+  const normalized = input
+    .replace(/\\n/g, '\n')
+    .replace(/\\<(\/?danmaku\b[^>]*)>/gi, '<$1>')
+  const tagRe = /<danmaku\b[^>]*>([\s\S]*?)<\/danmaku>/gi
+  const blocks: string[] = []
+  const visible = normalized.replace(tagRe, (_all, body: string) => {
+    blocks.push(String(body ?? '').trim())
+    return ''
+  })
+  const cleaned = visible
+    .split(/\r?\n/)
+    .map((s) => s.trim())
+    .filter(Boolean)
+  if (!blocks.length) return { cleaned, danmakuLines: [] }
+  const dm: string[] = []
+  for (const body of blocks) {
+    try {
+      const j = JSON.parse(body) as unknown
+      if (Array.isArray(j)) {
+        dm.push(...j.map((x) => String(x ?? '').trim()).filter(Boolean))
+        continue
+      }
+    } catch {
+      // ignore and fallback
+    }
+    dm.push(
+      ...body
+        .split(/\r?\n/)
+        .map((s) => s.trim())
+        .filter(Boolean),
+    )
+  }
+  return { cleaned, danmakuLines: dm.slice(0, 20) }
 }
 
 function formatBusyCountdownByEndTime(endTimeMs: number, nowMs = Date.now()): string {
@@ -852,6 +921,7 @@ type DmBullet = {
   text: string
   track: number
   durationSec: number
+  startDelaySec?: number
   fontPx: number
   colorRgba: string
   style: 'none' | 'gray' | 'white'
@@ -947,9 +1017,10 @@ export function ChatRoom({
   const { wechatTheme } = state
   const { chatTheme } = useChatTheme()
   const apiConfig = useCurrentApiConfig('chatCard')
+  const danmakuApiConfig = useCurrentApiConfig('danmaku')
+  const danmakuSubApiEnabled = useIsSubApiEnabled('danmaku')
   const voiceAsrApiConfig = useCurrentApiConfig('voiceAsr')
   const voiceAsrEnabled = useIsSubApiEnabled('voiceAsr')
-  const { fetchDanmakuLines } = useWeChatDanmakuAi()
   const { currentTimeMs, getCurrentTimeMs } = useWeChatCurrentTime({
     characterId: personaCharacterId?.trim() || conversationCharacterId,
   })
@@ -958,7 +1029,7 @@ export function ChatRoom({
   const [peerBusyRow, setPeerBusyRow] = useState<CharacterBusySettingsRow | null>(null)
   const [globalModeBusyEnabled, setGlobalModeBusyEnabled] = useState(true)
   const [dmBullets, setDmBullets] = useState<DmBullet[]>([])
-  const nextDmTrackRef = useRef(0)
+  const dmLaneBusyUntilRef = useRef<number[]>([])
 
   useEffect(() => {
     let cancelled = false
@@ -1331,9 +1402,12 @@ export function ChatRoom({
 
   const hydrateMessages = useCallback(
     async (scrollToBottom: boolean) => {
+      // 避免“偶发丢记录”观感：刷新/存储变更时按当前可见窗口动态拉取，
+      // 不要每次都硬回退到最近 50 条。
+      const recentLimit = Math.max(50, visibleMsgLimit + 20)
       let msgs = await personaDb.listWeChatChatMessagesRecent({
         conversationKey,
-        limit: 50,
+        limit: recentLimit,
       })
 
       // Lumi 小助手：首次进入且无历史时，写入默认开场白（只写一次，避免每次进入都刷屏）。
@@ -1367,7 +1441,7 @@ export function ChatRoom({
         // 重新读取，确保使用库里最终结果（也避免并发/StrictMode 下的重复写入观感）
         msgs = await personaDb.listWeChatChatMessagesRecent({
           conversationKey,
-          limit: 50,
+          limit: recentLimit,
         })
       }
 
@@ -1406,7 +1480,7 @@ export function ChatRoom({
               }
               msgs = await personaDb.listWeChatChatMessagesRecent({
                 conversationKey,
-                limit: 50,
+                limit: recentLimit,
               })
             }
           } catch {
@@ -1480,7 +1554,16 @@ export function ChatRoom({
         }
       }
     },
-    [conversationKey, getCurrentTimeMs, rebuildWithCurrentTime, useLumiProjectAssistantPrompt, personaCharacterId, conversationCharacterId, playerIdentityId],
+    [
+      conversationKey,
+      getCurrentTimeMs,
+      rebuildWithCurrentTime,
+      useLumiProjectAssistantPrompt,
+      personaCharacterId,
+      conversationCharacterId,
+      playerIdentityId,
+      visibleMsgLimit,
+    ],
   )
 
   const hydrateMessagesRef = useRef(hydrateMessages)
@@ -2107,105 +2190,86 @@ export function ChatRoom({
     setTypingVisible(false)
   }, [])
 
-  /** 主回复气泡全部落库、展示完成后：按配置额外请求综艺式弹幕（不写消息表）。 */
-  const spawnDanmakuAfterReply = useCallback(async () => {
-    const g = await personaDb.getGlobalSettings()
-    if (!danmakuEnabled) return
-    const pid = (personaCharacterId?.trim() || conversationCharacterId.trim()) || ''
-    const charRow = pid ? await personaDb.getCharacterDanmakuSettings(pid) : null
-    const eff = resolveEffectiveDanmakuVisuals(g, pid, charRow)
-    if (eff.skipCharacter) return
-
-    let character: Character | null = null
-    let worldBackgroundPrompt: string | undefined
-    const pcid = personaCharacterId?.trim()
-    if (pcid) {
-      try {
-        character = await personaDb.getCharacter(pcid)
-        if (character?.worldBackgroundEnabled !== false && character?.worldBackgroundId?.trim()) {
-          const wbg = await personaDb.getWorldBackground(character.worldBackgroundId.trim())
-          const block = formatWorldBackgroundForPrompt(wbg)
-          if (block.trim()) worldBackgroundPrompt = block
-        }
-      } catch {
-        character = null
-      }
+  /** 消费模型返回的弹幕行；当本地配置尚未加载完成时，回退实时读取 DB，避免“首轮丢弹幕”。 */
+  const enqueueDanmakuLines = useCallback(async (lines: string[]) => {
+    if (!lines.length || !danmakuEnabled) return
+    let eff = effectiveDm
+    if (!eff) {
+      const g = await personaDb.getGlobalSettings()
+      const pid = (personaCharacterId?.trim() || conversationCharacterId.trim()) || ''
+      const row = pid ? await personaDb.getCharacterDanmakuSettings(pid) : null
+      eff = resolveEffectiveDanmakuVisuals(g, pid, row)
     }
-
-    let playerIdentity: PlayerIdentity | null = null
-    const piid = playerIdentityId.trim()
-    if (piid && piid !== '__none__') {
-      try {
-        playerIdentity = await personaDb.getPlayerIdentity(piid)
-      } catch {
-        playerIdentity = null
-      }
-    }
-
-    const transcript = itemsToTranscript(itemsRef.current)
-    const peerName = playerDisplayName.trim() || state.profile.displayName.trim() || '朋友'
-    const promptMode =
-      useLumiProjectAssistantPrompt && !personaCharacterId?.trim() ? 'lumi-assistant' : 'persona'
-    const offlineDatingPlotsContext =
-      promptMode === 'persona' && pcid
-        ? await loadOfflineDatingPlotsPromptBlock(pcid, character?.name ?? null)
-        : ''
-
-    const lines = await fetchDanmakuLines({
-      apiConfig,
-      character,
-      playerIdentity,
-      playerDisplayName: peerName,
-      transcript,
-      promptMode,
-      useMemory: eff.useMemory,
-      generateCount: eff.generateCount,
-      customRulesPrompt: eff.customPrompt.trim() || undefined,
-      longTermMemoryNotes: memoryNotesForPrompt.trim() || undefined,
-      worldBackgroundPrompt,
-      offlineDatingPlotsContext: offlineDatingPlotsContext || undefined,
-    })
-    if (!lines.length) return
-
+    if (!eff || eff.skipCharacter) return
+    logger.log(
+      'ai',
+      `[DMDBG] enqueue lines=${lines.length} poolBefore=${dmBullets.length} density=${eff.density} pos=${eff.position}`,
+    )
     const trackCount = densityToTrackCount(eff.density)
     const durationSec = eff.scrollDurationSec
     const fontPx = eff.fontSize
     const colorRgba = hexAndOpacityToRgba(eff.color, eff.opacity)
+    if (dmLaneBusyUntilRef.current.length !== trackCount) {
+      dmLaneBusyUntilRef.current = Array.from({ length: trackCount }, () => 0)
+    }
 
     lines.forEach((line, i) => {
+      const scheduleDelay = Math.max(0, i * randomBetween(80, 260) + randomBetween(0, 900))
       window.setTimeout(() => {
-        const id = `dm-${Date.now()}-${i}-${Math.random().toString(36).slice(2, 8)}`
-        const track = nextDmTrackRef.current % trackCount
-        nextDmTrackRef.current += 1
-        const topPct = eff.position === 'random' ? Math.random() * 78 : undefined
-        setDmBullets((prev) => [
-          ...prev,
-          {
-            id,
-            text: line,
-            track,
-            durationSec,
-            fontPx,
-            colorRgba,
-            style: eff.style,
-            positionMode: eff.position,
-            topPct,
-          },
-        ])
-      }, i * 160)
+        const pickTrackWithGap = () => {
+          const now = Date.now()
+          const busy = dmLaneBusyUntilRef.current
+          let best = 0
+          let bestWait = Number.POSITIVE_INFINITY
+          for (let t = 0; t < trackCount; t += 1) {
+            const wait = Math.max(0, (busy[t] ?? 0) - now)
+            if (wait <= 0) return { track: t, waitMs: 0 }
+            if (wait < bestWait) {
+              bestWait = wait
+              best = t
+            }
+          }
+          return { track: best, waitMs: Math.max(0, bestWait) }
+        }
+        const place = () => {
+          const { track, waitMs } = pickTrackWithGap()
+          if (waitMs > 0) {
+            window.setTimeout(place, waitMs)
+            return
+          }
+          const id = `dm-${Date.now()}-${i}-${Math.random().toString(36).slice(2, 8)}`
+          const durationJitter = (Math.random() - 0.5) * 2.2
+          const realDuration = Math.max(3, durationSec + durationJitter)
+          const safeGapMs = Math.max(1100, realDuration * 1000 * 0.62)
+          dmLaneBusyUntilRef.current[track] = Date.now() + safeGapMs
+          const topPct =
+            eff.position === 'random'
+              ? Math.min(92, Math.max(2, (track / Math.max(1, trackCount - 1)) * 72 + Math.random() * 6))
+              : undefined
+          setDmBullets((prev) => {
+            const next = [
+              ...prev,
+              {
+                id,
+                text: line,
+                track,
+                durationSec: realDuration,
+                startDelaySec: Math.random() * 0.65,
+                fontPx,
+                colorRgba,
+                style: eff.style,
+                positionMode: eff.position,
+                topPct,
+              },
+            ]
+            // 循环渲染下保留近期窗口，避免数组无限膨胀。
+            return next.slice(-180)
+          })
+        }
+        place()
+      }, scheduleDelay)
     })
-  }, [
-    apiConfig,
-    conversationCharacterId,
-    danmakuEnabled,
-    fetchDanmakuLines,
-    memoryNotesForPrompt,
-    personaCharacterId,
-    playerDisplayName,
-    playerIdentityId,
-    state.profile.displayName,
-    useLumiProjectAssistantPrompt,
-  ])
+  }, [danmakuEnabled, effectiveDm, personaCharacterId, conversationCharacterId, logger, dmBullets.length])
 
   const generateHeartWhisper = useCallback(async () => {
     if (heartWhisperLoading) return
@@ -2349,7 +2413,6 @@ export function ChatRoom({
 
         let aiReply: WeChatPeerReplyResult = { bubbles: [] }
         let aiRequestFailed = false
-        let expectingThinkingChain = false
         let clearBusyAfterReply = false
         let suppressBusyDirectiveThisRound = false
         try {
@@ -2440,9 +2503,8 @@ export function ChatRoom({
               return otherIdx < 0 || selfIdx > otherIdx
             }) as ChatMsg | undefined
             const img = lastSelfWithImage?.images?.[0]
-            const convSettings = await personaDb.getChatConversationSettings(conversationKey)
-            const includeThinkingChain = !!convSettings?.showThinkingChain
-            expectingThinkingChain = includeThinkingChain
+            // 线上回复思维链开关：已取消（每次回复都走好感度一致性思维链 CoT）。
+            const includeThinkingChain = true
             const busyCfg =
               busyGs.busyMode === 'character'
                 ? {
@@ -2465,6 +2527,22 @@ export function ChatRoom({
                   })),
                 }
               : undefined
+            const danmakuConfig =
+              danmakuEnabled && effectiveDm && !effectiveDm.skipCharacter
+                ? {
+                    enabled: true,
+                    useMemory: effectiveDm.useMemory,
+                    generateCount: effectiveDm.generateCount,
+                    customPrompt: effectiveDm.customPrompt.trim() || undefined,
+                  }
+                : undefined
+            const hasDanmakuSubApi =
+              !!danmakuApiConfig?.apiUrl?.trim() &&
+              !!danmakuApiConfig?.apiKey?.trim() &&
+              !!danmakuApiConfig?.modelId?.trim() &&
+              danmakuSubApiEnabled &&
+              !isSameApiConfigShape(danmakuApiConfig, apiConfig)
+            const shouldSplitDanmakuCall = !!danmakuConfig && hasDanmakuSubApi
             logger.log(
               'ai',
               `flushAiReplies: promptMode=${pm} personaCharacterId=${cid || 'none'} offlinePlotsChars=${offlineDatingPlotsContext.length} lastSelf=${lastSelf?.id ?? 'none'} lastOther=${lastOther?.id ?? 'none'} pickedImageFrom=${lastSelfWithImage?.id ?? 'none'} hasImage=${Boolean(img?.base64?.trim())} imgLen=${img?.base64?.trim()?.length ?? 0}`,
@@ -2487,6 +2565,8 @@ export function ChatRoom({
                   replyBias: finalReplyBias || undefined,
                   busyContext,
                   includeThinkingChain,
+                  currentTimeMs: getCurrentTimeMs(),
+                  danmakuConfig: shouldSplitDanmakuCall ? undefined : danmakuConfig,
                 })
               } else {
                 aiReply = await requestWeChatPeerReplyBubblesWithImage({
@@ -2505,6 +2585,8 @@ export function ChatRoom({
                   replyBias: finalReplyBias || undefined,
                   busyContext,
                   includeThinkingChain,
+                  currentTimeMs: getCurrentTimeMs(),
+                  danmakuConfig: shouldSplitDanmakuCall ? undefined : danmakuConfig,
                 })
               }
             } else {
@@ -2521,7 +2603,31 @@ export function ChatRoom({
                 replyBias: finalReplyBias || undefined,
                 busyContext,
                 includeThinkingChain,
+                currentTimeMs: getCurrentTimeMs(),
+                danmakuConfig: shouldSplitDanmakuCall ? undefined : danmakuConfig,
               })
+            }
+            if (shouldSplitDanmakuCall && danmakuApiConfig && danmakuConfig) {
+              try {
+                const splitLines = await requestWeChatDanmakuVarietyShow({
+                  apiConfig: danmakuApiConfig,
+                  character,
+                  playerIdentity,
+                  playerDisplayName: peerName,
+                  transcript,
+                  promptMode: pm,
+                  useMemory: danmakuConfig.useMemory,
+                  generateCount: danmakuConfig.generateCount,
+                  customRulesPrompt: danmakuConfig.customPrompt,
+                  longTermMemoryNotes: memoryNotesForPrompt.trim() || undefined,
+                  worldBackgroundPrompt,
+                  offlineDatingPlotsContext: offlineDatingPlotsContext || undefined,
+                })
+                logger.log('ai', `[DMDBG] split-call enabled lines=${splitLines.length}`)
+                if (splitLines.length > 0) queueMicrotask(() => enqueueDanmakuLines(splitLines))
+              } catch (err) {
+                logger.log('error', `弹幕副接口调用失败: ${err instanceof Error ? err.message : String(err)}`)
+              }
             }
           }
         } catch (e) {
@@ -2543,11 +2649,20 @@ export function ChatRoom({
         if (aiRequestFailed) continue
 
         let bubbles = aiReply.bubbles ?? []
+        const bubbleExtraction = extractDanmakuFromBubbleText(bubbles)
+        bubbles = bubbleExtraction.cleaned
+        const danmakuLinesCollected = [
+          ...(aiReply.danmakuLines ?? []).map((s) => String(s ?? '').trim()).filter(Boolean),
+          ...bubbleExtraction.danmakuLines,
+        ].filter(Boolean)
+        logger.log(
+          'ai',
+          `[DMDBG] extract inline=${(aiReply.danmakuLines ?? []).length} fallback=${bubbleExtraction.danmakuLines.length} total=${danmakuLinesCollected.length} bubblesAfterClean=${bubbles.length}`,
+        )
         const busyCandidate = [bubbles?.[0] ?? '', bubbles?.[1] ?? '', bubbles?.[2] ?? ''].join('')
         const busyDirective = parseBusyDirective(busyCandidate.trim())
-        const thinking =
-          aiReply.thinking?.trim() ||
-          (expectingThinkingChain && !busyDirective ? '（模型本轮未返回可见思维链，已使用占位思维链）' : undefined)
+        // 思维链仅用于模型内部推演，不在聊天室落库/展示。
+        const thinking = undefined
         if (busyDirective && !suppressBusyDirectiveThisRound) {
           const nowTs = getCurrentTimeMs()
           const end = nowTs + busyDirective.duration * 60 * 1000
@@ -2582,7 +2697,6 @@ export function ChatRoom({
         await sleep(randomBetween(280, 780))
         if (opponentQueueStopRef.current) continue
 
-        let lastAiSegForDm = ''
         let pendingReplyMessageId: string | undefined
         let thinkingAttached = false
         const emittedThisRound = new Set<string>()
@@ -2667,12 +2781,17 @@ export function ChatRoom({
               if (!rawScript) continue
               const normalizedScript = normalizeVoiceScriptForTts(rawScript)
               const seg = sanitizeVoiceTranscriptDisplay(normalizedScript)
+              const estimatedVoiceSec = Math.max(1, Math.min(30, Math.round(seg.length / 6)))
+              // 语音条按时长出队：避免“语音消息不到 1 秒就弹出”的违和感。
+              const voiceQueueDelayMs = Math.max(1200, Math.min(30000, estimatedVoiceSec * 1000))
+              await gapDelayWithTyping(voiceQueueDelayMs)
+              if (opponentQueueStopRef.current) break
               const ts = getCurrentTimeMs()
               const oid = `wxm-${ts}-ov-${i}-${Math.random().toString(36).slice(2, 6)}`
               const replyToMeta = pendingReplyMessageId ? await buildReplyMetaById(pendingReplyMessageId) : null
               pendingReplyMessageId = undefined
               const voice = {
-                durationSec: Math.max(1, Math.min(30, Math.round(seg.length / 6))),
+                durationSec: estimatedVoiceSec,
                 emotionAnalyzed: true,
                 ttsScript: normalizedScript,
                 transcriptText: seg || '（语音）',
@@ -2724,7 +2843,7 @@ export function ChatRoom({
               markEmittedThisRound(oid, ts, seg || '[语音]')
               if (shouldStickToBottom) scrollToBottomSmooth()
               else setPendingNewCount((c) => c + 1)
-              await sleep(randomBetween(120, 260))
+              await sleep(randomBetween(220, 420))
               continue
             }
             const rpDirective = parseRedPacketDirective(currentLine)
@@ -2834,11 +2953,12 @@ export function ChatRoom({
 
             const charSticker = parseCharacterStickerLine(currentLine)
             if (charSticker) {
-              const url = charSticker.url
-              if (!getKnownStickerUrlSet().has(url)) {
-                logger.log('ai', `角色表情包 URL 不在资源库，已跳过: ${url.slice(0, 120)}`)
+              const resolvedUrl = resolveKnownStickerUrl(charSticker.url)
+              if (!resolvedUrl) {
+                logger.log('ai', `角色表情包 URL 不在资源库，已跳过: ${charSticker.url.slice(0, 120)}`)
                 continue
               }
+              const url = resolvedUrl
               const dedupeSticker = `sticker:${url}`
               if (emittedThisRound.has(dedupeSticker)) continue
               emittedThisRound.add(dedupeSticker)
@@ -2919,7 +3039,6 @@ export function ChatRoom({
             }
             emittedThisRound.add(dedupeKey)
             logger.log('ai', `队列分段#${i + 1}/${bubbles.length} len=${seg.length} text=${seg}`)
-            lastAiSegForDm = seg
             const gap = gapBeforeBubbleMs(seg.length, i === 0)
             if (gap > 0) {
               logger.log('ai', `分段等待#${i + 1}: ${gap}ms`)
@@ -3000,11 +3119,8 @@ export function ChatRoom({
           }
         }
 
-        if (lastAiSegForDm.trim()) {
-          queueMicrotask(() => {
-            void spawnDanmakuAfterReply()
-          })
-        }
+        const inlineDanmakuLines = danmakuLinesCollected
+        if (inlineDanmakuLines.length > 0) queueMicrotask(() => enqueueDanmakuLines(inlineDanmakuLines))
         if (clearBusyAfterReply) {
           await personaDb.putCharacterBusySettings({
             characterId: conversationCharacterId,
@@ -3062,7 +3178,11 @@ export function ChatRoom({
     useLumiProjectAssistantPrompt,
     memoryNotesForPrompt,
     peerNotifyTitle,
-    spawnDanmakuAfterReply,
+    enqueueDanmakuLines,
+    danmakuEnabled,
+    effectiveDm,
+    danmakuApiConfig,
+    danmakuSubApiEnabled,
     showComposerToast,
     buildReplyMetaById,
     logger,
@@ -3970,10 +4090,11 @@ export function ChatRoom({
       'recall',
     ]
     const base: WeChatMessageActionId[] = ['copy', 'forward', 'favorite', 'delete', 'multiSelect', 'quote', 'translate', 'edit']
-    const list = actionMessageCanRecall ? [...withRecall] : [...base]
-    if (actionPanelTargetMsg?.isRecalled) return list.filter((x) => x !== 'quote')
-    return list
-  }, [actionMessageCanRecall, actionPanelTargetMsg?.isRecalled])
+    let next = actionMessageCanRecall ? [...withRecall] : [...base]
+    if (actionPanelTargetMsg?.isRecalled) next = next.filter((x) => x !== 'quote')
+    if (actionPanelTargetMsg?.voice) next = next.filter((x) => x !== 'copy')
+    return next
+  }, [actionMessageCanRecall, actionPanelTargetMsg?.isRecalled, actionPanelTargetMsg?.voice])
 
   const redPacketModalIdRef = useRef<string | null>(null)
   useEffect(() => {
@@ -4297,6 +4418,18 @@ export function ChatRoom({
             audioUrl={m.voice.audioUrl || ''}
             transcriptText={m.voice.transcriptText || '（暂未生成转写文本）'}
             onRequestAudio={isSelf ? undefined : () => ensureVoiceMessageAudio(m.id, m.voice)}
+            onLongPress={
+              isMultiSelectMode
+                ? undefined
+                : (rect) =>
+                    openActionPanelFor({
+                      id: m.id,
+                      isSelf,
+                      text: messagePlainPreview(m),
+                      ts: m.timestamp,
+                      anchorRect: rect,
+                    })
+            }
             onTranscriptToggle={() => {
               if (!isAtBottomRef.current) return
               requestAnimationFrame(() => {
@@ -4705,6 +4838,11 @@ export function ChatRoom({
   return (
     <div className="relative flex h-full min-h-0 flex-1 flex-col" data-wx-chat-motion-scope>
       <style>{`@keyframes wxRecallShake { 0% { transform: translateX(0); opacity: 1; } 25% { transform: translateX(-2px); } 50% { transform: translateX(2px); } 75% { transform: translateX(-1px); } 100% { transform: translateX(0); opacity: 0.75; } }`}</style>
+      {showDmOverlay ? (
+        <div className="pointer-events-none absolute inset-x-0 top-0 bottom-0 z-[60]">
+          <DanmakuOverlay bullets={dmBullets} zoneStyle={dmZoneStyle} />
+        </div>
+      ) : null}
       <div
         ref={scrollRef}
         onScroll={onScrollPane}
@@ -4724,54 +4862,6 @@ export function ChatRoom({
         }}
       >
         {/* 多选模式不在顶部显示“已选中” */}
-        {showDmOverlay ? (
-          <>
-            <style>{`
-              @keyframes wxDmFly {
-                from { transform: translate3d(110vw, 0, 0); }
-                to { transform: translate3d(calc(-100% - 110vw), 0, 0); }
-              }
-            `}</style>
-            <div
-              className="pointer-events-none absolute inset-x-0 z-[8] overflow-hidden"
-              style={dmZoneStyle}
-              aria-hidden
-            >
-              {dmBullets.map((b) => {
-                const lineHeight = b.fontPx + 8
-                const topStyle =
-                  b.positionMode === 'random' && b.topPct != null ? `${b.topPct}%` : b.track * lineHeight
-                const bg =
-                  b.style === 'gray'
-                    ? 'rgba(0,0,0,0.06)'
-                    : b.style === 'white'
-                      ? 'rgba(255,255,255,0.92)'
-                      : undefined
-                return (
-                  <div
-                    key={b.id}
-                    className="absolute left-0 max-w-[92vw] truncate font-medium"
-                    style={{
-                      top: topStyle,
-                      fontSize: b.fontPx,
-                      lineHeight: `${lineHeight}px`,
-                      color: b.colorRgba,
-                      backgroundColor: bg,
-                      padding: b.style === 'none' ? undefined : '2px 10px',
-                      borderRadius: b.style === 'none' ? undefined : 8,
-                      whiteSpace: 'nowrap',
-                      animation: `wxDmFly ${b.durationSec}s linear forwards`,
-                      willChange: 'transform',
-                    }}
-                    onAnimationEnd={() => setDmBullets((p) => p.filter((x) => x.id !== b.id))}
-                  >
-                    {b.text}
-                  </div>
-                )
-              })}
-            </div>
-          </>
-        ) : null}
         <div ref={topSentinelRef} className="h-px w-full shrink-0 bg-transparent opacity-0" aria-hidden />
         {canLoadMoreAtTop ? (
           <div className="flex justify-center pb-2 pt-1">
@@ -5154,6 +5244,7 @@ export function ChatRoom({
             longTermMemoryNotes: memoryNotesForPrompt.trim() || undefined,
             worldBackgroundPrompt,
             offlineDatingPlotsContext: offlineDatingPlotsContext || undefined,
+            currentTimeMs: getCurrentTimeMs(),
           })
           if (res.decision === 'ACCEPT') {
             const opening = String(res.opening ?? '').trim()
@@ -5262,6 +5353,7 @@ export function ChatRoom({
             longTermMemoryNotes: memoryNotesForPrompt.trim() || undefined,
             worldBackgroundPrompt,
             offlineDatingPlotsContext: offlineDatingPlotsContext || undefined,
+            currentTimeMs: getCurrentTimeMs(),
           })
         }}
         onTranscribeAudio={async (audioBlob) => {

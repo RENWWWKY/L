@@ -50,6 +50,12 @@ type AiNpcJson = {
   name: string
   gender: string
   age: number
+  /** 身高：建议格式如 "170cm"（允许 "170" / "170厘米" / "1.70m"） */
+  height: string
+  /** 体重：建议格式如 "55kg"（允许 "55" / "55公斤"） */
+  weight: string
+  /** 座右铭：短句，<=15 字 */
+  motto: string
   /** 月-日，如 "08-03"，须与 age、主角年龄时间线自洽 */
   birthdayMD: string
   /** 头像分类：由 AI 按人设智能选择 */
@@ -200,6 +206,22 @@ function noPlayerWord(s: string): string {
   return String(s || '').replace(/玩家/g, '你')
 }
 
+function normalizeRelationPerspective(fromName: string, toName: string, raw: unknown): string {
+  const s = String(raw ?? '').trim()
+  if (!s) return ''
+  // 关系视角句应直呼双方姓名：尽量把常见代词兜底替换掉，避免出现「你/他/她/我」等。
+  // 约定：fromPerspective =「fromName看toName」，因此「我」应指 fromName，「你/他/她/TA/对方」倾向指 toName。
+  const safeFrom = (fromName || '').trim() || '此人'
+  const safeTo = (toName || '').trim() || '对方'
+  return s
+    .replace(/玩家/g, safeTo)
+    .replace(/(?<![\u4e00-\u9fffA-Za-z0-9_])我(?![\u4e00-\u9fffA-Za-z0-9_])/g, safeFrom)
+    .replace(/(?<![\u4e00-\u9fffA-Za-z0-9_])你(?![\u4e00-\u9fffA-Za-z0-9_])/g, safeTo)
+    .replace(/(?<![\u4e00-\u9fffA-Za-z0-9_])(他|她|TA|ta|对方)(?![\u4e00-\u9fffA-Za-z0-9_])/g, safeTo)
+    .replace(/\s+/g, ' ')
+    .trim()
+}
+
 /** 将 AI 返回的月日规范为 MM-DD，非法则返回空串 */
 function normalizeBirthdayMD(raw: unknown): string {
   const t = String(raw ?? '').trim()
@@ -251,6 +273,10 @@ function characterFromAiNpc(npc: AiNpcJson, main: Character, usedAvatarUrls: Set
   const painPoints = (npc.painPoints || []).slice(0, 5).map(noPlayerWord)
   const birthdayMD = normalizeBirthdayMD(npc.birthdayMD)
   const gender = parseGender(npc.gender)
+  const height = String(npc.height || '').trim()
+  const weight = String(npc.weight || '').trim()
+  const mottoRaw = noPlayerWord(String(npc.motto || '').trim())
+  const motto = mottoRaw.length > 15 ? mottoRaw.slice(0, 15) : mottoRaw
   return {
     id: uid('ch'),
     createdAt: now,
@@ -258,12 +284,14 @@ function characterFromAiNpc(npc: AiNpcJson, main: Character, usedAvatarUrls: Set
     name: npc.name || '未命名',
     gender,
     age: Number.isFinite(npc.age) ? npc.age : null,
+    height,
+    weight,
     birthdayMD,
     zodiac: birthdayMD ? zodiacFromMD(birthdayMD) : '',
     identity: noPlayerWord(npc.occupation || '未知'),
     mbti: npc.mbti || '',
     bio: noPlayerWord(npc.bio || ''),
-    motto: '',
+    motto,
     avatarUrl: pickNpcAvatar(npc, gender, usedAvatarUrls),
     worldBooks: buildWorldBooks(npc),
     generatedForCharacterId: main.id,
@@ -304,7 +332,7 @@ npcs 长度必须等于用户要求的数量。
 - 允许例外：若用户「补充说明」或关系设定需要「忘年交、隔代亲友、老智者与年轻学生、社区里爱聊天的忘年朋友」等，NPC 可与主角年龄差距很大；此时必须在 bio 或 basicSettingEntries 中写清相识缘由与为何关系成立，避免凭空无铺垫。
 
 每个 npc 对象字段（缺一不可）：
-- name, gender（male/female/other 或 男/女）, age（数字）, birthdayMD（"MM-DD"）, occupation（职业）,
+- name, gender（male/female/other 或 男/女）, age（数字）, height（身高字符串）, weight（体重字符串）, motto（座右铭，<=15字）, birthdayMD（"MM-DD"）, occupation（职业）,
 - avatarCategory（必须从以下枚举中选择且只能选一个：["40岁以上长辈头像男","40岁以上长辈头像女","微信头像男E型阳光","微信头像女清冷和御姐","抽象搞笑男女通用","微信头像女可爱活泼"]）,
 - interests（字符串数组，恰好3个）, painPoints（字符串数组，恰好2个）,
 - mbti（四字母大写）,
@@ -312,6 +340,11 @@ npcs 长度必须等于用户要求的数量。
 - basicSettingEntries：数组，每项 {name, content}。必须覆盖并写清：固定人设、背景故事、该NPC与主角「${main.name}」的相识过程、该NPC与「你」（当前操作本项目的人）的相识过程（四个主题可分多条条目，不得遗漏后两项）。
 - firstImpressionEntries：数组，每项 {name, content}。对应世界书「当前对你的态度」（priority=聊天之后）。必须至少一条，且只能描述该 NPC 对「你」的当前态度。
 - 写法要求（强约束）：第三人称旁白式叙述（与基础设定条目一致）；指涉操作者时只用第二人称「你」，全文禁止出现「玩家」二字。禁止 NPC 第一人称台词、内心独白、书信体。
+
+身高体重与座右铭要求（强约束）：
+- height：写成易读格式，优先用 cm（例："170cm"），允许 "1.70m" / "170厘米"；不要写区间；不要写过长解释。
+- weight：优先用 kg（例："55kg"），允许 "55公斤"；不要写区间；不要写过长解释。
+- motto：一句短准的人设准则，<=15 个汉字，避免空洞大词；禁止出现「玩家」二字，指操作者只用「你」。
 - 内容应概括当下关系体感，可含与主角「${main.name}」无关、仅与「你」相处状态有关的描述；自由发挥，不限定句式。可参考风格（禁止照搬）：第一次见面后就没怎么交流，感觉有点陌生；最近和你在冷战，感觉和你交流非常尴尬。
 
 你与主角区分（强约束，禁止混写）：
@@ -322,8 +355,8 @@ npcs 长度必须等于用户要求的数量。
 每个 relationships 对象：
 - fromName, toName（必须是主角「${main.name}」或某个 npc 的 name，精确匹配）,
 - relation：箭头 from→to 中间显示的词；语义表示「to 是 from 的 relation」（例：from=季靳川,to=安屿,relation=妹妹 表示安屿是季靳川的妹妹）,
-- fromPerspective：【fromName看toName】的完整一句描述,
-- toPerspective：【toName看fromName】的完整一句描述。
+- fromPerspective：【fromName看toName】的完整一句第三人称描述（**必须出现 fromName 与 toName 的字面名字**，禁止用「你/我/他/她/TA/对方」代指双方）,
+- toPerspective：【toName看fromName】的完整一句第三人称描述（**必须出现 toName 与 fromName 的字面名字**，禁止用「你/我/他/她/TA/对方」代指双方）。
 
 重要：关系允许不对称，且必须体现不对称。
 - 对于任意一对发生联系的角色 A 与 B，必须分别给出 A→B 与 B→A 两条 relationships 记录（两条记录的 fromName/toName 方向相反）。
@@ -431,8 +464,8 @@ ${input.playerIdentity?.worldBooks?.length ? `所有世界书条目：${input.pl
       fromCharacterId: from.id,
       toCharacterId: to.id,
       relation: noPlayerWord(r.relation || ''),
-      fromPerspective: noPlayerWord(r.fromPerspective || ''),
-      toPerspective: noPlayerWord(r.toPerspective || ''),
+      fromPerspective: normalizeRelationPerspective(from.name, to.name, r.fromPerspective),
+      toPerspective: normalizeRelationPerspective(to.name, from.name, r.toPerspective),
     })
   }
 

@@ -3967,6 +3967,7 @@ function WeChatAppInner({ onBack }: Props) {
         worldBackgroundPrompt,
         offlineDatingPlotsContext: offlineDatingPlotsContext || undefined,
         replyBias: buildFriendRequestReplyBias({ messages: params.messages, extraBias: params.replyBias }),
+        currentTimeMs: getCurrentTimeMs(),
       })
       return {
         bubbles: ai.bubbles.filter((x) => String(x || '').trim().length > 0),
@@ -3974,7 +3975,7 @@ function WeChatAppInner({ onBack }: Props) {
         avatar: character.avatarUrl?.trim() || '',
       }
     },
-    [apiConfig, playerIdentityId, state.profile.displayName],
+    [apiConfig, getCurrentTimeMs, playerIdentityId, state.profile.displayName],
   )
 
   const resolveNewFriendRequest = useCallback(
