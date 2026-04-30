@@ -1,7 +1,8 @@
 import { ArrowLeft, ChevronRight, Clock, Phone, Plus } from 'lucide-react'
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { AnimatePresence, motion } from 'framer-motion'
 
+import { ImageCropperModal } from '../../../components/ImageCropperModal'
 import { Pressable } from '../../../components/Pressable'
 import type {
   ChatConversationSettingsRow,
@@ -120,10 +121,13 @@ export function ChatSettingsScreen({
   const [globalModeBusyEnabled, setGlobalModeBusyEnabled] = useState(true)
   const [findHistoryOpen, setFindHistoryOpen] = useState(false)
   const [stub, setStub] = useState<StubKind | null>(null)
+  const [chatBgDraft, setChatBgDraft] = useState('')
+  const [chatBgCropSrc, setChatBgCropSrc] = useState<string | null>(null)
   const [timeSettingsOpen, setTimeSettingsOpen] = useState(false)
   const [inviteOpen, setInviteOpen] = useState(false)
   const [clearOpen, setClearOpen] = useState(false)
   const [selectedInvite, setSelectedInvite] = useState<Set<string>>(() => new Set())
+  const chatBgFileRef = useRef<HTMLInputElement | null>(null)
 
   const load = useCallback(async () => {
     const [row, nextGs] = await Promise.all([personaDb.getChatConversationSettings(conversationKey), personaDb.getGlobalSettings()])
@@ -294,6 +298,130 @@ export function ChatSettingsScreen({
     setSelectedInvite(new Set())
     onClose()
     onOpenGroupChat(id)
+  }
+
+  useEffect(() => {
+    if (stub !== 'chat-bg') return
+    setChatBgDraft((effective.chatBackground ?? '').trim())
+  }, [stub, effective.chatBackground])
+
+  const onPickChatBgFile = useCallback((file: File | null) => {
+    if (!file) return
+    const reader = new FileReader()
+    reader.onload = () => {
+      const result = String(reader.result ?? '')
+      if (!result) return
+      setChatBgCropSrc(result)
+    }
+    reader.readAsDataURL(file)
+  }, [])
+
+  if (stub === 'chat-bg') {
+    const draftTrimmed = chatBgDraft.trim()
+    const currentTrimmed = (effective.chatBackground ?? '').trim()
+    const canApply = draftTrimmed.length > 0 && draftTrimmed !== currentTrimmed
+    const canReset = currentTrimmed.length > 0
+    return (
+      <div className="flex h-full min-h-0 flex-col bg-[#ededed]">
+        <header
+          className="shrink-0 border-b border-[#e5e5e5] bg-[#ededed] px-3 pb-3"
+          style={{ paddingTop: 'max(12px, env(safe-area-inset-top, 0px))' }}
+        >
+          <div className="flex w-full items-center">
+            <Pressable
+              type="button"
+              aria-label="返回"
+              onClick={() => setStub(null)}
+              className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full"
+            >
+              <ArrowLeft className="size-5 text-black" strokeWidth={2} />
+            </Pressable>
+            <h1 className="min-w-0 flex-1 text-center text-[18px] font-bold text-black">设置当前聊天背景</h1>
+            <div className="w-10 shrink-0" />
+          </div>
+        </header>
+        <div className="min-h-0 flex-1 overflow-y-auto px-4 pb-5 pt-4">
+          <div className="rounded-[12px] bg-white px-4 py-4" style={{ boxShadow: '0 1px 3px rgba(0,0,0,0.06)' }}>
+            <p className="text-[15px] font-medium text-black">图片地址（URL）</p>
+            <input
+              value={draftTrimmed.startsWith('data:') ? '' : chatBgDraft}
+              onChange={(e) => setChatBgDraft(e.target.value)}
+              placeholder="https://... 粘贴图片链接"
+              className="mt-2 h-11 w-full rounded-[10px] border border-[#e5e5e5] bg-white px-3 text-[13px] text-black outline-none"
+            />
+            <p className="mt-2 text-[12px] text-[#8e8e8e]">
+              支持 URL 与本地上传二选一；本地上传会进入 9:16 裁剪后应用到当前聊天。
+            </p>
+            <div className="mt-3 overflow-hidden rounded-[10px] border border-[#e5e5e5] bg-[#f7f7f7]" style={{ aspectRatio: '9 / 16' }}>
+              {draftTrimmed ? (
+                <img src={draftTrimmed} alt="" className="h-full w-full object-cover" />
+              ) : (
+                <div className="flex h-full w-full items-center justify-center text-[12px] text-[#8e8e8e]">当前使用默认聊天背景</div>
+              )}
+            </div>
+            <div className="mt-4 flex flex-wrap gap-2">
+              <Pressable
+                type="button"
+                onClick={() => chatBgFileRef.current?.click()}
+                className="inline-flex h-10 items-center justify-center rounded-[10px] border border-black bg-black px-4 text-[13px] text-white"
+              >
+                本地上传并裁剪（9:16）
+              </Pressable>
+              <Pressable
+                type="button"
+                disabled={!canApply}
+                onClick={() => {
+                  void (async () => {
+                    await patch({ chatBackground: draftTrimmed })
+                    setStub(null)
+                  })()
+                }}
+                className="inline-flex h-10 items-center justify-center rounded-[10px] border border-[#d0d0d0] bg-white px-4 text-[13px] text-black disabled:opacity-45"
+              >
+                应用到当前聊天
+              </Pressable>
+              <Pressable
+                type="button"
+                disabled={!canReset}
+                onClick={() => {
+                  void (async () => {
+                    await patch({ chatBackground: '' })
+                    setChatBgDraft('')
+                    setStub(null)
+                  })()
+                }}
+                className="inline-flex h-10 items-center justify-center rounded-[10px] border border-[#d0d0d0] bg-white px-4 text-[13px] text-black disabled:opacity-45"
+              >
+                恢复默认聊天背景
+              </Pressable>
+            </div>
+            <input
+              ref={chatBgFileRef}
+              type="file"
+              accept="image/*"
+              className="hidden"
+              onChange={(e) => {
+                onPickChatBgFile(e.target.files?.[0] ?? null)
+                e.currentTarget.value = ''
+              }}
+            />
+          </div>
+        </div>
+        <ImageCropperModal
+          open={!!chatBgCropSrc}
+          imageSrc={chatBgCropSrc ?? ''}
+          title="裁剪聊天背景（9:16）"
+          aspect={9 / 16}
+          maxSide={1440}
+          objectFit="vertical-cover"
+          onCancel={() => setChatBgCropSrc(null)}
+          onConfirm={(dataUrl) => {
+            setChatBgCropSrc(null)
+            setChatBgDraft(dataUrl)
+          }}
+        />
+      </div>
+    )
   }
 
   if (stub) {

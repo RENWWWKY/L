@@ -12,7 +12,7 @@ import {
   type ReactNode,
 } from 'react'
 import { AnimatePresence, motion } from 'framer-motion'
-import { ChevronDown, X } from 'lucide-react'
+import { ChevronDown, PhoneCall, X } from 'lucide-react'
 
 import { useCustomization } from '../../CustomizationContext'
 import { Pressable } from '../../components/Pressable'
@@ -83,13 +83,14 @@ import { TransferChatRow } from './transfer/TransferChatRow'
 import { RedPacketModal } from './redPacket/RedPacketModal'
 import { upsertLumiTransfer } from './transfer/lumiTransferStorage'
 import { evaluateExpiredTransfers, getLumiTransferFresh } from './transfer/lumiTransferStorage'
+import { walletAddTransaction, walletAdjustBalance } from './wallet/walletMockStore'
 import { CallingScreen } from './voiceCall/CallingScreen'
 import { IncomingCallScreen } from './voiceCall/IncomingCallScreen'
 import { VoiceCallActionSheet } from './voiceCall/VoiceCallActionSheet'
 import { VoiceCallPanel } from './voiceCall/VoiceCallPanel'
 import { requestSiliconflowTranscription } from './voiceCall/siliconflowAsr'
 import { StickerPickerPanel } from './stickers/StickerPickerPanel'
-import { getKnownStickerUrlSet } from './stickers/stickerStore'
+import { resolveStickerOutputRef } from './stickers/stickerStore'
 import { ChatInputBar } from './voiceInput/ChatInputBar'
 import { VoiceOverlay, type VoiceGestureZone } from './voiceInput/VoiceOverlay'
 import { VoiceMessageBubble } from './VoiceMessageBubble'
@@ -468,44 +469,16 @@ function parseVoiceCallDirective(raw: string): AiVoiceCallDirective | null {
   }
 }
 
-/** 角色侧：单行 `[表情包]URL`（URL 须来自表情包资源库） */
+/** 角色侧：单行 `[表情包]引用名` 或兼容旧版 `[表情包]URL/路径`（须能解析到表情包资源库） */
 function parseCharacterStickerLine(line: string): { url: string } | null {
   const t = String(line ?? '').trim()
   const m = /^\[表情包\]\s*(.+)$/.exec(t)
-  const raw = m ? m[1]! : t
-  let url = raw.trim().replace(/^['"`「」]+|['"`」]+$/g, '').trim()
-  url = url.replace(/^\/+/, '').trim()
-  // 兼容模型偶发漏前缀：如 `Lumi-Phone/image/...`、`Phone/image/...`
-  url = url
-    .replace(/^lumi[-_]?phone\/image\//i, 'Phone/image/')
-    .replace(/^lumi[-:：\s]*/i, '')
-    .trim()
-  // 去掉 URL 末尾常见标点，避免命中失败
-  url = url.replace(/[，。！？!?,、；;:：）\])》】]+$/g, '').trim()
+  if (!m) return null
+  const raw = m[1]!.trim().replace(/^['"`「」]+|['"`」]+$/g, '').trim()
+  if (!raw) return null
+  const url = resolveStickerOutputRef(raw)
   if (!url) return null
-  // 仅把“看起来像 URL/资源路径”的行当作表情包候选，避免误吞普通文本。
-  if (!/^https?:\/\/\S+$/i.test(url) && !/^(?:\.{0,2}\/)?(?:Lumi-)?Phone\/image\/\S+$/i.test(url)) {
-    return null
-  }
   return { url }
-}
-
-function resolveKnownStickerUrl(rawUrl: string): string | null {
-  const set = getKnownStickerUrlSet()
-  if (!set.size) return null
-  const src = String(rawUrl || '').trim()
-  if (!src) return null
-  const candidates = [
-    src,
-    src.replace(/^\/+/, ''),
-    `/${src.replace(/^\/+/, '')}`,
-    src.replace(/^\/?Lumi-Phone\/image\//i, 'Phone/image/'),
-    src.replace(/^\/?Phone\/image\//i, 'Lumi-Phone/image/'),
-  ]
-  for (const c of candidates) {
-    if (set.has(c)) return c
-  }
-  return null
 }
 
 function extractDanmakuFromBubbleText(lines: string[]): { cleaned: string[]; danmakuLines: string[] } {
@@ -1412,7 +1385,7 @@ export function ChatRoom({
 
       // Lumi 小助手：首次进入且无历史时，写入默认开场白（只写一次，避免每次进入都刷屏）。
       const isLumiAssistantSession =
-        useLumiProjectAssistantPrompt && !personaCharacterId?.trim() && conversationCharacterId === WECHAT_LUMI_PEER_CHARACTER_ID
+        useLumiProjectAssistantPrompt && conversationCharacterId === WECHAT_LUMI_PEER_CHARACTER_ID
       if (isLumiAssistantSession && msgs.length === 0) {
         const baseTs = getCurrentTimeMs()
         const inserted: WeChatChatMessage[] = []
@@ -2278,7 +2251,8 @@ export function ChatRoom({
       let character: Character | null = null
       let worldBackgroundPrompt: string | undefined
       const pcid = personaCharacterId?.trim()
-      if (pcid) {
+      const lumiAssistantChat = useLumiProjectAssistantPrompt
+      if (!lumiAssistantChat && pcid) {
         character = await personaDb.getCharacter(pcid)
         if (character?.worldBackgroundEnabled !== false && character?.worldBackgroundId?.trim()) {
           const wbg = await personaDb.getWorldBackground(character.worldBackgroundId.trim())
@@ -2288,12 +2262,11 @@ export function ChatRoom({
       }
       let playerIdentity: PlayerIdentity | null = null
       const piid = playerIdentityId.trim()
-      if (piid && piid !== '__none__') {
+      if (!lumiAssistantChat && piid && piid !== '__none__') {
         playerIdentity = await personaDb.getPlayerIdentity(piid)
       }
       const peerName = playerDisplayName.trim() || state.profile.displayName.trim() || '朋友'
-      const promptMode =
-        useLumiProjectAssistantPrompt && !personaCharacterId?.trim() ? 'lumi-assistant' : 'persona'
+      const promptMode = lumiAssistantChat ? 'lumi-assistant' : 'persona'
       const offlineDatingPlotsContext =
         promptMode === 'persona' && pcid
           ? await loadOfflineDatingPlotsPromptBlock(pcid, character?.name ?? null)
@@ -2382,7 +2355,8 @@ export function ChatRoom({
         let character: Character | null = null
         let worldBackgroundPrompt: string | undefined
         const cid = personaCharacterId?.trim()
-        if (cid) {
+        const lumiAssistantChat = useLumiProjectAssistantPrompt
+        if (!lumiAssistantChat && cid) {
           try {
             character = await personaDb.getCharacter(cid)
             if (character?.worldBackgroundEnabled !== false && character?.worldBackgroundId?.trim()) {
@@ -2397,7 +2371,7 @@ export function ChatRoom({
 
         let playerIdentity: PlayerIdentity | null = null
         const pid = playerIdentityId.trim()
-        if (pid && pid !== '__none__') {
+        if (!lumiAssistantChat && pid && pid !== '__none__') {
           try {
             playerIdentity = await personaDb.getPlayerIdentity(pid)
           } catch {
@@ -2405,7 +2379,7 @@ export function ChatRoom({
           }
         }
 
-        const pm = useLumiProjectAssistantPrompt && !cid ? 'lumi-assistant' : 'persona'
+        const pm = lumiAssistantChat ? 'lumi-assistant' : 'persona'
         const offlineDatingPlotsContext =
           pm === 'persona' && cid
             ? await loadOfflineDatingPlotsPromptBlock(cid, character?.name ?? null)
@@ -2953,12 +2927,7 @@ export function ChatRoom({
 
             const charSticker = parseCharacterStickerLine(currentLine)
             if (charSticker) {
-              const resolvedUrl = resolveKnownStickerUrl(charSticker.url)
-              if (!resolvedUrl) {
-                logger.log('ai', `角色表情包 URL 不在资源库，已跳过: ${charSticker.url.slice(0, 120)}`)
-                continue
-              }
-              const url = resolvedUrl
+              const url = charSticker.url
               const dedupeSticker = `sticker:${url}`
               if (emittedThisRound.has(dedupeSticker)) continue
               emittedThisRound.add(dedupeSticker)
@@ -4177,14 +4146,14 @@ export function ChatRoom({
       const sideStyle = isSelf ? { marginRight: `${inset}px` } : { marginLeft: `${inset}px` }
       const textColor = '#8e8e8e'
       return (
-        <div className={`mt-1 flex w-[100vw] max-w-[100vw] overflow-x-hidden ${isSelf ? 'justify-end' : 'justify-start'}`}>
+        <div className={`mt-1 flex w-full max-w-full overflow-x-hidden ${isSelf ? 'justify-end' : 'justify-start'}`}>
           <button
             type="button"
             onClick={() => {
               const id = m.replyTo?.messageId?.trim()
               if (id) jumpToMessage(id)
             }}
-            className="max-w-[calc(100vw-24px-24px-80px)] rounded-[8px] px-1.5 py-1 text-left"
+            className="max-w-[calc(100%-24px-24px-80px)] rounded-[8px] px-1.5 py-1 text-left"
             style={{
               background: '#f5f5f5',
               ...(showAvatar ? sideStyle : {}),
@@ -4228,11 +4197,11 @@ export function ChatRoom({
       const inset = showAvatar ? 24 + 40 + 12 : 24
       const sideStyle = isSelf ? { marginRight: `${inset}px` } : { marginLeft: `${inset}px` }
       return (
-        <div className={`mb-1 flex w-[100vw] max-w-[100vw] overflow-x-hidden ${isSelf ? 'justify-end' : 'justify-start'}`}>
+        <div className={`mb-1 flex w-full max-w-full overflow-x-hidden ${isSelf ? 'justify-end' : 'justify-start'}`}>
           <button
             type="button"
             onClick={() => toggleThinkingFold(m.id)}
-            className="max-w-[calc(100vw-24px-24px-80px)] rounded-[10px] border border-black/8 bg-black/[0.03] px-2.5 py-1.5 text-left"
+            className="max-w-[calc(100%-24px-24px-80px)] rounded-[10px] border border-black/8 bg-black/[0.03] px-2.5 py-1.5 text-left"
             style={showAvatar ? sideStyle : undefined}
           >
             <div className="flex items-center justify-between gap-2">
@@ -4372,11 +4341,11 @@ export function ChatRoom({
           /* ignore */
         }
         const card = (
-          <div className="flex w-[100vw] max-w-[100vw] shrink-0 items-end justify-end gap-[4px] overflow-x-hidden">
+          <div className="flex w-full max-w-full shrink-0 items-end justify-end gap-[4px] overflow-x-hidden">
             <div className="mr-[24px] ml-auto min-w-0">
               <Pressable
                 type="button"
-                className="max-w-[calc(100vw-24px-24px-80px)] rounded-[12px] border border-[#e5e5e5] bg-white px-3 py-2 text-left active:bg-[#f5f5f5]"
+                className="max-w-[calc(100%-24px-24px-80px)] rounded-[12px] border border-[#e5e5e5] bg-white px-3 py-2 text-left active:bg-[#f5f5f5]"
                 onClick={() => showCenterToast('查看聊天记录（预留）')}
               >
                 <div className="text-[15px] font-semibold text-black">{title}</div>
@@ -4443,7 +4412,7 @@ export function ChatRoom({
         )
         const voiceRow = (
           isSelf ? (
-            <div className="flex w-[100vw] max-w-[100vw] shrink-0 items-end justify-end overflow-x-hidden">
+            <div className="flex w-full max-w-full shrink-0 items-end justify-end overflow-x-hidden">
               {!showAvatar ? (
                 <div className="mr-[24px] ml-auto min-w-0">{bubbleNode}</div>
               ) : showAvatarVisual ? (
@@ -4467,7 +4436,7 @@ export function ChatRoom({
               )}
             </div>
           ) : (
-            <div className="w-[100vw] max-w-[100vw] shrink-0 overflow-x-hidden">
+            <div className="w-full max-w-full shrink-0 overflow-x-hidden">
               {!showAvatar ? (
                 <div className="ml-[24px] mr-auto min-w-0">{bubbleNode}</div>
               ) : showAvatarVisual ? (
@@ -4623,7 +4592,8 @@ export function ChatRoom({
               : '对方未应答'
         const rowInner = (
           <WeChatMessageBubbleRow
-            messageText={`☎ ${bubbleText}`}
+            messageText={bubbleText}
+            messagePrefixIcon={<PhoneCall className="size-[14px]" strokeWidth={1.9} aria-hidden />}
             isSelf={isSelf}
             bubble={bubble}
             showAvatar={showAvatar}
@@ -4846,7 +4816,7 @@ export function ChatRoom({
       <div
         ref={scrollRef}
         onScroll={onScrollPane}
-        className="relative min-h-0 w-[100vw] max-w-[100vw] flex-1 overflow-y-auto overflow-x-hidden overscroll-y-contain py-4 pl-0 pr-0 [-webkit-overflow-scrolling:touch]"
+        className="relative min-h-0 w-full max-w-full flex-1 overflow-y-auto overflow-x-hidden overscroll-y-contain py-4 pl-0 pr-0 [-webkit-overflow-scrolling:touch]"
         style={{
           // 给消息列表留出“键盘上移后的输入栏”空间，避免最后几条被挡住
           paddingBottom: 12 + (isMultiSelectMode ? 86 : keyboardInsetPx),
@@ -4882,12 +4852,12 @@ export function ChatRoom({
             <span className="wx-chat-history-dot" />
           </div>
         ) : null}
-        <div className="flex w-[100vw] max-w-[100vw] flex-col">{messagesView}</div>
+        <div className="flex w-full max-w-full flex-col">{messagesView}</div>
       </div>
 
       {isMultiSelectMode ? (
         <div
-          className="relative z-10 w-[100vw] max-w-[100vw] shrink-0 border-t border-[#e5e5e5] bg-white"
+          className="relative z-10 w-full max-w-full shrink-0 border-t border-[#e5e5e5] bg-white"
           style={{ paddingBottom: 'max(12px, env(safe-area-inset-bottom, 0px))' }}
         >
           <div className="flex items-center justify-between px-4 py-2">
@@ -4970,7 +4940,7 @@ export function ChatRoom({
             </div>
           ) : null}
           <div
-            className="relative z-10 w-[100vw] max-w-[100vw] shrink-0 border-t"
+            className="relative z-10 w-full max-w-full shrink-0 border-t"
             style={{
               backgroundColor: chatTheme.inputBar.backgroundColor,
               borderTopColor: '#e5e5e5',
@@ -5029,13 +4999,6 @@ export function ChatRoom({
             </Pressable>
           </div>
         ) : null}
-        {stubPanel ? (
-          <StickerPickerPanel
-            onPick={({ url, description }) => {
-              void sendStickerFromPicker({ url, description })
-            }}
-          />
-        ) : null}
         <ChatInputBar
           inputMode={inputMode}
           btnPx={btnPx}
@@ -5068,6 +5031,14 @@ export function ChatRoom({
           }}
           onSend={onSendButtonClick}
         />
+
+        {stubPanel ? (
+          <StickerPickerPanel
+            onPick={({ url, description }) => {
+              void sendStickerFromPicker({ url, description })
+            }}
+          />
+        ) : null}
 
         <motion.div
           initial={false}
@@ -5188,7 +5159,21 @@ export function ChatRoom({
             return
           }
           if (d === 'REJECT') {
-            void appendCallStatusBubble({ status: 'rejected' }, activeCallInitiator ?? 'self')
+            const initiator = activeCallInitiator ?? 'self'
+            void (async () => {
+              await appendCallStatusBubble({ status: 'rejected' }, initiator)
+              // 角色拒接用户来电后，必须走模型追加一条“普通消息”解释原因（不可本地硬编码文案）。
+              if (initiator === 'self') {
+                retryReplyBiasRef.current = [
+                  '[系统提示] 你刚刚拒接了用户来电。',
+                  '- 现在请继续按普通线上聊天机制自然回复，解释拒接原因（例如正在忙/不方便接听/情绪上不想接）。',
+                  '- 必须保持人设和当前关系状态；如果双方在闹矛盾，可直接带情绪表达不想接电话。',
+                  '- 禁止输出协议标签或 JSON，按正常微信聊天口吻分行回复。',
+                ].join('\n')
+                pendingAiRepliesRef.current += 1
+                void flushAiReplies()
+              }
+            })()
             setActiveCallInitiator(null)
             setIncomingCallOpeningLine('')
             setOutgoingCallOpeningLine('')
@@ -5203,7 +5188,8 @@ export function ChatRoom({
           let character: Character | null = null
           let worldBackgroundPrompt: string | undefined
           const pcid = personaCharacterId?.trim()
-          if (pcid) {
+          const lumiAssistantChat = useLumiProjectAssistantPrompt
+          if (!lumiAssistantChat && pcid) {
             try {
               character = await personaDb.getCharacter(pcid)
               if (character?.worldBackgroundEnabled !== false && character?.worldBackgroundId?.trim()) {
@@ -5218,7 +5204,7 @@ export function ChatRoom({
 
           let playerIdentity: PlayerIdentity | null = null
           const piid = playerIdentityId.trim()
-          if (piid && piid !== '__none__') {
+          if (!lumiAssistantChat && piid && piid !== '__none__') {
             try {
               playerIdentity = await personaDb.getPlayerIdentity(piid)
             } catch {
@@ -5227,8 +5213,7 @@ export function ChatRoom({
           }
 
           const peerName = playerDisplayName.trim() || state.profile.displayName.trim() || '朋友'
-          const promptMode =
-            useLumiProjectAssistantPrompt && !personaCharacterId?.trim() ? 'lumi-assistant' : 'persona'
+          const promptMode = lumiAssistantChat ? 'lumi-assistant' : 'persona'
           const offlineDatingPlotsContext =
             promptMode === 'persona' && pcid
               ? await loadOfflineDatingPlotsPromptBlock(pcid, character?.name ?? null)
@@ -5302,7 +5287,8 @@ export function ChatRoom({
           let character: Character | null = null
           let worldBackgroundPrompt: string | undefined
           const pcid = personaCharacterId?.trim()
-          if (pcid) {
+          const lumiAssistantChat = useLumiProjectAssistantPrompt
+          if (!lumiAssistantChat && pcid) {
             try {
               character = await personaDb.getCharacter(pcid)
               if (character?.worldBackgroundEnabled !== false && character?.worldBackgroundId?.trim()) {
@@ -5317,7 +5303,7 @@ export function ChatRoom({
 
           let playerIdentity: PlayerIdentity | null = null
           const piid = playerIdentityId.trim()
-          if (piid && piid !== '__none__') {
+          if (!lumiAssistantChat && piid && piid !== '__none__') {
             try {
               playerIdentity = await personaDb.getPlayerIdentity(piid)
             } catch {
@@ -5326,8 +5312,7 @@ export function ChatRoom({
           }
 
           const peerName = playerDisplayName.trim() || state.profile.displayName.trim() || '朋友'
-          const promptMode =
-            useLumiProjectAssistantPrompt && !personaCharacterId?.trim() ? 'lumi-assistant' : 'persona'
+          const promptMode = lumiAssistantChat ? 'lumi-assistant' : 'persona'
           const offlineDatingPlotsContext =
             promptMode === 'persona' && pcid
               ? await loadOfflineDatingPlotsPromptBlock(pcid, character?.name ?? null)
@@ -5389,11 +5374,20 @@ export function ChatRoom({
             if (!id) return
             const fromDb = await personaDb.getWeChatChatMessageById(id)
             const cur = fromDb?.redPacket
+            const rp = fromDb?.redPacket ?? cur
             if (cur) {
               await personaDb.patchWeChatChatMessageById(id, { redPacket: { ...cur, opened: true } })
             }
             // 系统通知条：你领取了XX的红包（XX=对方微信备注）
             void appendSystemNote(`【系统】你领取了${peerNotifyTitle.trim() || '对方'}的红包`)
+            if (rp?.amountYuan && Number.isFinite(rp.amountYuan) && rp.amountYuan > 0) {
+              walletAdjustBalance(rp.amountYuan)
+              walletAddTransaction({
+                type: 'topup',
+                title: `收到${peerNotifyTitle.trim() || '对方'}的红包`,
+                amount: rp.amountYuan,
+              })
+            }
             setItems((prev) =>
               rebuildWithCurrentTime(
                 extractMessages(prev).map((it) => {
@@ -5403,7 +5397,6 @@ export function ChatRoom({
               ),
             )
             setRedPacketModalId(null)
-            const rp = fromDb?.redPacket ?? cur
             if (!rp || !onNavigateRedPacketDetail) return
             const isSelfMsg = fromDb?.type === 'player'
             onNavigateRedPacketDetail({

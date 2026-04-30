@@ -15,7 +15,7 @@ type Match = { end: number; node: ReactNode }
 
 /**
  * 三种语义：**内心**、语言（「」/弯引号/英文引号）、其余为旁白（含人名、动作描写）。
- * 优先级：** → 「」 → “” → ""
+ * 优先级：** → * → 「」 → “” → ""
  */
 export function parsePlotRichText(s: string, depth = 0): ReactNode[] {
   if (!s) return []
@@ -50,6 +50,25 @@ export function parsePlotRichText(s: string, depth = 0): ReactNode[] {
     const k = nextKey()
     return {
       end: end + 2,
+      node: (
+        <span key={k} className={osCls}>
+          {parsePlotRichText(inner, depth + 1)}
+        </span>
+      ),
+    }
+  }
+
+  const trySingleOs = (): Match | null => {
+    if (s[i] !== '*') return null
+    // 双星号由 tryOs 处理；这里只兜底单星号。
+    if (s[i + 1] === '*') return null
+    const end = s.indexOf('*', i + 1)
+    if (end === -1) return null
+    const inner = s.slice(i + 1, end)
+    if (!inner.trim()) return null
+    const k = nextKey()
+    return {
+      end: end + 1,
       node: (
         <span key={k} className={osCls}>
           {parsePlotRichText(inner, depth + 1)}
@@ -109,7 +128,7 @@ export function parsePlotRichText(s: string, depth = 0): ReactNode[] {
   }
 
   while (i < s.length) {
-    const m = tryOs() ?? tryCorner() ?? tryCurve() ?? tryAscii()
+    const m = tryOs() ?? trySingleOs() ?? tryCorner() ?? tryCurve() ?? tryAscii()
     if (m) {
       emitPlain(plainStart, i)
       out.push(m.node)

@@ -6,9 +6,9 @@ import { Pressable } from '../../../components/Pressable'
 import { personaDb } from '../newFriendsPersona/idb'
 import { CustomNumericKeyboard } from '../redPacket/CustomNumericKeyboard'
 import { maskRealName } from '../redPacket/maskRealName'
+import { useWalletMockStore } from '../wallet/walletMockStore'
 import { TransferPasswordSheet } from './TransferPasswordSheet'
 
-const WALLET_BOUND_MOCK = true
 const GOLD = '#c9a76a'
 
 function applyAmountKey(prev: string, k: string): string {
@@ -50,6 +50,7 @@ export function TransferPage({
   const [remark, setRemark] = useState('')
   const [pwdOpen, setPwdOpen] = useState(false)
   const [toast, setToast] = useState<string | null>(null)
+  const { snapshot, verifyPaymentPassword } = useWalletMockStore()
 
   useEffect(() => {
     let cancelled = false
@@ -82,29 +83,45 @@ export function TransferPage({
       window.setTimeout(() => setToast(null), 2200)
       return
     }
-    if (!WALLET_BOUND_MOCK) {
-      setToast('请先绑定支付')
+    if (!snapshot.isPaymentPasswordSet) {
+      setToast('请先在钱包中设置支付密码')
       window.setTimeout(() => setToast(null), 2600)
       return
     }
+    if (snapshot.balance < yuan) {
+      setToast('余额不足')
+      window.setTimeout(() => setToast(null), 2200)
+      return
+    }
     setPwdOpen(true)
-  }, [amountStr])
+  }, [amountStr, snapshot.balance, snapshot.isPaymentPasswordSet])
 
   const handlePwdComplete = useCallback(
-    async (_pin: string) => {
+    async (pin: string) => {
       const yuan = parseAmountYuan(amountStr)
       if (yuan == null) return
+      const ok = await verifyPaymentPassword(pin)
+      if (!ok) {
+        setToast('支付密码错误')
+        window.setTimeout(() => setToast(null), 2200)
+        return
+      }
       setPwdOpen(false)
       const transferId = `wxtr-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`
-      await Promise.resolve(
-        onPaidTransfer({
-          transferId,
-          amountYuan: yuan,
-          remark: remark.trim().slice(0, 40),
-        }),
-      )
+      try {
+        await Promise.resolve(
+          onPaidTransfer({
+            transferId,
+            amountYuan: yuan,
+            remark: remark.trim().slice(0, 40),
+          }),
+        )
+      } catch (e) {
+        setToast(e instanceof Error ? e.message : '支付失败')
+        window.setTimeout(() => setToast(null), 2400)
+      }
     },
-    [amountStr, onPaidTransfer, remark],
+    [amountStr, onPaidTransfer, remark, verifyPaymentPassword],
   )
 
   return (

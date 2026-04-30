@@ -97,7 +97,7 @@ export function WeChatChatImageBubbleRow({
 
   if (!isSelf) {
     return (
-      <div className="w-[100vw] max-w-[100vw] shrink-0 overflow-x-hidden" data-wx-msg-id={_id}>
+      <div className="w-full max-w-full shrink-0 overflow-x-hidden" data-wx-msg-id={_id}>
         {!showAvatar ? (
           <div className="ml-[24px] mr-auto min-w-0">{imageBlock}</div>
         ) : showAvatarVisual ? (
@@ -141,7 +141,7 @@ export function WeChatChatImageBubbleRow({
   }
 
   return (
-    <div className="flex w-[100vw] max-w-[100vw] shrink-0 items-end justify-end gap-[4px] overflow-x-hidden" data-wx-msg-id={_id}>
+    <div className="flex w-full max-w-full shrink-0 items-end justify-end gap-[4px] overflow-x-hidden" data-wx-msg-id={_id}>
       {!showAvatar ? (
         <div className="mr-[24px] ml-auto min-w-0">{imageBlock}</div>
       ) : showAvatarVisual ? (

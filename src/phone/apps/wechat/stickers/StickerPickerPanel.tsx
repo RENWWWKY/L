@@ -14,15 +14,15 @@ export function StickerPickerPanel({ onPick }: Props) {
 
   if (!groups.length) {
     return (
-      <div className="mb-2 rounded-[12px] border border-[#eee] bg-white px-3 py-3 text-center text-[12px] text-gray-500">
+      <div className="mt-2 rounded-[12px] border border-[#eee] bg-white px-3 py-3 text-center text-[12px] text-gray-500">
         还没有表情包。请先去「我-表情」创建分组并上传表情。
       </div>
     )
   }
 
   return (
-    <div className="mb-2 rounded-[12px] border border-[#eee] bg-white p-2 shadow-sm">
-      <div className="mb-2 flex gap-2 overflow-x-auto">
+    <div className="mt-2 rounded-[12px] border border-[#eee] bg-white p-2 shadow-sm">
+      <div className="mb-2 flex shrink-0 gap-2 overflow-x-auto">
         {groups.map((g) => (
           <Pressable
             key={g.id}
@@ -34,19 +34,26 @@ export function StickerPickerPanel({ onPick }: Props) {
           </Pressable>
         ))}
       </div>
-      <div className="grid grid-cols-5 gap-1.5">
-        {(active?.items ?? []).slice(0, 30).map((item) => (
-          <Pressable
-            key={item.id}
-            type="button"
-            onClick={() => onPick({ url: item.url, description: item.description })}
-            className="overflow-hidden rounded-[10px] border border-[#eee] bg-[#fafafa]"
-          >
-            <div className="aspect-square">
-              <img src={item.url} alt="" className="h-full w-full object-contain" />
-            </div>
-          </Pressable>
-        ))}
+      <div
+        className="max-h-[min(42vh,288px)] overflow-y-auto overscroll-y-contain [-webkit-overflow-scrolling:touch]"
+        role="list"
+        aria-label="表情包列表"
+      >
+        <div className="grid grid-cols-4 gap-2 pb-1">
+          {(active?.items ?? []).map((item) => (
+            <Pressable
+              key={item.id}
+              type="button"
+              onClick={() => onPick({ url: item.url, description: item.description })}
+              className="overflow-hidden rounded-[10px] border border-[#eee] bg-[#fafafa]"
+              role="listitem"
+            >
+              <div className="aspect-square">
+                <img src={item.url} alt="" className="h-full w-full object-contain" draggable={false} />
+              </div>
+            </Pressable>
+          ))}
+        </div>
       </div>
     </div>
   )

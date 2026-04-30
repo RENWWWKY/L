@@ -114,30 +114,151 @@ export function getKnownStickerUrlSet(): Set<string> {
   return s
 }
 
+function decodeURIComponentSafe(s: string): string {
+  const t = String(s ?? '').trim()
+  if (!t) return ''
+  try {
+    return decodeURIComponent(t)
+  } catch {
+    return t
+  }
+}
+
+function fileBasenameNoExtFromUrlOrPath(input: string): string {
+  const decoded = decodeURIComponentSafe(input.replaceAll('\\', '/'))
+  const seg = decoded.split('/').pop() ?? decoded
+  return seg.replace(/\.[^.]+$/i, '').trim()
+}
+
+/** 与 ChatRoom 内校验逻辑一致：尝试把模型输出的路径变体归一到资源库里的 url */
+export function resolveKnownStickerUrl(rawUrl: string): string | null {
+  const set = getKnownStickerUrlSet()
+  if (!set.size) return null
+  const src = String(rawUrl || '').trim()
+  if (!src) return null
+  const candidates = [
+    src,
+    src.replace(/^\/+/, ''),
+    `/${src.replace(/^\/+/, '')}`,
+    src.replace(/^\/?Lumi-Phone\/image\//i, 'Phone/image/'),
+    src.replace(/^\/?Phone\/image\//i, 'Lumi-Phone/image/'),
+    decodeURIComponentSafe(src),
+  ]
+  for (const c of candidates) {
+    const x = c.trim()
+    if (x && set.has(x)) return x
+  }
+  return null
+}
+
+export type StickerCatalogEntry = {
+  url: string
+  /** 展示给模型的一行「引用名」，须原样用于 `[表情包]引用名` */
+  ref: string
+  description: string
+  groupName: string
+  groupTag: string
+}
+
+function allStickerGroups(): StickerGroup[] {
+  const state = readState()
+  return [...DEFAULT_GROUPS, ...state.groups]
+}
+
 /**
- * 拼入微信单聊 system，供模型选用合法表情包 URL。
+ * 生成每条表情的稳定引用名：默认用「描述」；若全局重名则用「分组名/描述」。
+ */
+export function getStickerCatalogEntries(): StickerCatalogEntry[] {
+  const rows: Array<{ g: StickerGroup; it: StickerItem; desc: string }> = []
+  for (const g of allStickerGroups()) {
+    const tag = g.readonly ? `${g.name}·默认` : g.name
+    for (const it of g.items) {
+      const desc = (it.description || '未命名').replace(/\s+/g, ' ').trim().slice(0, 40) || '未命名'
+      rows.push({ g, it, desc })
+    }
+  }
+  const norm = (s: string) => s.trim()
+  const descCount = new Map<string, number>()
+  for (const r of rows) {
+    const k = norm(r.desc)
+    descCount.set(k, (descCount.get(k) ?? 0) + 1)
+  }
+  return rows.map(({ g, it, desc }) => {
+    const groupTag = g.readonly ? `${g.name}·默认` : g.name
+    const ref = (descCount.get(norm(desc)) ?? 0) > 1 ? `${g.name}/${desc}` : desc
+    return {
+      url: it.url.trim(),
+      ref,
+      description: desc,
+      groupName: g.name,
+      groupTag,
+    }
+  })
+}
+
+/**
+ * 将模型输出的 `[表情包]` 行载荷解析为资源库中的真实 url。
+ * 优先支持「引用名」（与《表情包资源》中 ref 一致）；兼容旧版完整 URL / Phone 路径等。
+ */
+export function resolveStickerOutputRef(rawInput: string): string | null {
+  let ref = String(rawInput ?? '').trim().replace(/^['"`「」]+|['"`」]+$/g, '').trim()
+  ref = ref.replace(/[，。！？!?,、；;:：）\])》】]+$/g, '').trim()
+  if (!ref) return null
+
+  const urlHit = resolveKnownStickerUrl(ref)
+  if (urlHit) return urlHit
+
+  const decoded = decodeURIComponentSafe(ref)
+  if (decoded !== ref) {
+    const u2 = resolveKnownStickerUrl(decoded)
+    if (u2) return u2
+  }
+
+  const entries = getStickerCatalogEntries()
+  for (const e of entries) {
+    if (e.ref === ref || e.ref === decoded) return e.url
+  }
+  for (const e of entries) {
+    if (e.description === ref || e.description === decoded) return e.url
+  }
+  const slash = ref.indexOf('/')
+  if (slash > 0) {
+    const gname = ref.slice(0, slash).trim()
+    const d = ref.slice(slash + 1).trim()
+    const hit = entries.find((e) => e.groupName === gname && e.description === d)
+    if (hit) return hit.url
+  }
+
+  const stem = fileBasenameNoExtFromUrlOrPath(ref)
+  const stemLoose = stem.replace(/-[A-Za-z0-9]{4,}$/i, '').trim()
+  if (stem || stemLoose) {
+    for (const e of entries) {
+      const d = e.description.trim()
+      if (!d) continue
+      if (stem === d || stemLoose === d || stem.startsWith(d) || stemLoose.startsWith(d)) return e.url
+    }
+  }
+  return null
+}
+
+/**
+ * 拼入微信单聊 system，供模型选用合法表情包（用「引用名」输出，避免长路径/URL 被截断或抄错）。
  * 行数与总长封顶，避免撑爆上下文。
  */
 export function buildStickerCatalogPromptBlock(maxLines = 96, maxChars = 9500): string {
-  const state = readState()
+  const entries = getStickerCatalogEntries()
   const lines: string[] = []
-  for (const g of [...DEFAULT_GROUPS, ...state.groups]) {
-    const tag = g.readonly ? `${g.name}·默认` : g.name
-    for (const it of g.items) {
-      const desc = (it.description || '未命名').replace(/\s+/g, ' ').trim().slice(0, 40)
-      const u = it.url.trim()
-      if (!u) continue
-      lines.push(`- 「${tag}」${desc} → ${u}`)
-      if (lines.length >= maxLines) break
-    }
+  for (const e of entries) {
+    if (!e.url) continue
+    lines.push(`- 「${e.groupTag}」${e.description} → 发送时单独一行输出：[表情包]${e.ref}`)
     if (lines.length >= maxLines) break
   }
   if (!lines.length) {
     return `---------------------\n【表情包资源】\n---------------------\n当前库中无可用表情条目。请勿输出 [表情包] 行；用户发图仍按「表情包消息」规则接话即可。\n`
   }
   let body = lines.join('\n')
-  if (body.length > maxChars) body = `${body.slice(0, maxChars)}\n…（目录过长已截断，请只用上方已列出的 URL）`
-  return `---------------------\n【表情包资源（仅允许使用下列完整 URL）】\n---------------------\n${body}\n`
+  if (body.length > maxChars) body = `${body.slice(0, maxChars)}\n…（目录过长已截断，请只用上方已列出的引用名）`
+  return `---------------------\n【表情包资源（仅允许使用下列「引用名」）】\n---------------------\n${body}\n`
 }
 
 function writeState(next: StickerState) {

@@ -60,9 +60,21 @@ export function emitWalletStorageChanged() {
 
 const BANKS: WalletBankName[] = ['Lumi银行', 'LU宝银行', 'Luum银行']
 const MAX_CARDS_PER_BANK = 3
+const LEGACY_MOCK_AFFECTION_CARD_IDS = new Set(['aff-1', 'aff-2'])
+const LEGACY_MOCK_TRANSACTION_IDS = new Set([
+  'txn-aff-6',
+  'txn-aff-5',
+  'txn-1',
+  'txn-aff-4',
+  'txn-2',
+  'txn-aff-3',
+  'txn-aff-2',
+  'txn-3',
+  'txn-aff-1',
+])
 
 const DEFAULT_SNAPSHOT: WalletSnapshot = {
-  balance: 12500,
+  balance: 5000,
   isPaymentPasswordSet: false,
   paymentPassword: '',
   bankCards: [
@@ -70,109 +82,8 @@ const DEFAULT_SNAPSHOT: WalletSnapshot = {
     { id: 'bank-2', bankName: 'LU宝银行', number: '6222000022221886', last4: '1886', tone: 'gray' },
     { id: 'bank-3', bankName: 'Luum银行', number: '6222000033339001', last4: '9001', tone: 'black' },
   ],
-  affectionCards: [
-    {
-      id: 'aff-1',
-      giverName: '星辰',
-      giverAvatar: 'https://images.unsplash.com/photo-1500648767791-00dcc994a43e?auto=format&fit=crop&w=200&q=80',
-      message: 'For your daily joy.',
-      signature: 'Xingchen',
-      monthlyRemaining: 8000,
-      monthlyLimit: 10000,
-      blessing: '想花就花，我一直都在。',
-    },
-    {
-      id: 'aff-2',
-      giverName: '沈砚',
-      giverAvatar: 'https://images.unsplash.com/photo-1506794778202-cad84cf45f1d?auto=format&fit=crop&w=200&q=80',
-      message: 'For your quiet luxuries.',
-      signature: 'Shen Yan',
-      monthlyRemaining: 3200,
-      monthlyLimit: 6000,
-      blessing: '取悦自己，别总在省。',
-    },
-  ],
-  transactions: [
-    {
-      id: 'txn-aff-6',
-      type: 'affection',
-      title: '夜宵（由亲情卡支付）',
-      subtitle: '04-20 00:23',
-      amount: -58,
-      createdAt: '2026-04-20T00:23:00.000Z',
-      meta: { affectionCardId: 'aff-2', giverName: '沈砚' },
-    },
-    {
-      id: 'txn-aff-5',
-      type: 'affection',
-      title: '打车回家（由亲情卡支付）',
-      subtitle: '04-19 23:08',
-      amount: -42,
-      createdAt: '2026-04-19T23:08:00.000Z',
-      meta: { affectionCardId: 'aff-1', giverName: '星辰' },
-    },
-    {
-      id: 'txn-1',
-      type: 'topup',
-      title: 'Lumi转账 - 收到星辰的转账',
-      subtitle: '04-19 14:30',
-      amount: 520,
-      createdAt: '2026-04-19T14:30:00.000Z',
-    },
-    {
-      id: 'txn-aff-4',
-      type: 'affection',
-      title: '买花（由亲情卡支付）',
-      subtitle: '04-19 12:06',
-      amount: -128,
-      createdAt: '2026-04-19T12:06:00.000Z',
-      meta: { affectionCardId: 'aff-1', giverName: '星辰' },
-    },
-    {
-      id: 'txn-2',
-      type: 'affection',
-      title: '购买咖啡（由亲情卡支付）',
-      subtitle: '04-19 09:12',
-      amount: -35,
-      createdAt: '2026-04-19T09:12:00.000Z',
-      meta: { affectionCardId: 'aff-1', giverName: '星辰' },
-    },
-    {
-      id: 'txn-aff-3',
-      type: 'affection',
-      title: '甜品（由亲情卡支付）',
-      subtitle: '04-19 08:40',
-      amount: -26,
-      createdAt: '2026-04-19T08:40:00.000Z',
-      meta: { affectionCardId: 'aff-2', giverName: '沈砚' },
-    },
-    {
-      id: 'txn-aff-2',
-      type: 'affection',
-      title: '买书（由亲情卡支付）',
-      subtitle: '04-18 21:11',
-      amount: -96,
-      createdAt: '2026-04-18T21:11:00.000Z',
-      meta: { affectionCardId: 'aff-2', giverName: '沈砚' },
-    },
-    {
-      id: 'txn-3',
-      type: 'withdraw',
-      title: '提现到LU宝银行',
-      subtitle: '04-18 22:08',
-      amount: -888,
-      createdAt: '2026-04-18T22:08:00.000Z',
-    },
-    {
-      id: 'txn-aff-1',
-      type: 'affection',
-      title: '电影票（由亲情卡支付）',
-      subtitle: '04-17 20:19',
-      amount: -79,
-      createdAt: '2026-04-17T20:19:00.000Z',
-      meta: { affectionCardId: 'aff-1', giverName: '星辰' },
-    },
-  ],
+  affectionCards: [],
+  transactions: [],
 }
 
 export function walletReadSnapshot(): WalletSnapshot {
@@ -217,16 +128,15 @@ export function walletReadSnapshot(): WalletSnapshot {
           ]
         : bankCards
 
-    const affectionCards =
-      Array.isArray(parsed.affectionCards) && parsed.affectionCards.length > 0
-        ? (parsed.affectionCards as AffectionCard[]).map((c) => ({
-            ...c,
-            blessing:
-              typeof c.blessing === 'string' && c.blessing.trim()
-                ? c.blessing.trim()
-                : '把这份底气，都留给你。',
-          }))
-        : DEFAULT_SNAPSHOT.affectionCards
+    const affectionCards = (Array.isArray(parsed.affectionCards) ? (parsed.affectionCards as AffectionCard[]) : [])
+      .filter((c) => !LEGACY_MOCK_AFFECTION_CARD_IDS.has(String(c?.id || '').trim()))
+      .map((c) => ({
+        ...c,
+        blessing:
+          typeof c.blessing === 'string' && c.blessing.trim()
+            ? c.blessing.trim()
+            : '把这份底气，都留给你。',
+      }))
 
     const giverIdByName = new Map(affectionCards.map((c) => [c.giverName, c.id] as const))
     const fallbackAff = affectionCards[0] ?? DEFAULT_SNAPSHOT.affectionCards[0] ?? null
@@ -244,14 +154,11 @@ export function walletReadSnapshot(): WalletSnapshot {
     }
 
     const transactionsFromStorage = Array.isArray(parsed.transactions)
-      ? (parsed.transactions as WalletTransaction[]).map(migrateOneTransaction)
+      ? (parsed.transactions as WalletTransaction[])
+          .filter((t) => !LEGACY_MOCK_TRANSACTION_IDS.has(String(t?.id || '').trim()))
+          .map(migrateOneTransaction)
       : []
-    // 开发/演示场景：若本地已有存档，会看不到新加的 DEFAULT mock 流水；这里合并默认流水（按 id 去重）。
-    const seen = new Set(transactionsFromStorage.map((t) => t.id))
-    const transactions = [
-      ...transactionsFromStorage,
-      ...DEFAULT_SNAPSHOT.transactions.filter((t) => !seen.has(t.id)),
-    ]
+    const transactions = transactionsFromStorage
 
     return {
       ...DEFAULT_SNAPSHOT,

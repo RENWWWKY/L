@@ -1,5 +1,11 @@
 export type DateMode = 'normal' | 'vn'
 export type NarrativePerspective = 'first' | 'second' | 'third'
+/** 剧情 AI 目标正文字数（汉字）：与 DatingStoryPage、generateDatingAi 共用，避免 UI 选 1000 却被后端钳成 600 */
+export const DATING_AI_LENGTH_TARGET_MIN = 60
+export const DATING_AI_LENGTH_TARGET_MAX = 2000
+/** 剧情续写单次 completion 上限（token；仍受所选模型/API 限制） */
+export const DATING_AI_MAX_OUTPUT_TOKENS = 30000
+
 export type NarrativeGenOptions = {
   /** 期望字数（大概值，非硬性） */
   lengthTargetChars?: number

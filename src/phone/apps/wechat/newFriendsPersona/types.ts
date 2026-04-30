@@ -286,6 +286,8 @@ export type CharacterMemory = {
 /** 全局记忆设置（IndexedDB `memorySettings`，主键 id 固定为 `default`） */
 export type MemorySettingsRow = {
   id: 'default'
+  /** 自动总结总开关：关闭后仅支持手动总结 */
+  autoSummaryEnabled: boolean
   autoSummaryInterval: number
   /** 各会话自上次自动总结以来已完成的「AI 回复轮」计数 */
   aiRoundCountByConversation?: Record<string, number>

@@ -2,7 +2,11 @@ import type { ApiConfig } from '../api/types'
 import type { Character, HeartWhisper, PlayerIdentity, ScheduleTable, WeChatReplyToMeta } from './newFriendsPersona/types'
 import { openAiCompatibleChat, openAiCompatibleChatAny, type OpenAiCompatibleMessage } from './newFriendsPersona/ai'
 import { LUMI_ASSISTANT_SYSTEM_PROMPT } from './lumiAssistantPrompt'
-import { WECHAT_REPLY_OUTPUT_APPENDIX, WECHAT_THINKING_CHAIN_APPENDIX } from './wechatReplyOutputPrompt'
+import {
+  WECHAT_LUMI_ASSISTANT_OUTPUT_APPENDIX,
+  WECHAT_REPLY_OUTPUT_APPENDIX,
+  WECHAT_THINKING_CHAIN_APPENDIX,
+} from './wechatReplyOutputPrompt'
 import { WECHAT_ROLEPLAY_SYSTEM_PROMPT } from './wechatChatPrompt'
 import { buildStickerCatalogPromptBlock } from './stickers/stickerStore'
 import { WECHAT_HEART_WHISPER_SYSTEM_PROMPT } from './wechatHeartWhisperPrompt'
@@ -10,6 +14,9 @@ import { logConsole } from './consoleLogger'
 import { VOICE_CALL_SYSTEM_PROMPT } from './voiceCall/voiceCallSystemPrompt'
 import { VOICE_CALL_DECISION_SYSTEM_PROMPT } from './voiceCall/callDecisionSystemPrompt'
 import { buildMbtiPersonalityWorldBookText, getMbtiPersonalityWorldBookName, isMbtiPersonalityWorldBookName, normalizeMbti } from './mbtiPersonalityWorldBook'
+
+/** 微信单聊主回复（含思维链解析路径）completion 上限；仍受模型/API 限制 */
+export const WECHAT_PEER_REPLY_MAX_OUTPUT_TOKENS = 30000
 
 export type WeChatChatPromptMode = 'lumi-assistant' | 'persona'
 export type WeChatDanmakuInlineConfig = {
@@ -56,7 +63,18 @@ function buildBusyPrefix(ctx?: BusyRuntimeContext): string {
 忙碌原因：${ctx.reason || '无'}
 最大忙碌时长：${ctx.maxDuration} 分钟`
   }
-  if (!ctx.busyMessages?.length) return ''
+  if (!ctx.busyMessages?.length) {
+    const customScenarios = Array.isArray(ctx.customScenarios)
+      ? ctx.customScenarios.map((x) => String(x ?? '').trim()).filter(Boolean).slice(0, 8)
+      : []
+    return `【忙碌模式可选触发规则】
+- 你当前不在忙碌中，可正常聊天。
+- 若你判断当前情境确实不便继续（开会/上课/开车/洗澡/睡觉/情绪冷却等），可以改为仅输出一行 BUSY 指令：
+  [BUSY]{"reason":"你正在忙的事情","duration":15}
+- duration 必须是 1~${ctx.maxDuration} 的整数分钟。
+- 若用户明确要求“测试忙碌指令/BUSY 指令/进入忙碌状态”，应优先输出 BUSY 指令配合测试。
+${customScenarios.length ? `- 忙碌场景参考：${customScenarios.join('；')}` : ''}`.trim()
+  }
   return `【忙碌后回复上下文】
 你当前已经忙完「${ctx.reason || '一些事情'}」，现在恢复线上聊天。
 请直接按普通聊天规则回复用户，不要输出 BUSY 指令。
@@ -176,7 +194,7 @@ function safeScheduleJson(s: ScheduleTable): string {
   }
 }
 
-function formatCurrentTimeBlock(currentTimeMs?: number): string {
+function formatCurrentTimeBlock(currentTimeMs?: number, opts?: { forLumiAssistant?: boolean }): string {
   const ts = Number(currentTimeMs)
   const safeTs = Number.isFinite(ts) && ts > 0 ? ts : Date.now()
   const d = new Date(safeTs)
@@ -185,7 +203,10 @@ function formatCurrentTimeBlock(currentTimeMs?: number): string {
   const stamp = `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())} ${week} ${pad2(d.getHours())}:${pad2(d.getMinutes())}:${pad2(
     d.getSeconds(),
   )}`
-  return `\n\n---\n【当前时间】\n当前时间点：${stamp}\n请将时间感（早/午/晚、是否深夜、是否工作时段）自然体现在角色回复里；若无自定义时间配置，默认按系统当前时间理解。\n`
+  const tail = opts?.forLumiAssistant
+    ? `可将时段体现在问候或语气里（如早晚安），但不要编造与用户私密剧情。\n`
+    : `请将时间感（早/午/晚、是否深夜、是否工作时段）自然体现在角色回复里；若无自定义时间配置，默认按系统当前时间理解。\n`
+  return `\n\n---\n【当前时间】\n当前时间点：${stamp}\n${tail}`
 }
 
 export function buildSystemContent(params: {
@@ -204,13 +225,18 @@ export function buildSystemContent(params: {
   currentTimeMs?: number
 }): string {
   const player = params.playerDisplayName.trim() || '朋友'
-  const peerLine = `\n\n---\n【会话对方】对方的微信资料名或备注可能显示为：${player}。请用自然称呼，不要机械重复全名除非语境需要。\n`
+  const attributionLine =
+    params.promptMode === 'lumi-assistant'
+      ? `对方消息里的「我」「我的」默认指${player}本人在自述；勿把这些遭遇误写成发生在助手自己身上。\n`
+      : `对方发来的内容里出现的「我」「我的」，默认指${player}本人正在自述——不要把那些事当成角色自己的遭遇来接续叙述。\n`
+  const peerLine = `\n\n---\n【会话对方】对方的微信资料名或备注可能显示为：${player}。请用自然称呼，不要机械重复全名除非语境需要。\n${attributionLine}`
   const mem = buildLongTermMemorySection(params.longTermMemoryNotes)
   const offlinePlots = params.offlineDatingPlotsContext?.trim()
     ? `\n\n---\n${params.offlineDatingPlotsContext.trim()}\n`
     : ''
   const replyBias = params.replyBias?.trim() ? `\n\n---\n【本轮回复偏向（最高优先级）】\n${params.replyBias.trim()}\n` : ''
-  const currentTime = formatCurrentTimeBlock(params.currentTimeMs)
+  const isLumiAssistant = params.promptMode === 'lumi-assistant'
+  const currentTime = formatCurrentTimeBlock(params.currentTimeMs, { forLumiAssistant: isLumiAssistant })
   const schedule = buildScheduleSection({
     playerIdentity: (params.playerIdentity?.schedule as ScheduleTable | undefined) ?? null,
     character: (params.character?.schedule as ScheduleTable | undefined) ?? null,
@@ -218,8 +244,9 @@ export function buildSystemContent(params: {
   const pi = buildPlayerIdentitySection(params.playerIdentity)
   const fictionCot = `\n\n${FICTIONAL_COT_APPENDIX}\n`
 
-  if (params.promptMode === 'lumi-assistant') {
-    return `${LUMI_ASSISTANT_SYSTEM_PROMPT}${mem}${offlinePlots}${replyBias}${currentTime}${schedule}${pi}${fictionCot}${peerLine}`
+  if (isLumiAssistant) {
+    // 助手模式：不注入「虚构沙盒」免责声明，避免诱导沉浸式扮演。
+    return `${LUMI_ASSISTANT_SYSTEM_PROMPT}${mem}${offlinePlots}${replyBias}${currentTime}${schedule}${pi}${peerLine}`
   }
 
   const wb = buildWorldBookText(params.character)
@@ -492,15 +519,20 @@ export async function requestWeChatPeerReplyBubbles(params: {
     worldBackgroundPrompt: params.worldBackgroundPrompt,
     transcript: params.transcript,
   })
-  // 线上回复：取消思维链开关，始终启用（用于把好感度-人设-行为强一致性 CoT 注入到每轮）。
-  const system = `${busyPrefix ? `${busyPrefix}\n\n` : ''}${base}\n\n${WECHAT_CHARACTER_RECALL_GUIDE}\n\n${WECHAT_REPLY_OUTPUT_APPENDIX}\n\n${WECHAT_THINKING_CHAIN_APPENDIX}${danmakuInstruction ? `\n\n${danmakuInstruction}` : ''}\n\n${stickerCat}`
+  const recallGuide = isLumi
+    ? `【撤回】仅在明显误发时可极少使用输出协议中的撤回格式；禁止用于恋爱拉扯或虚构剧情。`
+    : WECHAT_CHARACTER_RECALL_GUIDE
+  const outputAppendix = isLumi
+    ? WECHAT_LUMI_ASSISTANT_OUTPUT_APPENDIX
+    : `${WECHAT_REPLY_OUTPUT_APPENDIX}\n\n${WECHAT_THINKING_CHAIN_APPENDIX}`
+  const system = `${busyPrefix ? `${busyPrefix}\n\n` : ''}${base}\n\n${recallGuide}\n\n${outputAppendix}${danmakuInstruction ? `\n\n${danmakuInstruction}` : ''}\n\n${stickerCat}`
 
   const history = transcriptToMessages(params.transcript)
   const messages: OpenAiCompatibleMessage[] = [{ role: 'system', content: system }, ...history]
 
   const text = await openAiCompatibleChat(cfg, messages, {
     temperature: isLumi ? 0.62 : 0.82,
-    max_tokens: isLumi ? 1200 : 2048,
+    max_tokens: WECHAT_PEER_REPLY_MAX_OUTPUT_TOKENS,
   })
   const parsed = parseWeChatPeerReplyWithThinking(text)
   // 线上已切换为“后台内隐 CoT”，不再要求可见思维链重试。
@@ -559,8 +591,7 @@ export type VoiceCallDecision = {
 function safeParseDecisionJson(raw: string): VoiceCallDecision | null {
   const s = stripAssistantFence(String(raw ?? '')).trim()
   if (!s) return null
-  try {
-    const obj = JSON.parse(s) as unknown
+  const parseObj = (obj: unknown): VoiceCallDecision | null => {
     if (!obj || typeof obj !== 'object') return null
     const rec = obj as Record<string, unknown>
     const decision = rec.decision
@@ -568,9 +599,31 @@ function safeParseDecisionJson(raw: string): VoiceCallDecision | null {
     const internal_thought = typeof rec.internal_thought === 'string' ? rec.internal_thought : undefined
     const opening = typeof rec.opening === 'string' ? String(rec.opening).trim().slice(0, 120) : undefined
     return { decision, internal_thought, opening }
-  } catch {
-    return null
   }
+  try {
+    const direct = parseObj(JSON.parse(s) as unknown)
+    if (direct) return direct
+  } catch {
+    // continue with tolerant parsing
+  }
+  // 兼容“前后带解释文字”的情况：抽取首个 JSON 对象再试
+  const i = s.indexOf('{')
+  const j = s.lastIndexOf('}')
+  if (i >= 0 && j > i) {
+    const slice = s.slice(i, j + 1)
+    try {
+      const nested = parseObj(JSON.parse(slice) as unknown)
+      if (nested) return nested
+    } catch {
+      // continue
+    }
+  }
+  // 兜底：只要文本出现明确决策词，就不要一律打成 NO_ANSWER
+  const upper = s.toUpperCase()
+  if (/\bACCEPT\b/.test(upper)) return { decision: 'ACCEPT' }
+  if (/\bREJECT\b/.test(upper)) return { decision: 'REJECT' }
+  if (/\bNO_ANSWER\b/.test(upper) || /\bNO ANSWER\b/.test(upper)) return { decision: 'NO_ANSWER' }
+  return null
 }
 
 /** 呼叫决策：返回 ACCEPT/REJECT/NO_ANSWER 的 JSON 结果。 */
@@ -697,8 +750,13 @@ export async function requestWeChatPeerReplyBubblesWithImage(params: {
     worldBackgroundPrompt: params.worldBackgroundPrompt,
     transcript: params.transcript,
   })
-  // 线上回复：取消思维链开关，始终启用（忙碌模式内部仍会按协议禁止输出 <thinking>）。
-  const system = `${busyPrefix ? `${busyPrefix}\n\n` : ''}${base}\n\n${WECHAT_CHARACTER_RECALL_GUIDE}\n\n---\n【图片消息附加要求】\n${imgRules}\n\n${WECHAT_REPLY_OUTPUT_APPENDIX}\n\n${WECHAT_THINKING_CHAIN_APPENDIX}${danmakuInstruction ? `\n\n${danmakuInstruction}` : ''}\n\n${stickerCat}`
+  const recallGuide = isLumi
+    ? `【撤回】仅在明显误发时可极少使用输出协议中的撤回格式；禁止用于恋爱拉扯或虚构剧情。`
+    : WECHAT_CHARACTER_RECALL_GUIDE
+  const outputAppendix = isLumi
+    ? WECHAT_LUMI_ASSISTANT_OUTPUT_APPENDIX
+    : `${WECHAT_REPLY_OUTPUT_APPENDIX}\n\n${WECHAT_THINKING_CHAIN_APPENDIX}`
+  const system = `${busyPrefix ? `${busyPrefix}\n\n` : ''}${base}\n\n${recallGuide}\n\n---\n【图片消息附加要求】\n${imgRules}\n\n${outputAppendix}${danmakuInstruction ? `\n\n${danmakuInstruction}` : ''}\n\n${stickerCat}`
 
   const history = transcriptToMessages(params.transcript)
 
@@ -724,7 +782,7 @@ export async function requestWeChatPeerReplyBubblesWithImage(params: {
   try {
     const text = await openAiCompatibleChatAny(cfg, visionMessages, {
       temperature: isLumi ? 0.62 : 0.82,
-      max_tokens: isLumi ? 1200 : 2048,
+      max_tokens: WECHAT_PEER_REPLY_MAX_OUTPUT_TOKENS,
     })
     const p0 = parseWeChatPeerReplyWithThinking(text)
     const b0 = p0.bubbles
@@ -740,7 +798,7 @@ export async function requestWeChatPeerReplyBubblesWithImage(params: {
     const tryAlt = async (messages: unknown[]) => {
       const text = await openAiCompatibleChatAny(cfg, messages, {
         temperature: isLumi ? 0.62 : 0.82,
-        max_tokens: isLumi ? 1200 : 2048,
+        max_tokens: WECHAT_PEER_REPLY_MAX_OUTPUT_TOKENS,
       })
       const p1 = parseWeChatPeerReplyWithThinking(text)
       const b1 = p1.bubbles
@@ -818,7 +876,7 @@ export async function requestWeChatPeerReply(params: {
   worldBackgroundPrompt?: string
   offlineDatingPlotsContext?: string
   currentTimeMs?: number
-  /** 默认 `persona`；与微信里 Lumi 未绑人设时使用 `lumi-assistant`。 */
+  /** 默认 `persona`；内置 Lumi 会话固定 `lumi-assistant`（与人设绑定无关）。 */
   promptMode?: WeChatChatPromptMode
 }): Promise<string> {
   const cfg = params.apiConfig
@@ -843,7 +901,7 @@ export async function requestWeChatPeerReply(params: {
   const isLumi = promptMode === 'lumi-assistant'
   const text = await openAiCompatibleChat(cfg, messages, {
     temperature: isLumi ? 0.62 : 0.78,
-    max_tokens: isLumi ? 900 : 768,
+    max_tokens: WECHAT_PEER_REPLY_MAX_OUTPUT_TOKENS,
   })
   const cleaned = text.replace(/^\s*【[^】]+】\s*/g, '').trim()
   return cleaned || text.trim()

@@ -6,12 +6,10 @@ import { Pressable } from '../../../components/Pressable'
 import type { Character } from '../newFriendsPersona/types'
 import { personaDb } from '../newFriendsPersona/idb'
 import { WECHAT_LUMI_PEER_CHARACTER_ID } from '../wechatConversationKey'
+import { useWalletMockStore } from '../wallet/walletMockStore'
 import { CustomNumericKeyboard } from './CustomNumericKeyboard'
 import { maskRealName } from './maskRealName'
 import { PasswordPaymentSheet } from './PasswordPaymentSheet'
-
-/** Mock：钱包是否已绑定支付密码；改为 false 可测未绑定提示 */
-const WALLET_BOUND_MOCK = true
 
 const REMARK_PRESETS = ['Best Wishes', '恭喜发财', '谢谢老板', '大吉大利', '新年快乐'] as const
 const MIN_RED_PACKET_YUAN = 0.01
@@ -62,6 +60,7 @@ export function RedPacketPage({
   const [remarkSheet, setRemarkSheet] = useState(false)
   const [toast, setToast] = useState<string | null>(null)
   const [pwdOpen, setPwdOpen] = useState(false)
+  const { snapshot, verifyPaymentPassword } = useWalletMockStore()
 
   const characterId = chat.kind === 'persona' ? chat.characterId : WECHAT_LUMI_PEER_CHARACTER_ID
 
@@ -106,29 +105,45 @@ export function RedPacketPage({
       window.setTimeout(() => setToast(null), 2200)
       return
     }
-    if (!WALLET_BOUND_MOCK) {
-      setToast('Please bind your wallet first')
+    if (!snapshot.isPaymentPasswordSet) {
+      setToast('请先在钱包中设置支付密码')
       window.setTimeout(() => setToast(null), 2600)
       return
     }
+    if (snapshot.balance < yuan) {
+      setToast('余额不足')
+      window.setTimeout(() => setToast(null), 2200)
+      return
+    }
     setPwdOpen(true)
-  }, [amountStr])
+  }, [amountStr, snapshot.balance, snapshot.isPaymentPasswordSet])
 
   const handlePwdComplete = useCallback(
-    async (_pin: string) => {
+    async (pin: string) => {
       const yuan = parseAmountYuan(amountStr)
       if (yuan == null) return
+      const ok = await verifyPaymentPassword(pin)
+      if (!ok) {
+        setToast('支付密码错误')
+        window.setTimeout(() => setToast(null), 2200)
+        return
+      }
       setPwdOpen(false)
       const packetId = `wxrp-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`
-      await Promise.resolve(
-        onPaidSend({
-          packetId,
-          amountYuan: yuan,
-          remark: remark.trim() || 'Best Wishes',
-        }),
-      )
+      try {
+        await Promise.resolve(
+          onPaidSend({
+            packetId,
+            amountYuan: yuan,
+            remark: remark.trim() || 'Best Wishes',
+          }),
+        )
+      } catch (e) {
+        setToast(e instanceof Error ? e.message : '支付失败')
+        window.setTimeout(() => setToast(null), 2400)
+      }
     },
-    [amountStr, onPaidSend, remark],
+    [amountStr, onPaidSend, remark, verifyPaymentPassword],
   )
 
   return (

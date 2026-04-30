@@ -75,6 +75,12 @@ const CHARACTER_TIME_STORE = 'characterTimeSettings'
 const FAVORITES_STORE = 'favorites'
 const HEART_WHISPER_STORE = 'heartWhispers'
 
+/** 与 DatingContext / loadOfflineDatingPlotsForWechatPrompt 一致（IndexedDB phoneKv） */
+const WECHAT_DATING_ARCHIVES_KV_KEY = 'wechat-dating-archives-v1'
+const WECHAT_DATING_CHARACTERS_KV_KEY = 'wechat-dating-characters-v1'
+const WECHAT_DATING_HEART_WHISPER_KV_PREFIX = 'wechat-dating-heart-whisper-v1:'
+const WECHAT_DATING_STYLE_TUNING_LS_PREFIX = 'wechat-dating-style-tuning:'
+
 type Stored = Character
 
 export const DEFAULT_WECHAT_GLOBAL_SETTINGS: WeChatGlobalSettingsRow = {
@@ -980,6 +986,7 @@ function normalizeCharacterMemory(input: unknown): CharacterMemory | null {
 
 function normalizeMemorySettingsRow(input: unknown): MemorySettingsRow {
   const r = (input ?? {}) as Partial<MemorySettingsRow>
+  const autoSummaryEnabled = typeof r.autoSummaryEnabled === 'boolean' ? r.autoSummaryEnabled : true
   const n =
     typeof r.autoSummaryInterval === 'number' && Number.isFinite(r.autoSummaryInterval)
       ? Math.max(1, Math.min(100, Math.floor(r.autoSummaryInterval)))
@@ -1013,6 +1020,7 @@ function normalizeMemorySettingsRow(input: unknown): MemorySettingsRow {
   }
   return {
     id: 'default',
+    autoSummaryEnabled,
     autoSummaryInterval: n,
     aiRoundCountByConversation:
       Object.keys(aiRoundCountByConversation).length > 0 ? aiRoundCountByConversation : undefined,
@@ -1488,6 +1496,140 @@ export class PersonaDb {
   }
 
   /**
+   * 「不告知删除联系人」等场景：清掉该角色在约会页存档、线下总结游标、会话侧记忆计数与 legacy localStorage，
+   * 避免重新加回后仍带着旧线下剧情或自动总结状态。
+   */
+  async purgeWechatDatingArtifactsAndMemoryTracksForCharacterIds(characterIds: string[]): Promise<void> {
+    const ids = new Set(characterIds.map((x) => x.trim()).filter(Boolean))
+    if (!ids.size) return
+
+    try {
+      const arch: Record<string, unknown> = {}
+      const idbArch = await this.getPhoneKv(WECHAT_DATING_ARCHIVES_KV_KEY)
+      if (idbArch && typeof idbArch === 'object' && !Array.isArray(idbArch)) Object.assign(arch, idbArch as Record<string, unknown>)
+      if (typeof localStorage !== 'undefined') {
+        try {
+          const lsRaw = localStorage.getItem(WECHAT_DATING_ARCHIVES_KV_KEY)
+          if (lsRaw) {
+            const p = JSON.parse(lsRaw) as unknown
+            if (p && typeof p === 'object' && !Array.isArray(p)) Object.assign(arch, p as Record<string, unknown>)
+          }
+        } catch {
+          // ignore
+        }
+      }
+      let archChanged = false
+      for (const id of ids) {
+        if (id in arch) {
+          delete arch[id]
+          archChanged = true
+        }
+      }
+      if (archChanged) {
+        await this.setPhoneKv(WECHAT_DATING_ARCHIVES_KV_KEY, arch)
+        if (typeof localStorage !== 'undefined') {
+          try {
+            if (Object.keys(arch).length) localStorage.setItem(WECHAT_DATING_ARCHIVES_KV_KEY, JSON.stringify(arch))
+            else localStorage.removeItem(WECHAT_DATING_ARCHIVES_KV_KEY)
+          } catch {
+            // ignore quota
+          }
+        }
+      }
+    } catch {
+      // ignore
+    }
+
+    try {
+      const seen = new Map<string, unknown>()
+      const idbChars = await this.getPhoneKv(WECHAT_DATING_CHARACTERS_KV_KEY)
+      if (Array.isArray(idbChars)) {
+        for (const x of idbChars) {
+          const id = typeof (x as { id?: unknown })?.id === 'string' ? (x as { id: string }).id.trim() : ''
+          if (id) seen.set(id, x)
+        }
+      }
+      if (typeof localStorage !== 'undefined') {
+        try {
+          const lsRaw = localStorage.getItem(WECHAT_DATING_CHARACTERS_KV_KEY)
+          if (lsRaw) {
+            const p = JSON.parse(lsRaw) as unknown
+            if (Array.isArray(p)) {
+              for (const x of p) {
+                const id = typeof (x as { id?: unknown })?.id === 'string' ? (x as { id: string }).id.trim() : ''
+                if (id) seen.set(id, x)
+              }
+            }
+          }
+        } catch {
+          // ignore
+        }
+      }
+      if (seen.size) {
+        const arr = [...seen.values()]
+        const filtered = arr.filter((x) => {
+          const id = typeof (x as { id?: unknown })?.id === 'string' ? (x as { id: string }).id.trim() : ''
+          return !id || !ids.has(id)
+        })
+        if (filtered.length !== arr.length) {
+          await this.setPhoneKv(WECHAT_DATING_CHARACTERS_KV_KEY, filtered)
+          if (typeof localStorage !== 'undefined') {
+            try {
+              if (filtered.length) localStorage.setItem(WECHAT_DATING_CHARACTERS_KV_KEY, JSON.stringify(filtered))
+              else localStorage.removeItem(WECHAT_DATING_CHARACTERS_KV_KEY)
+            } catch {
+              // ignore
+            }
+          }
+        }
+      }
+    } catch {
+      // ignore
+    }
+
+    for (const id of ids) {
+      try {
+        await this.deletePhoneKv(`${WECHAT_DATING_HEART_WHISPER_KV_PREFIX}${id}`)
+      } catch {
+        // ignore
+      }
+      try {
+        if (typeof localStorage !== 'undefined') {
+          localStorage.removeItem(`${WECHAT_DATING_STYLE_TUNING_LS_PREFIX}${id}`)
+        }
+      } catch {
+        // ignore
+      }
+    }
+
+    try {
+      const settings = await this.getMemorySettings()
+      const datingMap = { ...(settings.datingPlotSummaryCursorByCharacterId ?? {}) }
+      for (const id of ids) delete datingMap[id]
+      const aiMap = { ...(settings.aiRoundCountByConversation ?? {}) }
+      for (const k of Object.keys(aiMap)) {
+        const peer = k.split('::')[0]?.trim()
+        if (peer && ids.has(peer)) delete aiMap[k]
+      }
+      const sumMap = { ...(settings.summaryCursorTimestampByConversation ?? {}) }
+      for (const k of Object.keys(sumMap)) {
+        const peer = k.split('::')[0]?.trim()
+        if (peer && ids.has(peer)) delete sumMap[k]
+      }
+      await this.putMemorySettings(
+        {
+          datingPlotSummaryCursorByCharacterId: Object.keys(datingMap).length ? datingMap : undefined,
+          aiRoundCountByConversation: Object.keys(aiMap).length ? aiMap : undefined,
+          summaryCursorTimestampByConversation: Object.keys(sumMap).length ? sumMap : undefined,
+        },
+        { emit: false },
+      )
+    } catch {
+      // ignore
+    }
+  }
+
+  /**
    * 清理通讯录侧数据（聊天/记忆/会话设置/弹幕/图谱视图/玩家链接），
    * 保留角色本体与角色-角色关系边。
    */
@@ -1495,6 +1637,8 @@ export class PersonaDb {
     if (!characterIds.length) return
     const idsToRemove = new Set(characterIds.map((x) => x.trim()).filter(Boolean))
     if (!idsToRemove.size) return
+
+    await this.purgeWechatDatingArtifactsAndMemoryTracksForCharacterIds([...idsToRemove])
 
     const db = await openDb()
     const stores: string[] = []
@@ -1504,7 +1648,12 @@ export class PersonaDb {
     if (db.objectStoreNames.contains(CHAT_CONV_SETTINGS_STORE)) stores.push(CHAT_CONV_SETTINGS_STORE)
     if (db.objectStoreNames.contains(CHARACTER_DANMAKU_STORE)) stores.push(CHARACTER_DANMAKU_STORE)
     if (db.objectStoreNames.contains(PLAYER_LINKS_STORE)) stores.push(PLAYER_LINKS_STORE)
-    if (!stores.length) return
+    if (db.objectStoreNames.contains(HEART_WHISPER_STORE)) stores.push(HEART_WHISPER_STORE)
+    if (!stores.length) {
+      db.close()
+      emitWeChatStorageChanged()
+      return
+    }
     const tx = db.transaction(stores, 'readwrite')
 
     if (db.objectStoreNames.contains(CHARACTER_MEMORIES_STORE)) {
@@ -1575,6 +1724,13 @@ export class PersonaDb {
       const links = tx.objectStore(PLAYER_LINKS_STORE)
       for (const cid of idsToRemove) {
         links.delete(cid)
+      }
+    }
+
+    if (db.objectStoreNames.contains(HEART_WHISPER_STORE)) {
+      const hs = tx.objectStore(HEART_WHISPER_STORE)
+      for (const cid of idsToRemove) {
+        hs.delete(cid)
       }
     }
 
@@ -2805,6 +2961,9 @@ export class PersonaDb {
    */
   async bumpMemoryAiRoundCount(conversationKey: string): Promise<{ shouldSummarize: boolean }> {
     const settings = await this.getMemorySettings()
+    if (settings.autoSummaryEnabled === false) {
+      return { shouldSummarize: false }
+    }
     const interval = settings.autoSummaryInterval
     const map = { ...(settings.aiRoundCountByConversation ?? {}) }
     const prev = map[conversationKey] ?? 0

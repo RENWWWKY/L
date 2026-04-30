@@ -19,6 +19,21 @@ function normalizeCoTAngleBrackets(s: string): string {
   return s.replace(/\uFF1C/g, '<').replace(/\uFF1E/g, '>').replace(/＜/g, '<').replace(/＞/g, '>')
 }
 
+/**
+ * 去掉「内心 OS」里仅有省略号/语气占位的 **…** 块（如 **我……**），避免固定前缀与旁白断裂。
+ * 星号内一旦出现叙事汉字（呃、好、别等以外的实质内容）即保留。
+ */
+function stripEllipsisOnlyOsSpans(s: string): string {
+  return String(s || '').replace(/\*\*([\s\S]*?)\*\*/g, (full, inner: string) => {
+    const t = String(inner ?? '').trim()
+    if (!t) return ''
+    const withoutLeadingWo = t.replace(/^我\s*/, '')
+    const substantive = withoutLeadingWo.replace(/[.。⋯…\s\d，,、；;:!！?？…]/gu, '')
+    if (substantive.length === 0 && t.length <= 20) return ''
+    return full
+  })
+}
+
 function stripHtmlComments(s: string): string {
   return s.replace(/<!--[\s\S]*?-->/g, '').trim()
 }
@@ -95,7 +110,7 @@ export function splitDatingAssistantOutput(raw: string): {
   } else {
     content = text
   }
-  const bodyTrim = stripHtmlComments(content)
+  const bodyTrim = stripEllipsisOnlyOsSpans(stripHtmlComments(content))
   const original = String(raw || '').trim()
   const finalContent = bodyTrim || (logicPass || planSummary ? '' : original)
   return { logicPass, planSummary, content: finalContent }

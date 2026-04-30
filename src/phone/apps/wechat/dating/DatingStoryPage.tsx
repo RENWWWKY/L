@@ -13,8 +13,8 @@ import { PlotRichParagraph } from './plotRichText'
 import { StoryFeed } from './StoryFeed'
 import { StyleSettingsDrawer } from './StyleSettingsDrawer'
 import { loadDatingStyleTuning, type DatingStyleTuning } from './styleTuningStorage'
-import type { BranchOption, NarrativePerspective } from './types'
-import type { DatingCardStyle } from './types'
+import { DATING_AI_LENGTH_TARGET_MAX, DATING_AI_LENGTH_TARGET_MIN } from './types'
+import type { BranchOption, DatingCardStyle, NarrativePerspective } from './types'
 import type { HeartWhisper } from '../newFriendsPersona/types'
 
 type Props = {
@@ -153,6 +153,9 @@ export function DatingStoryPage({ onBackToSelect }: Props) {
   const [initialBiasOpen, setInitialBiasOpen] = useState(false)
   const [initialBiasText, setInitialBiasText] = useState('')
   const [initialBiasDismissedFor, setInitialBiasDismissedFor] = useState<string | null>(null)
+  const [retryBiasOpen, setRetryBiasOpen] = useState(false)
+  const [retryBiasText, setRetryBiasText] = useState('')
+  const [retryTargetPlotId, setRetryTargetPlotId] = useState<string | null>(null)
   const [styleDrawerOpen, setStyleDrawerOpen] = useState(false)
   const [styleTuning, setStyleTuning] = useState<DatingStyleTuning>(() => ({ stylePrompt: '', referenceSnippet: '' }))
 
@@ -649,7 +652,7 @@ export function DatingStoryPage({ onBackToSelect }: Props) {
   const lengthTargetNum = (() => {
     const n = Number(lengthTargetChars)
     if (!Number.isFinite(n)) return 180
-    return Math.max(60, Math.min(600, Math.round(n)))
+    return Math.max(DATING_AI_LENGTH_TARGET_MIN, Math.min(DATING_AI_LENGTH_TARGET_MAX, Math.round(n)))
   })()
 
   const narrativeGenOptions = useMemo(
@@ -661,6 +664,24 @@ export function DatingStoryPage({ onBackToSelect }: Props) {
     }),
     [lengthTargetNum, autoUserReaction, godLocksNoInterrupt, styleTuning.stylePrompt, styleTuning.referenceSnippet],
   )
+
+  const openRetryBiasPanel = useCallback((plotId: string) => {
+    setRetryTargetPlotId(plotId)
+    setRetryBiasOpen(true)
+  }, [])
+
+  const confirmRetryWithBias = useCallback(() => {
+    const plotId = retryTargetPlotId?.trim()
+    if (!plotId) {
+      setRetryBiasOpen(false)
+      return
+    }
+    const bias = retryBiasText
+    setRetryBiasOpen(false)
+    setRetryBiasText('')
+    setRetryTargetPlotId(null)
+    void regenerateAiPlot(plotId, perspective, narrativeGenOptions, bias)
+  }, [narrativeGenOptions, perspective, regenerateAiPlot, retryBiasText, retryTargetPlotId])
 
   useEffect(() => {
     if (!currentArchive.godPerspective) return
@@ -890,7 +911,7 @@ export function DatingStoryPage({ onBackToSelect }: Props) {
                   regeneratingPlotId={regeneratingPlotId}
                   interactionLocked={loading}
                   onUpdatePlot={(id, patch) => updatePlotItem(id, patch)}
-                  onRegeneratePlot={(id) => void regenerateAiPlot(id, perspective, narrativeGenOptions)}
+                  onRegeneratePlot={openRetryBiasPanel}
                   onSetPlotVersionIndex={(id, idx) => setPlotVersionIndex(id, idx)}
                   onDeletePlot={(id) => deletePlotItem(id)}
                   branchEnabled={currentArchive.branchEnabled}
@@ -1004,8 +1025,8 @@ export function DatingStoryPage({ onBackToSelect }: Props) {
                       <p className="px-1 text-[11px] text-[#8e8e8e]">目标字数（正文汉字，约 88%～118% 区间）</p>
                       <input
                         type="number"
-                        min={60}
-                        max={600}
+                        min={DATING_AI_LENGTH_TARGET_MIN}
+                        max={DATING_AI_LENGTH_TARGET_MAX}
                         step={10}
                         value={lengthTargetChars}
                         onChange={(e) => setLengthTargetChars(e.target.value)}
@@ -1808,6 +1829,46 @@ export function DatingStoryPage({ onBackToSelect }: Props) {
                 }}
               >
                 生成首段剧情
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      {retryBiasOpen ? (
+        <div className="absolute inset-0 z-50 flex items-center justify-center bg-black/35 px-4">
+          <div className="w-full max-w-[520px] rounded-2xl border border-stone-200 bg-white p-4 shadow-lg">
+            <p className="text-center text-[16px] font-semibold text-[#262626]">重新回复偏向</p>
+            <p className="mt-2 text-center text-[12px] leading-relaxed text-[#8e8e8e]">
+              填写你希望本轮剧情偏向的方向（选填），将撤销该轮并重生一版回复。
+            </p>
+            <textarea
+              value={retryBiasText}
+              onChange={(e) => setRetryBiasText(e.target.value.slice(0, 320))}
+              rows={5}
+              maxLength={320}
+              placeholder="例：对白更直接一点，减少环境描写，先把冲突点说开。"
+              className="mt-3 w-full rounded-xl border border-stone-200 bg-white px-3 py-3 text-[13px] leading-relaxed text-[#262626] outline-none transition-all duration-200 focus:border-stone-400"
+            />
+            <p className="mt-1 text-right text-[11px] text-[#8e8e8e]">{retryBiasText.length}/320</p>
+            <div className="mt-3 flex items-center justify-end gap-2">
+              <button
+                type="button"
+                className="rounded-xl border border-stone-200 bg-white px-4 py-2 text-[13px] text-[#262626] hover:bg-stone-50"
+                onClick={() => {
+                  setRetryBiasOpen(false)
+                  setRetryBiasText('')
+                  setRetryTargetPlotId(null)
+                }}
+              >
+                取消
+              </button>
+              <button
+                type="button"
+                className="rounded-xl bg-neutral-900 px-4 py-2 text-[13px] font-medium text-white hover:bg-neutral-800"
+                onClick={confirmRetryWithBias}
+              >
+                确认重试
               </button>
             </div>
           </div>

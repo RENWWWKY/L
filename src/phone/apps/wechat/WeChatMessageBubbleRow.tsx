@@ -10,6 +10,7 @@ const PREVIEW_BUBBLE_MAX = 'max-w-[min(100%,calc(100vw-24px-24px-80px))]'
 
 export type WeChatMessageBubbleRowProps = {
   messageText: string
+  messagePrefixIcon?: ReactNode
   isSelf: boolean
   bubble: WeChatBubbleTheme
   showAvatar: boolean
@@ -126,6 +127,7 @@ function useMessageBubbleSingleLine(contentRef: RefObject<HTMLDivElement | null>
 
 export function WeChatMessageBubbleRow({
   messageText,
+  messagePrefixIcon,
   isSelf,
   bubble,
   showAvatar,
@@ -222,7 +224,14 @@ export function WeChatMessageBubbleRow({
         }}
         {...(variant === 'chat' ? bind : {})}
       >
-        {messageText}
+        {messagePrefixIcon ? (
+          <span className="inline-flex items-center gap-1.5 align-middle">
+            <span className="inline-flex shrink-0">{messagePrefixIcon}</span>
+            <span>{messageText}</span>
+          </span>
+        ) : (
+          messageText
+        )}
         {variant === 'chat' && bubbleSelected ? (
           <span
             className="pointer-events-none absolute inset-0"
@@ -241,7 +250,7 @@ export function WeChatMessageBubbleRow({
   if (variant === 'chat') {
     if (!isSelf) {
       return (
-        <div className={`w-[100vw] max-w-[100vw] shrink-0 overflow-x-hidden ${rowClassName}`}>
+        <div className={`w-full max-w-full shrink-0 overflow-x-hidden ${rowClassName}`}>
           {!showAvatar ? (
             <div className="ml-[24px] mr-auto min-w-0">{bubbleBlock}</div>
           ) : showAvatarVisual ? (
@@ -286,7 +295,7 @@ export function WeChatMessageBubbleRow({
 
     return (
       <div
-        className={`flex w-[100vw] max-w-[100vw] shrink-0 items-end justify-end gap-[4px] overflow-x-hidden ${rowClassName}`}
+        className={`flex w-full max-w-full shrink-0 items-end justify-end gap-[4px] overflow-x-hidden ${rowClassName}`}
       >
         {chatAccessory}
         {!showAvatar ? (

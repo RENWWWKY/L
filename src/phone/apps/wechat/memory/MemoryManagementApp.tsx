@@ -17,6 +17,25 @@ const COLORS = {
   border: '#e5e5e5',
 } as const
 
+function WxSwitch({ on, onToggle }: { on: boolean; onToggle: () => void }) {
+  return (
+    <button
+      type="button"
+      role="switch"
+      aria-checked={on}
+      onClick={onToggle}
+      className="relative h-8 w-[52px] shrink-0 rounded-full transition-colors duration-200"
+      style={{ backgroundColor: on ? '#000000' : '#cccccc' }}
+    >
+      <span
+        className="absolute top-1 h-6 w-6 rounded-full bg-white shadow-sm transition-[left] duration-200 ease-out"
+        style={{ left: on ? 26 : 4 }}
+        aria-hidden
+      />
+    </button>
+  )
+}
+
 function TopBar({ title, onBack }: { title: string; onBack: () => void }) {
   return (
     <div
@@ -63,6 +82,7 @@ export function MemoryManagementApp({
   onBack: () => void
   onOpenCharacter: (characterId: string, titleRemark?: string) => void
 }) {
+  const [autoSummaryEnabled, setAutoSummaryEnabled] = useState(true)
   const [intervalN, setIntervalN] = useState(10)
   const [memories, setMemories] = useState<CharacterMemory[]>([])
   const [loading, setLoading] = useState(true)
@@ -74,6 +94,7 @@ export function MemoryManagementApp({
         personaDb.getMemorySettings(),
         personaDb.listAllCharacterMemories(),
       ])
+      setAutoSummaryEnabled(settings.autoSummaryEnabled !== false)
       setIntervalN(settings.autoSummaryInterval)
       setMemories(allMem)
     } finally {
@@ -109,6 +130,12 @@ export function MemoryManagementApp({
     await personaDb.putMemorySettings({ autoSummaryInterval: n })
   }
 
+  const toggleAutoSummary = async () => {
+    const next = !autoSummaryEnabled
+    setAutoSummaryEnabled(next)
+    await personaDb.putMemorySettings({ autoSummaryEnabled: next })
+  }
+
   return (
     <div
       className="flex h-full min-h-0 flex-col overflow-hidden"
@@ -126,6 +153,17 @@ export function MemoryManagementApp({
           <p className="text-[16px] font-semibold" style={{ color: COLORS.text }}>
             全局设置
           </p>
+          <div className="mt-4 flex items-center justify-between gap-3">
+            <div className="min-w-0">
+              <p className="text-[16px]" style={{ color: COLORS.text }}>
+                自动总结记忆
+              </p>
+              <p className="mt-1 text-[13px]" style={{ color: COLORS.sub }}>
+                关闭后仅保留手动总结
+              </p>
+            </div>
+            <WxSwitch on={autoSummaryEnabled} onToggle={() => void toggleAutoSummary()} />
+          </div>
           <div className="mt-4 flex flex-wrap items-center gap-3">
             <span className="min-w-0 flex-1 text-[16px]" style={{ color: COLORS.text }}>
               每{intervalN}轮自动总结一次记忆（微信聊天 AI 回复 + 约会线下剧情 AI 生成合计）
@@ -139,7 +177,8 @@ export function MemoryManagementApp({
               onBlur={() => {
                 void commitInterval(intervalN)
               }}
-              className="w-[80px] shrink-0 rounded-[8px] border px-2 py-2 text-center text-[16px] outline-none transition-all duration-200 ease-out focus:border-black"
+              disabled={!autoSummaryEnabled}
+              className="w-[80px] shrink-0 rounded-[8px] border px-2 py-2 text-center text-[16px] outline-none transition-all duration-200 ease-out focus:border-black disabled:cursor-not-allowed disabled:opacity-50"
               style={{
                 borderColor: COLORS.border,
                 background: COLORS.card,
@@ -172,7 +211,7 @@ export function MemoryManagementApp({
           通讯录
         </p>
         <p className="mx-4 mt-1 text-[13px] leading-relaxed" style={{ color: COLORS.sub }}>
-          点击联系人查看长期记忆与当前身份下最近50条对话
+          点击联系人查看长期记忆
         </p>
 
         {loading ? (

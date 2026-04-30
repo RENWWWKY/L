@@ -52,7 +52,7 @@ export function StickerCenterPage({ onBack }: Props) {
 
       <AnimatePresence mode="wait">
         {!activeGroup ? (
-          <motion.div key="hub" initial={{ opacity: 0, x: 16 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: -12 }} transition={{ duration: 0.22 }} className="relative z-[1] min-h-0 flex-1">
+          <motion.div key="hub" initial={{ opacity: 0, x: 16 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: -12 }} transition={{ duration: 0.22 }} className="relative min-h-0 flex-1">
             <StickerHub
               groups={store.groups}
               onCreate={() => setCreateOpen(true)}
@@ -64,7 +64,7 @@ export function StickerCenterPage({ onBack }: Props) {
             />
           </motion.div>
         ) : (
-          <motion.div key={`detail-${activeGroup.id}`} initial={{ opacity: 0, x: 18 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: -12 }} transition={{ duration: 0.22 }} className="relative z-[1] min-h-0 flex-1">
+          <motion.div key={`detail-${activeGroup.id}`} initial={{ opacity: 0, x: 18 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: -12 }} transition={{ duration: 0.22 }} className="relative min-h-0 flex-1">
             <StickerDetail
               group={activeGroup}
               allGroups={store.groups}

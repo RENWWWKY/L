@@ -3784,8 +3784,12 @@ function WeChatAppInner({ onBack }: Props) {
   }, [route.name, activeConversationKey, refreshMessageThreadsMeta])
 
   const messagesTabUnreadTotal = useMemo(
-    () => messageThreads.reduce((s, t) => s + t.unread, 0),
-    [messageThreads],
+    () =>
+      messageThreads.reduce((s, t) => {
+        if (isConversationMuted(t.conversationKey)) return s
+        return s + t.unread
+      }, 0),
+    [messageThreads, isConversationMuted],
   )
 
   const exitChatToMessages = useCallback(() => {
@@ -3842,7 +3846,8 @@ function WeChatAppInner({ onBack }: Props) {
   const activeTab = route.name === 'tabs' ? route.tab : 'messages'
   const hideTabChrome =
     (route.name === 'tabs' && route.tab === 'dates' && hideDatingChrome) ||
-    (route.name === 'tabs' && route.tab === 'discover' && discoverMomentsOpen)
+    (route.name === 'tabs' && route.tab === 'discover' && discoverMomentsOpen) ||
+    wxGlobalNav != null
   const hideWeChatHeader =
     route.name === 'new-friends-persona' ||
     route.name === 'player-identities' ||
@@ -4470,6 +4475,10 @@ function WeChatAppInner({ onBack }: Props) {
                     const cid =
                       route.chat.kind === 'lumi' ? WECHAT_LUMI_PEER_CHARACTER_ID : route.chat.characterId
                     const ts = getCurrentTimeMs()
+                    const peerName = redPacketPeer?.remarkName?.trim() || '对方'
+                    const remark = payload.remark.trim() || 'Best Wishes'
+                    const ok = walletSpend(payload.amountYuan, `发红包给${peerName} · ${remark}`)
+                    if (!ok) throw new Error('余额不足，支付失败')
                     await personaDb.appendWeChatChatMessage({
                       id: payload.packetId,
                       characterId: cid,
@@ -4486,7 +4495,6 @@ function WeChatAppInner({ onBack }: Props) {
                         opened: false,
                       },
                     })
-                    walletSpend(payload.amountYuan, `发红包 · ${payload.remark.trim() || 'Best Wishes'}`)
                     setRoute({ name: 'chat', chat: route.chat })
                   }}
                 />
@@ -4512,6 +4520,10 @@ function WeChatAppInner({ onBack }: Props) {
                     const ts = getCurrentTimeMs()
                     const expiresAt = ts + 24 * 60 * 60 * 1000
                     const convKey = wechatConversationKey(cid, playerIdentityId)
+                    const peerName = lumiTransferPeer?.remarkName?.trim() || '对方'
+                    const remark = payload.remark.trim()
+                    const ok = walletSpend(payload.amountYuan, remark ? `转账给${peerName} · ${remark}` : `转账给${peerName}`)
+                    if (!ok) throw new Error('余额不足，支付失败')
                     upsertLumiTransfer({
                       id: payload.transferId,
                       amount: payload.amountYuan,
@@ -4536,7 +4548,6 @@ function WeChatAppInner({ onBack }: Props) {
                       transfer: { transferId: payload.transferId },
                     })
                     emitWeChatStorageChanged()
-                    walletSpend(payload.amountYuan, `转账 · ${payload.remark.trim() || (lumiTransferPeer?.remarkName ?? '对方')}`)
                     setRoute({ name: 'chat', chat: route.chat })
                   }}
                 />
@@ -4556,6 +4567,7 @@ function WeChatAppInner({ onBack }: Props) {
                   transferId={route.transferId}
                   playerIdentityId={playerIdentityId}
                   getCurrentTime={getCurrentTimeMs}
+                  peerName={(chatPeerContact?.remarkName ?? '').trim() || (route.chat.kind === 'lumi' ? 'Lumi' : '对方')}
                   onBack={() => setRoute({ name: 'chat', chat: route.chat })}
                 />
               )}

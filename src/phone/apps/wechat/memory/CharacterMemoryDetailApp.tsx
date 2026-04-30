@@ -3,9 +3,9 @@ import { useCallback, useEffect, useState } from 'react'
 import { WECHAT_LUMI_ASSISTANT_CONTACT } from '../../../../components/WeChatContactsInstagram'
 import { Pressable } from '../../../components/Pressable'
 import { personaDb } from '../newFriendsPersona/idb'
-import type { CharacterMemory, WeChatChatMessage } from '../newFriendsPersona/types'
+import type { CharacterMemory } from '../newFriendsPersona/types'
 import { uid } from '../newFriendsPersona/utils'
-import { WECHAT_LUMI_PEER_CHARACTER_ID, wechatConversationKey } from '../wechatConversationKey'
+import { WECHAT_LUMI_PEER_CHARACTER_ID } from '../wechatConversationKey'
 import { MemoryContentWithSourceBadges } from './memorySourceBadges'
 
 const COLORS = {
@@ -70,20 +70,10 @@ function ModalBackdrop({ children, onClose }: { children: React.ReactNode; onClo
   )
 }
 
-function formatMsgTime(ts: number): string {
-  const d = new Date(ts)
-  return d.toLocaleString('zh-CN', {
-    month: 'numeric',
-    day: 'numeric',
-    hour: '2-digit',
-    minute: '2-digit',
-  })
-}
-
 export function CharacterMemoryDetailApp({
   characterId,
   titleRemark,
-  playerIdentityId,
+  playerIdentityId: _playerIdentityId,
   onBack,
 }: {
   characterId: string
@@ -95,8 +85,6 @@ export function CharacterMemoryDetailApp({
 }) {
   const [displayName, setDisplayName] = useState('')
   const [list, setList] = useState<CharacterMemory[]>([])
-  const [chatMessages, setChatMessages] = useState<WeChatChatMessage[]>([])
-  const [chatSourceLabel, setChatSourceLabel] = useState<'current' | 'all' | 'clique' | 'alias'>('current')
   const [loading, setLoading] = useState(true)
 
   const [editOpen, setEditOpen] = useState(false)
@@ -111,58 +99,11 @@ export function CharacterMemoryDetailApp({
   const reload = useCallback(async () => {
     setLoading(true)
     try {
-      const pid = playerIdentityId === null ? '__none__' : playerIdentityId.trim() || '__none__'
-      const conversationKey = wechatConversationKey(characterId, pid)
-
-      const [mems, ch, msgsCurrent] = await Promise.all([
+      const [mems, ch] = await Promise.all([
         personaDb.listCharacterMemoriesForCharacter(characterId),
         personaDb.getCharacter(characterId),
-        playerIdentityId === null
-          ? Promise.resolve([] as WeChatChatMessage[])
-          : personaDb.listWeChatChatMessagesRecent({ conversationKey, limit: 50 }),
       ])
-      let msgs = msgsCurrent
-      let source: 'current' | 'all' | 'clique' | 'alias' = 'current'
-      if (playerIdentityId !== null && msgsCurrent.length === 0) {
-        const byCharacter = await personaDb.listWeChatChatMessagesRecentByCharacter({ characterId, limit: 50 })
-        if (byCharacter.length > 0) {
-          msgs = byCharacter
-          source = 'all'
-        } else {
-          const rootId = ch?.generatedForCharacterId?.trim() || characterId
-          const npcs = await personaDb.listNpcsFor(rootId)
-          const cliqueIds = [rootId, ...npcs.map((x) => x.id)].filter(Boolean)
-          const byClique = await personaDb.listWeChatChatMessagesByCharacterIds(cliqueIds)
-          if (byClique.length > 0) {
-            msgs = byClique.slice(-50)
-            source = 'clique'
-          } else {
-            const allCharacters = await personaDb.listCharacters()
-            const aliases = new Set(
-              [titleRemark, ch?.name, ch?.wechatNickname, ch?.remark]
-                .map((x) => String(x ?? '').trim())
-                .filter(Boolean),
-            )
-            const aliasIds = allCharacters
-              .filter((x) => {
-                if (x.id === characterId) return false
-                const vals = [x.name, x.wechatNickname, x.remark].map((v) => String(v ?? '').trim())
-                return vals.some((v) => !!v && aliases.has(v))
-              })
-              .map((x) => x.id)
-            if (aliasIds.length > 0) {
-              const byAlias = await personaDb.listWeChatChatMessagesByCharacterIds([characterId, ...aliasIds])
-              if (byAlias.length > 0) {
-                msgs = byAlias.slice(-50)
-                source = 'alias'
-              }
-            }
-          }
-        }
-      }
       setList(mems)
-      setChatMessages(msgs)
-      setChatSourceLabel(source)
 
       if (titleRemark?.trim()) {
         setDisplayName(titleRemark.trim())
@@ -176,7 +117,7 @@ export function CharacterMemoryDetailApp({
     } finally {
       setLoading(false)
     }
-  }, [characterId, playerIdentityId, titleRemark])
+  }, [characterId, titleRemark])
 
   useEffect(() => {
     void reload()
@@ -325,60 +266,6 @@ export function CharacterMemoryDetailApp({
               </div>
             )}
 
-            <p className="mx-4 mt-6 text-[16px] font-semibold" style={{ color: COLORS.text }}>
-              最近对话
-            </p>
-            <p className="mx-4 mt-1 text-[13px]" style={{ color: COLORS.sub }}>
-              {chatSourceLabel === 'all'
-                ? '当前身份暂无记录，已展示该角色跨身份最近50条'
-                : chatSourceLabel === 'clique'
-                  ? '当前角色暂无记录，已展示同人脉圈最近50条'
-                  : chatSourceLabel === 'alias'
-                    ? '当前ID暂无记录，已展示同名/同备注角色最近50条'
-                  : '当前微信身份下最多50条，按时间正序'}
-            </p>
-            {playerIdentityId === null ? (
-              <div
-                className="mx-4 mt-2 rounded-[12px] border bg-white px-4 py-6 text-center text-[14px]"
-                style={{ borderColor: COLORS.border, color: COLORS.sub }}
-              >
-                正在加载身份…
-              </div>
-            ) : chatMessages.length === 0 ? (
-              <div
-                className="mx-4 mt-2 rounded-[12px] border bg-white px-4 py-8 text-center text-[14px]"
-                style={{ borderColor: COLORS.border, color: COLORS.sub }}
-              >
-                暂无聊天记录
-              </div>
-            ) : (
-              <div
-                className="mx-4 mt-2 space-y-3 rounded-[12px] border bg-white px-3 py-4"
-                style={{ borderColor: COLORS.border, boxShadow: '0 1px 3px rgba(0,0,0,0.05)' }}
-              >
-                {chatMessages.map((m) => {
-                  const self = m.type === 'player'
-                  return (
-                    <div key={m.id} className={`flex w-full ${self ? 'justify-end' : 'justify-start'}`}>
-                      <div
-                        className="max-w-[88%] rounded-[12px] border px-3 py-2 transition-all duration-200 ease-out"
-                        style={{
-                          borderColor: COLORS.border,
-                          background: self ? '#f5f5f5' : COLORS.card,
-                        }}
-                      >
-                        <p className="text-[11px] leading-tight" style={{ color: COLORS.faint }}>
-                          {self ? '我' : '对方'} · {formatMsgTime(m.timestamp)}
-                        </p>
-                        <p className="mt-1 whitespace-pre-wrap break-words text-[15px] leading-snug" style={{ color: COLORS.text }}>
-                          {m.content}
-                        </p>
-                      </div>
-                    </div>
-                  )
-                })}
-              </div>
-            )}
           </>
         )}
       </div>

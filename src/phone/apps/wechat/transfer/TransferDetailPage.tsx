@@ -3,6 +3,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react'
 
 import { Pressable } from '../../../components/Pressable'
 import { formatRedPacketHistoryDateTime } from '../redPacket/redPacketHistoryFromMessages'
+import { walletAddTransaction, walletAdjustBalance } from '../wallet/walletMockStore'
 import {
   acceptLumiTransfer,
   getLumiTransferFresh,
@@ -29,11 +30,14 @@ export function TransferDetailPage({
   transferId,
   playerIdentityId,
   getCurrentTime,
+  peerName,
   onBack,
 }: {
   transferId: string
   playerIdentityId: string
   getCurrentTime: () => number
+  /** 当前聊天对方展示名（用于钱包入账与页面文案） */
+  peerName: string
   onBack: () => void
 }) {
   const [rec, setRec] = useState<LumiTransferRecord | null>(() => getLumiTransferFresh(transferId, getCurrentTime))
@@ -70,8 +74,20 @@ export function TransferDetailPage({
 
   const onConfirm = useCallback(() => {
     if (!canConfirmAsReceiver) return
-    if (acceptLumiTransfer(transferId, getCurrentTime)) refresh()
-  }, [canConfirmAsReceiver, transferId, getCurrentTime, refresh])
+    if (acceptLumiTransfer(transferId, getCurrentTime)) {
+      if (rec && Number.isFinite(rec.amount) && rec.amount > 0) {
+        const peer = peerName.trim() || '对方'
+        const note = rec.remark?.trim()
+        walletAdjustBalance(rec.amount)
+        walletAddTransaction({
+          type: 'topup',
+          title: note ? `收到${peer}的转账 · ${note}` : `收到${peer}的转账`,
+          amount: rec.amount,
+        })
+      }
+      refresh()
+    }
+  }, [canConfirmAsReceiver, getCurrentTime, peerName, rec, refresh, transferId])
 
   const onReturn = useCallback(() => {
     if (!canConfirmAsReceiver) return
