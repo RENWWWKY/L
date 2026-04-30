@@ -39,7 +39,11 @@ export function Dock({
   const { theme, dockStyle } = state
 
   return (
-    <div data-dock-root="true" className="flex w-full shrink-0 justify-center px-3 pb-[6px] pt-1">
+    <div
+      data-dock-root="true"
+      className="flex w-full shrink-0 justify-center px-3 pt-1"
+      style={{ paddingBottom: 'max(6px, env(safe-area-inset-bottom, 0px))' }}
+    >
       <DockCapsule theme={theme} dockStyle={dockStyle}>
         <nav ref={dockNavRef} className="grid grid-cols-4 items-stretch gap-2" aria-label="底部 Dock（4x1）">
           {Array.from({ length: DOCK_COUNT }, (_, index) => {

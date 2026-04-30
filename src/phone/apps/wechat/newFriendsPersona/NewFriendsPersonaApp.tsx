@@ -743,10 +743,10 @@ export function NewFriendsPersonaApp({
       )
     }
     return (
-      <div className="relative h-full min-h-0 overflow-hidden" style={{ background: bg }}>
+      <div className="relative flex h-full min-h-0 flex-col overflow-hidden" style={{ background: bg }}>
         <TopBar title="角色人设" onBack={onBack} />
 
-        <div className="h-full min-h-0 overflow-y-auto overflow-x-hidden touch-pan-y overscroll-x-none px-4 pb-[calc(96px+env(safe-area-inset-bottom,0px))] pt-4 [scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden">
+        <div className="min-h-0 flex-1 overflow-y-auto overflow-x-hidden touch-pan-y overscroll-x-none px-4 pb-4 pt-4 [scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden">
           <>
           <Card>
             <div className="border-b px-4 py-4" style={{ borderColor: border }}>
@@ -923,7 +923,7 @@ export function NewFriendsPersonaApp({
           </>
         </div>
 
-        <div className="absolute bottom-0 left-0 right-0 px-4" style={{ paddingBottom: 'calc(20px + env(safe-area-inset-bottom,0px))' }}>
+        <div className="shrink-0 px-4 pt-2" style={{ paddingBottom: 'calc(20px + env(safe-area-inset-bottom,0px))' }}>
           <button
             type="button"
             className="flex w-full items-center justify-center gap-2 rounded-xl bg-[#111827] px-4 py-3 text-[15px] font-semibold text-white transition-all duration-200 ease-out hover:bg-[#0b1220]"

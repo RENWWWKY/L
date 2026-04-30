@@ -19,7 +19,7 @@ export function StatusBar() {
       className="flex shrink-0 items-center justify-between px-5 pb-2 text-[13px] tracking-wide"
       style={{
         color: 'var(--phone-text)',
-        paddingTop: 'max(0px, env(safe-area-inset-top, 0px))',
+        paddingTop: 0,
       }}
     >
       <span className="font-medium tabular-nums">{time}</span>
