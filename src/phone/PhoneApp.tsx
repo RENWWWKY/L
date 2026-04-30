@@ -25,6 +25,12 @@ const pageProps = {
   animate: { opacity: 1, y: 0 },
   exit: { opacity: 0, y: -10 },
   transition,
+  style: {
+    willChange: 'transform, opacity',
+    transform: 'translateZ(0)',
+    backfaceVisibility: 'hidden' as const,
+    WebkitBackfaceVisibility: 'hidden' as const,
+  },
 }
 const ENTRY_NOTICE_KEY = 'entry-notice-accepted-v1'
 
@@ -80,19 +86,19 @@ export function PhoneApp() {
     >
       <ApiSettingsProvider>
         <PhoneShell>
-          <AnimatePresence mode="wait">
+          <AnimatePresence mode="wait" initial={false}>
             {route.name === 'home' && (
-              <motion.div key="home" className="relative flex h-full min-h-0 flex-col" {...pageProps}>
+              <motion.div key="home" className="route-page-layer relative flex h-full min-h-0 flex-col transform-gpu" {...pageProps}>
                 <HomeScreen onOpenApp={openApp} />
               </motion.div>
             )}
             {route.name === 'customize' && (
-              <motion.div key="customize" className="flex h-full min-h-0 flex-col" {...pageProps}>
+              <motion.div key="customize" className="route-page-layer flex h-full min-h-0 flex-col transform-gpu" {...pageProps}>
                 <CustomizeScreen onBack={goHome} />
               </motion.div>
             )}
             {route.name === 'app' && (
-              <motion.div key={`app-${route.id}`} className="flex h-full min-h-0 flex-col" {...pageProps}>
+              <motion.div key={`app-${route.id}`} className="route-page-layer flex h-full min-h-0 flex-col transform-gpu" {...pageProps}>
                 {route.id === 'wechat' ? (
                   <WeChatApp onBack={goHome} />
                 ) : route.id === 'api' ? (

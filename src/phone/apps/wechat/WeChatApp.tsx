@@ -245,6 +245,12 @@ const pageProps = {
   animate: { opacity: 1, y: 0 },
   exit: { opacity: 0, y: -8 },
   transition,
+  style: {
+    willChange: 'transform, opacity',
+    transform: 'translateZ(0)',
+    backfaceVisibility: 'hidden' as const,
+    WebkitBackfaceVisibility: 'hidden' as const,
+  },
 }
 
 type WxFillStyleWithNaturalness = WxFillStyle & { gradientNaturalness?: number }
@@ -494,7 +500,7 @@ function Header({
   const center =
     showTyping && typingText?.trim() ? (
       <div className="relative flex min-h-[36px] min-w-0 flex-1 flex-col items-center justify-center px-1">
-        <AnimatePresence mode="wait">
+        <AnimatePresence mode="wait" initial={false}>
           <motion.div
             key="wx-typing-line"
             className="flex min-h-[36px] min-w-0 flex-1 flex-col items-center justify-center px-1"
@@ -4275,7 +4281,7 @@ function WeChatAppInner({ onBack }: Props) {
       </AnimatePresence>
 
       <div className="relative flex min-h-0 flex-1 flex-col overflow-hidden">
-        <AnimatePresence mode="wait">
+        <AnimatePresence mode="wait" initial={false}>
           {route.name === 'tabs' ? (
             <motion.div key={`tab-${route.tab}`} className="flex h-full min-h-0 flex-col" {...pageProps}>
               {route.tab === 'messages' ? (

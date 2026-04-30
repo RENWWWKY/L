@@ -22,9 +22,12 @@
 }
 
 html,
-body {
+body,
+#root {
   margin: 0;
   min-height: 100%;
+  background-color: #f2f2f4;
+  -webkit-tap-highlight-color: transparent;
 }
 
 body {
@@ -60,11 +63,14 @@ select {
   min-height: 100dvh;
   min-width: 0;
   flex-direction: column;
-  /* iOS Safari：切换页面时减少整页重建合成层导致的闪屏 */
-  -webkit-transform: translateZ(0);
+}
+
+/* iOS Safari 路由切页防闪：强制动画页走独立合成层 */
+.route-page-layer {
   transform: translateZ(0);
-  -webkit-backface-visibility: hidden;
+  will-change: transform, opacity;
   backface-visibility: hidden;
+  -webkit-backface-visibility: hidden;
 }
 
 /**

@@ -785,8 +785,7 @@ export function CustomizationProvider({ children }: { children: ReactNode }) {
     document.addEventListener('visibilitychange', onVisibility)
     document.addEventListener('focusin', onFocusIn, true)
     document.addEventListener('focusout', onFocusOut, true)
-    // iOS Safari：切换页面/地址栏动画期间会触发 visualViewport scroll，
-    // 此时强制 scrollTo(0,0) 容易造成整页重绘闪白；仅在 pageshow/resize 时纠正即可。
+    window.visualViewport?.addEventListener('scroll', forceTop)
 
     return () => {
       window.removeEventListener('resize', refresh)
@@ -796,6 +795,7 @@ export function CustomizationProvider({ children }: { children: ReactNode }) {
       document.removeEventListener('visibilitychange', onVisibility)
       document.removeEventListener('focusin', onFocusIn, true)
       document.removeEventListener('focusout', onFocusOut, true)
+      window.visualViewport?.removeEventListener('scroll', forceTop)
     }
   }, [])
 
