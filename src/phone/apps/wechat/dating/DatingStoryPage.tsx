@@ -1,4 +1,4 @@
-import { ArrowLeft, ChevronDown, FilePenLine, Heart, Layers, MoreHorizontal, Sparkles } from 'lucide-react'
+import { ArrowLeft, ChevronDown, FilePenLine, Heart, Layers, MoreHorizontal } from 'lucide-react'
 import { type PointerEvent as ReactPointerEvent, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useCurrentApiConfig } from '../../api/ApiSettingsContext'
 import { personaDb } from '../newFriendsPersona/idb'

@@ -1,6 +1,5 @@
 import { motion } from 'framer-motion'
 import { ChevronDown } from 'lucide-react'
-import type { ReactNode } from 'react'
 import { VNNameTag } from './VNNameTag'
 
 type Props = {
