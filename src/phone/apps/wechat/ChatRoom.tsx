@@ -107,6 +107,7 @@ const VoiceCallPanelCompat = VoiceCallPanel as unknown as (
 const LUMI_DEFAULT_OPENING_BUBBLES = [
   '嗨，我是 Lumi，是您的专属小助手！',
   '您在这里遇到任何问题，都可以直接问我：比如 API/模型怎么配、人设/世界书怎么绑、发图看图怎么用、气泡主题/拆条怎么调等。你有什么困惑的地方吗？',
+  '官方教程（建议收藏）：https://www.notion.so/Lumi-Phone-350d29002fd980fdafb8c00f3e13b2b6?source=copy_link',
 ]
 const ENTER_DOUBLE_TAP_WINDOW_MS = 220
 const ENTER_SINGLE_COMMIT_DELAY_MS = 80

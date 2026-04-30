@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { personaDb } from '../newFriendsPersona/idb'
 
 export interface StickerItem {
   id: string
@@ -21,6 +22,7 @@ type StickerState = {
 }
 
 const STORAGE_KEY = 'wechat-sticker-center-v1'
+const STICKER_DB_KEY = 'wechat-sticker-center-v2'
 const STICKER_CHANGED_EVENT = 'wechat-sticker-storage-changed'
 const DEFAULT_GROUP_ID_1 = 'default-sticker-pack-1'
 const DEFAULT_GROUP_ID_2 = 'default-sticker-pack-2'
@@ -87,18 +89,69 @@ const DEFAULT_STATE: StickerState = {
   groups: [],
 }
 
+let memoryState: StickerState = DEFAULT_STATE
+let isHydrating = false
+let hydrationPromise: Promise<StickerState> | null = null
+let persistQueue: Promise<void> = Promise.resolve()
+
+function normalizeState(input: unknown): StickerState {
+  const parsed = input as Partial<StickerState> | null | undefined
+  return {
+    groups: Array.isArray(parsed?.groups) ? parsed!.groups : [],
+  }
+}
+
 function readState(): StickerState {
+  return memoryState
+}
+
+async function readLocalStorageBackup(): Promise<StickerState> {
   if (typeof window === 'undefined') return DEFAULT_STATE
   try {
     const raw = window.localStorage.getItem(STORAGE_KEY)
     if (!raw) return DEFAULT_STATE
-    const parsed = JSON.parse(raw) as Partial<StickerState>
-    return {
-      groups: Array.isArray(parsed.groups) ? parsed.groups : [],
-    }
+    return normalizeState(JSON.parse(raw))
   } catch {
     return DEFAULT_STATE
   }
+}
+
+async function hydrateStateFromDb(): Promise<StickerState> {
+  if (typeof window === 'undefined') return DEFAULT_STATE
+  if (hydrationPromise) return hydrationPromise
+  hydrationPromise = (async () => {
+    if (isHydrating) return memoryState
+    isHydrating = true
+    try {
+      const fromDb = normalizeState(await personaDb.getPhoneKv(STICKER_DB_KEY))
+      if (fromDb.groups.length > 0) {
+        memoryState = fromDb
+        return fromDb
+      }
+      const fallback = await readLocalStorageBackup()
+      if (fallback.groups.length > 0) {
+        memoryState = fallback
+        await personaDb.setPhoneKv(STICKER_DB_KEY, fallback)
+      } else {
+        memoryState = fromDb
+      }
+      return memoryState
+    } catch {
+      const fallback = await readLocalStorageBackup()
+      memoryState = fallback
+      return fallback
+    } finally {
+      isHydrating = false
+      hydrationPromise = null
+    }
+  })()
+  return hydrationPromise
+}
+
+if (typeof window !== 'undefined') {
+  void hydrateStateFromDb().then(() => {
+    emitChanged()
+  })
 }
 
 /** 角色发图 / 校验模型输出 URL：仅允许资源库内地址（含默认包与用户表情包中心） */
@@ -261,12 +314,15 @@ export function buildStickerCatalogPromptBlock(maxLines = 96, maxChars = 9500): 
 }
 
 function writeState(next: StickerState) {
-  if (typeof window === 'undefined') return
-  try {
-    window.localStorage.setItem(STORAGE_KEY, JSON.stringify(next))
-  } catch {
-    // ignore
-  }
+  memoryState = next
+  persistQueue = persistQueue
+    .catch(() => undefined)
+    .then(async () => {
+      await personaDb.setPhoneKv(STICKER_DB_KEY, next)
+    })
+    .catch(() => {
+      // ignore
+    })
   emitChanged()
 }
 
@@ -280,16 +336,20 @@ export function useStickerStore() {
   }, [state])
 
   useEffect(() => {
+    void hydrateStateFromDb().then((next) => {
+      stateRef.current = next
+      setState(next)
+      emitChanged()
+    })
+
     const onChanged = () => {
       const next = readState()
       stateRef.current = next
       setState(next)
     }
     window.addEventListener(STICKER_CHANGED_EVENT, onChanged)
-    window.addEventListener('storage', onChanged)
     return () => {
       window.removeEventListener(STICKER_CHANGED_EVENT, onChanged)
-      window.removeEventListener('storage', onChanged)
     }
   }, [])
 

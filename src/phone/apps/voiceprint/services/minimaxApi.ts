@@ -44,20 +44,45 @@ function errFromResp(payload: any, fallback: string) {
   return new Error(Number.isFinite(code) ? `${withReq} (code=${code})` : withReq)
 }
 
+function wrapNetworkError(err: unknown, url: string) {
+  const rawMsg = err instanceof Error ? err.message : String(err ?? 'unknown')
+  const lowered = rawMsg.toLowerCase()
+  const maybeCors = lowered.includes('failed to fetch') || lowered.includes('networkerror') || lowered.includes('load failed')
+  const maybeAbort = lowered.includes('aborted') || lowered.includes('abort')
+  const maybeTls = lowered.includes('ssl') || lowered.includes('tls') || lowered.includes('certificate')
+  if (maybeAbort) {
+    return new Error(`连接超时或请求被中断，请稍后重试。endpoint=${url}，原始错误=${rawMsg}`)
+  }
+  if (maybeTls) {
+    return new Error(`TLS/证书握手失败，请检查系统时间、网络代理或证书链。endpoint=${url}，原始错误=${rawMsg}`)
+  }
+  if (maybeCors) {
+    return new Error(
+      `浏览器网络请求失败（常见原因：API 域名不可达/CORS 被拦截/代理拦截/Key 所在区域网络不通）。endpoint=${url}，原始错误=${rawMsg}`,
+    )
+  }
+  return new Error(`网络请求失败。endpoint=${url}，原始错误=${rawMsg}`)
+}
+
 async function minimaxFetch(path: string, creds: MiniMaxCredentials, init: RequestInit) {
   const apiKey = creds.apiKey.trim()
   const groupId = creds.groupId.trim()
   if (!apiKey) throw new Error('请先填写 MiniMax API Key')
   const url = `${MINIMAX_API_BASE}${path}`
-  const doFetch = async () =>
-    fetch(url, {
-      ...init,
-      headers: {
-        Authorization: `Bearer ${apiKey}`,
-        ...(groupId ? { GroupId: groupId } : {}),
-        ...(init.headers ?? {}),
-      },
-    })
+  const doFetch = async () => {
+    try {
+      return await fetch(url, {
+        ...init,
+        headers: {
+          Authorization: `Bearer ${apiKey}`,
+          ...(groupId ? { GroupId: groupId } : {}),
+          ...(init.headers ?? {}),
+        },
+      })
+    } catch (err) {
+      throw wrapNetworkError(err, url)
+    }
+  }
   let resp = await doFetch()
   let text = await resp.text()
   let json: any = null

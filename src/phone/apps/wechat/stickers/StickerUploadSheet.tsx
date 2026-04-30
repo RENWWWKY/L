@@ -16,6 +16,15 @@ function fileNameNoExt(name: string): string {
   return n.replace(/\.[^.]+$/, '').trim()
 }
 
+function fileToDataUrl(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader()
+    reader.onload = () => resolve(String(reader.result ?? ''))
+    reader.onerror = () => reject(reader.error ?? new Error('readAsDataURL failed'))
+    reader.readAsDataURL(file)
+  })
+}
+
 export function StickerUploadSheet({ open, onClose, onSave }: Props) {
   const [tab, setTab] = useState<'local' | 'link'>('local')
   const [url, setUrl] = useState('')
@@ -190,22 +199,31 @@ export function StickerUploadSheet({ open, onClose, onSave }: Props) {
               accept="image/*"
               multiple
               className="hidden"
-              onChange={(e) => {
+              onChange={async (e) => {
                 const files = Array.from(e.target.files ?? [])
                 if (!files.length) return
-                const rows = files.map((f, i) => {
-                  const inferred = fileNameNoExt(f.name) || `表情${i + 1}`
-                  return { name: f.name, url: URL.createObjectURL(f), description: files.length > 1 ? '' : inferred }
-                })
-                setLocalFiles(rows)
-                setUrl(rows[0]?.url ?? '')
-                if (rows.length === 1) {
-                  const inferred = rows[0]!.description
-                  if (inferred) setDescription(inferred)
-                } else {
-                  setDescription('')
+                setBusy(true)
+                try {
+                  const urls = await Promise.all(files.map((f) => fileToDataUrl(f)))
+                  const rows = files.map((f, i) => {
+                    const safeUrl = urls[i] ?? ''
+                    if (!safeUrl) return null
+                    const inferred = fileNameNoExt(f.name) || `表情${i + 1}`
+                    return { name: f.name, url: safeUrl, description: files.length > 1 ? '' : inferred }
+                  }).filter((row): row is { name: string; url: string; description: string } => row != null)
+                  if (!rows.length) return
+                  setLocalFiles(rows)
+                  setUrl(rows[0]?.url ?? '')
+                  if (rows.length === 1) {
+                    const inferred = rows[0]!.description
+                    if (inferred) setDescription(inferred)
+                  } else {
+                    setDescription('')
+                  }
+                } finally {
+                  setBusy(false)
+                  e.currentTarget.value = ''
                 }
-                e.currentTarget.value = ''
               }}
             />
           </motion.div>
