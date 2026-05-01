@@ -5,10 +5,9 @@ import type { ReactNode } from 'react'
 type Props = {
   isAutoPlay: boolean
   playSpeed: 1 | 1.5 | 2
-  isInnerVoiceMode: boolean
   onExit: () => void
   onLog: () => void
-  onToggleInnerVoice: () => void
+  onHeartWhisper: () => void
   onToggleAuto: () => void
   onCycleSpeed: () => void
 }
@@ -44,10 +43,9 @@ function CtrlBtn({
 export function VNBottomControls({
   isAutoPlay,
   playSpeed,
-  isInnerVoiceMode,
   onExit,
   onLog,
-  onToggleInnerVoice,
+  onHeartWhisper,
   onToggleAuto,
   onCycleSpeed,
 }: Props) {
@@ -61,7 +59,7 @@ export function VNBottomControls({
       <CtrlBtn label="历史" onClick={onLog}>
         <List className="size-4" strokeWidth={1.5} />
       </CtrlBtn>
-      <CtrlBtn label="心语" active={isInnerVoiceMode} onClick={onToggleInnerVoice}>
+      <CtrlBtn label="心语" onClick={onHeartWhisper}>
         <Heart className="size-4" strokeWidth={1.5} />
       </CtrlBtn>
       <CtrlBtn label={isAutoPlay ? '暂停' : '自动'} active={isAutoPlay} onClick={onToggleAuto}>

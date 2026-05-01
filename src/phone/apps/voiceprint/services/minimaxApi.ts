@@ -17,6 +17,13 @@ type MiniMaxBaseResp = { status_code?: number; status_msg?: string }
 
 const MINIMAX_API_BASE = (import.meta.env.VITE_MINIMAX_API_BASE as string | undefined)?.trim() || 'https://api.minimaxi.com'
 
+function appendGroupIdToPath(path: string, groupId: string) {
+  const gid = String(groupId || '').trim()
+  if (!gid) return path
+  const hasQuery = path.includes('?')
+  return `${path}${hasQuery ? '&' : '?'}GroupId=${encodeURIComponent(gid)}`
+}
+
 function decodeMiniMaxCode(code: number) {
   const map: Record<number, string> = {
     1000: '服务端临时异常，请稍后重试',
@@ -68,14 +75,13 @@ async function minimaxFetch(path: string, creds: MiniMaxCredentials, init: Reque
   const apiKey = creds.apiKey.trim()
   const groupId = creds.groupId.trim()
   if (!apiKey) throw new Error('请先填写 MiniMax API Key')
-  const url = `${MINIMAX_API_BASE}${path}`
+  const url = `${MINIMAX_API_BASE}${appendGroupIdToPath(path, groupId)}`
   const doFetch = async () => {
     try {
       return await fetch(url, {
         ...init,
         headers: {
           Authorization: `Bearer ${apiKey}`,
-          ...(groupId ? { GroupId: groupId } : {}),
           ...(init.headers ?? {}),
         },
       })
@@ -302,12 +308,12 @@ export async function queryMiniMaxT2AAsyncTask(
   // 官方文档：GET /v1/query/t2a_async_query_v2?task_id=...
   const apiKey = creds.apiKey.trim()
   const groupId = creds.groupId.trim()
-  const url = `${MINIMAX_API_BASE}/v1/query/t2a_async_query_v2?task_id=${encodeURIComponent(task_id)}`
+  const queryPath = appendGroupIdToPath(`/v1/query/t2a_async_query_v2?task_id=${encodeURIComponent(task_id)}`, groupId)
+  const url = `${MINIMAX_API_BASE}${queryPath}`
   const resp = await fetch(url, {
     method: 'GET',
     headers: {
       Authorization: `Bearer ${apiKey}`,
-      ...(groupId ? { GroupId: groupId } : {}),
       'Content-Type': 'application/json',
     },
   })
@@ -342,7 +348,6 @@ export async function retrieveMiniMaxAudioFileUrl(
   const headers: Record<string, string> = {
     Authorization: `Bearer ${apiKey}`,
   }
-  if (groupId) headers.GroupId = groupId
 
   const inferAudioMime = (bytes: Uint8Array): string => {
     if (bytes.length >= 3 && bytes[0] === 0x49 && bytes[1] === 0x44 && bytes[2] === 0x33) return 'audio/mpeg' // ID3
@@ -498,7 +503,8 @@ export async function retrieveMiniMaxAudioFileUrl(
   }
 
   const tryDownload = async (path: string) => {
-    const url = `${MINIMAX_API_BASE}${path}?file_id=${encodeURIComponent(fileId)}`
+    const withFileId = `${path}?file_id=${encodeURIComponent(fileId)}`
+    const url = `${MINIMAX_API_BASE}${appendGroupIdToPath(withFileId, groupId)}`
     const resp = await fetch(url, { method: 'GET', headers })
     if (!resp.ok) throw new Error(`文件获取失败（HTTP ${resp.status}）`)
     const contentType = String(resp.headers.get('content-type') ?? '').toLowerCase()

@@ -6,6 +6,7 @@ type Props = {
   name: string
   loading: boolean
   innerVoice?: boolean
+  showNameTag?: boolean
   showContinueHint?: boolean
   onContinue: () => void
   children: string
@@ -15,6 +16,7 @@ export function VNDialogBox({
   name,
   loading,
   innerVoice = false,
+  showNameTag = true,
   showContinueHint = false,
   onContinue,
   children,
@@ -26,7 +28,7 @@ export function VNDialogBox({
       transition={{ type: 'spring', stiffness: 260, damping: 28 }}
       className="relative w-full overflow-visible"
     >
-      <VNNameTag name={name} innerVoice={innerVoice} />
+      {showNameTag ? <VNNameTag name={name} innerVoice={innerVoice} /> : null}
       <div
         className="relative min-h-[132px] overflow-hidden px-4 pb-3 pt-8"
         style={{

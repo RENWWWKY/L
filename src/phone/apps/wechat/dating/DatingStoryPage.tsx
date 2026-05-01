@@ -39,14 +39,35 @@ function parseIdentityTag(tag: string): { text: string; isPainPoint: boolean } {
   return { text: raw, isPainPoint: false }
 }
 
-/** 仅计汉字、字母、数字；标点、空白、符号、Markdown 标记等均不计入 */
-function countPlotCharsExcludePunctuation(text: string): number {
-  let n = 0
-  for (const ch of text) {
-    if (/[\u4e00-\u9fff\u3400-\u4dbf\uf900-\ufaff]/.test(ch)) n += 1
-    else if (/[A-Za-z0-9]/.test(ch)) n += 1
+function trimVnBubbleToMaxChars(text: string, maxChars = 25): string {
+  const chars = Array.from(text)
+  if (chars.length <= maxChars) return text
+  return chars.slice(0, maxChars).join('')
+}
+
+function stripSpeechQuotes(text: string): string {
+  return text.replace(/[“”"「」『』]/g, '')
+}
+
+function parseVnBubble(raw: string, defaultSpeaker: string): { text: string; speaker: string | null } {
+  const firstLine = String(raw || '')
+    .split(/\r?\n/)
+    .map((x) => x.trim())
+    .find((x) => x.length > 0) || ''
+  if (!firstLine) return { text: '', speaker: null }
+
+  const quotedSpeech = /^[“"「『].+[”"」』]$/.test(firstLine)
+  const noQuotes = stripSpeechQuotes(firstLine).trim()
+  const speakerMatch = noQuotes.match(/^([^：:]{1,12})[：:]\s*(.+)$/)
+  if (speakerMatch) {
+    const speaker = speakerMatch[1]!.trim()
+    const content = trimVnBubbleToMaxChars(speakerMatch[2]!.trim())
+    return { text: content, speaker: speaker || defaultSpeaker }
   }
-  return n
+
+  // 仅在原句显式使用引号时按对白处理；其余视为旁白（隐藏姓名框）
+  const text = trimVnBubbleToMaxChars(noQuotes)
+  return { text, speaker: quotedSpeech ? defaultSpeaker : null }
 }
 
 function BranchList({
@@ -142,7 +163,6 @@ function DatingStoryPageInner({ onBackToSelect }: Props) {
     branchesLoading,
     generateInitialPlot,
     resetCurrentArchive,
-    rollbackBranchNode,
     regeneratingPlotId,
     updatePlotItem,
     setPlotVersionIndex,
@@ -154,6 +174,8 @@ function DatingStoryPageInner({ onBackToSelect }: Props) {
   const inputRef = useRef<HTMLTextAreaElement | null>(null)
   const composerRef = useRef<HTMLDivElement | null>(null)
   const [menuOpen, setMenuOpen] = useState(false)
+  const [portraitSetupOpen, setPortraitSetupOpen] = useState(false)
+  const [bgmConfigOpen, setBgmConfigOpen] = useState(false)
   const [switchOpen, setSwitchOpen] = useState(false)
   const [editOpen, setEditOpen] = useState(false)
   const [perspectiveOpen, setPerspectiveOpen] = useState(false)
@@ -174,6 +196,8 @@ function DatingStoryPageInner({ onBackToSelect }: Props) {
   const [heartWhisperOpen, setHeartWhisperOpen] = useState(false)
   const [heartWhisperLoading, setHeartWhisperLoading] = useState(false)
   const [heartWhisperData, setHeartWhisperData] = useState<HeartWhisper | null>(null)
+  const [vnCustomInput, setVnCustomInput] = useState('')
+  const [vnCustomInputModalOpen, setVnCustomInputModalOpen] = useState(false)
 
   const PLOT_TAIL_LS = (id: string) => `wechat-dating-plot-tail:${id.trim()}`
   const PLOT_TAIL_DEFAULT = 24
@@ -433,20 +457,20 @@ function DatingStoryPageInner({ onBackToSelect }: Props) {
   }, [effectiveCardStyle])
   const [vnShownText, setVnShownText] = useState('')
   const [vnTyping, setVnTyping] = useState(false)
+  const [vnMockIndex, setVnMockIndex] = useState(0)
   const [vnFabPos, setVnFabPos] = useState({ x: 0, y: 80 })
   const normalScrollRef = useRef<HTMLDivElement | null>(null)
   const vnRootRef = useRef<HTMLDivElement | null>(null)
-  const vnTimerRef = useRef<number | null>(null)
+  const vnRafRef = useRef<number | null>(null)
   const vnAutoTimerRef = useRef<number | null>(null)
   const vnDragRef = useRef<{ pointerId: number; startX: number; startY: number; moved: boolean } | null>(null)
+  const vnAutoAdvanceRef = useRef<() => void>(() => {})
   const {
     isAutoPlay,
     playSpeed,
-    isInnerVoiceMode,
     logOpen,
     toggleAutoPlay,
     cyclePlaySpeed,
-    toggleInnerVoiceMode,
     openLog,
     closeLog,
   } = useVNStore()
@@ -525,68 +549,106 @@ function DatingStoryPageInner({ onBackToSelect }: Props) {
     return [...currentArchive.plots].reverse().find((x) => x.type === 'ai') ?? null
   }, [currentArchive.plots])
 
-  const VN_MOCK_TWO_LINES =
-    '他把纸袋放到桌角，声音很轻。「先吃点东西。」\n我点点头，把话咽回去，手指在杯沿停了一下。'
+  const VN_MOCK_BUBBLES = [
+    '林澈：你先坐，我去把窗关上。',
+    '风从走廊灌进来，门边的纸张轻轻抖了一下。',
+    '林澈：别着凉，热水在你手边。',
+  ] as const
+  const VN_MOCK_BRANCHES = [
+    '他把杯子往你这边推近一点，低声说先把手暖起来。',
+    '你抬头看他一眼，问他刚才是不是一直在门口等你。',
+    '窗外风声更重了，你提议先把今天的误会说清楚。',
+  ] as const
 
-  const vnCountSource = useMemo(() => {
-    if (!isVn || loading) return ''
-    const raw = (vnShownText || latestAi?.content || '').trim()
-    return splitDatingAssistantOutput(raw).content
-  }, [isVn, loading, vnShownText, latestAi?.content])
-
-  const vnThinkingText = useMemo(() => {
-    if (!latestAi?.content) return ''
-    const stored = latestAi.logicPass?.trim() || ''
-    const sp = splitDatingAssistantOutput(latestAi.content)
-    return (stored || sp.logicPass || latestAi.planSummary?.trim() || sp.planSummary || '').trim()
-  }, [latestAi?.id, latestAi?.content, latestAi?.logicPass, latestAi?.planSummary])
-
-  const vnBodyChars = useMemo(() => countPlotCharsExcludePunctuation(vnCountSource), [vnCountSource])
+  const hasRealVnSource = useMemo(() => !!latestAi?.content?.trim(), [latestAi?.content])
+  const isMockMode = !hasRealVnSource
+  const mockLastIndex = VN_MOCK_BUBBLES.length - 1
+  const isLastMockBubble = isMockMode && vnMockIndex >= mockLastIndex
+  const activeMockBubble = useMemo(
+    () => VN_MOCK_BUBBLES[Math.max(0, Math.min(VN_MOCK_BUBBLES.length - 1, vnMockIndex))] ?? VN_MOCK_BUBBLES[0],
+    [VN_MOCK_BUBBLES, vnMockIndex],
+  )
+  const vnTargetText = useMemo(() => {
+    if (hasRealVnSource) return splitDatingAssistantOutput(latestAi?.content || '').content.trim()
+    return String(activeMockBubble || '').trim()
+  }, [activeMockBubble, hasRealVnSource, latestAi?.content])
+  const vnBubble = useMemo(() => {
+    return parseVnBubble(vnShownText || vnTargetText, currentCharacter.realName)
+  }, [currentCharacter.realName, vnShownText, vnTargetText])
 
   useEffect(() => {
-    if (vnTimerRef.current) {
-      window.clearInterval(vnTimerRef.current)
-      vnTimerRef.current = null
+    if (hasRealVnSource) {
+      setVnMockIndex(0)
+    }
+  }, [hasRealVnSource])
+
+  const handleVnContinue = useCallback(() => {
+    if (vnTyping) {
+      skipVnTyping()
+      return
+    }
+    if (hasRealVnSource) return
+    if (VN_MOCK_BUBBLES.length <= 1) return
+    setVnMockIndex((prev) => Math.min(prev + 1, mockLastIndex))
+  }, [VN_MOCK_BUBBLES.length, hasRealVnSource, mockLastIndex, vnTyping])
+
+  useEffect(() => {
+    if (vnRafRef.current != null) {
+      window.cancelAnimationFrame(vnRafRef.current)
+      vnRafRef.current = null
     }
     if (!isVn) return
-    const full = latestAi?.content ? splitDatingAssistantOutput(latestAi.content).content : ''
+    const full = vnTargetText
     if (!full) {
       setVnShownText('')
       setVnTyping(false)
       return
     }
-    setVnShownText('')
+    // 切换下一句时先落一个首字，避免“先空一下再出现”导致的卡顿观感
+    setVnShownText(full.slice(0, 1))
     setVnTyping(true)
-    let i = 0
-    const typeIntervalMs = Math.max(10, Math.round(24 / playSpeed))
-    vnTimerRef.current = window.setInterval(() => {
-      i += 1
-      if (i >= full.length) {
-        setVnShownText(full)
+    let index = Math.min(1, full.length)
+    let lastTs = 0
+    let carryMs = 0
+    // 放慢基础速度：1x 约 58ms/字，且保持随 playSpeed 加速
+    const msPerChar = Math.max(20, Math.round(58 / Math.max(0.5, playSpeed)))
+    const tick = (ts: number) => {
+      if (!lastTs) lastTs = ts
+      const dt = ts - lastTs
+      lastTs = ts
+      carryMs += dt
+      let advanced = false
+      while (carryMs >= msPerChar && index < full.length) {
+        carryMs -= msPerChar
+        index += 1
+        advanced = true
+      }
+      if (advanced) {
+        setVnShownText(full.slice(0, index))
+      }
+      if (index >= full.length) {
         setVnTyping(false)
-        if (vnTimerRef.current) {
-          window.clearInterval(vnTimerRef.current)
-          vnTimerRef.current = null
-        }
+        vnRafRef.current = null
         return
       }
-      setVnShownText(full.slice(0, i))
-    }, typeIntervalMs)
+      vnRafRef.current = window.requestAnimationFrame(tick)
+    }
+    vnRafRef.current = window.requestAnimationFrame(tick)
     return () => {
-      if (vnTimerRef.current) {
-        window.clearInterval(vnTimerRef.current)
-        vnTimerRef.current = null
+      if (vnRafRef.current != null) {
+        window.cancelAnimationFrame(vnRafRef.current)
+        vnRafRef.current = null
       }
     }
-  }, [isVn, latestAi?.id, latestAi?.content, playSpeed])
+  }, [isVn, vnTargetText, playSpeed])
 
   const skipVnTyping = () => {
     if (!vnTyping) return
-    if (vnTimerRef.current) {
-      window.clearInterval(vnTimerRef.current)
-      vnTimerRef.current = null
+    if (vnRafRef.current != null) {
+      window.cancelAnimationFrame(vnRafRef.current)
+      vnRafRef.current = null
     }
-    setVnShownText(latestAi?.content ? splitDatingAssistantOutput(latestAi.content).content : '')
+    setVnShownText(vnTargetText)
     setVnTyping(false)
   }
 
@@ -641,6 +703,10 @@ function DatingStoryPageInner({ onBackToSelect }: Props) {
   const showBranchPanel =
     currentArchive.branchEnabled &&
     (currentArchive.pendingBranches.length > 0 || branchesLoading)
+  const vnBranchOptions = useMemo(
+    () => currentArchive.pendingBranches.slice(0, 3),
+    [currentArchive.pendingBranches],
+  )
   const branchListLoading = branchesLoading && currentArchive.pendingBranches.length === 0
   const handleBranchPick = (x: BranchOption) => {
     stageBranchChoice(x)
@@ -692,6 +758,49 @@ function DatingStoryPageInner({ onBackToSelect }: Props) {
     }),
     [lengthTargetNum, autoUserReaction, godLocksNoInterrupt, styleTuning.stylePrompt, styleTuning.referenceSnippet],
   )
+  const handleVnBranchPick = useCallback(
+    async (x: BranchOption) => {
+      stageBranchChoice(x)
+      const ok = await sendPlayerInput(x.content, perspective, narrativeGenOptions)
+      if (ok) {
+        setInput('')
+      }
+    },
+    [narrativeGenOptions, perspective, sendPlayerInput, stageBranchChoice],
+  )
+  const handleVnCustomGenerate = useCallback(async () => {
+    const text = vnCustomInput.trim()
+    if (!text) return
+    const ok = await sendPlayerInput(text, perspective, narrativeGenOptions)
+    if (ok) {
+      setVnCustomInput('')
+      setInput('')
+      setVnCustomInputModalOpen(false)
+    }
+  }, [narrativeGenOptions, perspective, sendPlayerInput, vnCustomInput])
+  const handleVnMockBranchGenerate = useCallback(
+    async (text: string) => {
+      const payload = text.trim()
+      if (!payload) return
+      const ok = await sendPlayerInput(payload, perspective, narrativeGenOptions)
+      if (ok) {
+        setInput('')
+      }
+    },
+    [narrativeGenOptions, perspective, sendPlayerInput],
+  )
+
+  useEffect(() => {
+    vnAutoAdvanceRef.current = () => {
+      if (hasRealVnSource) {
+        void sendPlayerInput('继续推进剧情', perspective, narrativeGenOptions)
+        return
+      }
+      if (VN_MOCK_BUBBLES.length > 1) {
+        setVnMockIndex((prev) => Math.min(prev + 1, mockLastIndex))
+      }
+    }
+  }, [VN_MOCK_BUBBLES.length, hasRealVnSource, mockLastIndex, narrativeGenOptions, perspective, sendPlayerInput])
 
   const openRetryBiasPanel = useCallback((plotId: string) => {
     setRetryTargetPlotId(plotId)
@@ -733,11 +842,10 @@ function DatingStoryPageInner({ onBackToSelect }: Props) {
       vnAutoTimerRef.current = null
     }
     if (!isVn || !isAutoPlay || loading || vnTyping) return
-    if (!latestAi?.content?.trim()) return
-    const body = splitDatingAssistantOutput(latestAi.content).content.trim()
-    const delayMs = Math.max(700, Math.min(2800, Math.round((900 + body.length * 12) / playSpeed)))
+    if (!vnTargetText.trim()) return
+    const delayMs = 2000
     vnAutoTimerRef.current = window.setTimeout(() => {
-      void sendPlayerInput('继续推进剧情', perspective, narrativeGenOptions)
+      vnAutoAdvanceRef.current()
     }, delayMs)
     return () => {
       if (vnAutoTimerRef.current) {
@@ -745,7 +853,7 @@ function DatingStoryPageInner({ onBackToSelect }: Props) {
         vnAutoTimerRef.current = null
       }
     }
-  }, [isVn, isAutoPlay, loading, vnTyping, latestAi?.id, latestAi?.content, playSpeed, sendPlayerInput, perspective, narrativeGenOptions])
+  }, [isAutoPlay, isVn, loading, vnTargetText, vnTyping])
 
   return (
     <div
@@ -912,9 +1020,6 @@ function DatingStoryPageInner({ onBackToSelect }: Props) {
                   </button>
                   <button className="w-full rounded-lg px-3 py-2 text-left text-[13px] text-[#262626] hover:bg-stone-50" onClick={resetCurrentArchive}>
                     重置当前角色进度
-                  </button>
-                  <button className="w-full rounded-lg px-3 py-2 text-left text-[13px] text-[#262626] hover:bg-stone-50" onClick={rollbackBranchNode}>
-                    回退到上一分支节点
                   </button>
                   <button className="flex w-full items-center justify-between rounded-lg px-3 py-2 text-left text-[13px] text-[#262626] hover:bg-stone-50" onClick={() => setSwitchOpen((v) => !v)}>
                     切换其他AI角色 <ChevronDown className="size-4" />
@@ -1243,11 +1348,21 @@ function DatingStoryPageInner({ onBackToSelect }: Props) {
                 type="button"
                 className="w-full rounded-lg px-3 py-2 text-left text-[13px] text-[#262626] hover:bg-stone-50"
                 onClick={() => {
-                  rollbackBranchNode()
+                  setPortraitSetupOpen(true)
                   setMenuOpen(false)
                 }}
               >
-                回退上一分支
+                立绘设置
+              </button>
+              <button
+                type="button"
+                className="w-full rounded-lg px-3 py-2 text-left text-[13px] text-[#262626] hover:bg-stone-50"
+                onClick={() => {
+                  setBgmConfigOpen(true)
+                  setMenuOpen(false)
+                }}
+              >
+                BGM配置
               </button>
               <button
                 type="button"
@@ -1263,7 +1378,7 @@ function DatingStoryPageInner({ onBackToSelect }: Props) {
           ) : null}
 
           <div className="relative z-10 flex h-full min-h-0 flex-col px-4 pb-[calc(64px+max(10px,env(safe-area-inset-bottom,0px)))]">
-            <div className="basis-[56%] shrink-0" />
+            <div className="basis-[54%] shrink-0" />
             <div className="-mb-7 flex justify-center">
               <img
                 src={currentCharacter.avatarUrl}
@@ -1272,71 +1387,85 @@ function DatingStoryPageInner({ onBackToSelect }: Props) {
                 style={{ opacity: loading ? 0.7 : 1 }}
               />
             </div>
-            <VNDialogBox
-              name={currentCharacter.realName}
-              loading={loading}
-              innerVoice={isInnerVoiceMode}
-              onContinue={skipVnTyping}
-              showContinueHint={!loading && !vnTyping}
-            >
-              {(vnShownText || latestAi?.content || VN_MOCK_TWO_LINES).trim()}
-            </VNDialogBox>
-            <div className="mt-2">
-              {!loading && vnThinkingText ? (
-                <details className="rounded-md border border-white/50 bg-white/45 px-2 py-1 backdrop-blur-md">
-                  <summary className="cursor-pointer select-none list-none text-[10px] text-white/80 drop-shadow-md [&::-webkit-details-marker]:hidden">
-                    Lumi思维链（展开/收起）
-                  </summary>
-                  <pre className="mt-1 max-h-[min(24vh,180px)] overflow-y-auto whitespace-pre-wrap break-words font-sans text-[11px] leading-relaxed text-white/90">
-                    {vnThinkingText}
-                  </pre>
-                </details>
-              ) : null}
-              {showBranchPanel ? (
-                <details className="mt-2 rounded-md border border-white/50 bg-white/45 px-2 py-1 backdrop-blur-md">
-                  <summary className="cursor-pointer select-none list-none text-[10px] text-white/80 drop-shadow-md [&::-webkit-details-marker]:hidden">
-                    剧情分支（展开/收起）
-                  </summary>
-                  <div className="mt-1 max-h-[min(30vh,220px)] overflow-y-auto">
-                    <BranchList
-                      options={currentArchive.pendingBranches}
-                      loading={branchListLoading}
-                      onPick={handleBranchPick}
-                      vn
-                    />
-                  </div>
-                </details>
-              ) : null}
-              {currentArchive.branchEnabled ? (
-                <div className="mt-2 space-y-2">
-                  <textarea
-                    value={input}
-                    onChange={(e) => setInput(e.target.value)}
-                    placeholder="选分支后文案会出现在这里，可改完再发…"
-                    rows={2}
-                    enterKeyHint="send"
-                    autoComplete="off"
-                    className="w-full resize-y rounded-lg border border-white/60 bg-white/55 px-3 py-2 text-[13px] leading-relaxed text-[#262626] outline-none backdrop-blur-md focus:border-white"
-                  />
-                  <div className="flex justify-end">
-                    <button
-                      type="button"
-                      disabled={loading || !input.trim()}
-                      onClick={async () => {
-                        const ok = await sendPlayerInput(input, perspective, narrativeGenOptions)
-                        if (ok) setInput('')
-                      }}
-                      className="rounded-lg bg-neutral-900/92 px-4 py-1.5 text-[12px] font-medium text-white transition-all hover:bg-neutral-800 disabled:opacity-50"
-                    >
-                      {loading ? '发送中…' : '发送'}
-                    </button>
+            {!currentArchive.branchEnabled ? (
+              <div className="mb-2 mt-2">
+                <button
+                  type="button"
+                  className="w-full rounded-lg border border-white/60 bg-white/60 px-3 py-2 text-left text-[12px] text-[#1f2937] transition-all hover:bg-white/75"
+                  onClick={() => setVnCustomInputModalOpen(true)}
+                >
+                  自定义输入
+                </button>
+              </div>
+            ) : null}
+            <div className="relative">
+              {isLastMockBubble ? (
+                <div className="pointer-events-auto absolute inset-x-0 bottom-[calc(100%+8px)] z-20">
+                  <div className="space-y-2.5">
+                    {VN_MOCK_BRANCHES.map((item, idx) => (
+                      <button
+                        key={`vn-mock-branch-${idx}`}
+                        type="button"
+                        onClick={() => {
+                          void handleVnMockBranchGenerate(item)
+                        }}
+                        className="w-full rounded-xl border border-white/60 bg-white/70 px-3 py-2.5 text-left text-[13px] leading-[1.75] text-[#1f2937] transition-all hover:bg-white"
+                      >
+                        {item}
+                      </button>
+                    ))}
                   </div>
                 </div>
               ) : null}
-              {vnBodyChars > 0 ? (
-                <p className="mt-1 text-right text-[10px] tabular-nums text-white/75 drop-shadow-md">
-                  约 {vnBodyChars} 字（不含标点）
-                </p>
+              <VNDialogBox
+                name={currentCharacter.realName}
+                loading={loading}
+                showNameTag={!!vnBubble.speaker}
+                onContinue={handleVnContinue}
+                showContinueHint={!loading}
+              >
+                {vnBubble.text}
+              </VNDialogBox>
+            </div>
+            <div className="mt-2">
+              {showBranchPanel ? (
+                <div className="mt-2 rounded-md border border-white/50 bg-white/45 px-2 py-2 backdrop-blur-md">
+                  <p className="text-[10px] text-white/80 drop-shadow-md">剧情分支</p>
+                  <div className="mt-1 max-h-[min(34vh,250px)] overflow-y-auto">
+                    <BranchList
+                      options={vnBranchOptions}
+                      loading={branchListLoading}
+                      onPick={(x) => {
+                        void handleVnBranchPick(x)
+                      }}
+                      vn={false}
+                    />
+                    <div className="mt-2 rounded-xl border border-white/60 bg-white/55 px-3 py-2">
+                      <p className="text-[11px] text-[#475569]">自定义输入</p>
+                      <textarea
+                        value={vnCustomInput}
+                        onChange={(e) => setVnCustomInput(e.target.value)}
+                        placeholder="输入你希望的剧情走向，然后生成下一段..."
+                        rows={2}
+                        enterKeyHint="send"
+                        autoComplete="off"
+                        className="mt-1 w-full resize-y rounded-lg border border-white/70 bg-white/70 px-2.5 py-2 text-[13px] leading-relaxed text-[#262626] outline-none focus:border-white"
+                      />
+                      <div className="mt-2 flex justify-end">
+                        <button
+                          type="button"
+                          disabled={loading || !vnCustomInput.trim()}
+                          onClick={() => {
+                            void handleVnCustomGenerate()
+                          }}
+                          className="rounded-lg bg-neutral-900/92 px-3 py-1.5 text-[12px] font-medium text-white transition-all hover:bg-neutral-800 disabled:opacity-50"
+                        >
+                          {loading ? '生成中…' : '生成剧情'}
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                </div>
               ) : null}
             </div>
           </div>
@@ -1345,10 +1474,9 @@ function DatingStoryPageInner({ onBackToSelect }: Props) {
             <VNBottomControls
               isAutoPlay={isAutoPlay}
               playSpeed={playSpeed}
-              isInnerVoiceMode={isInnerVoiceMode}
               onExit={() => setMode('normal')}
               onLog={openLog}
-              onToggleInnerVoice={toggleInnerVoiceMode}
+              onHeartWhisper={() => setHeartWhisperOpen(true)}
               onToggleAuto={toggleAutoPlay}
               onCycleSpeed={cyclePlaySpeed}
             />
@@ -1388,6 +1516,53 @@ function DatingStoryPageInner({ onBackToSelect }: Props) {
                   )}
                 </div>
               ))}
+            </div>
+          </div>
+        </div>
+      ) : null}
+      {isVn && vnCustomInputModalOpen ? (
+        <div className="absolute inset-0 z-50 flex items-end justify-center bg-black/35 p-4">
+          <div className="w-full max-w-[520px] rounded-2xl border border-stone-200 bg-white shadow-lg">
+            <div className="flex items-center justify-between border-b border-stone-100 px-4 py-3">
+              <p className="text-[14px] font-semibold text-stone-900">自定义输入</p>
+              <button
+                type="button"
+                className="rounded-lg px-2 py-1 text-[13px] text-stone-500 hover:bg-stone-50 hover:text-stone-700"
+                onClick={() => setVnCustomInputModalOpen(false)}
+              >
+                关闭
+              </button>
+            </div>
+            <div className="space-y-2 px-4 py-4">
+              <p className="text-[12px] text-stone-500">输入你希望的剧情走向，模型会据此生成下一段剧情。</p>
+              <textarea
+                value={vnCustomInput}
+                onChange={(e) => setVnCustomInput(e.target.value)}
+                placeholder="例如：让两人先冷静下来，再慢慢把误会说开。"
+                rows={4}
+                enterKeyHint="send"
+                autoComplete="off"
+                className="w-full resize-y rounded-xl border border-stone-200 bg-white px-3 py-2 text-[14px] text-stone-900 outline-none focus:border-stone-400"
+              />
+            </div>
+            <div className="flex items-center justify-end gap-2 border-t border-stone-100 px-4 py-3">
+              <button
+                type="button"
+                className="rounded-xl border border-stone-200 bg-white px-4 py-2 text-[13px] text-stone-700 hover:bg-stone-50"
+                onClick={() => setVnCustomInputModalOpen(false)}
+              >
+                取消
+              </button>
+              <button
+                type="button"
+                disabled={loading || !vnCustomInput.trim()}
+                className="rounded-xl bg-neutral-900 px-4 py-2 text-[13px] font-medium text-white hover:bg-neutral-800 disabled:opacity-60"
+                onClick={() => {
+                  void handleVnCustomGenerate()
+                }}
+              >
+                {loading ? '生成中…' : '生成剧情'}
+              </button>
             </div>
           </div>
         </div>
@@ -1865,6 +2040,44 @@ function DatingStoryPageInner({ onBackToSelect }: Props) {
                 }}
               >
                 保存
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+      {portraitSetupOpen ? (
+        <div className="absolute inset-0 z-50 flex items-center justify-center bg-black/35 p-4">
+          <div className="w-full max-w-[420px] rounded-2xl border border-stone-200 bg-white p-4 shadow-lg">
+            <p className="text-[15px] font-semibold text-stone-900">立绘设置</p>
+            <p className="mt-2 text-[13px] leading-relaxed text-stone-600">
+              已预留立绘设置入口。下一步可在这里接入立绘开关、位置、缩放和切换列表。
+            </p>
+            <div className="mt-3 flex justify-end">
+              <button
+                type="button"
+                className="rounded-lg bg-neutral-900 px-3 py-1.5 text-[12px] text-white"
+                onClick={() => setPortraitSetupOpen(false)}
+              >
+                关闭
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+      {bgmConfigOpen ? (
+        <div className="absolute inset-0 z-50 flex items-center justify-center bg-black/35 p-4">
+          <div className="w-full max-w-[420px] rounded-2xl border border-stone-200 bg-white p-4 shadow-lg">
+            <p className="text-[15px] font-semibold text-stone-900">BGM配置</p>
+            <p className="mt-2 text-[13px] leading-relaxed text-stone-600">
+              已预留 BGM 配置入口。下一步可在这里接入曲目选择、音量与自动切歌规则。
+            </p>
+            <div className="mt-3 flex justify-end">
+              <button
+                type="button"
+                className="rounded-lg bg-neutral-900 px-3 py-1.5 text-[12px] text-white"
+                onClick={() => setBgmConfigOpen(false)}
+              >
+                关闭
               </button>
             </div>
           </div>

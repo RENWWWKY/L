@@ -92,6 +92,8 @@ type Props = {
   onBack: () => void
 }
 
+const WECHAT_APPEARANCE_GUIDE_SEEN_KEY = 'lumi-wechat-appearance-guide-seen-v1'
+
 type TabId = 'messages' | 'contacts' | 'dates' | 'discover' | 'profile'
 
 /** 当前打开的会话：Lumi 小助手，或通讯录中某个人设角色 */
@@ -485,6 +487,8 @@ function Header({
   titleTrailingInteractive = false,
   /** 聊天室：右上角为「当前聊天设置」（三点）；其它页为外观主题（太阳图标） */
   rightMode = 'appearance',
+  showAppearanceGuide = false,
+  onDismissAppearanceGuide,
 }: {
   title: string
   /** 第二行：备注/说明（灰色小字），与微信昵称主行搭配 */
@@ -502,6 +506,8 @@ function Header({
   titleTrailing?: ReactNode
   titleTrailingInteractive?: boolean
   rightMode?: 'appearance' | 'chat-room-settings'
+  showAppearanceGuide?: boolean
+  onDismissAppearanceGuide?: () => void
 }) {
   const showTitleUnread =
     typeof titleUnreadCount === 'number' && titleUnreadCount > 0 && !showTyping
@@ -648,38 +654,60 @@ function Header({
 
       {center}
 
-      <div className="flex w-10 shrink-0 items-center justify-end">
+      <div className="relative flex w-10 shrink-0 items-center justify-end">
         {showRight ? (
-          <Pressable
-            onClick={onOpenTheme}
-            className="flex h-9 w-9 items-center justify-center rounded-full"
-            style={{ color: 'var(--wx-text)' }}
-            aria-label={rightMode === 'chat-room-settings' ? '当前聊天设置' : '外观与主题'}
-          >
-            {rightMode === 'chat-room-settings' ? (
-              <MoreHorizontal size={22} strokeWidth={2} aria-hidden />
-            ) : (
-              <svg
-                width="19"
-                height="19"
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="currentColor"
-                strokeWidth="1.35"
-                strokeLinecap="round"
-              >
-                <path d="M12 2v2.2" />
-                <path d="M12 19.8V22" />
-                <path d="M2 12h2.2" />
-                <path d="M19.8 12H22" />
-                <path d="M4.5 4.5l1.6 1.6" />
-                <path d="M17.9 17.9l1.6 1.6" />
-                <path d="M4.5 19.5l1.6-1.6" />
-                <path d="M17.9 6.1l1.6-1.6" />
-                <circle cx="12" cy="12" r="3.6" />
-              </svg>
-            )}
-          </Pressable>
+          <>
+            <Pressable
+              onClick={onOpenTheme}
+              className="relative z-[2] flex h-9 w-9 items-center justify-center rounded-full"
+              style={{ color: 'var(--wx-text)' }}
+              aria-label={rightMode === 'chat-room-settings' ? '当前聊天设置' : '外观与主题'}
+            >
+              {rightMode === 'chat-room-settings' ? (
+                <MoreHorizontal size={22} strokeWidth={2} aria-hidden />
+              ) : (
+                <svg
+                  width="19"
+                  height="19"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="1.35"
+                  strokeLinecap="round"
+                >
+                  <path d="M12 2v2.2" />
+                  <path d="M12 19.8V22" />
+                  <path d="M2 12h2.2" />
+                  <path d="M19.8 12H22" />
+                  <path d="M4.5 4.5l1.6 1.6" />
+                  <path d="M17.9 17.9l1.6 1.6" />
+                  <path d="M4.5 19.5l1.6-1.6" />
+                  <path d="M17.9 6.1l1.6-1.6" />
+                  <circle cx="12" cy="12" r="3.6" />
+                </svg>
+              )}
+            </Pressable>
+            {showAppearanceGuide && rightMode === 'appearance' ? (
+              <>
+                <div
+                  className="pointer-events-none absolute right-0 top-0 z-[1] h-9 w-9 rounded-full border-2 border-[#D4AF37]"
+                  style={{ boxShadow: '0 0 0 6px rgba(212,175,55,0.22)' }}
+                  aria-hidden
+                />
+                <div className="absolute right-0 top-full z-[3] mt-2 w-[190px] rounded-[12px] border bg-white/95 p-2.5 shadow-[0_10px_28px_rgba(0,0,0,0.18)]">
+                  <p className="text-[12px] leading-snug text-[#1C1C1E]">
+                    点这里可以调整微信外观，比如聊天气泡和头像显示。
+                  </p>
+                  <Pressable
+                    onClick={onDismissAppearanceGuide}
+                    className="mt-2 w-full rounded-[8px] bg-black py-1.5 text-center text-[11px] text-white"
+                  >
+                    知道了
+                  </Pressable>
+                </div>
+              </>
+            ) : null}
+          </>
         ) : (
           <div className="h-9 w-9" aria-hidden />
         )}
@@ -3257,15 +3285,35 @@ function WeChatAppInner({ onBack }: Props) {
   const [themePanelBoot, setThemePanelBoot] = useState<ThemePanelBoot>({})
   const [chatSettingsOpen, setChatSettingsOpen] = useState(false)
   const [wxGlobalNav, setWxGlobalNav] = useState<WxGlobalNavState>(null)
+  const [showAppearanceGuide, setShowAppearanceGuide] = useState(false)
+  const dismissAppearanceGuide = useCallback(() => {
+    setShowAppearanceGuide(false)
+    try {
+      window.localStorage.setItem(WECHAT_APPEARANCE_GUIDE_SEEN_KEY, '1')
+    } catch {
+      // ignore storage failures
+    }
+  }, [])
   const openWeChatAppearance = useCallback(() => {
+    if (showAppearanceGuide) dismissAppearanceGuide()
     setThemePanelBoot({})
     setThemeOpen(true)
-  }, [])
+  }, [dismissAppearanceGuide, showAppearanceGuide])
   const [profileEditOpen, setProfileEditOpen] = useState(false)
   const [hideDatingChrome, setHideDatingChrome] = useState(false)
   const [discoverMomentsOpen, setDiscoverMomentsOpen] = useState(false)
   const [chatOtherTyping, setChatOtherTyping] = useState(false)
   const newFriendsUnreadCount = useMemo(() => pendingNewFriendRequests.filter((x) => !!x.unread).length, [pendingNewFriendRequests])
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return
+    try {
+      const seen = window.localStorage.getItem(WECHAT_APPEARANCE_GUIDE_SEEN_KEY) === '1'
+      if (!seen) setShowAppearanceGuide(true)
+    } catch {
+      setShowAppearanceGuide(true)
+    }
+  }, [])
 
   const chatPeerContact = useMemo(() => {
     if (route.name !== 'chat') return null
@@ -4256,6 +4304,8 @@ function WeChatAppInner({ onBack }: Props) {
           rightMode={route.name === 'chat' ? 'chat-room-settings' : 'appearance'}
           showRight={route.name === 'tabs' || route.name === 'chat'}
           onOpenTheme={route.name === 'chat' ? () => setChatSettingsOpen(true) : openWeChatAppearance}
+          showAppearanceGuide={showAppearanceGuide && route.name === 'tabs'}
+          onDismissAppearanceGuide={dismissAppearanceGuide}
           titleUnreadCount={
             route.name === 'tabs' && route.tab === 'messages' ? messagesTabUnreadTotal : undefined
           }
