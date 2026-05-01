@@ -45,6 +45,11 @@ export function WheelWidget({
   const { theme } = state
   const [localOpen, setLocalOpen] = useState(false)
   const [options, setOptions] = useState<string[]>(DEFAULT_OPTIONS)
+  const isEdgeAndroid = useMemo(() => {
+    if (typeof window === 'undefined') return false
+    const ua = window.navigator.userAgent.toLowerCase()
+    return ua.includes('android') && (ua.includes('edga') || ua.includes('edge'))
+  }, [])
   const longPressHandlers = useLongPress({
     delay: 500,
     moveTolerance: 10,
@@ -95,7 +100,7 @@ export function WheelWidget({
           ref={registerNode}
           className="h-full w-full"
           animate={
-            isEditMode && !isActiveDrag
+            isEditMode && !isActiveDrag && !isEdgeAndroid
               ? {
                   y: [-1.2, 1.8, -1.2],
                   rotate: [-0.4, 0.5, -0.35],
@@ -106,7 +111,16 @@ export function WheelWidget({
                   scale: isLongPressPrimed ? 1.03 : 1,
                 }
           }
-          transition={isEditMode && !isActiveDrag ? { duration: 2.4, repeat: Infinity, repeatType: 'mirror', ease: 'easeInOut' } : { duration: 0.18, ease: 'easeOut' }}
+          transition={
+            isEditMode && !isActiveDrag && !isEdgeAndroid
+              ? { duration: 2.4, repeat: Infinity, repeatType: 'mirror', ease: 'easeInOut' }
+              : { duration: 0.18, ease: 'easeOut' }
+          }
+          style={{
+            transform: 'translateZ(0)',
+            backfaceVisibility: 'hidden',
+            WebkitBackfaceVisibility: 'hidden',
+          }}
         >
           <Pressable
             onClick={() => {
@@ -116,7 +130,8 @@ export function WheelWidget({
             style={{
               background: 'linear-gradient(180deg, rgba(255,255,255,0.72), rgba(248,249,251,0.6))',
               borderColor: 'rgba(255,255,255,0.7)',
-              backdropFilter: 'blur(22px) saturate(1.08)',
+              backdropFilter: isEdgeAndroid ? 'none' : 'blur(22px) saturate(1.08)',
+              WebkitBackdropFilter: isEdgeAndroid ? 'none' : 'blur(22px) saturate(1.08)',
               opacity: isActiveDrag ? 0.04 : 1,
               userSelect: 'none',
               WebkitUserSelect: 'none',
@@ -144,7 +159,7 @@ export function WheelWidget({
                   borderLeft: '7px solid transparent',
                   borderRight: '7px solid transparent',
                   borderTop: '12px solid #D4AF37',
-                  filter: 'drop-shadow(0 4px 8px rgba(212,175,55,0.22))',
+                  filter: isEdgeAndroid ? 'none' : 'drop-shadow(0 4px 8px rgba(212,175,55,0.22))',
                 }}
               />
               <div className="relative aspect-square w-[80%] max-w-[132px] rounded-full border border-white/80 bg-white/70 p-2">

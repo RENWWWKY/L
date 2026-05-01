@@ -772,6 +772,8 @@ type ChatMsgProps = {
   chatSelfAvatarUrl?: string
   /** 对方气泡旁头像（通讯录 / 人设库） */
   chatOtherAvatarUrl?: string
+  /** 单击对方头像：快捷打开面板（如心语） */
+  onOtherAvatarClick?: () => void
   onBubbleLongPress?: (anchorRect: DOMRect) => void
   bubbleSelected?: boolean
 }
@@ -836,6 +838,7 @@ function OtherMessageEnter({
   showBubbleTail,
   showAvatarColumn = true,
   chatOtherAvatarUrl,
+  onOtherAvatarClick,
   onBubbleLongPress,
   bubbleSelected,
 }: ChatMsgProps & { showAvatarColumn?: boolean }) {
@@ -851,6 +854,7 @@ function OtherMessageEnter({
         avatarTapMotion
         showAvatarColumn={showAvatarColumn}
         chatOtherAvatarUrl={chatOtherAvatarUrl}
+        onOtherAvatarClick={onOtherAvatarClick}
         onBubbleLongPress={onBubbleLongPress}
         bubbleSelected={bubbleSelected}
       />
@@ -1744,6 +1748,12 @@ export function ChatRoom({
   const voiceChunksRef = useRef<Blob[]>([])
   const [forwardModeSheetOpen, setForwardModeSheetOpen] = useState(false)
   const [checkPhoneOpen, setCheckPhoneOpen] = useState(false)
+
+  const openHeartWhisperPanel = useCallback(() => {
+    if (isMultiSelectMode) return
+    setPlusMenuOpen(false)
+    setHeartWhisperOpen(true)
+  }, [isMultiSelectMode])
 
   const exitMultiSelect = useCallback(() => {
     setIsMultiSelectMode(false)
@@ -3864,7 +3874,7 @@ export function ChatRoom({
           stub('音乐')
           break
         case 'heart_words':
-          setHeartWhisperOpen(true)
+          openHeartWhisperPanel()
           break
         case 'read_ignore':
           manualAiPauseRef.current = true
@@ -4084,8 +4094,9 @@ export function ChatRoom({
       showBubbleTail,
       chatSelfAvatarUrl: playerAvatarUrl?.trim() || undefined,
       chatOtherAvatarUrl: peerAvatarResolved,
+      onOtherAvatarClick: openHeartWhisperPanel,
     }),
-    [bubble, showAvatar, showBubbleTail, playerAvatarUrl, peerAvatarResolved],
+    [bubble, showAvatar, showBubbleTail, playerAvatarUrl, peerAvatarResolved, openHeartWhisperPanel],
   )
 
   const MERGE_FORWARD_PREFIX = '__wx_merge_forward__:' as const
@@ -4692,6 +4703,7 @@ export function ChatRoom({
               showAvatarColumn={isSelf ? showAvatarColumnSelf : showAvatarColumnOther}
               chatSelfAvatarUrl={sharedMsgProps.chatSelfAvatarUrl}
               chatOtherAvatarUrl={sharedMsgProps.chatOtherAvatarUrl}
+              onOtherAvatarClick={sharedMsgProps.onOtherAvatarClick}
               selected={actionPanelOpen && actionMessageId === m.id}
               onLongPress={
                 isMultiSelectMode
@@ -4738,6 +4750,7 @@ export function ChatRoom({
               avatarTapMotion
               showAvatarColumn={showAvatarColumnOther}
               chatOtherAvatarUrl={sharedMsgProps.chatOtherAvatarUrl}
+              onOtherAvatarClick={sharedMsgProps.onOtherAvatarClick}
               bubbleSelected={actionPanelOpen && actionMessageId === m.id}
               onBubbleLongPress={
                 isMultiSelectMode

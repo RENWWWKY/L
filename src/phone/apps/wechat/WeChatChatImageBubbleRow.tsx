@@ -13,6 +13,7 @@ type Props = {
   showAvatarColumn: boolean
   chatSelfAvatarUrl?: string
   chatOtherAvatarUrl?: string
+  onOtherAvatarClick?: () => void
   selected?: boolean
   onLongPress?: (anchorRect: DOMRect) => void
 }
@@ -27,6 +28,7 @@ export function WeChatChatImageBubbleRow({
   showAvatarColumn,
   chatSelfAvatarUrl,
   chatOtherAvatarUrl,
+  onOtherAvatarClick,
   selected = false,
   onLongPress,
 }: Props) {
@@ -113,6 +115,7 @@ export function WeChatChatImageBubbleRow({
                   borderRadius: `${bubble.avatarRadiusPx}px`,
                   border: '1px solid color-mix(in oklab, var(--wx-border) 70%, transparent)',
                 }}
+                onClick={onOtherAvatarClick}
                 aria-hidden
               />
             ) : (
@@ -123,6 +126,7 @@ export function WeChatChatImageBubbleRow({
                   background: 'rgba(0,0,0,0.06)',
                   border: '1px solid color-mix(in oklab, var(--wx-border) 70%, transparent)',
                 }}
+                onClick={onOtherAvatarClick}
                 aria-hidden
               />
             )}

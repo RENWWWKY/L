@@ -43,6 +43,8 @@ export type WeChatMessageBubbleRowProps = {
   chatSelfAvatarUrl?: string
   /** 聊天页对方头像（角色微信头像或 Lumi 助手图）；无则灰色占位，勿与己方混淆 */
   chatOtherAvatarUrl?: string
+  /** 聊天页：点击对方头像 */
+  onOtherAvatarClick?: () => void
   /** 长按气泡触发操作面板（微信一致） */
   onBubbleLongPress?: (anchorRect: DOMRect) => void
   /** 面板打开时，气泡显示选中态 */
@@ -144,6 +146,7 @@ export function WeChatMessageBubbleRow({
   chatSolidBubbleBg,
   chatSelfAvatarUrl,
   chatOtherAvatarUrl,
+  onOtherAvatarClick,
   onBubbleLongPress,
   bubbleSelected = false,
 }: WeChatMessageBubbleRowProps) {
@@ -266,6 +269,7 @@ export function WeChatMessageBubbleRow({
                     borderRadius: `${bubble.avatarRadiusPx}px`,
                     border: '1px solid color-mix(in oklab, var(--wx-border) 70%, transparent)',
                   }}
+                  onClick={onOtherAvatarClick}
                   aria-hidden
                 />
               ) : (
@@ -276,6 +280,7 @@ export function WeChatMessageBubbleRow({
                     background: 'rgba(0,0,0,0.06)',
                     border: '1px solid color-mix(in oklab, var(--wx-border) 70%, transparent)',
                   }}
+                  onClick={onOtherAvatarClick}
                   aria-hidden
                 />
               )}
