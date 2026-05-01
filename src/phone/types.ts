@@ -253,6 +253,8 @@ export type UiPreferences = {
   showDeviceFrame: boolean
   /** 关闭页面切换动画（PPT 式切换，减少 iOS Safari 闪屏概率） */
   disablePageTransitions: boolean
+  /** 强制罗盘使用静态样式（关闭动画与高开销特效） */
+  forceStaticCompass: boolean
   /** 键盘抬升调试面板（桌面与聊天页） */
   keyboardDebugEnabled: boolean
   /** 仅保留兼容字段，不再用于抬升逻辑 */
@@ -428,6 +430,7 @@ export const DEFAULT_CUSTOMIZATION: CustomizationState = {
     fullScreen: false,
     showDeviceFrame: true,
     disablePageTransitions: false,
+    forceStaticCompass: false,
     keyboardDebugEnabled: false,
     keyboardDebugSimulateOpen: false,
     keyboardDebugInsetPx: 0,

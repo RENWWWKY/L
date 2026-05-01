@@ -743,6 +743,12 @@ export function CustomizeScreen({ onBack }: Props) {
           </div>
         ) : section === 'music' ? (
           <div className="space-y-3">
+            <SettingToggle
+              label="罗盘极简模式"
+              description="强制桌面罗盘使用静态样式（无动画/无滤镜），优先稳定性"
+              checked={ui.forceStaticCompass}
+              onChange={(v) => setUi({ forceStaticCompass: v })}
+            />
             <div>
               <FieldLabel>曲名</FieldLabel>
               <input

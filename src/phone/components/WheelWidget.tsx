@@ -42,7 +42,7 @@ export function WheelWidget({
   onLongPressStartDrag,
 }: Props) {
   const { state } = useCustomization()
-  const { theme } = state
+  const { theme, ui } = state
   const [localOpen, setLocalOpen] = useState(false)
   const [options, setOptions] = useState<string[]>(DEFAULT_OPTIONS)
   const isEdgeAndroid = useMemo(() => {
@@ -50,6 +50,18 @@ export function WheelWidget({
     const ua = window.navigator.userAgent.toLowerCase()
     return ua.includes('android') && (ua.includes('edga') || ua.includes('edge'))
   }, [])
+  const isLowEndDevice = useMemo(() => {
+    if (typeof window === 'undefined' || !isEdgeAndroid) return false
+    const nav = window.navigator as Navigator & {
+      deviceMemory?: number
+      connection?: { saveData?: boolean }
+    }
+    const lowCpu = typeof nav.hardwareConcurrency === 'number' && nav.hardwareConcurrency <= 4
+    const lowMemory = typeof nav.deviceMemory === 'number' && nav.deviceMemory <= 4
+    const saveData = Boolean(nav.connection?.saveData)
+    return lowCpu || lowMemory || saveData
+  }, [isEdgeAndroid])
+  const useStaticFallback = ui.forceStaticCompass || (isEdgeAndroid && isLowEndDevice)
   const longPressHandlers = useLongPress({
     delay: 500,
     moveTolerance: 10,
@@ -100,7 +112,7 @@ export function WheelWidget({
           ref={registerNode}
           className="h-full w-full"
           animate={
-            isEditMode && !isActiveDrag && !isEdgeAndroid
+            isEditMode && !isActiveDrag && !useStaticFallback
               ? {
                   y: [-1.2, 1.8, -1.2],
                   rotate: [-0.4, 0.5, -0.35],
@@ -108,11 +120,11 @@ export function WheelWidget({
               : {
                   y: 0,
                   rotate: 0,
-                  scale: isLongPressPrimed ? 1.03 : 1,
+                  scale: isLongPressPrimed && !useStaticFallback ? 1.03 : 1,
                 }
           }
           transition={
-            isEditMode && !isActiveDrag && !isEdgeAndroid
+            isEditMode && !isActiveDrag && !useStaticFallback
               ? { duration: 2.4, repeat: Infinity, repeatType: 'mirror', ease: 'easeInOut' }
               : { duration: 0.18, ease: 'easeOut' }
           }
@@ -128,10 +140,13 @@ export function WheelWidget({
             }}
             className="relative flex h-full w-full flex-col overflow-hidden rounded-[28px] border p-3 text-left shadow-[0_20px_36px_rgba(15,23,42,0.12)]"
             style={{
-              background: 'linear-gradient(180deg, rgba(255,255,255,0.72), rgba(248,249,251,0.6))',
-              borderColor: 'rgba(255,255,255,0.7)',
-              backdropFilter: isEdgeAndroid ? 'none' : 'blur(22px) saturate(1.08)',
-              WebkitBackdropFilter: isEdgeAndroid ? 'none' : 'blur(22px) saturate(1.08)',
+              background: useStaticFallback
+                ? 'rgba(250,250,251,0.96)'
+                : 'linear-gradient(180deg, rgba(255,255,255,0.72), rgba(248,249,251,0.6))',
+              borderColor: useStaticFallback ? 'rgba(226,232,240,0.9)' : 'rgba(255,255,255,0.7)',
+              boxShadow: useStaticFallback ? '0 6px 14px rgba(15,23,42,0.08)' : undefined,
+              backdropFilter: useStaticFallback ? 'none' : 'blur(22px) saturate(1.08)',
+              WebkitBackdropFilter: useStaticFallback ? 'none' : 'blur(22px) saturate(1.08)',
               opacity: isActiveDrag ? 0.04 : 1,
               userSelect: 'none',
               WebkitUserSelect: 'none',
@@ -159,15 +174,23 @@ export function WheelWidget({
                   borderLeft: '7px solid transparent',
                   borderRight: '7px solid transparent',
                   borderTop: '12px solid #D4AF37',
-                  filter: isEdgeAndroid ? 'none' : 'drop-shadow(0 4px 8px rgba(212,175,55,0.22))',
+                  filter: useStaticFallback ? 'none' : 'drop-shadow(0 4px 8px rgba(212,175,55,0.22))',
                 }}
               />
-              <div className="relative aspect-square w-[80%] max-w-[132px] rounded-full border border-white/80 bg-white/70 p-2">
+              <div
+                className="relative aspect-square w-[80%] max-w-[132px] rounded-full border border-white/80 bg-white/70 p-2"
+                style={{
+                  background: useStaticFallback ? 'rgba(255,255,255,0.95)' : undefined,
+                  borderColor: useStaticFallback ? 'rgba(226,232,240,0.95)' : undefined,
+                }}
+              >
                 <div
                   className="absolute inset-[10%] rounded-full"
                   style={{
                     background:
-                      'conic-gradient(from -90deg, rgba(255,255,255,0.98) 0deg 45deg, rgba(244,246,248,0.94) 45deg 90deg, rgba(255,255,255,0.98) 90deg 135deg, rgba(244,246,248,0.94) 135deg 180deg, rgba(255,255,255,0.98) 180deg 225deg, rgba(244,246,248,0.94) 225deg 270deg, rgba(255,255,255,0.98) 270deg 315deg, rgba(244,246,248,0.94) 315deg 360deg)',
+                      useStaticFallback
+                        ? 'rgba(246,248,250,1)'
+                        : 'conic-gradient(from -90deg, rgba(255,255,255,0.98) 0deg 45deg, rgba(244,246,248,0.94) 45deg 90deg, rgba(255,255,255,0.98) 90deg 135deg, rgba(244,246,248,0.94) 135deg 180deg, rgba(255,255,255,0.98) 180deg 225deg, rgba(244,246,248,0.94) 225deg 270deg, rgba(255,255,255,0.98) 270deg 315deg, rgba(244,246,248,0.94) 315deg 360deg)',
                     border: '1px solid rgba(229,231,235,0.95)',
                   }}
                 />
