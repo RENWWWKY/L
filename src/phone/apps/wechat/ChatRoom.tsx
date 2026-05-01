@@ -149,7 +149,7 @@ function isSameApiConfigShape(
     String(a.modelId || '').trim() === String(b.modelId || '').trim()
   )
 }
-const VOICE_ALLOWED_EMOTIONS = ['happy', 'sad', 'angry', 'fearful', 'disgusted', 'surprised', 'neutral', 'fluent'] as const
+const VOICE_ALLOWED_EMOTIONS = ['happy', 'sad', 'angry', 'fearful', 'disgusted', 'surprised', 'neutral', 'calm', 'fluent', 'whisper'] as const
 function makeStableLumiOpeningId(conversationKey: string, index: number): string {
   const key = conversationKey
     .trim()
@@ -211,7 +211,7 @@ function sanitizeVoiceTranscriptDisplay(input: string): string {
   return String(input ?? '')
     .replace(/<[^>]*>/g, ' ')
     .replace(/\([^)]*\)/g, ' ')
-    .replace(/\{\/?(happy|sad|angry|fearful|disgusted|surprised|neutral|fluent)\}/gi, ' ')
+    .replace(/\{\/?(happy|sad|angry|fearful|disgusted|surprised|neutral|calm|fluent|whisper)\}/gi, ' ')
     // 去掉独立口癖（如“啧”“哈...”），避免显示在语音转写文本中
     .replace(/(^|[\s，。！？!?,、；;:：])(啧+|哈+)(?:\s*(?:\.{2,}|…+|~+|～+))?(?=$|[\s，。！？!?,、；;:：])/gu, '$1')
     .replace(/\s+/g, ' ')
@@ -222,7 +222,7 @@ function sanitizeVoiceControlForTextBubble(input: string): string {
   return String(input ?? '')
     .replace(/<#\s*[\d.]+\s*#>/g, ' ')
     .replace(/\(([a-zA-Z][a-zA-Z\- ]{0,24})\)/g, ' ')
-    .replace(/\{\/?(happy|sad|angry|fearful|disgusted|surprised|neutral|fluent)\}/gi, ' ')
+    .replace(/\{\/?(happy|sad|angry|fearful|disgusted|surprised|neutral|calm|fluent|whisper)\}/gi, ' ')
     // 去掉模型偶发泄露的“语音来源标签”，避免在普通文本气泡里显示“（对方语音）”
     .replace(/（(?:对方|用户)?语音(?:[，,:：][^）]{1,16})?）/g, ' ')
     .replace(/\((?:对方|用户)?语音(?:[，,:：][^)]{1,16})?\)/g, ' ')
@@ -282,7 +282,7 @@ function normalizeVoiceScriptForTts(input: string): string {
   }
 
   // 没有情绪标签就按内容猜一个（不再默认 neutral）
-  const hasEmotionTag = /\{(happy|sad|angry|fearful|disgusted|surprised|neutral|fluent)\}/i.test(s)
+  const hasEmotionTag = /\{(happy|sad|angry|fearful|disgusted|surprised|neutral|calm|fluent|whisper)\}/i.test(s)
   if (!hasEmotionTag) {
     const emo = guessEmotion()
     s = `{${emo}}${s}{/${emo}}`
@@ -293,19 +293,39 @@ function normalizeVoiceScriptForTts(input: string): string {
 }
 
 function stripEmotionTagsForTts(input: string): string {
-  // iOS/部分模型会把 {happy} 读出来：这里将情绪标签“转译”为更稳的语气词，再去除标签本体
-  return String(input ?? '')
-    .replace(/\{happy\}/gi, ' (laughs) ')
-    .replace(/\{sad\}/gi, ' (sighs) ')
-    .replace(/\{angry\}/gi, ' (breath) ')
-    .replace(/\{fearful\}/gi, ' (inhale) ')
-    .replace(/\{disgusted\}/gi, ' (groans) ')
-    .replace(/\{surprised\}/gi, ' (gasps) ')
-    .replace(/\{neutral\}/gi, ' (breath) ')
-    .replace(/\{fluent\}/gi, ' (breath) ')
-    .replace(/\{\/(happy|sad|angry|fearful|disgusted|surprised|neutral|fluent)\}/gi, ' ')
+  // 按官方 t2a_v2 文档：保留语气词标签与停顿；花括号情绪标签不直接入文本，改由 voice_setting.emotion 控制。
+  let s = String(input ?? '')
+    .replace(/\{\/?(happy|sad|angry|fearful|disgusted|surprised|neutral|calm|fluent|whisper)\}/gi, ' ')
     .replace(/\s+/g, ' ')
     .trim()
+
+  // 统一各种括号到 ()，便于白名单判定（例如 （coughs） / [coughs] / 【coughs】）
+  s = s
+    .replace(/（/g, '(')
+    .replace(/）/g, ')')
+    .replace(/\[/g, '(')
+    .replace(/\]/g, ')')
+    .replace(/【/g, '(')
+    .replace(/】/g, ')')
+
+  // 仅保留白名单语气词，其他英文括号内容剔除，避免被直接念出来
+  s = s.replace(/\(([^)]*)\)/g, (_m, inner: string) => {
+    const token = String(inner || '').trim().toLowerCase()
+    return VOICE_ALLOWED_TONE_TOKENS.has(token) ? `(${token})` : ' '
+  })
+
+  // 保留合法停顿控制符，清理其它尖括号片段
+  s = s.replace(/<(?!#\s*[\d.]+\s*#>)[^>]*>/g, ' ')
+
+  return s.replace(/\s+/g, ' ').trim()
+}
+
+function pickVoiceEmotionForTts(input: string): (typeof VOICE_ALLOWED_EMOTIONS)[number] | undefined {
+  const s = String(input ?? '')
+  const m = s.match(/\{(happy|sad|angry|fearful|disgusted|surprised|neutral|calm|fluent|whisper)\}/i)
+  if (!m?.[1]) return undefined
+  const emo = m[1].toLowerCase() as (typeof VOICE_ALLOWED_EMOTIONS)[number]
+  return (VOICE_ALLOWED_EMOTIONS as readonly string[]).includes(emo) ? emo : undefined
 }
 
 function mapWeChatMessagesToChatItems(msgs: WeChatChatMessage[]): ChatMsg[] {
@@ -1087,7 +1107,7 @@ export function ChatRoom({
     [conversationCharacterId, playerIdentityId],
   )
   const synthCharacterVoiceAudioUrl = useCallback(
-    async (ttsScript: string): Promise<string> => {
+    async (ttsScript: string, emotion?: (typeof VOICE_ALLOWED_EMOTIONS)[number]): Promise<string> => {
       try {
         const apiKey = String(localStorage.getItem('minimax:apiKey') || '').trim()
         if (!apiKey) return ''
@@ -1099,7 +1119,7 @@ export function ChatRoom({
         if (!voiceId) return ''
         const blob = await createMiniMaxT2ASyncAudioBlob(
           { apiKey, groupId },
-          { voice_id: voiceId, text: ttsScript, model: speechModel },
+          { voice_id: voiceId, text: ttsScript, model: speechModel, emotion },
         )
         return await blobToDataUrl(blob)
       } catch (e) {
@@ -1175,19 +1195,22 @@ export function ChatRoom({
   )
   const extractMessages = useCallback((list: ChatItem[]) => list.filter((it): it is ChatMsg => it.kind === 'msg'), [])
   const ensureVoiceMessageAudio = useCallback(
-    async (messageId: string, voice?: ChatMsg['voice']): Promise<string> => {
+    async (messageId: string, voice?: ChatMsg['voice'], opts?: { forceResynthesize?: boolean }): Promise<string> => {
       const msgId = messageId.trim()
       if (!msgId || !voice) return ''
+      const forceResynthesize = opts?.forceResynthesize === true
       const existingAudioUrl = voice.audioUrl?.trim() || ''
-      if (existingAudioUrl) return existingAudioUrl
+      if (existingAudioUrl && !forceResynthesize) return existingAudioUrl
 
       const pending = voiceSynthesisPromiseRef.current.get(msgId)
       if (pending) return pending
 
       const task = (async () => {
-        const playableScript = stripEmotionTagsForTts(String(voice.ttsScript || '').trim())
+        const rawScript = String(voice.ttsScript || '').trim()
+        const emotion = pickVoiceEmotionForTts(rawScript)
+        const playableScript = stripEmotionTagsForTts(rawScript)
         if (!playableScript) return ''
-        const synthesizedAudioUrl = await synthCharacterVoiceAudioUrl(playableScript)
+        const synthesizedAudioUrl = await synthCharacterVoiceAudioUrl(playableScript, emotion)
         if (!synthesizedAudioUrl) return ''
 
         setItems((prev) => {
@@ -1703,6 +1726,8 @@ export function ChatRoom({
   const [actionMessageText, setActionMessageText] = useState<string>('')
   const [actionMessageCanRecall, setActionMessageCanRecall] = useState(false)
   const [confirmDeleteOpen, setConfirmDeleteOpen] = useState(false)
+  const [voiceResynthesizeConfirmId, setVoiceResynthesizeConfirmId] = useState<string | null>(null)
+  const [voiceResynthesizing, setVoiceResynthesizing] = useState(false)
   const aiCallingRef = useRef(false)
   const lastUserAiTriggerTsRef = useRef<number>(0)
 
@@ -1723,6 +1748,71 @@ export function ChatRoom({
       centerToastTimerRef.current = null
     }, 1500)
   }, [])
+
+  const requestVoiceResynthesizeConfirm = useCallback((messageId: string) => {
+    const id = messageId.trim()
+    if (!id) return
+    setVoiceResynthesizeConfirmId(id)
+  }, [])
+
+  const runVoiceResynthesize = useCallback(async () => {
+    const msgId = voiceResynthesizeConfirmId?.trim() || ''
+    if (!msgId || voiceResynthesizing) return
+    const target = extractMessages(itemsRef.current).find((m) => m.id === msgId)
+    if (!target?.voice) {
+      setVoiceResynthesizeConfirmId(null)
+      showCenterToast('语音消息不存在或已被删除')
+      return
+    }
+    setVoiceResynthesizing(true)
+    try {
+      // 先清掉旧缓存，确保 UI 与落库都进入“待重合成”状态。
+      setItems((prev) => {
+        const next = rebuildWithCurrentTime(
+          extractMessages(prev).map((msg) =>
+            msg.id !== msgId || !msg.voice
+              ? msg
+              : {
+                  ...msg,
+                  voice: {
+                    ...msg.voice,
+                    audioUrl: undefined,
+                  },
+                },
+          ),
+        )
+        itemsRef.current = next
+        return next
+      })
+      try {
+        await personaDb.patchWeChatChatMessageById(msgId, { voice: { audioUrl: '' } })
+      } catch (e) {
+        logger.log('error', `清理旧语音缓存失败 id=${msgId} err=${e instanceof Error ? e.message : String(e)}`)
+      }
+
+      const nextUrl = await ensureVoiceMessageAudio(
+        msgId,
+        {
+          ...target.voice,
+          audioUrl: '',
+        },
+        { forceResynthesize: true },
+      )
+      if (!nextUrl) showCenterToast('重新合成失败，请稍后重试')
+      else showCenterToast('已重新合成语音')
+    } finally {
+      setVoiceResynthesizing(false)
+      setVoiceResynthesizeConfirmId(null)
+    }
+  }, [
+    ensureVoiceMessageAudio,
+    extractMessages,
+    logger,
+    rebuildWithCurrentTime,
+    showCenterToast,
+    voiceResynthesizeConfirmId,
+    voiceResynthesizing,
+  ])
 
   useEffect(() => {
     return () => {
@@ -2034,6 +2124,15 @@ export function ChatRoom({
           })
           return
         }
+        case 'resynthesizeVoice': {
+          const target = itemsRef.current.find((it): it is ChatMsg => it.kind === 'msg' && it.id === mid)
+          if (!target?.voice || target.from !== 'other') {
+            showCenterToast('仅支持角色语音重合成')
+            return
+          }
+          requestVoiceResynthesizeConfirm(mid)
+          return
+        }
         default:
           return
       }
@@ -2047,6 +2146,7 @@ export function ChatRoom({
       actionMessageCanRecall,
       buildReplyMetaById,
       onRequestForwardMessage,
+      requestVoiceResynthesizeConfirm,
       getCurrentTimeMs,
       rebuildWithCurrentTime,
       extractMessages,
@@ -4130,8 +4230,9 @@ export function ChatRoom({
     let next = actionMessageCanRecall ? [...withRecall] : [...base]
     if (actionPanelTargetMsg?.isRecalled) next = next.filter((x) => x !== 'quote')
     if (actionPanelTargetMsg?.voice) next = next.filter((x) => x !== 'copy')
+    if (actionPanelTargetMsg?.voice && actionPanelTargetMsg.from === 'other') next = [...next, 'resynthesizeVoice']
     return next
-  }, [actionMessageCanRecall, actionPanelTargetMsg?.isRecalled, actionPanelTargetMsg?.voice])
+  }, [actionMessageCanRecall, actionPanelTargetMsg?.from, actionPanelTargetMsg?.isRecalled, actionPanelTargetMsg?.voice])
 
   const redPacketModalIdRef = useRef<string | null>(null)
   useEffect(() => {
@@ -5616,6 +5717,20 @@ export function ChatRoom({
             setConfirmDeleteOpen(false)
             closeActionPanel()
           })()
+        }}
+      />
+      <WeChatConfirmDialog
+        open={!!voiceResynthesizeConfirmId}
+        title="重新合成语音"
+        description="将按当前语音参数重新合成这条语音，并覆盖旧缓存。是否继续？"
+        cancelText="取消"
+        confirmText={voiceResynthesizing ? '合成中…' : '确认重合成'}
+        onCancel={() => {
+          if (voiceResynthesizing) return
+          setVoiceResynthesizeConfirmId(null)
+        }}
+        onConfirm={() => {
+          void runVoiceResynthesize()
         }}
       />
       <WeChatConfirmDialog

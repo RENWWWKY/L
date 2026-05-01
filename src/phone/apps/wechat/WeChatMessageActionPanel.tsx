@@ -6,6 +6,7 @@ import {
   Copy,
   Edit,
   Languages,
+  RefreshCcw,
   Share,
   Star,
   Trash2,
@@ -23,6 +24,7 @@ export type WeChatMessageActionId =
   | 'translate'
   | 'edit'
   | 'recall'
+  | 'resynthesizeVoice'
 
 type Action = {
   id: WeChatMessageActionId
@@ -60,6 +62,7 @@ const ACTIONS: Action[] = [
   { id: 'translate', label: '翻译', Icon: Languages },
   { id: 'edit', label: '编辑', Icon: Edit },
   { id: 'recall', label: '撤回', Icon: CornerUpLeft },
+  { id: 'resynthesizeVoice', label: '重合成', Icon: RefreshCcw },
 ]
 
 export type PanelAnchor = {

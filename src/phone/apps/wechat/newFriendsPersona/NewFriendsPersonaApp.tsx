@@ -1118,6 +1118,7 @@ function PersonaEditPage({
   const [editTab, setEditTab] = useState<'basic' | 'opening' | 'wechat' | 'worldbook' | 'network' | 'schedule' | 'io'>('basic')
   const [ioExporting, setIoExporting] = useState(false)
   const [scheduleOpen, setScheduleOpen] = useState(false)
+  const [keyboardInset, setKeyboardInset] = useState(0)
 
   useEffect(() => {
     void (async () => {
@@ -1176,6 +1177,25 @@ function PersonaEditPage({
       }
     })()
   }, [data?.id, data?.generatedForCharacterId, editTab])
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return
+    const vv = window.visualViewport
+    if (!vv) return
+    const updateInset = () => {
+      const inset = Math.max(0, window.innerHeight - vv.height - vv.offsetTop)
+      setKeyboardInset((prev) => (Math.abs(prev - inset) < 1 ? prev : inset))
+    }
+    updateInset()
+    vv.addEventListener('resize', updateInset)
+    vv.addEventListener('scroll', updateInset)
+    window.addEventListener('orientationchange', updateInset)
+    return () => {
+      vv.removeEventListener('resize', updateInset)
+      vv.removeEventListener('scroll', updateInset)
+      window.removeEventListener('orientationchange', updateInset)
+    }
+  }, [])
 
   /** NPC 返回所属主角编辑页，主角返回人设列表（通讯录上一页） */
   const performBack = useCallback(async () => {
@@ -1461,7 +1481,12 @@ function PersonaEditPage({
         }
       />
 
-      <div className="h-full min-h-0 overflow-y-auto overflow-x-hidden touch-pan-y overscroll-x-none px-4 pb-[calc(96px+env(safe-area-inset-bottom,0px))] pt-4 [scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden">
+      <div
+        className="h-full min-h-0 overflow-y-auto overflow-x-hidden touch-pan-y overscroll-x-none px-4 pt-4 [scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden"
+        style={{
+          paddingBottom: `calc(96px + env(safe-area-inset-bottom,0px) + ${Math.round(keyboardInset)}px + ${editTab === 'worldbook' ? 88 : 0}px)`,
+        }}
+      >
         <Card>
           <div className="px-3 py-3">
             <div className="flex items-center gap-2 overflow-x-auto [scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden">

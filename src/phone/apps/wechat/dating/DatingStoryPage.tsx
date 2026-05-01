@@ -1,5 +1,6 @@
 import { ArrowLeft, ChevronDown, FilePenLine, Heart, Layers, MoreHorizontal } from 'lucide-react'
 import { type PointerEvent as ReactPointerEvent, useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { AnimatePresence, motion } from 'framer-motion'
 import { useCurrentApiConfig } from '../../api/ApiSettingsContext'
 import { personaDb } from '../newFriendsPersona/idb'
 import type { Character, PlayerIdentity } from '../newFriendsPersona/types'
@@ -9,7 +10,6 @@ import { requestWeChatHeartWhisper, type ChatTranscriptTurn } from '../wechatCha
 import { HeartWhisperModal } from '../HeartWhisperModal'
 import { useDating } from './DatingContext'
 import { splitDatingAssistantOutput } from './plotCoT'
-import { PlotRichParagraph } from './plotRichText'
 import { StoryFeed } from './StoryFeed'
 import { StyleSettingsDrawer } from './StyleSettingsDrawer'
 import { loadDatingStyleTuning, type DatingStyleTuning } from './styleTuningStorage'
@@ -18,7 +18,10 @@ import type { BranchOption, DatingCardStyle, NarrativePerspective } from './type
 import type { HeartWhisper } from '../newFriendsPersona/types'
 import { VNDialogBox } from './VNDialogBox'
 import { VNBottomControls } from './VNBottomControls'
-import { VNStoreProvider, useVNStore } from './useVNStore'
+import { VNStoreProvider, useActiveSprite, useVNStore } from './useVNStore'
+import { SpriteEditorPage } from './SpriteEditorPage'
+import { ChromaKeyRenderer } from './ChromaKeyRenderer'
+import { extractVnBackgroundCue, resolveVnBackgroundByName, VN_BACKGROUND_ASSETS } from './vnBackgroundCatalog'
 
 type Props = {
   onBackToSelect: () => void
@@ -39,12 +42,6 @@ function parseIdentityTag(tag: string): { text: string; isPainPoint: boolean } {
   return { text: raw, isPainPoint: false }
 }
 
-function trimVnBubbleToMaxChars(text: string, maxChars = 25): string {
-  const chars = Array.from(text)
-  if (chars.length <= maxChars) return text
-  return chars.slice(0, maxChars).join('')
-}
-
 function stripSpeechQuotes(text: string): string {
   return text.replace(/[“”"「」『』]/g, '')
 }
@@ -56,83 +53,168 @@ function parseVnBubble(raw: string, defaultSpeaker: string): { text: string; spe
     .find((x) => x.length > 0) || ''
   if (!firstLine) return { text: '', speaker: null }
 
-  const quotedSpeech = /^[“"「『].+[”"」』]$/.test(firstLine)
-  const noQuotes = stripSpeechQuotes(firstLine).trim()
-  const speakerMatch = noQuotes.match(/^([^：:]{1,12})[：:]\s*(.+)$/)
+  const noQuotes = stripSpeechQuotes(firstLine).replace(/^[-*•\d.)\s]+/, '').trim()
+  const speakerMatch = noQuotes.match(/^([^：:]{1,24}(?:（\s*你\s*）|\(\s*你\s*\))?)[：:]\s*(.+)$/)
   if (speakerMatch) {
     const speaker = speakerMatch[1]!.trim()
-    const content = trimVnBubbleToMaxChars(speakerMatch[2]!.trim())
+    const content = speakerMatch[2]!.trim()
+    if (!content) return { text: '', speaker: null }
+    if (/^(旁白|叙述|系统|narrator)$/i.test(speaker)) {
+      return { text: content, speaker: null }
+    }
     return { text: content, speaker: speaker || defaultSpeaker }
   }
 
-  // 仅在原句显式使用引号时按对白处理；其余视为旁白（隐藏姓名框）
-  const text = trimVnBubbleToMaxChars(noQuotes)
-  return { text, speaker: quotedSpeech ? defaultSpeaker : null }
+  // 未命中「姓名：内容」时一律按旁白处理，避免误显示姓名框。
+  const text = noQuotes
+  return { text, speaker: null }
 }
 
-function BranchList({
-  options,
-  onPick,
-  vn,
-  loading,
-}: {
-  options: BranchOption[]
-  onPick: (x: BranchOption) => void
-  vn?: boolean
-  loading?: boolean
-}) {
-  if (loading) {
-    const sk = vn ? 'flex-1' : 'w-full'
+function splitPlainVnText(text: string, maxChars = 25): string[] {
+  const source = String(text || '').trim()
+  if (!source) return []
+  const out: string[] = []
+  const isPunc = (ch: string) => /[，。；！？、,.!?;:：]/.test(ch)
+  let rest = source
+  while (rest) {
+    const chars = Array.from(rest)
+    if (chars.length <= maxChars) {
+      out.push(rest)
+      break
+    }
+    const head = chars.slice(0, maxChars)
+    let cut = -1
+    for (let i = head.length - 1; i >= 0; i -= 1) {
+      if (isPunc(head[i]!)) {
+        cut = i + 1
+        break
+      }
+    }
+    const sliceLen = cut > Math.floor(maxChars * 0.42) ? cut : maxChars
+    const left = chars.slice(0, sliceLen).join('').trim()
+    const right = chars.slice(sliceLen).join('').trim()
+    if (left) out.push(left)
+    rest = right
+  }
+  return out
+}
+
+function sanitizeDanglingThoughtMarker(text: string): string {
+  let t = String(text || '').trim()
+  if (!t) return ''
+  // 避免切段后出现孤立单个 *（例如句尾只剩一个 *）。
+  if (t.endsWith('*') && !t.endsWith('**')) t = t.slice(0, -1).trimEnd()
+  if (t.startsWith('*') && !t.startsWith('**')) t = t.slice(1).trimStart()
+  return t
+}
+
+function isInnerThoughtText(rawText: string, speaker: string | null): boolean {
+  const t = String(rawText || '').trim()
+  if (!t) return false
+  // 主路径：显式星号包裹
+  if (/^\*{1,2}[\s\S]+\*{1,2}$/u.test(t) || /\*\*[\s\S]+\*\*/u.test(t)) return true
+  // 常见显式标签：内心/OS
+  if (/^(?:\(|（|\[|【)?\s*(?:内心|心声|OS|os)\s*(?:\)|）|\]|】)?[：:]/u.test(t)) return true
+  // 兜底：无说话者 + 第一人称短句，通常是该角色心声
+  if (!speaker && /^我(?:[，。！？、\s]|$)/u.test(t)) return true
+  return false
+}
+
+function stripInnerThoughtDecorators(text: string): string {
+  let t = String(text || '').trim()
+  if (!t) return ''
+  t = t.replace(/^(?:\(|（|\[|【)?\s*(?:内心|心声|OS|os)\s*(?:\)|）|\]|】)?[：:]\s*/u, '')
+  const wrapMatch = t.match(/^\*{1,2}([\s\S]+)\*{1,2}$/u)
+  if (wrapMatch?.[1]) t = wrapMatch[1].trim()
+  return t
+}
+
+function splitVnContentToBubbles(
+  raw: string,
+  defaultSpeaker: string,
+  maxChars = 25,
+): Array<{ text: string; speaker: string | null; isInnerThought: boolean }> {
+  const source = String(raw || '').trim()
+  if (!source) return []
+  const lines = source
+    .split(/\r?\n/)
+    .map((x) => x.trim())
+    .filter(Boolean)
+  const blocks = lines.length ? lines : [source]
+  const out: Array<{ text: string; speaker: string | null; isInnerThought: boolean }> = []
+  for (const block of blocks) {
+    const parsed = parseVnBubble(block, defaultSpeaker)
+    if (!parsed.text) continue
+    const isInnerThoughtLine = isInnerThoughtText(parsed.text, parsed.speaker)
+    const normalizedText = isInnerThoughtLine ? stripInnerThoughtDecorators(parsed.text) : parsed.text
+    const chunks = splitPlainVnText(normalizedText, maxChars)
+    for (const chunk of chunks) {
+      const clean = sanitizeDanglingThoughtMarker(chunk.replace(/\*\*/g, ''))
+      if (!clean) continue
+      out.push({ text: clean, speaker: parsed.speaker, isInnerThought: isInnerThoughtLine })
+    }
+  }
+  return out
+}
+
+function vnProgressLsKey(characterId: string): string {
+  return `wechat-dating-vn-progress:${String(characterId || '').trim()}`
+}
+const VN_PROGRESS_GLOBAL_KEY = 'wechat-dating-vn-progress:global'
+
+function buildVnAiProgressSignature(rawAiContent: string): string {
+  return splitDatingAssistantOutput(String(rawAiContent || '')).content.trim().slice(0, 140)
+}
+
+type VnLogEntryKind = 'dialogue' | 'narration' | 'innerThought'
+type VnLogEntry = {
+  id: string
+  kind: VnLogEntryKind
+  name: string | null
+  text: string
+  isUser?: boolean
+}
+
+function VnLogItemRenderer({ item }: { item: VnLogEntry }) {
+  if (item.kind === 'narration') {
     return (
-      <div className={vn ? 'mt-3 flex gap-2' : 'mt-4 space-y-2'}>
-        {Array.from({ length: 4 }).map((_, i) => (
-          <div
-            key={i}
-            className={`animate-pulse rounded-xl border border-stone-100 bg-stone-100/80 px-4 py-3 ${sk}`}
-          >
-            <div className="h-3 w-16 rounded bg-stone-200/90" />
-            <div className="mt-2 h-3 w-full rounded bg-stone-200/70" />
-            <div className="mt-1.5 h-3 w-[82%] rounded bg-stone-200/50" />
-          </div>
-        ))}
+      <div className="px-8 py-1.5 text-center text-[13px] font-light leading-relaxed text-gray-500">
+        {item.text}
       </div>
     )
   }
-  if (!options.length) return null
-  if (vn) {
+  if (item.kind === 'innerThought') {
     return (
-      <div className="mt-3 flex gap-2">
-        {options.map((o) => (
-          <button
-            key={o.id}
-            type="button"
-            onClick={() => onPick(o)}
-            className="flex-1 rounded-xl border border-stone-200 bg-white/70 px-3 py-2 text-left text-[14px] text-[#262626] transition-all duration-200 ease-out hover:border-stone-400 hover:bg-white"
-          >
-            {o.styleLabel ? (
-              <span className="mb-1 block text-[10px] font-medium uppercase tracking-wide text-stone-400">{o.styleLabel}</span>
-            ) : null}
-            <span className="leading-snug">{o.content}</span>
-          </button>
-        ))}
+      <div className="rounded-xl border border-[#E8DDC8]/65 bg-white/70 px-4 py-3">
+        <p className="mb-1 text-[11px] tracking-[0.12em] text-[#8B7B62]/80">
+          [{item.name || '未署名'}] 的内心
+        </p>
+        <p className="font-serif text-[15px] italic leading-relaxed text-[#C5A880]">“{item.text}”</p>
       </div>
     )
   }
   return (
-    <div className="mt-4 space-y-2">
-      {options.map((o) => (
-        <button
-          key={o.id}
-          type="button"
-          onClick={() => onPick(o)}
-          className="w-full rounded-xl bg-white px-4 py-3 text-left shadow-sm transition-all duration-200 ease-out hover:bg-stone-50"
-        >
-          {o.styleLabel ? (
-            <span className="mb-1 block text-[11px] font-medium text-stone-400">{o.styleLabel}</span>
-          ) : null}
-          <span className="text-[15px] leading-relaxed text-[#262626]">{o.content}</span>
-        </button>
-      ))}
+    <div
+      className="rounded-xl border px-4 py-3"
+      style={
+        item.isUser
+          ? {
+              borderColor: '#B9C9E6',
+              background: '#EDF4FF',
+            }
+          : {
+              borderColor: '#E7EAEE',
+              background: '#FFFFFF',
+            }
+      }
+    >
+      <p
+        className="mb-1 text-xs font-semibold tracking-[0.04em]"
+        style={{ color: item.isUser ? '#2F5F9A' : '#1C1C1E' }}
+      >
+        {item.name || '未署名'}
+      </p>
+      <p className="text-[15px] leading-relaxed text-[#2B313B]">{item.text}</p>
     </div>
   )
 }
@@ -147,6 +229,8 @@ export function DatingStoryPage(props: Props) {
 
 export default DatingStoryPage
 function DatingStoryPageInner({ onBackToSelect }: Props) {
+  const VN_BG_FALLBACK =
+    'https://images.unsplash.com/photo-1524504388940-b1c1722653e1?auto=format&fit=crop&w=1200&q=80'
   const apiConfig = useCurrentApiConfig('chatCard')
   const {
     currentCharacter,
@@ -181,7 +265,7 @@ function DatingStoryPageInner({ onBackToSelect }: Props) {
   const [perspectiveOpen, setPerspectiveOpen] = useState(false)
   const [perspective, setPerspective] = useState<NarrativePerspective>('second')
   const [lengthOpen, setLengthOpen] = useState(false)
-  const [lengthTargetChars, setLengthTargetChars] = useState('180')
+  const [lengthTargetChars, setLengthTargetChars] = useState('500')
   const [autoUserOpen, setAutoUserOpen] = useState(false)
   const [autoUserReaction, setAutoUserReaction] = useState(false)
   const [initialBiasOpen, setInitialBiasOpen] = useState(false)
@@ -198,6 +282,8 @@ function DatingStoryPageInner({ onBackToSelect }: Props) {
   const [heartWhisperData, setHeartWhisperData] = useState<HeartWhisper | null>(null)
   const [vnCustomInput, setVnCustomInput] = useState('')
   const [vnCustomInputModalOpen, setVnCustomInputModalOpen] = useState(false)
+  const [vnUserDisplayName, setVnUserDisplayName] = useState('用户')
+  const [vnDanmakuModelOn, setVnDanmakuModelOn] = useState(false)
 
   const PLOT_TAIL_LS = (id: string) => `wechat-dating-plot-tail:${id.trim()}`
   const PLOT_TAIL_DEFAULT = 24
@@ -340,6 +426,63 @@ function DatingStoryPageInner({ onBackToSelect }: Props) {
   useEffect(() => {
     setStyleTuning(loadDatingStyleTuning(currentCharacter.id))
   }, [currentCharacter.id])
+  useEffect(() => {
+    let cancelled = false
+    void (async () => {
+      const cid = String(currentCharacter.id || '').trim()
+      if (!cid) {
+        if (!cancelled) setVnUserDisplayName('用户')
+        return
+      }
+      try {
+        const character = await personaDb.getCharacter(cid)
+        const pid = character?.playerIdentityId?.trim()
+        if (!pid) {
+          if (!cancelled) setVnUserDisplayName('用户')
+          return
+        }
+        const identity = await personaDb.getPlayerIdentity(pid)
+        if (!cancelled) {
+          setVnUserDisplayName(identity?.name?.trim() || identity?.wechatNickname?.trim() || '用户')
+        }
+      } catch {
+        if (!cancelled) setVnUserDisplayName('用户')
+      }
+    })()
+    return () => {
+      cancelled = true
+    }
+  }, [currentCharacter.id])
+  useEffect(() => {
+    let cancelled = false
+    void (async () => {
+      const cid = String(currentCharacter.id || '').trim()
+      if (!cid) {
+        if (!cancelled) setVnDanmakuModelOn(false)
+        return
+      }
+      try {
+        const row = await personaDb.getCharacterDanmakuSettings(cid)
+        if (!cancelled) setVnDanmakuModelOn(!!row?.useMemory)
+      } catch {
+        if (!cancelled) setVnDanmakuModelOn(false)
+      }
+    })()
+    return () => {
+      cancelled = true
+    }
+  }, [currentCharacter.id])
+  const toggleVnDanmakuModel = useCallback(async () => {
+    const cid = String(currentCharacter.id || '').trim()
+    if (!cid) return
+    const next = !vnDanmakuModelOn
+    setVnDanmakuModelOn(next)
+    try {
+      await personaDb.putCharacterDanmakuSettings({ characterId: cid, useMemory: next })
+    } catch {
+      setVnDanmakuModelOn(!next)
+    }
+  }, [currentCharacter.id, vnDanmakuModelOn])
   const defaultCardStyle: DatingCardStyle = useMemo(
     () => ({
       showContent: true,
@@ -457,10 +600,17 @@ function DatingStoryPageInner({ onBackToSelect }: Props) {
   }, [effectiveCardStyle])
   const [vnShownText, setVnShownText] = useState('')
   const [vnTyping, setVnTyping] = useState(false)
-  const [vnMockIndex, setVnMockIndex] = useState(0)
+  const [vnSubmitting, setVnSubmitting] = useState(false)
+  const [vnBubbleIndex, setVnBubbleIndex] = useState(0)
   const [vnFabPos, setVnFabPos] = useState({ x: 0, y: 80 })
   const normalScrollRef = useRef<HTMLDivElement | null>(null)
   const vnRootRef = useRef<HTMLDivElement | null>(null)
+  const vnLogScrollRef = useRef<HTMLDivElement | null>(null)
+  const vnProgressRestoreReadyRef = useRef(false)
+  const vnPendingRestoreIndexRef = useRef<number | null>(null)
+  const vnLatestAiIdRef = useRef('')
+  const vnLatestAiSigRef = useRef('')
+  const vnCurrentCharIdRef = useRef('')
   const vnRafRef = useRef<number | null>(null)
   const vnAutoTimerRef = useRef<number | null>(null)
   const vnDragRef = useRef<{ pointerId: number; startX: number; startY: number; moved: boolean } | null>(null)
@@ -474,15 +624,63 @@ function DatingStoryPageInner({ onBackToSelect }: Props) {
     openLog,
     closeLog,
   } = useVNStore()
+  const [spriteActors, setSpriteActors] = useState<Array<{ id: string; name: string; avatarUrl?: string }>>([
+    { id: '__user__', name: '你' },
+  ])
+  useEffect(() => {
+    let cancelled = false
+    void (async () => {
+      const rootId = String(currentCharacter.id || '').trim()
+      if (!rootId) {
+        if (!cancelled) setSpriteActors([{ id: '__user__', name: '你' }])
+        return
+      }
+      try {
+        const [rootRow, npcRows] = await Promise.all([personaDb.getCharacter(rootId), personaDb.listNpcsFor(rootId)])
+        if (cancelled) return
+        const mainActor = {
+          id: rootId,
+          name: rootRow?.name?.trim() || currentCharacter.realName,
+          avatarUrl: rootRow?.avatarUrl?.trim() || currentCharacter.avatarUrl,
+        }
+        const npcActors = (npcRows || [])
+          .map((n) => ({
+            id: n.id,
+            name: String(n.name || '').trim() || '未命名NPC',
+            avatarUrl: String(n.avatarUrl || '').trim(),
+          }))
+          .filter((n) => n.id && n.id !== rootId)
+        const dedup = new Map<string, { id: string; name: string; avatarUrl?: string }>()
+        dedup.set('__user__', { id: '__user__', name: '你' })
+        dedup.set(mainActor.id, mainActor)
+        for (const n of npcActors) dedup.set(n.id, n)
+        setSpriteActors(Array.from(dedup.values()))
+      } catch {
+        if (cancelled) return
+        setSpriteActors([
+          { id: '__user__', name: '你' },
+          { id: rootId, name: currentCharacter.realName, avatarUrl: currentCharacter.avatarUrl },
+        ])
+      }
+    })()
+    return () => {
+      cancelled = true
+    }
+  }, [currentCharacter.avatarUrl, currentCharacter.id, currentCharacter.realName])
   const VN_FAB_SIZE = 44
   const VN_EDGE = 8
   const VN_MENU_W = 176
   const VN_MENU_H = 176
 
   const isVn = currentArchive.modePreference === 'vn'
+  const [vnBgCurrentUrl, setVnBgCurrentUrl] = useState<string>(VN_BACKGROUND_ASSETS[0]?.url || VN_BG_FALLBACK)
+  const [vnBgPrevUrl, setVnBgPrevUrl] = useState<string | null>(null)
+  const [vnBgFlashOn, setVnBgFlashOn] = useState(false)
+  const vnBgFadeTimerRef = useRef<number | null>(null)
+  const vnBgFlashTimerRef = useRef<number | null>(null)
   const didAutoScrollBottomRef = useRef<string>('')
 
-  const lengthLabel = `${lengthTargetChars || '180'}字`
+  const lengthLabel = `${lengthTargetChars || '500'}字`
   const godLocksNoInterrupt = currentArchive.godPerspective
   const autoUserLabel = godLocksNoInterrupt ? '不抢话' : autoUserReaction ? '抢话' : '不抢话'
 
@@ -548,49 +746,279 @@ function DatingStoryPageInner({ onBackToSelect }: Props) {
   const latestAi = useMemo(() => {
     return [...currentArchive.plots].reverse().find((x) => x.type === 'ai') ?? null
   }, [currentArchive.plots])
+  const latestPlayer = useMemo(() => {
+    return [...currentArchive.plots].reverse().find((x) => x.type === 'player') ?? null
+  }, [currentArchive.plots])
 
-  const VN_MOCK_BUBBLES = [
-    '林澈：你先坐，我去把窗关上。',
-    '风从走廊灌进来，门边的纸张轻轻抖了一下。',
-    '林澈：别着凉，热水在你手边。',
-  ] as const
-  const VN_MOCK_BRANCHES = [
-    '他把杯子往你这边推近一点，低声说先把手暖起来。',
-    '你抬头看他一眼，问他刚才是不是一直在门口等你。',
-    '窗外风声更重了，你提议先把今天的误会说清楚。',
-  ] as const
-
-  const hasRealVnSource = useMemo(() => !!latestAi?.content?.trim(), [latestAi?.content])
-  const isMockMode = !hasRealVnSource
-  const mockLastIndex = VN_MOCK_BUBBLES.length - 1
-  const isLastMockBubble = isMockMode && vnMockIndex >= mockLastIndex
-  const activeMockBubble = useMemo(
-    () => VN_MOCK_BUBBLES[Math.max(0, Math.min(VN_MOCK_BUBBLES.length - 1, vnMockIndex))] ?? VN_MOCK_BUBBLES[0],
-    [VN_MOCK_BUBBLES, vnMockIndex],
+  const vnRawContent = useMemo(() => splitDatingAssistantOutput(latestAi?.content || '').content.trim(), [latestAi?.content])
+  const vnBgCue = useMemo(() => extractVnBackgroundCue(vnRawContent), [vnRawContent])
+  const vnBubbles = useMemo(() => {
+    return splitVnContentToBubbles(vnBgCue.cleanedText, currentCharacter.realName, 25)
+  }, [currentCharacter.realName, vnBgCue.cleanedText])
+  const vnCurrentBubble = useMemo(
+    () => vnBubbles[Math.max(0, Math.min(vnBubbles.length - 1, vnBubbleIndex))] ?? null,
+    [vnBubbles, vnBubbleIndex],
   )
-  const vnTargetText = useMemo(() => {
-    if (hasRealVnSource) return splitDatingAssistantOutput(latestAi?.content || '').content.trim()
-    return String(activeMockBubble || '').trim()
-  }, [activeMockBubble, hasRealVnSource, latestAi?.content])
-  const vnBubble = useMemo(() => {
-    return parseVnBubble(vnShownText || vnTargetText, currentCharacter.realName)
-  }, [currentCharacter.realName, vnShownText, vnTargetText])
+  const vnTargetText = useMemo(
+    () => vnCurrentBubble?.text || '',
+    [vnCurrentBubble],
+  )
+  const vnBubbleSpeaker = useMemo(() => {
+    return vnCurrentBubble?.speaker ?? null
+  }, [vnCurrentBubble])
+  const vnBubbleIsInnerThought = useMemo(() => !!vnCurrentBubble?.isInnerThought, [vnCurrentBubble])
+  const vnBubbleText = useMemo(() => (vnShownText || vnTargetText).trim(), [vnShownText, vnTargetText])
+  const vnBubble = useMemo(
+    () => ({ text: vnBubbleText, speaker: vnBubbleSpeaker }),
+    [vnBubbleSpeaker, vnBubbleText],
+  )
+  useEffect(() => {
+    vnLatestAiIdRef.current = String(latestAi?.id || '').trim()
+    vnLatestAiSigRef.current = buildVnAiProgressSignature(String(latestAi?.content || ''))
+    vnCurrentCharIdRef.current = String(currentCharacter.id || '').trim()
+  }, [latestAi?.content, latestAi?.id, currentCharacter.id])
+  const vnLogEntries = useMemo(() => {
+    const out: VnLogEntry[] = []
+    for (const p of currentArchive.plots) {
+      if (p.type === 'player') {
+        const msg = String(p.content || '').trim()
+        if (!msg) continue
+        out.push({
+          id: `${p.id}-player`,
+          kind: 'dialogue',
+          name: `${vnUserDisplayName}（你）`,
+          text: msg,
+          isUser: true,
+        })
+        continue
+      }
+      const aiRaw = splitDatingAssistantOutput(p.content).content.trim()
+      const cleaned = extractVnBackgroundCue(aiRaw).cleanedText
+      if (!cleaned) continue
+      const bubbles = splitVnContentToBubbles(cleaned, currentCharacter.realName, 25)
+      if (!bubbles.length) continue
+      const isCurrentAi = latestAi?.id === p.id
+      let shown = bubbles
+      if (isCurrentAi) {
+        const cap = Math.max(0, Math.min(bubbles.length - 1, vnBubbleIndex))
+        shown = bubbles.slice(0, cap + 1)
+        if (vnTyping && shown.length) {
+          const partial = String(vnShownText || '').trim()
+          if (!partial) {
+            shown = shown.slice(0, -1)
+          } else {
+            shown = [...shown]
+            shown[shown.length - 1] = { ...shown[shown.length - 1]!, text: partial }
+          }
+        }
+      }
+      for (let i = 0; i < shown.length; i += 1) {
+        const b = shown[i]!
+        const text = String(b.text || '').trim()
+        if (!text) continue
+        const kind: VnLogEntryKind = b.isInnerThought ? 'innerThought' : b.speaker ? 'dialogue' : 'narration'
+        out.push({
+          id: `${p.id}-ai-${i}`,
+          kind,
+          name: b.speaker?.trim() || currentCharacter.realName,
+          text,
+          isUser: (() => {
+            const n = String(b.speaker || '').replace(/\s+/g, '')
+            const userNorm = String(vnUserDisplayName || '').replace(/\s+/g, '')
+            return /^(我|你|用户|自己)$/u.test(n) || /（你）$|\(你\)$/u.test(n) || (userNorm && n === userNorm)
+          })(),
+        })
+      }
+    }
+    return out
+  }, [currentArchive.plots, currentCharacter.realName, latestAi?.id, vnBubbleIndex, vnShownText, vnTyping, vnUserDisplayName])
+  const activeSpeakerId = useMemo(() => {
+    const speaker = String(vnBubble.speaker || '')
+      .replace(/[“”"「」『』]/g, '')
+      .trim()
+    if (!speaker) return null
+    const normalizeSpeaker = (v: string) =>
+      String(v || '')
+        .replace(/[“”"「」『』]/g, '')
+        .replace(/[（]/g, '(')
+        .replace(/[）]/g, ')')
+        .replace(/\s+/g, '')
+        .trim()
+    const normalized = normalizeSpeaker(speaker)
+    const userNameNorm = String(vnUserDisplayName || '').trim().replace(/\s+/g, '')
+    if (/^(我|你|用户|自己)$/.test(normalized)) return '__user__'
+    if (/（你）$|\(你\)$/.test(normalized)) return '__user__'
+    if (userNameNorm && (normalized === userNameNorm || normalized === `${userNameNorm}（你）` || normalized === `${userNameNorm}(你)`)) {
+      return '__user__'
+    }
+    const byActor = spriteActors.find((x) => normalizeSpeaker(x.name) === normalized)
+    if (byActor) return byActor.id
+    if (speaker === currentCharacter.realName) return currentCharacter.id
+    return currentCharacter.id
+  }, [currentCharacter.id, currentCharacter.realName, spriteActors, vnBubbleSpeaker, vnUserDisplayName])
+  const vnDialogName = useMemo(() => {
+    const speaker = String(vnBubbleSpeaker || '').trim()
+    if (!speaker) {
+      return vnBubbleIsInnerThought ? `${currentCharacter.realName}·内心` : currentCharacter.realName
+    }
+    const normalized = speaker.replace(/\s+/g, '')
+    const userNameNorm = String(vnUserDisplayName || '').trim().replace(/\s+/g, '')
+    if (
+      /^(我|你|用户|自己)$/.test(normalized) ||
+      /（你）$|\(你\)$/.test(normalized) ||
+      (userNameNorm && (normalized === userNameNorm || normalized === `${userNameNorm}（你）` || normalized === `${userNameNorm}(你)`))
+    ) {
+      return vnBubbleIsInnerThought ? `${vnUserDisplayName}（你）·内心` : `${vnUserDisplayName}（你）`
+    }
+    return vnBubbleIsInnerThought ? `${speaker}·内心` : speaker
+  }, [currentCharacter.realName, vnBubbleIsInnerThought, vnBubbleSpeaker, vnUserDisplayName])
 
   useEffect(() => {
-    if (hasRealVnSource) {
-      setVnMockIndex(0)
+    if (!isVn) return
+    const cueName = String(vnBgCue.backgroundName || '').trim()
+    if (!cueName) return
+    const hit = resolveVnBackgroundByName(cueName)
+    if (!hit?.url || hit.url === vnBgCurrentUrl) return
+    if (vnBgFadeTimerRef.current != null) {
+      window.clearTimeout(vnBgFadeTimerRef.current)
+      vnBgFadeTimerRef.current = null
     }
-  }, [hasRealVnSource])
+    if (vnBgFlashTimerRef.current != null) {
+      window.clearTimeout(vnBgFlashTimerRef.current)
+      vnBgFlashTimerRef.current = null
+    }
+    setVnBgPrevUrl(vnBgCurrentUrl)
+    setVnBgCurrentUrl(hit.url)
+    setVnBgFlashOn(true)
+    vnBgFlashTimerRef.current = window.setTimeout(() => {
+      setVnBgFlashOn(false)
+      vnBgFlashTimerRef.current = null
+    }, 140)
+    vnBgFadeTimerRef.current = window.setTimeout(() => {
+      setVnBgPrevUrl(null)
+      vnBgFadeTimerRef.current = null
+    }, 420)
+  }, [isVn, vnBgCue.backgroundName, vnBgCurrentUrl])
+
+  useEffect(() => {
+    return () => {
+      if (vnBgFadeTimerRef.current != null) window.clearTimeout(vnBgFadeTimerRef.current)
+      if (vnBgFlashTimerRef.current != null) window.clearTimeout(vnBgFlashTimerRef.current)
+    }
+  }, [])
+  const activeSprite = useActiveSprite(activeSpeakerId)
+  const hasNextVnBubble = vnBubbleIndex < vnBubbles.length - 1
+  const vnUiLoading = loading || vnSubmitting
+  const isAwaitingVnAiReply =
+    loading &&
+    !!latestPlayer &&
+    (!latestAi || Number(latestAi.timestamp || 0) < Number(latestPlayer.timestamp || 0))
+  const vnBoxLoading = vnUiLoading && !vnTargetText.trim()
+
+  useEffect(() => {
+    if (!isVn) return
+    vnProgressRestoreReadyRef.current = false
+    vnPendingRestoreIndexRef.current = null
+    const key = vnProgressLsKey(currentCharacter.id)
+    const aiId = String(latestAi?.id || '').trim()
+    const aiSig = buildVnAiProgressSignature(String(latestAi?.content || ''))
+    if (!aiId) {
+      vnPendingRestoreIndexRef.current = 0
+      setVnBubbleIndex(0)
+      vnProgressRestoreReadyRef.current = true
+      return
+    }
+    try {
+      const raw = localStorage.getItem(key) || localStorage.getItem(VN_PROGRESS_GLOBAL_KEY)
+      if (!raw) {
+        setVnBubbleIndex(0)
+        vnProgressRestoreReadyRef.current = true
+        return
+      }
+      const parsed = JSON.parse(raw) as { latestAiId?: string; latestAiSig?: string; bubbleIndex?: number } | null
+      const savedAiId = String(parsed?.latestAiId || '').trim()
+      const savedAiSig = String(parsed?.latestAiSig || '').trim()
+      const savedIdx = Number(parsed?.bubbleIndex)
+      const hitById = !!savedAiId && savedAiId === aiId
+      const hitBySig = !!savedAiSig && !!aiSig && savedAiSig === aiSig
+      const hitLegacy = !savedAiId && !savedAiSig
+      if (Number.isFinite(savedIdx) && (hitById || hitBySig || hitLegacy)) {
+        const restored = Math.max(0, Math.round(savedIdx))
+        vnPendingRestoreIndexRef.current = restored
+        // 关键：恢复时不依赖当前 bubbles 长度，避免初始化阶段被错误钳到 0
+        setVnBubbleIndex(restored)
+        vnProgressRestoreReadyRef.current = true
+        return
+      }
+      vnPendingRestoreIndexRef.current = 0
+      setVnBubbleIndex(0)
+      vnProgressRestoreReadyRef.current = true
+    } catch {
+      vnPendingRestoreIndexRef.current = 0
+      setVnBubbleIndex(0)
+      vnProgressRestoreReadyRef.current = true
+    }
+  }, [isVn, currentCharacter.id, latestAi?.id, latestAi?.timestamp, vnBubbles.length])
+
+  useEffect(() => {
+    if (!isVn) return
+    if (!vnProgressRestoreReadyRef.current) return
+    const pending = vnPendingRestoreIndexRef.current
+    if (pending != null && Math.round(vnBubbleIndex) !== pending) return
+    if (pending != null && Math.round(vnBubbleIndex) === pending) {
+      vnPendingRestoreIndexRef.current = null
+    }
+    const aiId = String(latestAi?.id || '').trim()
+    if (!aiId) return
+    if (!vnBubbles.length) return
+    const key = vnProgressLsKey(currentCharacter.id)
+    const payload = {
+      latestAiId: aiId,
+      latestAiSig: buildVnAiProgressSignature(String(latestAi?.content || '')),
+      // 关键：持久化当前 index 原值，避免在气泡短暂未就绪时覆盖为 0
+      bubbleIndex: Math.max(0, Math.round(vnBubbleIndex)),
+      updatedAt: Date.now(),
+    }
+    try {
+      localStorage.setItem(key, JSON.stringify(payload))
+      localStorage.setItem(VN_PROGRESS_GLOBAL_KEY, JSON.stringify(payload))
+    } catch {
+      // ignore persistence failures
+    }
+  }, [isVn, currentCharacter.id, latestAi?.content, latestAi?.id, vnBubbleIndex, vnBubbles.length])
+
+  const persistVnProgressNow = useCallback((nextIndex: number) => {
+    const aiId = String(vnLatestAiIdRef.current || '').trim()
+    const aiSig = String(vnLatestAiSigRef.current || '').trim()
+    const charId = String(vnCurrentCharIdRef.current || '').trim()
+    if (!aiId) return
+    const payload = {
+      latestAiId: aiId,
+      latestAiSig: aiSig,
+      bubbleIndex: Math.max(0, Math.round(nextIndex)),
+      updatedAt: Date.now(),
+    }
+    try {
+      if (charId) localStorage.setItem(vnProgressLsKey(charId), JSON.stringify(payload))
+      localStorage.setItem(VN_PROGRESS_GLOBAL_KEY, JSON.stringify(payload))
+    } catch {
+      // ignore persistence failures
+    }
+  }, [])
 
   const handleVnContinue = useCallback(() => {
     if (vnTyping) {
       skipVnTyping()
       return
     }
-    if (hasRealVnSource) return
-    if (VN_MOCK_BUBBLES.length <= 1) return
-    setVnMockIndex((prev) => Math.min(prev + 1, mockLastIndex))
-  }, [VN_MOCK_BUBBLES.length, hasRealVnSource, mockLastIndex, vnTyping])
+    if (hasNextVnBubble) {
+      setVnBubbleIndex((v) => {
+        const next = Math.min(v + 1, Math.max(0, vnBubbles.length - 1))
+        persistVnProgressNow(next)
+        return next
+      })
+    }
+  }, [hasNextVnBubble, persistVnProgressNow, vnBubbles.length, vnTyping])
 
   useEffect(() => {
     if (vnRafRef.current != null) {
@@ -699,19 +1127,29 @@ function DatingStoryPageInner({ onBackToSelect }: Props) {
     }
     vnDragRef.current = null
   }
+  const vnSpriteOffsetPx = useMemo(() => {
+    if (!activeSprite) return { x: 0, y: 0 }
+    const rect = vnRootRef.current?.getBoundingClientRect()
+    if (!rect) return { x: 0, y: 0 }
+    return {
+      x: (activeSprite.position.x / 100) * rect.width,
+      y: (activeSprite.position.y / 100) * rect.height,
+    }
+  }, [activeSprite])
 
-  const showBranchPanel =
-    currentArchive.branchEnabled &&
-    (currentArchive.pendingBranches.length > 0 || branchesLoading)
   const vnBranchOptions = useMemo(
     () => currentArchive.pendingBranches.slice(0, 3),
     [currentArchive.pendingBranches],
   )
   const branchListLoading = branchesLoading && currentArchive.pendingBranches.length === 0
-  const handleBranchPick = (x: BranchOption) => {
+  const isVnEmpty = vnBubbles.length === 0
+  const isLastVnBubble = !isVnEmpty && !hasNextVnBubble
+  const shouldShowVnFloatingOptions = isVnEmpty || isLastVnBubble
+  const showVnBlockingGeneratingModal = isVn && (vnSubmitting || isAwaitingVnAiReply)
+  const handleBranchPick = useCallback((x: BranchOption) => {
     stageBranchChoice(x)
     setInput(x.content)
-  }
+  }, [stageBranchChoice])
   const vnMenuPos = useMemo(() => {
     const rect = vnRootRef.current?.getBoundingClientRect()
     const vw = rect?.width ?? 360
@@ -745,7 +1183,7 @@ function DatingStoryPageInner({ onBackToSelect }: Props) {
   const perspectiveLabel = perspective === 'first' ? '第一人称' : perspective === 'second' ? '第二人称' : '第三人称'
   const lengthTargetNum = (() => {
     const n = Number(lengthTargetChars)
-    if (!Number.isFinite(n)) return 180
+    if (!Number.isFinite(n)) return 500
     return Math.max(DATING_AI_LENGTH_TARGET_MIN, Math.min(DATING_AI_LENGTH_TARGET_MAX, Math.round(n)))
   })()
 
@@ -760,10 +1198,15 @@ function DatingStoryPageInner({ onBackToSelect }: Props) {
   )
   const handleVnBranchPick = useCallback(
     async (x: BranchOption) => {
+      setVnSubmitting(true)
       stageBranchChoice(x)
-      const ok = await sendPlayerInput(x.content, perspective, narrativeGenOptions)
-      if (ok) {
-        setInput('')
+      try {
+        const ok = await sendPlayerInput(x.content, perspective, narrativeGenOptions)
+        if (ok) {
+          setInput('')
+        }
+      } finally {
+        setVnSubmitting(false)
       }
     },
     [narrativeGenOptions, perspective, sendPlayerInput, stageBranchChoice],
@@ -771,36 +1214,29 @@ function DatingStoryPageInner({ onBackToSelect }: Props) {
   const handleVnCustomGenerate = useCallback(async () => {
     const text = vnCustomInput.trim()
     if (!text) return
-    const ok = await sendPlayerInput(text, perspective, narrativeGenOptions)
-    if (ok) {
-      setVnCustomInput('')
-      setInput('')
-      setVnCustomInputModalOpen(false)
+    setVnSubmitting(true)
+    try {
+      const ok = await sendPlayerInput(text, perspective, narrativeGenOptions)
+      if (ok) {
+        setVnCustomInput('')
+        setInput('')
+        setVnCustomInputModalOpen(false)
+      }
+    } finally {
+      setVnSubmitting(false)
     }
   }, [narrativeGenOptions, perspective, sendPlayerInput, vnCustomInput])
-  const handleVnMockBranchGenerate = useCallback(
-    async (text: string) => {
-      const payload = text.trim()
-      if (!payload) return
-      const ok = await sendPlayerInput(payload, perspective, narrativeGenOptions)
-      if (ok) {
-        setInput('')
-      }
-    },
-    [narrativeGenOptions, perspective, sendPlayerInput],
-  )
-
   useEffect(() => {
     vnAutoAdvanceRef.current = () => {
-      if (hasRealVnSource) {
-        void sendPlayerInput('继续推进剧情', perspective, narrativeGenOptions)
-        return
-      }
-      if (VN_MOCK_BUBBLES.length > 1) {
-        setVnMockIndex((prev) => Math.min(prev + 1, mockLastIndex))
+      if (hasNextVnBubble) {
+        setVnBubbleIndex((v) => {
+          const next = Math.min(v + 1, Math.max(0, vnBubbles.length - 1))
+          persistVnProgressNow(next)
+          return next
+        })
       }
     }
-  }, [VN_MOCK_BUBBLES.length, hasRealVnSource, mockLastIndex, narrativeGenOptions, perspective, sendPlayerInput])
+  }, [hasNextVnBubble, persistVnProgressNow, vnBubbles.length])
 
   const openRetryBiasPanel = useCallback((plotId: string) => {
     setRetryTargetPlotId(plotId)
@@ -843,7 +1279,7 @@ function DatingStoryPageInner({ onBackToSelect }: Props) {
     }
     if (!isVn || !isAutoPlay || loading || vnTyping) return
     if (!vnTargetText.trim()) return
-    const delayMs = 2000
+    const delayMs = 1500
     vnAutoTimerRef.current = window.setTimeout(() => {
       vnAutoAdvanceRef.current()
     }, delayMs)
@@ -854,6 +1290,15 @@ function DatingStoryPageInner({ onBackToSelect }: Props) {
       }
     }
   }, [isAutoPlay, isVn, loading, vnTargetText, vnTyping])
+
+  useEffect(() => {
+    if (!isVn || !logOpen) return
+    requestAnimationFrame(() => {
+      const el = vnLogScrollRef.current
+      if (!el) return
+      el.scrollTo({ top: el.scrollHeight, behavior: 'smooth' })
+    })
+  }, [isVn, logOpen, vnLogEntries.length])
 
   return (
     <div
@@ -1288,11 +1733,23 @@ function DatingStoryPageInner({ onBackToSelect }: Props) {
       ) : (
         <div ref={vnRootRef} className="relative h-full">
           <div
-            className="absolute inset-0 bg-cover bg-center"
+            className="absolute inset-0 bg-cover bg-center transition-opacity duration-[420ms] ease-out"
             style={{
-              backgroundImage:
-                'url(https://images.unsplash.com/photo-1524504388940-b1c1722653e1?auto=format&fit=crop&w=1200&q=80)',
+              backgroundImage: `url(${vnBgCurrentUrl})`,
             }}
+          />
+          {vnBgPrevUrl ? (
+            <motion.div
+              className="pointer-events-none absolute inset-0 bg-cover bg-center"
+              style={{ backgroundImage: `url(${vnBgPrevUrl})` }}
+              initial={{ opacity: 1 }}
+              animate={{ opacity: 0 }}
+              transition={{ duration: 0.42, ease: 'easeOut' }}
+            />
+          ) : null}
+          <div
+            className="pointer-events-none absolute inset-0 z-[8] bg-white transition-opacity duration-150"
+            style={{ opacity: vnBgFlashOn ? 0.72 : 0 }}
           />
           <div
             className="absolute z-30"
@@ -1338,11 +1795,11 @@ function DatingStoryPageInner({ onBackToSelect }: Props) {
                 type="button"
                 className="w-full rounded-lg px-3 py-2 text-left text-[13px] text-[#262626] hover:bg-stone-50"
                 onClick={() => {
-                  setEditOpen(true)
+                  void toggleVnDanmakuModel()
                   setMenuOpen(false)
                 }}
               >
-                编辑当前角色卡片信息
+                弹幕模型开关：{vnDanmakuModelOn ? '已开启' : '已关闭'}
               </button>
               <button
                 type="button"
@@ -1377,96 +1834,92 @@ function DatingStoryPageInner({ onBackToSelect }: Props) {
             </div>
           ) : null}
 
-          <div className="relative z-10 flex h-full min-h-0 flex-col px-4 pb-[calc(64px+max(10px,env(safe-area-inset-bottom,0px)))]">
-            <div className="basis-[54%] shrink-0" />
-            <div className="-mb-7 flex justify-center">
-              <img
-                src={currentCharacter.avatarUrl}
-                alt={currentCharacter.realName}
-                className="h-44 w-44 rounded-3xl object-cover shadow-[0_12px_28px_rgba(0,0,0,0.12)]"
-                style={{ opacity: loading ? 0.7 : 1 }}
+        {activeSpeakerId && activeSprite?.imageUrl ? (
+          <div className="pointer-events-none absolute inset-x-0 bottom-[calc(170px+max(10px,env(safe-area-inset-bottom,0px)))] z-[9] flex justify-center px-4">
+            <motion.div
+              key={`vn-speaker-sprite-${activeSpeakerId}`}
+              initial={{ opacity: 0, y: 20 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ duration: 0.24, ease: 'easeOut' }}
+              style={{
+                x: vnSpriteOffsetPx.x,
+                y: vnSpriteOffsetPx.y,
+                scale: activeSprite?.scale ?? 1,
+              }}
+            >
+              <ChromaKeyRenderer
+                imageUrl={activeSprite.imageUrl}
+                chromaKey={activeSprite.chromaKey}
+                className="max-h-[50dvh] w-auto shadow-[0_12px_28px_rgba(0,0,0,0.12)]"
               />
-            </div>
-            {!currentArchive.branchEnabled ? (
-              <div className="mb-2 mt-2">
-                <button
-                  type="button"
-                  className="w-full rounded-lg border border-white/60 bg-white/60 px-3 py-2 text-left text-[12px] text-[#1f2937] transition-all hover:bg-white/75"
-                  onClick={() => setVnCustomInputModalOpen(true)}
-                >
-                  自定义输入
-                </button>
-              </div>
-            ) : null}
+            </motion.div>
+          </div>
+        ) : null}
+
+          <div className="relative z-10 flex h-full min-h-0 flex-col px-4 pb-[calc(64px+max(10px,env(safe-area-inset-bottom,0px)))]">
+            <div className="basis-[65%] shrink-0" />
             <div className="relative">
-              {isLastMockBubble ? (
+              {shouldShowVnFloatingOptions ? (
                 <div className="pointer-events-auto absolute inset-x-0 bottom-[calc(100%+8px)] z-20">
                   <div className="space-y-2.5">
-                    {VN_MOCK_BRANCHES.map((item, idx) => (
-                      <button
-                        key={`vn-mock-branch-${idx}`}
-                        type="button"
-                        onClick={() => {
-                          void handleVnMockBranchGenerate(item)
-                        }}
-                        className="w-full rounded-xl border border-white/60 bg-white/70 px-3 py-2.5 text-left text-[13px] leading-[1.75] text-[#1f2937] transition-all hover:bg-white"
-                      >
-                        {item}
-                      </button>
-                    ))}
+                    {currentArchive.branchEnabled ? (
+                      <>
+                        {branchListLoading ? (
+                          <div className="space-y-2.5">
+                            {Array.from({ length: 3 }).map((_, idx) => (
+                              <div
+                                key={`vn-branch-loading-${idx}`}
+                                className="animate-pulse rounded-xl border border-white/60 bg-white/70 px-3 py-2.5"
+                              >
+                                <div className="h-3 w-full rounded bg-stone-200/70" />
+                              </div>
+                            ))}
+                          </div>
+                        ) : (
+                          vnBranchOptions.map((item, idx) => (
+                            <button
+                              key={item.id}
+                              type="button"
+                              disabled={vnUiLoading}
+                              onClick={() => {
+                                void handleVnBranchPick(item)
+                              }}
+                              className={`w-full rounded-xl border border-white/60 bg-white/70 px-3 py-2.5 text-center text-[14px] leading-[1.75] text-[#1f2937] transition-all hover:bg-white ${
+                                idx === 2 ? 'mt-5' : ''
+                              }`}
+                            >
+                              {item.content}
+                            </button>
+                          ))
+                        )}
+                      </>
+                    ) : null}
+                    <button
+                      type="button"
+                      disabled={vnUiLoading}
+                      onClick={() => setVnCustomInputModalOpen(true)}
+                      className="w-full rounded-xl border border-white/60 bg-white/70 px-3 py-2.5 text-center text-[14px] leading-[1.75] text-[#1f2937] transition-all hover:bg-white"
+                    >
+                      自定义输入
+                    </button>
+                    {vnUiLoading ? (
+                      <div className="rounded-xl border border-white/60 bg-white/70 px-3 py-2 text-center text-[13px] text-[#4b5563]">
+                        剧情正在生成中...
+                      </div>
+                    ) : null}
                   </div>
                 </div>
               ) : null}
               <VNDialogBox
-                name={currentCharacter.realName}
-                loading={loading}
-                showNameTag={!!vnBubble.speaker}
+                name={vnDialogName}
+                loading={vnBoxLoading}
+                innerVoice={vnBubbleIsInnerThought}
+                showNameTag={!!vnBubble.speaker || vnBubbleIsInnerThought}
                 onContinue={handleVnContinue}
-                showContinueHint={!loading}
+                showContinueHint={!vnBoxLoading}
               >
                 {vnBubble.text}
               </VNDialogBox>
-            </div>
-            <div className="mt-2">
-              {showBranchPanel ? (
-                <div className="mt-2 rounded-md border border-white/50 bg-white/45 px-2 py-2 backdrop-blur-md">
-                  <p className="text-[10px] text-white/80 drop-shadow-md">剧情分支</p>
-                  <div className="mt-1 max-h-[min(34vh,250px)] overflow-y-auto">
-                    <BranchList
-                      options={vnBranchOptions}
-                      loading={branchListLoading}
-                      onPick={(x) => {
-                        void handleVnBranchPick(x)
-                      }}
-                      vn={false}
-                    />
-                    <div className="mt-2 rounded-xl border border-white/60 bg-white/55 px-3 py-2">
-                      <p className="text-[11px] text-[#475569]">自定义输入</p>
-                      <textarea
-                        value={vnCustomInput}
-                        onChange={(e) => setVnCustomInput(e.target.value)}
-                        placeholder="输入你希望的剧情走向，然后生成下一段..."
-                        rows={2}
-                        enterKeyHint="send"
-                        autoComplete="off"
-                        className="mt-1 w-full resize-y rounded-lg border border-white/70 bg-white/70 px-2.5 py-2 text-[13px] leading-relaxed text-[#262626] outline-none focus:border-white"
-                      />
-                      <div className="mt-2 flex justify-end">
-                        <button
-                          type="button"
-                          disabled={loading || !vnCustomInput.trim()}
-                          onClick={() => {
-                            void handleVnCustomGenerate()
-                          }}
-                          className="rounded-lg bg-neutral-900/92 px-3 py-1.5 text-[12px] font-medium text-white transition-all hover:bg-neutral-800 disabled:opacity-50"
-                        >
-                          {loading ? '生成中…' : '生成剧情'}
-                        </button>
-                      </div>
-                    </div>
-                  </div>
-                </div>
-              ) : null}
             </div>
           </div>
 
@@ -1484,42 +1937,51 @@ function DatingStoryPageInner({ onBackToSelect }: Props) {
         </div>
       )}
 
-      {isVn && logOpen ? (
-        <div className="absolute inset-0 z-40 bg-black/30 p-4 backdrop-blur-md">
-          <div className="mx-auto flex h-full w-full max-w-[560px] flex-col overflow-hidden rounded-2xl border border-white/50 bg-white/45 shadow-[0_24px_56px_rgba(0,0,0,0.24)]">
-            <div
-              className="flex items-center justify-between border-b border-white/45 px-4 py-3"
-              style={{ paddingTop: 'max(12px, env(safe-area-inset-top, 0px))' }}
+      <AnimatePresence>
+        {isVn && logOpen ? (
+          <motion.div
+            className="absolute inset-0 z-[120] flex items-center justify-center bg-black/22 p-4"
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            transition={{ duration: 0.2, ease: 'easeOut' }}
+          >
+            <motion.div
+              className="flex h-[78dvh] w-full max-w-[680px] flex-col overflow-hidden rounded-3xl border border-[#DCC9A6] bg-[#F8F8F6] shadow-[0_22px_60px_rgba(0,0,0,0.16)]"
+              initial={{ y: 36, opacity: 0.78, scale: 0.985 }}
+              animate={{ y: 0, opacity: 1, scale: 1 }}
+              exit={{ y: 20, opacity: 0.86, scale: 0.99 }}
+              transition={{ type: 'spring', stiffness: 240, damping: 30, mass: 0.92 }}
             >
-              <p className="text-[13px] tracking-[0.08em] text-white drop-shadow-md">历史记录</p>
-              <button
-                type="button"
-                className="rounded-lg px-2 py-1 text-[12px] text-white/90 transition-all hover:bg-white/25"
-                onClick={closeLog}
+              <div
+                className="relative flex items-center justify-center border-b border-[#E6D9BF] bg-[#F3F1EC] px-4 py-3"
+                style={{ paddingTop: 'max(12px, env(safe-area-inset-top, 0px))' }}
               >
-                关闭
-              </button>
-            </div>
-            <div className="min-h-0 flex-1 space-y-2 overflow-y-auto px-4 py-3">
-              {currentArchive.plots.map((p) => (
-                <div
-                  key={p.id}
-                  className="rounded-lg border border-white/45 bg-white/55 px-3 py-2 text-[12px] leading-relaxed text-[#1f2937]"
+                <p className="text-[12px] tracking-[0.45em] text-[#2F3540]">L O G</p>
+                <button
+                  type="button"
+                  className="absolute right-3 rounded-full border border-[#E1D6BF] bg-[#FCFBF8] p-1.5 text-[#4B5563] transition hover:bg-white"
+                  onClick={closeLog}
+                  aria-label="关闭历史记录"
                 >
-                  <p className="mb-1 text-[10px] uppercase tracking-[0.1em] text-[#64748b]">
-                    {p.type === 'player' ? '你' : currentCharacter.realName}
-                  </p>
-                  {p.type === 'ai' ? (
-                    <PlotRichParagraph content={splitDatingAssistantOutput(p.content).content} />
-                  ) : (
-                    <p>{p.content}</p>
-                  )}
-                </div>
-              ))}
-            </div>
-          </div>
-        </div>
-      ) : null}
+                  <ChevronDown className="size-4" strokeWidth={1.5} />
+                </button>
+              </div>
+
+              <div
+                ref={vnLogScrollRef}
+                className="min-h-0 flex-1 space-y-2 overflow-y-auto px-5 py-4 [scrollbar-color:rgba(120,130,145,0.35)_transparent] [scrollbar-width:thin] [&::-webkit-scrollbar-thumb]:rounded-full [&::-webkit-scrollbar-thumb]:bg-[#9CA3AF]/40 [&::-webkit-scrollbar-track]:bg-transparent [&::-webkit-scrollbar]:w-1.5"
+              >
+                {vnLogEntries.length ? (
+                  vnLogEntries.map((entry) => <VnLogItemRenderer key={entry.id} item={entry} />)
+                ) : (
+                  <p className="py-8 text-center text-[13px] font-light text-[#9CA3AF]">当前还没有可回顾的台词</p>
+                )}
+              </div>
+            </motion.div>
+          </motion.div>
+        ) : null}
+      </AnimatePresence>
       {isVn && vnCustomInputModalOpen ? (
         <div className="absolute inset-0 z-50 flex items-end justify-center bg-black/35 p-4">
           <div className="w-full max-w-[520px] rounded-2xl border border-stone-200 bg-white shadow-lg">
@@ -1535,6 +1997,71 @@ function DatingStoryPageInner({ onBackToSelect }: Props) {
             </div>
             <div className="space-y-2 px-4 py-4">
               <p className="text-[12px] text-stone-500">输入你希望的剧情走向，模型会据此生成下一段剧情。</p>
+              <div className="grid grid-cols-2 gap-2">
+                <div className="flex items-center justify-between rounded-lg border border-stone-200 bg-white px-3 py-2">
+                  <p className="text-[13px] text-[#262626]">上帝视角</p>
+                  <button
+                    type="button"
+                    role="switch"
+                    aria-checked={currentArchive.godPerspective}
+                    onClick={() => setGodPerspective(!currentArchive.godPerspective)}
+                    className={`relative h-8 w-[52px] rounded-full p-1 transition-colors ${
+                      currentArchive.godPerspective ? 'bg-black' : 'bg-[#cccccc]'
+                    }`}
+                  >
+                    <span
+                      className={`block h-6 w-6 rounded-full bg-white transition-transform ${
+                        currentArchive.godPerspective ? 'translate-x-5' : 'translate-x-0'
+                      }`}
+                    />
+                  </button>
+                </div>
+                <div className="flex items-center justify-between rounded-lg border border-stone-200 bg-white px-3 py-2">
+                  <p className={`text-[13px] ${godLocksNoInterrupt ? 'text-[#a3a3a3]' : 'text-[#262626]'}`}>抢话</p>
+                  <button
+                    type="button"
+                    role="switch"
+                    aria-checked={!godLocksNoInterrupt && autoUserReaction}
+                    disabled={godLocksNoInterrupt}
+                    onClick={() => {
+                      if (godLocksNoInterrupt) return
+                      setAutoUserReaction((v) => !v)
+                    }}
+                    className={`relative h-8 w-[52px] rounded-full p-1 transition-colors ${
+                      godLocksNoInterrupt
+                        ? 'cursor-not-allowed bg-[#d6d6d6]'
+                        : autoUserReaction
+                          ? 'bg-black'
+                          : 'bg-[#cccccc]'
+                    }`}
+                  >
+                    <span
+                      className={`block h-6 w-6 rounded-full bg-white transition-transform ${
+                        !godLocksNoInterrupt && autoUserReaction ? 'translate-x-5' : 'translate-x-0'
+                      }`}
+                    />
+                  </button>
+                </div>
+              </div>
+              <div className="rounded-xl border border-stone-200 bg-stone-50 px-3 py-2.5">
+                <div className="mb-1 flex items-center justify-between">
+                  <p className="text-[12px] text-[#525252]">目标字数限制</p>
+                  <span className="text-[11px] text-[#8e8e8e]">{lengthLabel}</span>
+                </div>
+                <input
+                  type="number"
+                  min={DATING_AI_LENGTH_TARGET_MIN}
+                  max={DATING_AI_LENGTH_TARGET_MAX}
+                  step={10}
+                  value={lengthTargetChars}
+                  onChange={(e) => setLengthTargetChars(e.target.value)}
+                  className="w-full rounded-lg border border-stone-200 bg-white px-2.5 py-1.5 text-[13px] text-[#262626] outline-none focus:border-stone-400"
+                  placeholder="如 500"
+                />
+                <p className="mt-1 text-[10px] leading-snug text-[#9a9a9a]">
+                  范围 {DATING_AI_LENGTH_TARGET_MIN} - {DATING_AI_LENGTH_TARGET_MAX}，模型会尽量控制在目标区间附近。
+                </p>
+              </div>
               <textarea
                 value={vnCustomInput}
                 onChange={(e) => setVnCustomInput(e.target.value)}
@@ -2045,22 +2572,17 @@ function DatingStoryPageInner({ onBackToSelect }: Props) {
           </div>
         </div>
       ) : null}
-      {portraitSetupOpen ? (
-        <div className="absolute inset-0 z-50 flex items-center justify-center bg-black/35 p-4">
-          <div className="w-full max-w-[420px] rounded-2xl border border-stone-200 bg-white p-4 shadow-lg">
-            <p className="text-[15px] font-semibold text-stone-900">立绘设置</p>
-            <p className="mt-2 text-[13px] leading-relaxed text-stone-600">
-              已预留立绘设置入口。下一步可在这里接入立绘开关、位置、缩放和切换列表。
-            </p>
-            <div className="mt-3 flex justify-end">
-              <button
-                type="button"
-                className="rounded-lg bg-neutral-900 px-3 py-1.5 text-[12px] text-white"
-                onClick={() => setPortraitSetupOpen(false)}
-              >
-                关闭
-              </button>
-            </div>
+      <SpriteEditorPage
+        open={portraitSetupOpen}
+        actors={spriteActors}
+        onClose={() => setPortraitSetupOpen(false)}
+      />
+      {showVnBlockingGeneratingModal ? (
+        <div className="absolute inset-0 z-[130] flex items-center justify-center bg-black/45 backdrop-blur-[2px]">
+          <div className="mx-6 w-full max-w-[320px] rounded-2xl border border-white/35 bg-white/85 px-5 py-4 text-center shadow-[0_18px_44px_rgba(0,0,0,0.22)]">
+            <div className="mx-auto mb-3 h-8 w-8 animate-spin rounded-full border-2 border-[#c7ced9] border-t-[#111827]" />
+            <p className="text-[15px] font-medium text-[#111827]">剧情正在生成中</p>
+            <p className="mt-1 text-[12px] text-[#4b5563]">请稍候，生成完成后将自动继续</p>
           </div>
         </div>
       ) : null}

@@ -228,11 +228,18 @@ const hexToBytes = (hex: string): Uint8Array => {
 
 export async function createMiniMaxT2ASyncAudioBlob(
   creds: MiniMaxCredentials,
-  params: { voice_id: string; text: string; model?: string },
+  params: {
+    voice_id: string
+    text: string
+    model?: string
+    emotion?: 'happy' | 'sad' | 'angry' | 'fearful' | 'disgusted' | 'surprised' | 'neutral' | 'calm' | 'fluent' | 'whisper'
+  },
 ) {
   const voiceId = params.voice_id.trim()
   const text = params.text.trim()
   const model = String(params.model || 'speech-2.8-hd').trim() || 'speech-2.8-hd'
+  const emotionRaw = String(params.emotion || '').trim().toLowerCase()
+  const emotion = emotionRaw === 'neutral' ? 'calm' : emotionRaw
   if (!voiceId) throw new Error('请先选择 voice_id')
   if (!text) throw new Error('请输入要合成的台词')
 
@@ -248,6 +255,7 @@ export async function createMiniMaxT2ASyncAudioBlob(
         speed: 1,
         vol: 1,
         pitch: 0,
+        ...(emotion ? { emotion } : {}),
       },
       audio_setting: {
         sample_rate: 32000,

@@ -47,6 +47,12 @@ export async function loadDatingNpcNetworkPromptBlock(params: {
     const cliqueIds = [rootId, ...npcs.map((n) => n.id)]
     const rels = await personaDb.listRelationshipsInNetwork(cliqueIds)
     const relsFiltered = rels.filter((r) => !r.isPlayerIdentity)
+    // 只保留「主角 <-> NPC」直接关系，避免把 NPC<->NPC 或其他圈层关系误注入当前角色剧情
+    const mainToNpcRels = relsFiltered.filter((r) => {
+      const fromMain = r.fromCharacterId === rootId && r.toCharacterId !== rootId
+      const toMain = r.toCharacterId === rootId && r.fromCharacterId !== rootId
+      return fromMain || toMain
+    })
 
     const lines: string[] = []
     lines.push(`【主角】${mainLabel}（勿在正文输出 id）`)
@@ -64,9 +70,9 @@ export async function loadDatingNpcNetworkPromptBlock(params: {
       }
     }
 
-    if (relsFiltered.length) {
+    if (mainToNpcRels.length) {
       lines.push('\n【圈内关系（主角 ↔ NPC）】')
-      for (const r of relsFiltered.slice(0, 48)) {
+      for (const r of mainToNpcRels.slice(0, 48)) {
         const a = idToName.get(r.fromCharacterId)
         const b = idToName.get(r.toCharacterId)
         if (!a || !b) continue
@@ -90,7 +96,7 @@ export async function loadDatingNpcNetworkPromptBlock(params: {
       }
     }
 
-    if (!npcs.length && !relsFiltered.length && !playerLinks.length) {
+    if (!npcs.length && !mainToNpcRels.length && !playerLinks.length) {
       return ''
     }
 
