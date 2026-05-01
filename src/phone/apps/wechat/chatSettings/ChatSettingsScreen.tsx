@@ -368,7 +368,7 @@ export function ChatSettingsScreen({
                 onClick={() => chatBgFileRef.current?.click()}
                 className="inline-flex h-10 items-center justify-center rounded-[10px] border border-black bg-black px-4 text-[13px] text-white"
               >
-                本地上传并裁剪（9:16）
+                本地上传并裁剪
               </Pressable>
               <Pressable
                 type="button"
@@ -413,8 +413,8 @@ export function ChatSettingsScreen({
         <ImageCropperModal
           open={!!chatBgCropSrc}
           imageSrc={chatBgCropSrc ?? ''}
-          title="裁剪聊天背景（9:16）"
-          aspect={9 / 16}
+          title="裁剪聊天背景"
+          aspect={9 / 19.5}
           maxSide={1440}
           objectFit="vertical-cover"
           onCancel={() => setChatBgCropSrc(null)}

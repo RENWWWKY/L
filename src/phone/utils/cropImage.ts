@@ -24,18 +24,25 @@ export async function getCroppedDataUrl(
   const ctx = canvas.getContext('2d')
   if (!ctx) throw new Error('Canvas not supported')
 
-  const srcW = Math.max(1, Math.floor(croppedAreaPixels.width))
-  const srcH = Math.max(1, Math.floor(croppedAreaPixels.height))
+  const imageW = Math.max(1, Math.floor(image.naturalWidth || image.width))
+  const imageH = Math.max(1, Math.floor(image.naturalHeight || image.height))
+  // 兜底钳制：确保裁剪区域始终在图片有效边界内，杜绝导出图片外透明区域
+  const x = Math.max(0, Math.min(imageW - 1, Math.floor(croppedAreaPixels.x)))
+  const y = Math.max(0, Math.min(imageH - 1, Math.floor(croppedAreaPixels.y)))
+  const maxW = Math.max(1, imageW - x)
+  const maxH = Math.max(1, imageH - y)
+  const srcW = Math.max(1, Math.min(maxW, Math.floor(croppedAreaPixels.width)))
+  const srcH = Math.max(1, Math.min(maxH, Math.floor(croppedAreaPixels.height)))
   const scale = Math.min(1, maxSide / Math.max(srcW, srcH))
   canvas.width = Math.max(1, Math.floor(srcW * scale))
   canvas.height = Math.max(1, Math.floor(srcH * scale))
 
   ctx.drawImage(
     image,
-    croppedAreaPixels.x,
-    croppedAreaPixels.y,
-    croppedAreaPixels.width,
-    croppedAreaPixels.height,
+    x,
+    y,
+    srcW,
+    srcH,
     0,
     0,
     canvas.width,

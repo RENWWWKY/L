@@ -125,6 +125,7 @@ export function CustomizeScreen({ onBack }: Props) {
   const [styleCropTarget, setStyleCropTarget] = useState<StyleCropTarget | null>(null)
   const [activeStyleApp, setActiveStyleApp] = useState<AppSlot['id']>('wechat')
   const [styleAppOpen, setStyleAppOpen] = useState(false)
+  const [showLayoutResetToast, setShowLayoutResetToast] = useState(false)
 
   const title = useMemo(() => {
     switch (section) {
@@ -261,7 +262,7 @@ export function CustomizeScreen({ onBack }: Props) {
           open={section === 'theme' && !!wallpaperCropSrc}
           imageSrc={wallpaperCropSrc}
           title="裁剪桌面壁纸"
-          aspect={9 / 16}
+          aspect={9 / 19.5}
           maxSide={1440}
           objectFit="vertical-cover"
           onCancel={() => {
@@ -752,6 +753,8 @@ export function CustomizeScreen({ onBack }: Props) {
             <Pressable
               onClick={() => {
                 window.dispatchEvent(new Event('lumi-reset-home-widget-layout'))
+                setShowLayoutResetToast(true)
+                window.setTimeout(() => setShowLayoutResetToast(false), 1800)
               }}
               className="w-full rounded-[14px] border py-2.5 text-center text-[12px] font-medium"
               style={{
@@ -762,6 +765,18 @@ export function CustomizeScreen({ onBack }: Props) {
             >
               重置桌面组件布局
             </Pressable>
+            {showLayoutResetToast ? (
+              <div
+                className="rounded-[12px] border px-3 py-2 text-[12px]"
+                style={{
+                  borderColor: theme.border,
+                  background: `${theme.surface}f2`,
+                  color: theme.text,
+                }}
+              >
+                已重置桌面组件布局
+              </div>
+            ) : null}
             <div>
               <FieldLabel>曲名</FieldLabel>
               <input

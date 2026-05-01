@@ -1,5 +1,5 @@
 import Cropper from 'react-easy-crop'
-import { useCallback, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import { Pressable } from './Pressable'
 import { getCroppedDataUrl } from '../utils/cropImage'
 
@@ -30,6 +30,14 @@ export function ImageCropperModal({
   const [zoom, setZoom] = useState(1)
   const [areaPixels, setAreaPixels] = useState<Area | null>(null)
   const [busy, setBusy] = useState(false)
+
+  useEffect(() => {
+    if (!open) return
+    // 每次打开或切换图片时重置状态，避免沿用上一次裁剪坐标导致越界观感
+    setCrop({ x: 0, y: 0 })
+    setZoom(1)
+    setAreaPixels(null)
+  }, [open, imageSrc, aspect])
 
   const onCropComplete = useCallback((_a: unknown, pixels: Area) => {
     setAreaPixels(pixels)
@@ -91,6 +99,7 @@ export function ImageCropperModal({
           onZoomChange={setZoom}
           onCropComplete={onCropComplete}
           objectFit={objectFit}
+          restrictPosition
         />
       </div>
 
