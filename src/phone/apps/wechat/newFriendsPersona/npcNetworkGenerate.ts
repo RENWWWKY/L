@@ -222,6 +222,13 @@ function normalizeRelationPerspective(fromName: string, toName: string, raw: unk
     .trim()
 }
 
+function normalizeNameKey(raw: unknown): string {
+  return String(raw ?? '')
+    .trim()
+    .replace(/\s+/g, '')
+    .toLowerCase()
+}
+
 /** 将 AI 返回的月日规范为 MM-DD，非法则返回空串 */
 function normalizeBirthdayMD(raw: unknown): string {
   const t = String(raw ?? '').trim()
@@ -341,6 +348,13 @@ npcs 长度必须等于用户要求的数量。
 - firstImpressionEntries：数组，每项 {name, content}。对应世界书「当前对你的态度」（priority=聊天之后）。必须至少一条，且只能描述该 NPC 对「你」的当前态度。
 - 写法要求（强约束）：第三人称旁白式叙述（与基础设定条目一致）；指涉操作者时只用第二人称「你」，全文禁止出现「玩家」二字。禁止 NPC 第一人称台词、内心独白、书信体。
 
+姓名铁律（最高优先级，必须严格遵守）：
+- 所有 NPC 的 name 必须是「真实姓名样式」，默认 2~4 个中文汉字（如：王静、陈默、林婉、赵明远）。
+- 严禁把称呼/头衔/关系词当姓名（如：王老师、王女士、李经理、陈同学、阿姨、叔叔、学长、班主任、保安、店长、医生、前台等）。
+- 严禁使用泛化占位名（如：某某、路人甲、神秘人、同事A、老师B、甲乙丙）。
+- 若需要表达称呼，可写在 relation / 设定文案里，但 name 字段本身必须是可独立使用的真实姓名。
+- 若输出中出现任何不合规姓名，必须先自我修正再输出最终 JSON。
+
 身高体重与座右铭要求（强约束）：
 - height：写成易读格式，优先用 cm（例："170cm"），允许 "1.70m" / "170厘米"；不要写区间；不要写过长解释。
 - weight：优先用 kg（例："55kg"），允许 "55公斤"；不要写区间；不要写过长解释。
@@ -357,6 +371,7 @@ npcs 长度必须等于用户要求的数量。
 - relation：箭头 from→to 中间显示的词；语义表示「to 是 from 的 relation」（例：from=季靳川,to=安屿,relation=妹妹 表示安屿是季靳川的妹妹）,
 - fromPerspective：【fromName看toName】的完整一句第三人称描述（**必须出现 fromName 与 toName 的字面名字**，禁止用「你/我/他/她/TA/对方」代指双方）,
 - toPerspective：【toName看fromName】的完整一句第三人称描述（**必须出现 toName 与 fromName 的字面名字**，禁止用「你/我/他/她/TA/对方」代指双方）。
+- fromName/toName 仅允许使用「主角名或 NPC 的真实姓名」，禁止写称呼（如“王老师/王女士/李经理”）替代姓名。
 
 重要：关系允许不对称，且必须体现不对称。
 - 对于任意一对发生联系的角色 A 与 B，必须分别给出 A→B 与 B→A 两条 relationships 记录（两条记录的 fromName/toName 方向相反）。
@@ -371,6 +386,7 @@ playerLinks 数组（必填）：只描述「图中每一名角色（主角与 N
 - relationThemToYou：在「该角色→你」的连线上显示的词；语义与 relationships.relation 一致（箭头从该角色指向你时，relation 表示「你是该角色的 relationThemToYou」）。
 - theySeeYou：【该角色看你】的完整一句旁白描述。
 - 禁止生成「你看该角色」、禁止揣测操作者对角色的态度或称呼；全文禁止「玩家」，指操作者只用「你」；不要出现真实用户姓名。
+- characterName 必须是主角名或 NPC 的真实姓名，禁止使用称呼/头衔代替姓名。
 
 操作者身份一致性（硬性强约束，必须执行）：
 - 你将收到完整的「操作者身份参考」字段：姓名、性别、年龄、生日、星座、MBTI、职业/身份、兴趣爱好、雷点、所有世界书条目。
@@ -444,7 +460,16 @@ ${input.playerIdentity?.worldBooks?.length ? `所有世界书条目：${input.pl
   const nameToCharacter = new Map<string, Character>()
   const characters: Character[] = []
   const usedAvatarUrls = new Set<string>()
+  const mainNameKey = normalizeNameKey(main.name)
+  const seenNpcNameKeys = new Set<string>()
   for (const n of payload.npcs) {
+    const npcNameKey = normalizeNameKey((n as AiNpcJson)?.name)
+    if (!npcNameKey) continue
+    // AI 偶发把主角重复生成为 NPC：在落库前直接过滤。
+    if (mainNameKey && npcNameKey === mainNameKey) continue
+    // 同批生成内按姓名去重，避免重复卡片。
+    if (seenNpcNameKeys.has(npcNameKey)) continue
+    seenNpcNameKeys.add(npcNameKey)
     const ch = characterFromAiNpc(n, main, usedAvatarUrls)
     characters.push(ch)
     nameToCharacter.set(ch.name, ch)

@@ -992,11 +992,16 @@ export function NewFriendsPersonaApp({
               setAiRemarkCandidates(null)
               if (!listForInject.length) return
               const now = Date.now()
-              const injected = listForInject.map((ch) => ({
-                ...ch,
-                remark: (ch.name || '').trim().slice(0, 64),
-                updatedAt: now,
-              }))
+              // 关键：注入备注时只改 remark，始终保留最新微信资料（尤其 wechatNickname）。
+              const injected: Character[] = []
+              for (const seed of listForInject) {
+                const latest = (await personaDb.getCharacter(seed.id)) || seed
+                injected.push({
+                  ...latest,
+                  remark: (latest.name || '').trim().slice(0, 64),
+                  updatedAt: now,
+                })
+              }
               for (const ch of injected) {
                 await personaDb.upsertCharacter(ch)
               }

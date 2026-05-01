@@ -206,6 +206,10 @@ function isInnerThoughtText(rawText: string, speaker: string | null): boolean {
   if (/^\*{1,2}[\s\S]+\*{1,2}$/u.test(t) || /\*\*[\s\S]+\*\*/u.test(t)) return true
   // 常见显式标签：内心/OS
   if (/^(?:\(|（|\[|【)?\s*(?:内心|心声|OS|os)\s*(?:\)|）|\]|】)?[：:]/u.test(t)) return true
+  // 无说话者时，识别“第一人称心理动词”句式，避免裸写内心被当旁白。
+  if (!speaker && /(?:^|，|。|！|？)\s*我(?:在|就|只|突然|忽然|一直|总是)?(?:想|觉得|以为|盼着|希望|害怕|担心|庆幸|后悔|记得|明白|意识到)/u.test(t)) {
+    return true
+  }
   // 兜底：无说话者 + 第一人称短句，通常是该角色心声
   if (!speaker && /^我(?:[，。！？、\s]|$)/u.test(t)) return true
   return false
@@ -540,7 +544,7 @@ function DatingStoryPageInner({ onBackToSelect }: Props) {
     for (const p of currentArchive.plots.slice(-24)) {
       const raw = String(p.content || '').trim()
       if (!raw) continue
-      const text = p.type === 'ai' ? splitDatingAssistantOutput(raw).content.trim() : raw
+      const text = p.type === 'ai' ? extractVnVoiceParamsBlock(splitDatingAssistantOutput(raw).content).cleanedText.trim() : raw
       if (!text) continue
       out.push({
         id: p.id,

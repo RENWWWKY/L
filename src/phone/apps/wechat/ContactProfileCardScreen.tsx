@@ -278,6 +278,11 @@ export function ContactProfileCardScreen({
             subLabel="REMARK"
             value={character?.remark?.trim() || '未设置'}
           />
+          <ProfileInfoRow
+            label="微信昵称"
+            subLabel="NICKNAME"
+            value={wechatNickLine || '未设置'}
+          />
         </div>
 
         <div className="mt-2 border-y-[0.5px] border-gray-100 bg-white">

@@ -16,6 +16,27 @@ export type BranchChoicesSlot = {
 const LONG_PRESS_MS = 500
 const MOVE_CANCEL_PX = 12
 
+function stripVnVoiceParamsPayload(raw: string): string {
+  const source = String(raw || '')
+  if (!source.trim()) return ''
+  const startMatch = /【\s*VN语音参数\s*】/u.exec(source)
+  let cleaned = source
+  if (startMatch && startMatch.index >= 0) {
+    const start = startMatch.index
+    const endRegex = /【\s*VN语音参数结束\s*】/gu
+    endRegex.lastIndex = start + startMatch[0].length
+    const endMatch = endRegex.exec(source)
+    const end = endMatch ? endMatch.index : -1
+    cleaned = source.slice(0, start) + (end >= 0 ? source.slice(end + endMatch![0].length) : '')
+  }
+  return cleaned
+    .split(/\r?\n/)
+    .map((x) => x.trim())
+    .filter(Boolean)
+    .join('\n')
+    .trim()
+}
+
 /** 禁止系统文本圈选 / iOS 长按「拷贝·查询·翻译」浮条，仅保留自定义长按菜单 */
 const suppressSystemTextUi: {
   className: string
@@ -91,7 +112,7 @@ export function StoryBlock({
     const stored = plot.logicPass?.trim()
     const sp = splitDatingAssistantOutput(plot.content)
     const thinkingText = (stored || sp.logicPass || plot.planSummary?.trim() || sp.planSummary || '').trim()
-    const displayBody = stored ? plot.content : sp.content
+    const displayBody = stripVnVoiceParamsPayload(stored ? plot.content : sp.content)
     return { thinkingText, displayBody }
   }, [plot])
 
