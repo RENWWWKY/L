@@ -16,6 +16,12 @@ export type NarrativeGenOptions = {
   referenceSnippet?: string
   /** 剧情分支：选中卡片后的续写执导（仅当轮注入 user 侧一次） */
   branchContinuationHint?: string
+  /**
+   * 仅 **VN 自定义输入** 发送时由界面填入；缺省表示其它入口（分支/普通输入）不附加本条语义。
+   * `paraphrase`：玩家输入仅为剧情走向引导，**尚未发生**，正文须当场演出过程。
+   * `canon`：玩家输入视为**已经发生**的事实，正文写他人反应与后续。
+   */
+  vnCustomIntentMode?: 'canon' | 'paraphrase'
 }
 
 export type PlotItemType = 'player' | 'ai'
@@ -112,6 +118,8 @@ export type CharacterArchive = {
   branchEnabled: boolean
   /** VN 模式：禁用语音合成/播放（省 token + 省请求） */
   vnVoiceDisabled?: boolean
+  /** VN 自定义输入面板：开启「转述」时，输入仅为剧情引导（未发生）；关闭则视为既定事实 */
+  vnCustomInputParaphrase?: boolean
   lastDateAt: number | null
   pendingBranches: BranchOption[]
   branchNodeHistory: number[]

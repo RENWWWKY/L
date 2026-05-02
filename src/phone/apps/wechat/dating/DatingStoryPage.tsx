@@ -1,5 +1,5 @@
-import { ArrowLeft, ChevronDown, FilePenLine, Heart, Layers, Loader2, MoreHorizontal, Pause, Play } from 'lucide-react'
-import { type PointerEvent as ReactPointerEvent, useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { ArrowLeft, ChevronDown, FilePenLine, Heart, Layers, Loader2, MoreHorizontal, Pause, Play, Undo2 } from 'lucide-react'
+import { type PointerEvent as ReactPointerEvent, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { AnimatePresence, motion } from 'framer-motion'
 import { useCurrentApiConfig } from '../../api/ApiSettingsContext'
 import { personaDb } from '../newFriendsPersona/idb'
@@ -8,7 +8,7 @@ import { formatWorldBackgroundForPrompt } from '../newFriendsPersona/worldBackgr
 import { loadOfflineDatingPlotsPromptBlock } from './loadOfflineDatingPlotsForWechatPrompt'
 import { requestWeChatHeartWhisper, type ChatTranscriptTurn } from '../wechatChatAi'
 import { HeartWhisperModal } from '../HeartWhisperModal'
-import { useDating } from './DatingContext'
+import { useDating, vnRollbackJumpStorageKey } from './DatingContext'
 import { splitDatingAssistantOutput } from './plotCoT'
 import { StoryFeed } from './StoryFeed'
 import { StyleSettingsDrawer } from './StyleSettingsDrawer'
@@ -32,6 +32,8 @@ type Props = {
 const DATING_HEART_WHISPER_KV_PREFIX = 'wechat-dating-heart-whisper-v1:'
 const VN_LINE_VOICE_CACHE_KV_PREFIX = 'wechat-dating-vn-line-voice-cache-v1:'
 const VN_LINE_TTS_REQ_KV_PREFIX = 'wechat-dating-vn-line-tts-req-v1:'
+/** 与 DatingContext 中 VN 输出规则一致：单行气泡上限（按字符计）；切段时弱标点至少需见过 2 个标点后才允许断开。 */
+const VN_BUBBLE_MAX_CHARS = 25
 
 function datingHeartWhisperKvKey(characterId: string) {
   return `${DATING_HEART_WHISPER_KV_PREFIX}${String(characterId || '').trim()}`
@@ -135,11 +137,15 @@ function parseVnBubble(raw: string, defaultSpeaker: string): { text: string; spe
   return { text, speaker: null }
 }
 
-function splitPlainVnText(text: string, maxChars = 25): string[] {
+function splitPlainVnText(text: string, maxChars = VN_BUBBLE_MAX_CHARS): string[] {
   const source = String(text || '').trim()
   if (!source) return []
   const out: string[] = []
-  const isPunc = (ch: string) => /[，。；！？、,.!?;:：]/.test(ch)
+  const isStrongPunc = (ch: string) => /[。！？….!?；]/.test(ch)
+  const isWeakPunc = (ch: string) => /[，、,:：]/.test(ch)
+  const isAnyPunc = (ch: string) => isStrongPunc(ch) || isWeakPunc(ch)
+  const minEarlyCut = Math.max(8, Math.floor(maxChars * 0.42))
+  const minTailAfterWeak = 8
   let rest = source
   while (rest) {
     const chars = Array.from(rest)
@@ -149,13 +155,38 @@ function splitPlainVnText(text: string, maxChars = 25): string[] {
     }
     const head = chars.slice(0, maxChars)
     let cut = -1
+    let cutIsStrong = false
+    // 句末标点：允许在首个句末处断开（整句收束）
     for (let i = head.length - 1; i >= 0; i -= 1) {
-      if (isPunc(head[i]!)) {
+      if (!isStrongPunc(head[i]!)) continue
+      cut = i + 1
+      cutIsStrong = true
+      break
+    }
+    // 逗号类弱标点：禁止「见到第一个标点就断」——断点前前缀内须至少已有 2 个标点（含本处）
+    if (!cutIsStrong) {
+      for (let i = head.length - 1; i >= 0; i -= 1) {
+        if (!isWeakPunc(head[i]!)) continue
+        const tailLen = chars.length - (i + 1)
+        if (tailLen < minTailAfterWeak || i + 1 < minEarlyCut) continue
+        const puncsUpTo = head.slice(0, i + 1).filter(isAnyPunc).length
+        if (puncsUpTo < 2) continue
         cut = i + 1
         break
       }
     }
-    const sliceLen = cut > Math.floor(maxChars * 0.42) ? cut : maxChars
+    if (cut < 0 && !cutIsStrong) {
+      const lateStart = Math.max(minEarlyCut - 1, Math.floor(maxChars * 0.72))
+      for (let i = head.length - 1; i >= lateStart; i -= 1) {
+        if (!isWeakPunc(head[i]!)) continue
+        const puncsUpTo = head.slice(0, i + 1).filter(isAnyPunc).length
+        if (puncsUpTo < 2) continue
+        cut = i + 1
+        break
+      }
+    }
+    const sliceLen =
+      cut > 0 && (cutIsStrong || cut >= minEarlyCut || cut >= Math.floor(maxChars * 0.72)) ? cut : maxChars
     const left = chars.slice(0, sliceLen).join('').trim()
     const right = chars.slice(sliceLen).join('').trim()
     if (left) out.push(left)
@@ -227,7 +258,7 @@ function stripInnerThoughtDecorators(text: string): string {
 function splitVnContentToBubbles(
   raw: string,
   defaultSpeaker: string,
-  maxChars = 25,
+  maxChars = VN_BUBBLE_MAX_CHARS,
 ): Array<{
   text: string
   speaker: string | null
@@ -419,6 +450,7 @@ function DatingStoryPageInner({ onBackToSelect }: Props) {
     setBranchEnabled,
     setGodPerspective,
     setVnVoiceDisabled,
+    setVnCustomInputParaphrase,
     sendPlayerInput,
     stageBranchChoice,
     branchesLoading,
@@ -429,6 +461,7 @@ function DatingStoryPageInner({ onBackToSelect }: Props) {
     setPlotVersionIndex,
     deletePlotItem,
     regenerateAiPlot,
+    vnRollbackLastRound,
   } = useDating()
   const [input, setInput] = useState('')
   const [keyboardPad, setKeyboardPad] = useState(0)
@@ -1252,12 +1285,16 @@ function DatingStoryPageInner({ onBackToSelect }: Props) {
 
   const vnRawContent = useMemo(() => splitDatingAssistantOutput(latestAi?.content || '').content.trim(), [latestAi?.content])
   const vnVoiceParamsCue = useMemo(() => {
-    if (currentArchive.vnVoiceDisabled) return { cleanedText: vnRawContent, items: [] as Array<{ idx: number; emotion: string; tone: string }> }
-    return extractVnVoiceParamsBlock(vnRawContent)
+    const extracted = extractVnVoiceParamsBlock(vnRawContent)
+    // 禁用语音时仍须剥离隐藏参数块再拆气泡，否则 JSON/参数行会混入正文、气泡数量错乱，浮层「自定义输入」永远不出现。
+    if (currentArchive.vnVoiceDisabled) {
+      return { cleanedText: extracted.cleanedText, items: [] as Array<{ idx: number; emotion: string; tone: string }> }
+    }
+    return extracted
   }, [currentArchive.vnVoiceDisabled, vnRawContent])
   const vnBgCue = useMemo(() => extractVnBackgroundCue(vnVoiceParamsCue.cleanedText), [vnVoiceParamsCue.cleanedText])
   const vnBubbles = useMemo(() => {
-    return splitVnContentToBubbles(vnBgCue.cleanedText, currentCharacter.realName, 25)
+    return splitVnContentToBubbles(vnBgCue.cleanedText, currentCharacter.realName, VN_BUBBLE_MAX_CHARS)
   }, [currentCharacter.realName, vnBgCue.cleanedText])
   const vnCurrentBubble = useMemo(
     () => vnBubbles[Math.max(0, Math.min(vnBubbles.length - 1, vnBubbleIndex))] ?? null,
@@ -1431,7 +1468,7 @@ function DatingStoryPageInner({ onBackToSelect }: Props) {
       const voiceStripped = extractVnVoiceParamsBlock(aiRaw).cleanedText
       const cleaned = extractVnBackgroundCue(voiceStripped).cleanedText
       if (!cleaned) continue
-      const bubbles = splitVnContentToBubbles(cleaned, currentCharacter.realName, 25)
+      const bubbles = splitVnContentToBubbles(cleaned, currentCharacter.realName, VN_BUBBLE_MAX_CHARS)
       if (!bubbles.length) continue
       const isCurrentAi = latestAi?.id === p.id
       let shown = bubbles
@@ -1803,6 +1840,16 @@ function DatingStoryPageInner({ onBackToSelect }: Props) {
   const activeSprite = useActiveSprite(activeSpeakerId)
   const hasNextVnBubble = vnBubbleIndex < vnBubbles.length - 1
   const vnUiLoading = loading || vnSubmitting
+  const canVnRollback = useMemo(() => {
+    if (!isVn || vnUiLoading) return false
+    const plots = currentArchive.plots
+    if (plots.length < 2) return false
+    const last = plots[plots.length - 1]
+    if (last?.type !== 'ai') return false
+    const prev = plots[plots.length - 2]
+    const nextLen = prev?.type === 'player' ? plots.length - 2 : plots.length - 1
+    return nextLen >= 1
+  }, [currentArchive.plots, isVn, vnUiLoading])
   const isAwaitingVnAiReply =
     loading &&
     !!latestPlayer &&
@@ -1842,6 +1889,56 @@ function DatingStoryPageInner({ onBackToSelect }: Props) {
   useEffect(() => {
     if (vnAutoVoicePlay) vnLastAutoVoiceKeyRef.current = ''
   }, [vnAutoVoicePlay])
+
+  useLayoutEffect(() => {
+    if (!isVn || !currentCharacter.id) return
+    const rbKey = vnRollbackJumpStorageKey(currentCharacter.id)
+    let ts = 0
+    try {
+      ts = Number(sessionStorage.getItem(rbKey))
+    } catch {
+      /* ignore */
+    }
+    if (!Number.isFinite(ts) || ts <= 0) return
+    if (Date.now() - ts > 8000) {
+      try {
+        sessionStorage.removeItem(rbKey)
+      } catch {
+        /* ignore */
+      }
+      return
+    }
+    const aiId = String(latestAi?.id || '').trim()
+    if (!aiId || vnBubbles.length === 0) return
+    try {
+      sessionStorage.removeItem(rbKey)
+    } catch {
+      /* ignore */
+    }
+    const lastIdx = Math.max(0, vnBubbles.length - 1)
+    const aiSig = buildVnAiProgressSignature(String(latestAi?.content || ''))
+    vnLatestAiIdRef.current = aiId
+    vnLatestAiSigRef.current = aiSig
+    vnCurrentCharIdRef.current = String(currentCharacter.id || '').trim()
+    vnPendingRestoreIndexRef.current = lastIdx
+    vnProgressRestoreReadyRef.current = true
+    setVnBubbleIndex(lastIdx)
+    try {
+      const payload = {
+        latestAiId: aiId,
+        latestAiSig: aiSig,
+        bubbleIndex: lastIdx,
+        updatedAt: Date.now(),
+      }
+      localStorage.setItem(vnProgressLsKey(currentCharacter.id), JSON.stringify(payload))
+      localStorage.setItem(VN_PROGRESS_GLOBAL_KEY, JSON.stringify(payload))
+    } catch {
+      /* ignore */
+    }
+    stopVnLineVoice()
+    setVnShownText('')
+    setVnTyping(false)
+  }, [currentCharacter.id, isVn, latestAi?.content, latestAi?.id, stopVnLineVoice, vnBubbles.length])
 
   useEffect(() => {
     if (!isVn) return
@@ -2144,7 +2241,10 @@ function DatingStoryPageInner({ onBackToSelect }: Props) {
     if (!text) return
     setVnSubmitting(true)
     try {
-      const ok = await sendPlayerInput(text, perspective, narrativeGenOptions)
+      const ok = await sendPlayerInput(text, perspective, {
+        ...narrativeGenOptions,
+        vnCustomIntentMode: currentArchive.vnCustomInputParaphrase ? 'paraphrase' : 'canon',
+      })
       if (ok) {
         setVnCustomInput('')
         setInput('')
@@ -2153,7 +2253,7 @@ function DatingStoryPageInner({ onBackToSelect }: Props) {
     } finally {
       setVnSubmitting(false)
     }
-  }, [narrativeGenOptions, perspective, sendPlayerInput, vnCustomInput])
+  }, [currentArchive.vnCustomInputParaphrase, narrativeGenOptions, perspective, sendPlayerInput, vnCustomInput])
   useEffect(() => {
     vnAutoAdvanceRef.current = () => {
       if (hasNextVnBubble) {
@@ -2745,6 +2845,26 @@ function DatingStoryPageInner({ onBackToSelect }: Props) {
             >
               <button
                 type="button"
+                disabled={!canVnRollback}
+                title={
+                  canVnRollback
+                    ? '删除本轮输入与生成，气泡回到上一轮最后一句'
+                    : '至少经历一轮对话后才可撤回'
+                }
+                className={`flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-[13px] ${
+                  canVnRollback ? 'text-[#262626] hover:bg-stone-50' : 'cursor-not-allowed text-[#a3a3a3]'
+                }`}
+                onClick={() => {
+                  setMenuOpen(false)
+                  const ok = vnRollbackLastRound()
+                  if (!ok) showVnToast('暂无上一轮可撤回')
+                }}
+              >
+                <Undo2 className="size-3.5 shrink-0 opacity-80" strokeWidth={1.75} />
+                撤回上一轮
+              </button>
+              <button
+                type="button"
                 className="w-full rounded-lg px-3 py-2 text-left text-[13px] text-[#262626] hover:bg-stone-50"
                 onClick={() => {
                   onBackToSelect()
@@ -3022,7 +3142,39 @@ function DatingStoryPageInner({ onBackToSelect }: Props) {
               </button>
             </div>
             <div className="space-y-2 px-4 py-4">
-              <p className="text-[12px] text-stone-500">输入你希望的剧情走向，模型会据此生成下一段剧情。</p>
+              <p className="text-[12px] leading-relaxed text-stone-500">
+                输入剧情走向；开关「转述」决定这条输入是<strong className="font-medium text-stone-700">写作引导</strong>
+                还是<strong className="font-medium text-stone-700">既成事实</strong>（见下方说明）。
+              </p>
+              <div className="flex items-center justify-between gap-3 rounded-xl border border-stone-200 bg-stone-50/80 px-3 py-2.5">
+                <div className="min-w-0 flex-1">
+                  <p className="text-[13px] font-medium text-[#262626]">转述</p>
+                  <p className="mt-0.5 text-[11px] leading-snug text-stone-500">
+                    开：输入仅指导方向，正文须<strong>当场演出过程</strong>（尚未默认已发生）。关：输入视为<strong>已经发生</strong>，正文直接写他人反应。
+                    {currentArchive.vnCustomInputParaphrase && !godLocksNoInterrupt && !autoUserReaction ? (
+                      <span className="mt-1 block text-[10.5px] leading-snug text-amber-900/85">
+                        与「不抢话」同时生效：只会用镜头和对方反应逼近你的意图，不会在「{vnUserDisplayName}（你）」里替你写长篇台词；要亲口说的字请下一条自己输入。需要模型代写你开口时请打开「抢话」。
+                      </span>
+                    ) : null}
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  role="switch"
+                  aria-checked={!!currentArchive.vnCustomInputParaphrase}
+                  title="转述：输入为剧情引导，非既成事实"
+                  onClick={() => setVnCustomInputParaphrase(!currentArchive.vnCustomInputParaphrase)}
+                  className={`relative h-8 w-[52px] shrink-0 rounded-full p-1 transition-colors ${
+                    currentArchive.vnCustomInputParaphrase ? 'bg-black' : 'bg-[#cccccc]'
+                  }`}
+                >
+                  <span
+                    className={`block h-6 w-6 rounded-full bg-white shadow-sm transition-transform ${
+                      currentArchive.vnCustomInputParaphrase ? 'translate-x-5' : 'translate-x-0'
+                    }`}
+                  />
+                </button>
+              </div>
               <div className="grid grid-cols-2 gap-2">
                 <div className="flex items-center justify-between rounded-lg border border-stone-200 bg-white px-3 py-2">
                   <p className="text-[13px] text-[#262626]">上帝视角</p>
