@@ -1316,6 +1316,9 @@ export class PersonaDb {
   }
 
   async setCurrentIdentityId(identityId: string): Promise<void> {
+    const prev = (await this.getCurrentIdentityId()).trim()
+    const next = identityId.trim()
+
     const db = await openDb()
     const tx = db.transaction(CONFIG_STORE, 'readwrite')
     const store = tx.objectStore(CONFIG_STORE)
@@ -1327,6 +1330,84 @@ export class PersonaDb {
     store.put({ ...(row ?? {}), id: 'global', currentIdentityId: identityId })
     await txDone(tx)
     db.close()
+
+    // 曾用「未选身份」下的 __none__ 会话聊过天、之后首次设置当前身份时，把记录迁到新 key，避免对话「整段消失」
+    if (!prev && next && next !== '__none__') {
+      await this.migrateWeChatDataFromNonePlayerIdentity(next)
+    }
+  }
+
+  /**
+   * 将会话主键为 `角色id::__none__` 的聊天与偏好迁到真实身份（与 `wechatConversationKey` 一致）。
+   * 数据始终在 IndexedDB；仅 conversationKey 与当前身份不一致时，界面会显示为空。
+   */
+  async migrateWeChatDataFromNonePlayerIdentity(toPlayerIdentityId: string): Promise<void> {
+    const toPid = toPlayerIdentityId.trim()
+    if (!toPid || toPid === '__none__') return
+    const fromPid = '__none__'
+    let touched = false
+
+    const db = await openDb()
+    try {
+      if (db.objectStoreNames.contains(CHAT_MSG_STORE)) {
+        const tx = db.transaction(CHAT_MSG_STORE, 'readwrite')
+        const store = tx.objectStore(CHAT_MSG_STORE)
+        const all = await new Promise<unknown[]>((resolve, reject) => {
+          const r = store.getAll()
+          r.onsuccess = () => resolve((r.result as unknown[]) ?? [])
+          r.onerror = () => reject(r.error ?? new Error('migrateWeChatDataFromNonePlayerIdentity: messages'))
+        })
+        for (const raw of all) {
+          const m = normalizeWeChatChatMessage(raw)
+          if (!m || m.playerIdentityId !== fromPid) continue
+          const nextCk = wechatConversationKey(m.characterId, toPid)
+          const merged = normalizeWeChatChatMessage({ ...m, playerIdentityId: toPid, conversationKey: nextCk })
+          if (!merged) continue
+          store.put(merged)
+          touched = true
+        }
+        await txDone(tx)
+      }
+
+      if (db.objectStoreNames.contains(CHAT_CONV_SETTINGS_STORE)) {
+        const tx = db.transaction(CHAT_CONV_SETTINGS_STORE, 'readwrite')
+        const store = tx.objectStore(CHAT_CONV_SETTINGS_STORE)
+        const all = await new Promise<unknown[]>((resolve, reject) => {
+          const r = store.getAll()
+          r.onsuccess = () => resolve((r.result as unknown[]) ?? [])
+          r.onerror = () => reject(r.error ?? new Error('migrateWeChatDataFromNonePlayerIdentity: conv settings'))
+        })
+        for (const raw of all) {
+          const row = normalizeChatConversationSettingsRow(raw)
+          if (!row || row.playerIdentityId !== fromPid) continue
+          const newKey = wechatConversationKey(row.peerCharacterId, toPid)
+          if (newKey === row.conversationKey) continue
+
+          const existingRaw = await new Promise<unknown>((resolve, reject) => {
+            const r = store.get(newKey)
+            r.onsuccess = () => resolve(r.result)
+            r.onerror = () => reject(r.error)
+          })
+          const existing = normalizeChatConversationSettingsRow(existingRaw)
+          store.delete(row.conversationKey)
+          if (existing) {
+            store.put({
+              ...existing,
+              lastMessageTime: Math.max(row.lastMessageTime, existing.lastMessageTime),
+              updatedAt: Math.max(row.updatedAt, existing.updatedAt),
+            })
+          } else {
+            store.put({ ...row, conversationKey: newKey, playerIdentityId: toPid })
+          }
+          touched = true
+        }
+        await txDone(tx)
+      }
+    } finally {
+      db.close()
+    }
+
+    if (touched) emitWeChatStorageChanged()
   }
 
   async getCurrentIdentity(): Promise<PlayerIdentity | null> {

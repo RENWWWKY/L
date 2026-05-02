@@ -374,9 +374,7 @@ export function PlayerIdentityApp({
                         }
                         await personaDb.upsertPlayerIdentity(normalized)
                         await refresh()
-                        const cur = await personaDb.getCurrentIdentityId()
-                        if (!cur) await personaDb.setCurrentIdentityId(normalized.id)
-                        window.alert('导入成功')
+                        window.alert('导入成功（已加入身份列表；是否「正在使用」请在新建角色时或设置里自行选择）')
                       } catch (e) {
                         const msg = e instanceof Error ? e.message : '未知错误'
                         window.alert(`导入失败：${msg.slice(0, 180)}`)

@@ -3411,6 +3411,14 @@ function WeChatAppInner({ onBack }: Props) {
     }
   }, [route.name])
 
+  /** 把仍落在「未选身份」(__none__) 下的会话迁到当前身份，避免聊天记录实际在 IndexedDB 但列表为空（会话键 characterId::playerIdentityId 不一致）。 */
+  useEffect(() => {
+    if (playerIdentityId === null) return
+    const pid = playerIdentityId.trim()
+    if (!pid || pid === '__none__') return
+    void personaDb.migrateWeChatDataFromNonePlayerIdentity(pid)
+  }, [playerIdentityId])
+
   const { isConversationMuted } = useMuteStatus(playerIdentityId)
 
   /**

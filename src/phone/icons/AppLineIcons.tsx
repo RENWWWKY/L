@@ -82,12 +82,25 @@ export function IconVoiceprint(props: SVGProps<SVGSVGElement>) {
   )
 }
 
+/** 数据中心：双层圆角机架 + 槽位线（存储/节点意象，与全局线宽一致） */
+export function IconDataArchive(props: SVGProps<SVGSVGElement>) {
+  return (
+    <svg {...base} {...props}>
+      <path d="M5 5.75h14a2 2 0 0 1 2 2v2.65a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7.75a2 2 0 0 1 2-2z" />
+      <path d="M5 13.6h14a2 2 0 0 1 2 2v2.65a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-2.65a2 2 0 0 1 2-2z" />
+      <path d="M7.25 8.75h5.5M7.25 16.6h5.5" opacity="0.42" />
+      <path d="M15 8.75h2.75M15 16.6h2.75" opacity="0.42" />
+    </svg>
+  )
+}
+
 const map = {
   wechat: IconWeChat,
   takeout: IconTakeout,
   weibo: IconWeibo,
   api: IconApi,
   voiceprint: IconVoiceprint,
+  dataArchive: IconDataArchive,
   appearance: IconAppearance,
 } as const
 

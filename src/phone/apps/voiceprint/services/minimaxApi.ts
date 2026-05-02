@@ -1,4 +1,31 @@
-export type MiniMaxCredentials = { apiKey: string; groupId: string }
+/** 与控制台一致：国内站 api.minimaxi.com；国际站 api.minimax.io（参见官方说明）。 */
+export type MiniMaxApiRegion = 'domestic' | 'international'
+
+export type MiniMaxCredentials = {
+  apiKey: string
+  groupId: string
+  /** 显式指定 API 根地址时优先于区域与环境变量 */
+  apiBase?: string
+  /** 未指定 apiBase 且未设置 VITE_MINIMAX_API_BASE 时，按区域选择默认域名 */
+  apiRegion?: MiniMaxApiRegion
+}
+
+export const MINIMAX_API_ORIGIN_DOMESTIC = 'https://api.minimaxi.com'
+export const MINIMAX_API_ORIGIN_INTERNATIONAL = 'https://api.minimax.io'
+
+export function readMiniMaxApiRegionFromLocalStorage(): MiniMaxApiRegion {
+  if (typeof localStorage === 'undefined') return 'domestic'
+  return localStorage.getItem('minimax:apiRegion') === 'international' ? 'international' : 'domestic'
+}
+
+function resolveMiniMaxRequestBase(creds: MiniMaxCredentials): string {
+  const explicit = creds.apiBase?.trim()
+  if (explicit) return explicit
+  const env = (import.meta.env.VITE_MINIMAX_API_BASE as string | undefined)?.trim()
+  if (env) return env
+  const region = creds.apiRegion ?? readMiniMaxApiRegionFromLocalStorage()
+  return region === 'international' ? MINIMAX_API_ORIGIN_INTERNATIONAL : MINIMAX_API_ORIGIN_DOMESTIC
+}
 
 function toDetachedArrayBuffer(bytes: Uint8Array): ArrayBuffer {
   const copied = new Uint8Array(bytes.byteLength)
@@ -14,8 +41,6 @@ export type MiniMaxVoiceInfo = {
 }
 
 type MiniMaxBaseResp = { status_code?: number; status_msg?: string }
-
-const MINIMAX_API_BASE = (import.meta.env.VITE_MINIMAX_API_BASE as string | undefined)?.trim() || 'https://api.minimaxi.com'
 
 function appendGroupIdToPath(path: string, groupId: string) {
   const gid = String(groupId || '').trim()
@@ -75,7 +100,7 @@ async function minimaxFetch(path: string, creds: MiniMaxCredentials, init: Reque
   const apiKey = creds.apiKey.trim()
   const groupId = creds.groupId.trim()
   if (!apiKey) throw new Error('请先填写 MiniMax API Key')
-  const url = `${MINIMAX_API_BASE}${appendGroupIdToPath(path, groupId)}`
+  const url = `${resolveMiniMaxRequestBase(creds)}${appendGroupIdToPath(path, groupId)}`
   const doFetch = async () => {
     try {
       return await fetch(url, {
@@ -317,7 +342,7 @@ export async function queryMiniMaxT2AAsyncTask(
   const apiKey = creds.apiKey.trim()
   const groupId = creds.groupId.trim()
   const queryPath = appendGroupIdToPath(`/v1/query/t2a_async_query_v2?task_id=${encodeURIComponent(task_id)}`, groupId)
-  const url = `${MINIMAX_API_BASE}${queryPath}`
+  const url = `${resolveMiniMaxRequestBase(creds)}${queryPath}`
   const resp = await fetch(url, {
     method: 'GET',
     headers: {
@@ -512,7 +537,7 @@ export async function retrieveMiniMaxAudioFileUrl(
 
   const tryDownload = async (path: string) => {
     const withFileId = `${path}?file_id=${encodeURIComponent(fileId)}`
-    const url = `${MINIMAX_API_BASE}${appendGroupIdToPath(withFileId, groupId)}`
+    const url = `${resolveMiniMaxRequestBase(creds)}${appendGroupIdToPath(withFileId, groupId)}`
     const resp = await fetch(url, { method: 'GET', headers })
     if (!resp.ok) throw new Error(`文件获取失败（HTTP ${resp.status}）`)
     const contentType = String(resp.headers.get('content-type') ?? '').toLowerCase()

@@ -1,10 +1,11 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from 'react'
-import type { MiniMaxVoiceInfo } from './services/minimaxApi'
+import type { MiniMaxApiRegion, MiniMaxVoiceInfo } from './services/minimaxApi'
 
 const LS_KEY = {
   apiKey: 'minimax:apiKey',
   groupId: 'minimax:groupId',
   speechModel: 'minimax:speechModel',
+  apiRegion: 'minimax:apiRegion',
   characterVoiceMap: 'minimax:characterVoiceMap',
 } as const
 
@@ -14,9 +15,11 @@ type VoiceStore = {
   apiKey: string
   groupId: string
   speechModel: string
+  apiRegion: MiniMaxApiRegion
   setApiKey: (v: string) => void
   setGroupId: (v: string) => void
   setSpeechModel: (v: string) => void
+  setApiRegion: (v: MiniMaxApiRegion) => void
 
   voices: MiniMaxVoiceInfo[]
   setVoices: (v: MiniMaxVoiceInfo[]) => void
@@ -48,6 +51,9 @@ export function VoiceStoreProvider({ children }: { children: ReactNode }) {
   const [apiKey, setApiKeyState] = useState(() => localStorage.getItem(LS_KEY.apiKey) ?? '')
   const [groupId, setGroupIdState] = useState(() => localStorage.getItem(LS_KEY.groupId) ?? '')
   const [speechModel, setSpeechModelState] = useState(() => localStorage.getItem(LS_KEY.speechModel) ?? 'speech-2.8-hd')
+  const [apiRegion, setApiRegionState] = useState<MiniMaxApiRegion>(() =>
+    localStorage.getItem(LS_KEY.apiRegion) === 'international' ? 'international' : 'domestic',
+  )
   const [voices, setVoices] = useState<MiniMaxVoiceInfo[]>([])
   const [characterVoiceMap, setCharacterVoiceMap] = useState<CharacterVoiceMap>(() =>
     safeParseMap(localStorage.getItem(LS_KEY.characterVoiceMap) ?? ''),
@@ -56,6 +62,7 @@ export function VoiceStoreProvider({ children }: { children: ReactNode }) {
   const setApiKey = useCallback((v: string) => setApiKeyState(v), [])
   const setGroupId = useCallback((v: string) => setGroupIdState(v), [])
   const setSpeechModel = useCallback((v: string) => setSpeechModelState(v), [])
+  const setApiRegion = useCallback((v: MiniMaxApiRegion) => setApiRegionState(v), [])
 
   useEffect(() => {
     try {
@@ -78,6 +85,13 @@ export function VoiceStoreProvider({ children }: { children: ReactNode }) {
       // ignore
     }
   }, [speechModel])
+  useEffect(() => {
+    try {
+      localStorage.setItem(LS_KEY.apiRegion, apiRegion)
+    } catch {
+      // ignore
+    }
+  }, [apiRegion])
   useEffect(() => {
     try {
       localStorage.setItem(LS_KEY.characterVoiceMap, JSON.stringify(characterVoiceMap))
@@ -108,9 +122,11 @@ export function VoiceStoreProvider({ children }: { children: ReactNode }) {
       apiKey,
       groupId,
       speechModel,
+      apiRegion,
       setApiKey,
       setGroupId,
       setSpeechModel,
+      setApiRegion,
       voices,
       setVoices,
       characterVoiceMap,
@@ -121,9 +137,11 @@ export function VoiceStoreProvider({ children }: { children: ReactNode }) {
       apiKey,
       groupId,
       speechModel,
+      apiRegion,
       setApiKey,
       setGroupId,
       setSpeechModel,
+      setApiRegion,
       voices,
       characterVoiceMap,
       setCharacterVoice,

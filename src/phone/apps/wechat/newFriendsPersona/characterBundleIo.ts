@@ -73,6 +73,25 @@ function migrateBundlePublicUrls(bundle: CharacterBundleV5): CharacterBundleV5 {
   }
 }
 
+/** 分享用：去掉角色上导出的「绑定玩家身份」字段，由导入方使用当时选中的身份。 */
+function stripExportedPlayerIdentityBinding(ch: Character): Character {
+  const out: Character = { ...ch }
+  delete out.playerIdentityId
+  return out
+}
+
+async function getImportTargetPlayerIdentityId(): Promise<string | undefined> {
+  const raw = (await personaDb.getCurrentIdentityId()).trim()
+  return raw || undefined
+}
+
+function applyPlayerIdentityBindingForImport(ch: Character, bindingPid: string | undefined): Character {
+  const out: Character = { ...ch }
+  if (bindingPid) out.playerIdentityId = bindingPid
+  else delete out.playerIdentityId
+  return out
+}
+
 export async function buildCharacterExportBundle(data: Character): Promise<CharacterBundleV5> {
   const rootId = data.generatedForCharacterId?.trim() || data.id
   let main: Character
@@ -92,10 +111,9 @@ export async function buildCharacterExportBundle(data: Character): Promise<Chara
   const allRels = await personaDb.listAllRelationships()
   const relById = new Map<string, Relationship>()
   for (const r of allRels) {
+    if (r.isPlayerIdentity) continue
     const bothIn = cliqueSet.has(r.fromCharacterId) && cliqueSet.has(r.toCharacterId)
-    const idBindTouches =
-      r.isPlayerIdentity && (cliqueSet.has(r.fromCharacterId) || cliqueSet.has(r.toCharacterId))
-    if (bothIn || idBindTouches) relById.set(r.id, r)
+    if (bothIn) relById.set(r.id, r)
   }
   const relationships = [...relById.values()]
 
@@ -112,8 +130,8 @@ export async function buildCharacterExportBundle(data: Character): Promise<Chara
     version: CHARACTER_BUNDLE_VERSION,
     exportedAt: Date.now(),
     rootCharacterId: rootId,
-    mainCharacter: main,
-    npcs,
+    mainCharacter: stripExportedPlayerIdentityBinding(main),
+    npcs: npcs.map(stripExportedPlayerIdentityBinding),
     relationships,
     worldBackground,
     networkGraphViews,
@@ -178,7 +196,10 @@ export function parseCharacterImportFile(parsed: unknown): CharacterBundleV5[] |
   return single ? [single] : null
 }
 
-function cloneBundleWithNewIds(bundle: CharacterBundleV5): {
+function cloneBundleWithNewIds(
+  bundle: CharacterBundleV5,
+  importPlayerIdentityId: string | undefined,
+): {
   main: Character
   npcs: Character[]
   relationships: Relationship[]
@@ -217,27 +238,36 @@ function cloneBundleWithNewIds(bundle: CharacterBundleV5): {
     newWbId = bundle.mainCharacter.worldBackgroundId?.trim() || DEFAULT_WORLD_BACKGROUND_ID
   }
 
-  const main: Character = {
-    ...bundle.mainCharacter,
-    id: newRootId,
-    generatedForCharacterId: undefined,
-    worldBackgroundId: newWbId,
-    createdAt: Date.now(),
-    updatedAt: Date.now(),
-  }
+  const main: Character = applyPlayerIdentityBindingForImport(
+    {
+      ...bundle.mainCharacter,
+      id: newRootId,
+      generatedForCharacterId: undefined,
+      worldBackgroundId: newWbId,
+      createdAt: Date.now(),
+      updatedAt: Date.now(),
+    },
+    importPlayerIdentityId,
+  )
 
-  const npcs: Character[] = bundle.npcs.map((n) => ({
-    ...n,
-    id: mapId(n.id),
-    generatedForCharacterId: newRootId,
-    worldBackgroundId: newWbId,
-    createdAt: n.createdAt || Date.now(),
-    updatedAt: Date.now(),
-  }))
+  const npcs: Character[] = bundle.npcs.map((n) =>
+    applyPlayerIdentityBindingForImport(
+      {
+        ...n,
+        id: mapId(n.id),
+        generatedForCharacterId: newRootId,
+        worldBackgroundId: newWbId,
+        createdAt: n.createdAt || Date.now(),
+        updatedAt: Date.now(),
+      },
+      importPlayerIdentityId,
+    ),
+  )
 
   const cliqueNew = new Set([newRootId, ...npcs.map((n) => n.id)])
 
   const relationships: Relationship[] = bundle.relationships
+    .filter((r) => !r.isPlayerIdentity)
     .map((r) => {
       const from = oldToNew.get(r.fromCharacterId)
       const to = oldToNew.get(r.toCharacterId)
@@ -296,16 +326,26 @@ function cloneBundleWithNewIds(bundle: CharacterBundleV5): {
   }
 }
 
-/** 写入完整人脉包；返回新根 id 与模式（新建副本时会换新 id） */
+/**
+ * 写入完整人脉包；返回新根 id 与模式。
+ * - `new`：复制为新的人脉圈（新角色 id），与本地已有数据并存，适合重复导入同一模板做微调。
+ * - `overwrite`：按包内 id 写回并清理该圈内旧关系/画布等（会覆盖同 id 角色）；仅保留作特殊恢复场景。
+ */
 export async function importCharacterBundle(
   bundle: CharacterBundleV5,
   mode: 'new' | 'overwrite',
 ): Promise<{ rootId: string; mode: 'new' | 'overwrite' }> {
   bundle = migrateBundlePublicUrls(bundle)
   const cliqueOld = new Set([bundle.rootCharacterId, ...bundle.npcs.map((n) => n.id)])
+  const importPlayerIdentityId = await getImportTargetPlayerIdentityId()
+  if (!importPlayerIdentityId) {
+    throw new Error(
+      '请先在「我的身份」中创建身份，并确保已设为当前使用（新建角色人设时在弹窗里选择身份也会写入当前身份）。未设置当前玩家身份时不能导入人设包，以免无法正确绑定。',
+    )
+  }
 
   if (mode === 'new') {
-    const cloned = cloneBundleWithNewIds(bundle)
+    const cloned = cloneBundleWithNewIds(bundle, importPlayerIdentityId)
     if (cloned.worldBackground) {
       await personaDb.upsertWorldBackground(cloned.worldBackground)
     }
@@ -327,9 +367,11 @@ export async function importCharacterBundle(
     await personaDb.upsertWorldBackground(bundle.worldBackground)
   }
 
-  await personaDb.upsertCharacter(bundle.mainCharacter)
-  for (const n of bundle.npcs) await personaDb.upsertCharacter(n)
-  await personaDb.bulkPutRelationships(bundle.relationships)
+  await personaDb.upsertCharacter(applyPlayerIdentityBindingForImport(bundle.mainCharacter, importPlayerIdentityId))
+  for (const n of bundle.npcs) {
+    await personaDb.upsertCharacter(applyPlayerIdentityBindingForImport(n, importPlayerIdentityId))
+  }
+  await personaDb.bulkPutRelationships(bundle.relationships.filter((r) => !r.isPlayerIdentity))
   for (const g of bundle.networkGraphViews) await personaDb.putNetworkGraphView(g)
   await personaDb.putPlayerNetworkLinks(bundle.rootCharacterId, bundle.playerNetworkLinks)
   await personaDb.replaceWeChatChatMessagesByCharacterIds([...cliqueOld], [])

@@ -391,6 +391,7 @@ function normalizeAppPageStyles(parsed: unknown): CustomizationState['appPageSty
     weibo: migrateAppPage({ ...DEFAULT_APP_PAGE_STYLE, ...record.weibo }),
     api: migrateAppPage({ ...DEFAULT_APP_PAGE_STYLE, ...record.api }),
     voiceprint: migrateAppPage({ ...DEFAULT_APP_PAGE_STYLE, ...record.voiceprint }),
+    dataArchive: migrateAppPage({ ...def.dataArchive, ...record.dataArchive }),
     appearance: migrateAppPage(appearanceMerged),
   }
 }

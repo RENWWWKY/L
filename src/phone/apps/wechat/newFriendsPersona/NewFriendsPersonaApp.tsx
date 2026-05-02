@@ -16,12 +16,7 @@ import { PersonaBindingsManager } from './PersonaBindingsManager'
 import { DEFAULT_WORLD_BACKGROUND_ID } from './worldBackgroundConstants'
 import type { ScheduleTable } from './types'
 import { ScheduleEditorScreen } from '../schedule/ScheduleEditorScreen'
-import {
-  buildCharacterExportBundle,
-  CHARACTER_BUNDLES_LIST_KIND,
-  importCharacterBundle,
-  parseCharacterImportFile,
-} from './characterBundleIo'
+import { buildCharacterExportBundle, importCharacterBundle, parseCharacterImportFile } from './characterBundleIo'
 import { formatWorldBackgroundForPrompt } from './worldBackgroundFormat'
 import { WorldBackgroundEditPage, WorldBackgroundPickerPage } from './WorldBackgroundScreens'
 import { NewFriendsList, type FriendRequest } from './NewFriendsList'
@@ -860,75 +855,6 @@ export function NewFriendsPersonaApp({
             </Card>
           </div>
 
-          <div className="mt-4 flex flex-wrap items-center gap-2">
-            <button
-              type="button"
-              className="inline-flex items-center gap-2 rounded-xl border bg-white px-3 py-2 text-[13px] transition-all duration-200 ease-out hover:bg-[#fafafa]"
-              style={{ borderColor: border, color: text }}
-              onClick={() => {
-                void (async () => {
-                  try {
-                    const bundles = await Promise.all(list.map((c) => buildCharacterExportBundle(c)))
-                    toJsonDownload(
-                      {
-                        kind: CHARACTER_BUNDLES_LIST_KIND,
-                        version: 1,
-                        exportedAt: Date.now(),
-                        bundles,
-                      },
-                      `【Lumi Phone】-人设-全部.json`,
-                    )
-                  } catch (e) {
-                    window.alert(e instanceof Error ? e.message : '导出失败')
-                  }
-                })()
-              }}
-              disabled={!list.length}
-            >
-              <Download className="size-4" />
-              导出全部人设包
-            </button>
-
-            <label
-              className="inline-flex cursor-pointer items-center gap-2 rounded-xl border bg-white px-3 py-2 text-[13px] transition-all duration-200 ease-out hover:bg-[#fafafa]"
-              style={{ borderColor: border, color: text }}
-            >
-              <Upload className="size-4" />
-              导入人设包
-              <input
-                type="file"
-                accept=".json,application/json,text/json"
-                className="hidden"
-                onChange={async (e) => {
-                  const input = e.currentTarget
-                  const f = input.files?.[0]
-                  if (!f) return
-                  try {
-                    const raw = await f.text()
-                    const parsed: unknown = JSON.parse(raw)
-                    const bundles = parseCharacterImportFile(parsed)
-                    if (!bundles?.length) {
-                      window.alert('无法识别：请使用「完整人设包」JSON，或列表页导出的「全部人设包」。')
-                      return
-                    }
-                    for (const b of bundles) {
-                      await importCharacterBundle(b, 'overwrite')
-                    }
-                    await refresh()
-                    window.alert(bundles.length > 1 ? `已导入 ${bundles.length} 个人设包。` : '导入成功。')
-                  } catch (err) {
-                    window.alert(err instanceof Error ? err.message : '导入失败')
-                  } finally {
-                    input.value = ''
-                  }
-                }}
-              />
-            </label>
-          </div>
-          <p className="mt-2 text-[11px] leading-relaxed" style={{ color: sub, fontWeight: 300 }}>
-            导入会按文件里的角色 id 写入本地；已存在同 id 的条目会被包内数据替换。
-          </p>
-
           {loading ? (
             <p className="mt-4 text-center text-[12px]" style={{ color: sub }}>
               加载中...
@@ -1061,14 +987,6 @@ export function NewFriendsPersonaApp({
       }}
       onBundleImported={async ({ rootId, replacePage }) => {
         await refresh()
-        const root = await personaDb.getCharacter(rootId)
-        if (root) {
-          const npcs = await personaDb.listNpcsFor(rootId)
-          replaceWeChatPersonaContacts(
-            [rootId, ...npcs.map((n) => n.id)],
-            buildPersonaContactEntries([root, ...npcs]),
-          )
-        }
         if (replacePage) setPage({ name: 'edit', id: rootId, isNew: false })
       }}
     />
@@ -2375,8 +2293,8 @@ function PersonaEditPage({
               导入 / 导出
             </p>
             <p className="mt-1 text-[12px] leading-relaxed" style={{ color: sub, fontWeight: 300 }}>
-              导出为完整人设包：基础与微信资料、世界书、所选世界背景（含地图与时间线）、人脉 NPC、角色间关系、与该主角相关的「我的身份」绑定、人脉图画布与「你」的连线词。不含微信聊天记录与长期记忆。从
-              NPC 页导出会带上所属主角与整个人脉圈。导入仅支持本应用导出的完整包 JSON；写入时按包内角色 id 覆盖本地同 id 数据。
+              完整人设包仅在此页导入/导出；请从列表进入本角色编辑页。导入前须已在「我的身份」或新建角色时选好「当前使用」的玩家身份，否则无法导入。导出包内不含旧的身份绑定字段；导入时一律绑定为当前正在使用的身份。含：资料、世界书、世界背景、人脉
+              NPC 与关系（不含身份绑定边）、人脉画布与连线；导入为追加新副本，不自动进微信通讯录。
             </p>
           </div>
           <div className="flex flex-wrap gap-2 px-4 py-4">
@@ -2433,27 +2351,18 @@ function PersonaEditPage({
                       const parsed: unknown = JSON.parse(raw)
                       const bundles = parseCharacterImportFile(parsed)
                       if (!bundles?.length) {
-                        window.alert('无法识别：请导入本页或列表页导出的「完整人设包」JSON（单包文件）。')
+                        window.alert('无法识别：请导入本应用导出的「完整人设包」JSON（单文件）。')
                         return
                       }
                       if (bundles.length > 1) {
-                        window.alert('此处请一次只选一个完整人设包；多个包请在人设列表页导入「全部人设包」文件。')
+                        window.alert('此处一次仅支持单个完整人设包。若 JSON 内包含多个包，请拆成多个文件后分别导入。')
                         return
                       }
-                      const result = await importCharacterBundle(bundles[0], 'overwrite')
+                      const result = await importCharacterBundle(bundles[0], 'new')
                       const importedRoot = result.rootId
-                      const myRoot = data.generatedForCharacterId?.trim() || data.id
-                      if (importedRoot === myRoot) {
-                        const row = await personaDb.getCharacter(id)
-                        if (row) {
-                          setData(row)
-                          setDirty(false)
-                        }
-                      } else {
-                        onNavigateToCharacter(importedRoot)
-                      }
+                      onNavigateToCharacter(importedRoot)
                       await onBundleImported?.({ rootId: importedRoot, replacePage: false })
-                      window.alert('导入成功。')
+                      window.alert('导入成功，已追加为新的人设副本（未覆盖当前正在编辑的条目）。')
                     } catch (err) {
                       window.alert(err instanceof Error ? err.message : '导入失败')
                     } finally {

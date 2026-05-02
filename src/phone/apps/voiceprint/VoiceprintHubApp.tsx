@@ -14,6 +14,7 @@ import {
   fetchMiniMaxVoices,
   queryMiniMaxT2AAsyncTask,
   retrieveMiniMaxAudioFileUrl,
+  type MiniMaxApiRegion,
   type MiniMaxVoiceInfo,
 } from './services/minimaxApi'
 import { PlatinumToast } from './components/PlatinumToast'
@@ -161,10 +162,11 @@ function InvitationCard() {
 }
 
 function SettingsTab() {
-  const { apiKey, groupId, speechModel, setApiKey, setGroupId, setSpeechModel } = useVoiceStore()
+  const { apiKey, groupId, speechModel, apiRegion, setApiKey, setGroupId, setSpeechModel, setApiRegion } = useVoiceStore()
   const [apiKeyDraft, setApiKeyDraft] = useState(apiKey)
   const [groupIdDraft, setGroupIdDraft] = useState(groupId)
   const [speechModelDraft, setSpeechModelDraft] = useState(speechModel)
+  const [apiRegionDraft, setApiRegionDraft] = useState<MiniMaxApiRegion>(apiRegion)
   const [modelGuideOpen, setModelGuideOpen] = useState(false)
   const [toast, setToast] = useState<string | null>(null)
   const [tone, setTone] = useState<'error' | 'info'>('info')
@@ -183,11 +185,15 @@ function SettingsTab() {
   useEffect(() => {
     setSpeechModelDraft(speechModel)
   }, [speechModel])
+  useEffect(() => {
+    setApiRegionDraft(apiRegion)
+  }, [apiRegion])
 
   const saveSettings = () => {
     setApiKey(apiKeyDraft.trim())
     setGroupId(groupIdDraft.trim())
     setSpeechModel(speechModelDraft.trim())
+    setApiRegion(apiRegionDraft)
     setTone('info')
     setToast('声纹配置已保存')
   }
@@ -195,7 +201,11 @@ function SettingsTab() {
   const testConnection = async () => {
     setTesting(true)
     try {
-      await fetchMiniMaxVoices({ apiKey: apiKeyDraft.trim(), groupId: groupIdDraft.trim() })
+      await fetchMiniMaxVoices({
+        apiKey: apiKeyDraft.trim(),
+        groupId: groupIdDraft.trim(),
+        apiRegion: apiRegionDraft,
+      })
       setTone('info')
       setToast('连接测试成功，API Key 可用')
     } catch (e) {
@@ -212,6 +222,45 @@ function SettingsTab() {
       <div className="rounded-[18px] border border-black/8 bg-white px-4 py-4 shadow-[0_10px_30px_rgba(0,0,0,0.04)]">
         <div className="text-[13px] font-semibold text-[#111]">核心密钥</div>
         <div className="mt-3 space-y-3">
+          <div>
+            <div className="mb-1.5 text-[12px] font-medium text-[#4b5563]">API 区域</div>
+            <div className="flex w-full gap-1 rounded-[12px] border border-black/10 bg-[#fafafa] p-1">
+              {(
+                [
+                  { id: 'domestic' as const, label: '国内版' },
+                  { id: 'international' as const, label: '海外版' },
+                ] as const
+              ).map((opt) => (
+                <button
+                  key={opt.id}
+                  type="button"
+                  onClick={() => setApiRegionDraft(opt.id)}
+                  className={`flex-1 rounded-[10px] px-2 py-2 text-[12px] font-medium transition-colors ${
+                    apiRegionDraft === opt.id
+                      ? 'bg-white text-[#111] shadow-[0_1px_3px_rgba(0,0,0,0.08)]'
+                      : 'text-[#6b7280] active:bg-white/60'
+                  }`}
+                >
+                  {opt.label}
+                </button>
+              ))}
+            </div>
+            <div className="mt-1.5 text-[11px] leading-relaxed text-[#9ca3af]">
+              需与 API Key
+              所属控制台一致。海外站含
+              <span className="mx-0.5 font-mono text-[10px]">moss_</span>
+              等系统音色时选「海外版」。
+              {' '}
+              <a
+                href="https://platform.minimax.io/docs/faq/about-apis"
+                target="_blank"
+                rel="noreferrer"
+                className="font-medium text-[#D4AF37] underline underline-offset-2"
+              >
+                国际站说明
+              </a>
+            </div>
+          </div>
           <UnderlineInput label="MiniMax API Key" value={apiKeyDraft} placeholder="sk-..." onChange={setApiKeyDraft} />
           <UnderlineInput
             label="Group ID（可选）"
@@ -226,12 +275,16 @@ function SettingsTab() {
             可前往
             {' '}
             <a
-              href="https://platform.minimaxi.com/user-center/basic-information"
+              href={
+                apiRegionDraft === 'international'
+                  ? 'https://platform.minimax.io/user-center/basic-information/interface-key'
+                  : 'https://platform.minimaxi.com/user-center/basic-information'
+              }
               target="_blank"
               rel="noreferrer"
               className="font-medium text-[#D4AF37] underline underline-offset-2"
             >
-              MiniMax 账户中心
+              {apiRegionDraft === 'international' ? 'MiniMax 国际站 · API Keys' : 'MiniMax 账户中心'}
             </a>
             {' '}
             获取 API Key 与 Group ID。
@@ -420,7 +473,7 @@ function VoiceSectionBlock({
 }
 
 function ArchiveTab() {
-  const { apiKey, groupId, speechModel, voices, setVoices } = useVoiceStore()
+  const { apiKey, groupId, speechModel, apiRegion, voices, setVoices } = useVoiceStore()
   const [query, setQuery] = useState('')
   const [selectedVoice, setSelectedVoice] = useState<MiniMaxVoiceInfo | null>(null)
   const [testText, setTestText] = useState('你好，我是你的专属声音。')
@@ -483,7 +536,7 @@ function ArchiveTab() {
     [],
   )
 
-  const creds = useMemo(() => ({ apiKey, groupId }), [apiKey, groupId])
+  const creds = useMemo(() => ({ apiKey, groupId, apiRegion }), [apiKey, groupId, apiRegion])
 
   const filtered = useMemo(() => {
     const kw = query.trim().toLowerCase()
@@ -509,7 +562,7 @@ function ArchiveTab() {
     // 进入音色页时自动拉取（Group ID 可选）
     if (!apiKey.trim()) return
     void refreshVoices()
-  }, [apiKey, refreshVoices])
+  }, [apiKey, apiRegion, refreshVoices])
 
   useEffect(() => {
     const a = audioRef.current

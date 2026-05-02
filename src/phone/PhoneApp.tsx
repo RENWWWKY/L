@@ -10,6 +10,8 @@ import { useCustomization } from './CustomizationContext'
 import { ApiSettingsProvider } from './apps/api/ApiSettingsContext'
 import { ApiSettingsApp } from './apps/api/ApiSettingsApp'
 import { VoiceprintHubApp } from './apps/voiceprint/VoiceprintHubApp'
+import { DataArchiveApp } from './apps/dataArchive/DataArchiveApp'
+import { LUMI_SYS_FIRST_BOOT_KEY } from './apps/dataArchive/constants'
 import { WeChatApp } from './apps/wechat/WeChatApp'
 import type { AppSlot } from './types'
 
@@ -75,6 +77,17 @@ export function PhoneApp() {
   }, [])
 
   useEffect(() => {
+    if (typeof window === 'undefined') return
+    try {
+      if (!window.localStorage.getItem(LUMI_SYS_FIRST_BOOT_KEY)) {
+        window.localStorage.setItem(LUMI_SYS_FIRST_BOOT_KEY, String(Date.now()))
+      }
+    } catch {
+      // ignore
+    }
+  }, [])
+
+  useEffect(() => {
     const onOpen = (e: Event) => {
       const ce = e as CustomEvent<{ id: AppSlot['id'] }>
       const id = ce.detail?.id
@@ -132,6 +145,8 @@ export function PhoneApp() {
                   <ApiSettingsApp onBack={goHome} />
                 ) : route.id === 'voiceprint' ? (
                   <VoiceprintHubApp onBack={goHome} />
+                ) : route.id === 'dataArchive' ? (
+                  <DataArchiveApp onBack={goHome} />
                 ) : (
                   <AppPlaceholderScreen appId={route.id} onBack={goHome} />
                 )}
