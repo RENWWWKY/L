@@ -426,6 +426,12 @@ function clamp(n: number, min: number, max: number) {
   return Math.max(min, Math.min(max, n))
 }
 
+/** `<input type="color">` 仅接受 #rrggbb；非 hex 时用回退色避免控件报错 */
+function safeHex6ForColorInput(value: string, fallback = '#1B1B1F'): string {
+  const v = String(value || '').trim()
+  return /^#[0-9A-Fa-f]{6}$/i.test(v) ? v : fallback
+}
+
 function parseWeChatCssVars(cssText: string) {
   const vars: Record<string, string> = {}
   const re = /--wx-([a-z0-9-]+)\s*:\s*([^;]+);/gi
@@ -1667,6 +1673,8 @@ function ThemePanel({
     if (Object.keys(bubblePatch).length) {
       patch.bubbleGlobal = { ...wechatTheme.bubbleGlobal, ...bubblePatch }
     }
+    if (vars['self-bubble-text']) patch.selfBubbleText = vars['self-bubble-text']
+    if (vars['other-bubble-text']) patch.otherBubbleText = vars['other-bubble-text']
     if (vars['timestamp-text']) patch.timestampText = vars['timestamp-text']
 
     setWeChatTheme(patch)
@@ -2782,6 +2790,31 @@ function ThemePanel({
                               bubbleByRole: { ...wechatTheme.bubbleByRole, [bubbleRole]: next },
                             })
                         }}
+                        className="mt-2 h-10 w-full cursor-pointer rounded-[12px] border border-black/10 bg-transparent p-1"
+                      />
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-3">
+                    <div className="rounded-[16px] border p-3" style={{ borderColor: 'var(--wx-border)', background: 'var(--wx-surface)' }}>
+                      <p className="text-[11px] font-medium tracking-[0.16em]" style={{ color: 'var(--wx-text-muted)' }}>
+                        对方文字颜色
+                      </p>
+                      <input
+                        type="color"
+                        value={safeHex6ForColorInput(wechatTheme.otherBubbleText)}
+                        onChange={(e) => setWeChatTheme({ otherBubbleText: e.target.value })}
+                        className="mt-2 h-10 w-full cursor-pointer rounded-[12px] border border-black/10 bg-transparent p-1"
+                      />
+                    </div>
+                    <div className="rounded-[16px] border p-3" style={{ borderColor: 'var(--wx-border)', background: 'var(--wx-surface)' }}>
+                      <p className="text-[11px] font-medium tracking-[0.16em]" style={{ color: 'var(--wx-text-muted)' }}>
+                        自己文字颜色
+                      </p>
+                      <input
+                        type="color"
+                        value={safeHex6ForColorInput(wechatTheme.selfBubbleText)}
+                        onChange={(e) => setWeChatTheme({ selfBubbleText: e.target.value })}
                         className="mt-2 h-10 w-full cursor-pointer rounded-[12px] border border-black/10 bg-transparent p-1"
                       />
                     </div>

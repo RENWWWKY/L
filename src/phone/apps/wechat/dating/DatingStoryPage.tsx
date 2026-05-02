@@ -44,8 +44,6 @@ type Props = {
 const DATING_HEART_WHISPER_KV_PREFIX = 'wechat-dating-heart-whisper-v1:'
 const VN_LINE_VOICE_CACHE_KV_PREFIX = 'wechat-dating-vn-line-voice-cache-v1:'
 const VN_LINE_TTS_REQ_KV_PREFIX = 'wechat-dating-vn-line-tts-req-v1:'
-/** 与 DatingContext 中 VN 输出规则一致：单行气泡上限（按字符计）；切段时弱标点至少需见过 2 个标点后才允许断开。 */
-const VN_BUBBLE_MAX_CHARS = 25
 
 function datingHeartWhisperKvKey(characterId: string) {
   return `${DATING_HEART_WHISPER_KV_PREFIX}${String(characterId || '').trim()}`
@@ -133,11 +131,25 @@ function parseVnBubble(raw: string, defaultSpeaker: string): { text: string; spe
   if (!firstLine) return { text: '', speaker: null }
 
   const noQuotes = stripSpeechQuotes(firstLine).replace(/^[-*•\d.)\s]+/, '').trim()
-  const speakerMatch = noQuotes.match(/^([^：:]{1,24}(?:（\s*你\s*）|\(\s*你\s*\))?)[：:]\s*(.+)$/)
+  const speakerMatch = noQuotes.match(/^([^：:]{1,24}(?:（\s*你\s*）|\(\s*你\s*\))?)[：:]\s*(.+)$/su)
   if (speakerMatch) {
-    const speaker = speakerMatch[1]!.trim()
-    const content = speakerMatch[2]!.trim()
+    let speaker = speakerMatch[1]!.trim()
+    let content = speakerMatch[2]!.trim()
     if (!content) return { text: '', speaker: null }
+    // 模型误把两行压成一行，例如「纪旌：祁昀澈（你）：雨小了」——界面只认第一个冒号，会把玩家对白挂到 NPC 气泡。若冒号后仍以「某某（你）：」开头，则以内层说话人为准。
+    const innerYou = content.match(
+      /^([^：\n]{1,24}(?:（\s*你\s*）|\(\s*你\s*\)))[：:]\s*([\s\S]+)$/u,
+    )
+    if (
+      innerYou &&
+      innerYou[1] &&
+      innerYou[2] &&
+      /（\s*你\s*）|\(\s*你\s*\)/u.test(innerYou[1]) &&
+      innerYou[1].trim() !== speaker
+    ) {
+      speaker = innerYou[1].trim()
+      content = innerYou[2].trim()
+    }
     if (/^(旁白|叙述|系统|narrator)$/i.test(speaker)) {
       return { text: content, speaker: null }
     }
@@ -149,71 +161,35 @@ function parseVnBubble(raw: string, defaultSpeaker: string): { text: string; spe
   return { text, speaker: null }
 }
 
-function splitPlainVnText(text: string, maxChars = VN_BUBBLE_MAX_CHARS): string[] {
-  const source = String(text || '').trim()
-  if (!source) return []
-  const out: string[] = []
-  const isStrongPunc = (ch: string) => /[。！？….!?；]/.test(ch)
-  const isWeakPunc = (ch: string) => /[，、,:：]/.test(ch)
-  const isAnyPunc = (ch: string) => isStrongPunc(ch) || isWeakPunc(ch)
-  const minEarlyCut = Math.max(8, Math.floor(maxChars * 0.42))
-  const minTailAfterWeak = 8
-  let rest = source
-  while (rest) {
-    const chars = Array.from(rest)
-    if (chars.length <= maxChars) {
-      out.push(rest)
-      break
-    }
-    const head = chars.slice(0, maxChars)
-    let cut = -1
-    let cutIsStrong = false
-    // 句末标点：允许在首个句末处断开（整句收束）
-    for (let i = head.length - 1; i >= 0; i -= 1) {
-      if (!isStrongPunc(head[i]!)) continue
-      cut = i + 1
-      cutIsStrong = true
-      break
-    }
-    // 逗号类弱标点：禁止「见到第一个标点就断」——断点前前缀内须至少已有 2 个标点（含本处）
-    if (!cutIsStrong) {
-      for (let i = head.length - 1; i >= 0; i -= 1) {
-        if (!isWeakPunc(head[i]!)) continue
-        const tailLen = chars.length - (i + 1)
-        if (tailLen < minTailAfterWeak || i + 1 < minEarlyCut) continue
-        const puncsUpTo = head.slice(0, i + 1).filter(isAnyPunc).length
-        if (puncsUpTo < 2) continue
-        cut = i + 1
-        break
-      }
-    }
-    if (cut < 0 && !cutIsStrong) {
-      const lateStart = Math.max(minEarlyCut - 1, Math.floor(maxChars * 0.72))
-      for (let i = head.length - 1; i >= lateStart; i -= 1) {
-        if (!isWeakPunc(head[i]!)) continue
-        const puncsUpTo = head.slice(0, i + 1).filter(isAnyPunc).length
-        if (puncsUpTo < 2) continue
-        cut = i + 1
-        break
-      }
-    }
-    const sliceLen =
-      cut > 0 && (cutIsStrong || cut >= minEarlyCut || cut >= Math.floor(maxChars * 0.72)) ? cut : maxChars
-    const left = chars.slice(0, sliceLen).join('').trim()
-    const right = chars.slice(sliceLen).join('').trim()
-    if (left) out.push(left)
-    rest = right
-  }
-  return out
-}
-
 function sanitizeDanglingThoughtMarker(text: string): string {
   let t = String(text || '').trim()
   if (!t) return ''
-  // 避免切段后出现孤立单个 *（例如句尾只剩一个 *）。
+  // 避免换行拆条后出现孤立单个 *（例如句尾只剩一个 *）。
   if (t.endsWith('*') && !t.endsWith('**')) t = t.slice(0, -1).trimEnd()
   if (t.startsWith('*') && !t.startsWith('**')) t = t.slice(1).trimStart()
   return t
+}
+
+function escapeRegExp(s: string): string {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+}
+
+/** 「（你）」仅用于玩家行首标签；NPC/旁白正文中误写的「玩家名（你）」去掉后缀，避免穿帮 */
+function stripMisplacedYouInDialogueBody(text: string, userDisplayName: string, speaker: string | null): string {
+  const u = String(userDisplayName || '').trim()
+  if (!u) return text
+  const sp = String(speaker || '').trim()
+  const norm = (x: string) => x.replace(/\s+/g, '')
+  const isPlayerSpeaker =
+    !!sp &&
+    (/（\s*你\s*）|\(\s*你\s*\)/u.test(sp) || norm(sp) === norm(u) || norm(sp) === norm(`${u}（你）`))
+  if (isPlayerSpeaker) return text
+  try {
+    const re = new RegExp(`${escapeRegExp(u)}（\\s*你\\s*）`, 'g')
+    return String(text || '').replace(re, u)
+  } catch {
+    return text
+  }
 }
 
 function extractVnFlashbackCue(rawLine: string): { kind: 'start' | 'end' | null; rest: string } {
@@ -267,10 +243,11 @@ function stripInnerThoughtDecorators(text: string): string {
   return t
 }
 
+/** 一行即一个气泡；不在此按字数/标点切段，边界完全由模型正文换行决定（见 DatingContext VN 格式说明）。 */
 function splitVnContentToBubbles(
   raw: string,
   defaultSpeaker: string,
-  maxChars = VN_BUBBLE_MAX_CHARS,
+  userDisplayName?: string,
 ): Array<{
   text: string
   speaker: string | null
@@ -323,21 +300,21 @@ function splitVnContentToBubbles(
     const normalizedSpeaker = speakerIsInnerMarker ? null : parsed.speaker
     const isInnerThoughtLine = isInnerThoughtText(parsed.text, normalizedSpeaker)
     const normalizedText = isInnerThoughtLine ? stripInnerThoughtDecorators(parsed.text) : parsed.text
-    const chunks = splitPlainVnText(normalizedText, maxChars)
-    for (const chunk of chunks) {
-      const clean = sanitizeDanglingThoughtMarker(chunk.replace(/\*\*/g, ''))
-      if (!clean) continue
-      out.push({
-        text: clean,
-        speaker: normalizedSpeaker,
-        isInnerThought: isInnerThoughtLine,
-        bgmCueName: pendingBgmCue,
-        backgroundCueName: pendingBgCue,
-        isFlashback: flashbackMode,
-      })
-      pendingBgmCue = null
-      pendingBgCue = null
+    let clean = sanitizeDanglingThoughtMarker(normalizedText.replace(/\*\*/g, ''))
+    if (userDisplayName?.trim()) {
+      clean = stripMisplacedYouInDialogueBody(clean, userDisplayName.trim(), normalizedSpeaker)
     }
+    if (!clean) continue
+    out.push({
+      text: clean,
+      speaker: normalizedSpeaker,
+      isInnerThought: isInnerThoughtLine,
+      bgmCueName: pendingBgmCue,
+      backgroundCueName: pendingBgCue,
+      isFlashback: flashbackMode,
+    })
+    pendingBgmCue = null
+    pendingBgCue = null
   }
   return out
 }
@@ -1308,8 +1285,8 @@ function DatingStoryPageInner({ onBackToSelect }: Props) {
   }, [currentArchive.vnVoiceDisabled, vnRawContent])
   const vnBgCue = useMemo(() => extractVnBackgroundCue(vnVoiceParamsCue.cleanedText), [vnVoiceParamsCue.cleanedText])
   const vnBubbles = useMemo(() => {
-    return splitVnContentToBubbles(vnBgCue.cleanedText, currentCharacter.realName, VN_BUBBLE_MAX_CHARS)
-  }, [currentCharacter.realName, vnBgCue.cleanedText])
+    return splitVnContentToBubbles(vnBgCue.cleanedText, currentCharacter.realName, vnUserDisplayName)
+  }, [currentCharacter.realName, vnBgCue.cleanedText, vnUserDisplayName])
   const vnCurrentBubble = useMemo(
     () => vnBubbles[Math.max(0, Math.min(vnBubbles.length - 1, vnBubbleIndex))] ?? null,
     [vnBubbles, vnBubbleIndex],
@@ -1482,7 +1459,7 @@ function DatingStoryPageInner({ onBackToSelect }: Props) {
       const voiceStripped = extractVnVoiceParamsBlock(aiRaw).cleanedText
       const cleaned = extractVnBackgroundCue(voiceStripped).cleanedText
       if (!cleaned) continue
-      const bubbles = splitVnContentToBubbles(cleaned, currentCharacter.realName, VN_BUBBLE_MAX_CHARS)
+      const bubbles = splitVnContentToBubbles(cleaned, currentCharacter.realName, vnUserDisplayName)
       if (!bubbles.length) continue
       const isCurrentAi = latestAi?.id === p.id
       let shown = bubbles
@@ -1851,6 +1828,12 @@ function DatingStoryPageInner({ onBackToSelect }: Props) {
     },
     [stopVnLineVoice],
   )
+  useEffect(() => {
+    if (!isVn || !regeneratingPlotId) return
+    stopVnLineVoice()
+    setVnShownText('')
+    setVnTyping(false)
+  }, [isVn, regeneratingPlotId, stopVnLineVoice])
   const activeSprite = useActiveSprite(activeSpeakerId)
   const hasNextVnBubble = vnBubbleIndex < vnBubbles.length - 1
   const vnUiLoading = loading || vnSubmitting
@@ -1990,6 +1973,13 @@ function DatingStoryPageInner({ onBackToSelect }: Props) {
       const hitById = !!savedAiId && savedAiId === aiId
       const hitBySig = !!savedAiSig && !!aiSig && savedAiSig === aiSig
       const hitLegacy = !savedAiId && !savedAiSig
+      // 同 id 但正文签名与存档不一致（重新生成、编辑、或旧存档无签名→现已有签名）：从本轮首气泡开始
+      if (hitById && savedAiSig !== aiSig) {
+        vnPendingRestoreIndexRef.current = 0
+        setVnBubbleIndex(0)
+        vnProgressRestoreReadyRef.current = true
+        return
+      }
       if (Number.isFinite(savedIdx) && (hitById || hitBySig || hitLegacy)) {
         const restored = Math.max(0, Math.round(savedIdx))
         vnPendingRestoreIndexRef.current = restored
@@ -3119,6 +3109,26 @@ function DatingStoryPageInner({ onBackToSelect }: Props) {
               onCycleSpeed={cyclePlaySpeed}
             />
           </div>
+
+          {regeneratingPlotId ? (
+            <div
+              className="absolute inset-0 z-[130] flex flex-col items-center justify-center gap-3 touch-none bg-black/50 px-6"
+              aria-busy="true"
+              aria-live="polite"
+              role="alertdialog"
+              aria-label="正在重新生成剧情"
+              onPointerDown={(e) => e.stopPropagation()}
+              onClick={(e) => e.stopPropagation()}
+            >
+              <div className="flex max-w-[300px] flex-col items-center rounded-2xl border border-white/25 bg-white/95 px-6 py-8 shadow-[0_16px_48px_rgba(0,0,0,0.22)] backdrop-blur-md">
+                <Loader2 className="size-9 animate-spin text-neutral-700" strokeWidth={1.75} />
+                <p className="mt-4 text-center text-[15px] font-semibold text-neutral-900">正在重新生成</p>
+                <p className="mt-1.5 text-center text-[12px] leading-relaxed text-neutral-500">
+                  请稍候，当前无法操作；完成后将从本轮<strong className="font-medium text-neutral-700">第一句对白</strong>开始显示。
+                </p>
+              </div>
+            </div>
+          ) : null}
         </div>
       )}
 
