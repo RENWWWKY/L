@@ -1,7 +1,7 @@
 import { appendGroupChatEventNotice, groupNoticeMemberNickname } from './groupChatEventNotice'
 import { findGroupMember } from './groupChatUtils'
 import { personaDb } from './newFriendsPersona/idb'
-import type { GroupChatRow } from './newFriendsPersona/types'
+import type { GroupChatRow, GroupMemberRole } from './newFriendsPersona/types'
 import type { WeChatGroupMetaAction } from './groupChatModelMeta'
 import { WECHAT_GROUP_BOT_CHARACTER_ID } from './wechatConversationKey'
 
@@ -77,7 +77,8 @@ export async function applyWeChatGroupMetaFromModel(params: {
     }
     const members = g0.members.map((m) => {
       if (m.charId !== targetId || m.role === 'owner') return m
-      return { ...m, role: toRole === 'admin' ? 'admin' : 'member' }
+      const role: GroupMemberRole = toRole === 'admin' ? 'admin' : 'member'
+      return { ...m, role }
     })
     const next: GroupChatRow = { ...g0, members, updatedAt: Date.now() }
     await personaDb.putGroupChat(next)

@@ -116,7 +116,7 @@ const groupItemVariants = {
 
 export function GroupMemoryList({
   playerIdentityId,
-  playerDisplayName,
+  playerDisplayName: _playerDisplayName,
   playerAvatarUrl,
 }: {
   playerIdentityId: string

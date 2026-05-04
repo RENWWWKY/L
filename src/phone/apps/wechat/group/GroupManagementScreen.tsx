@@ -2,7 +2,7 @@ import { ArrowLeft } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useState } from 'react'
 
 import { Pressable } from '../../../components/Pressable'
-import type { GroupChatRow, GroupMember } from '../newFriendsPersona/types'
+import type { GroupChatRow, GroupMember, GroupMemberRole } from '../newFriendsPersona/types'
 import { emitWeChatStorageChanged, personaDb } from '../newFriendsPersona/idb'
 import { appendGroupChatEventNotice, groupNoticeMemberNickname } from '../groupChatEventNotice'
 import { WECHAT_GROUP_USER_CHAR_ID } from '../wechatConversationKey'
@@ -97,9 +97,10 @@ export function GroupManagementScreen({
     const cur = local.members.find((m) => m.charId === charId)
     if (!cur || cur.role === 'owner') return
     const wasAdmin = cur.role === 'admin'
-    const next = local.members.map((m) => {
+    const next: GroupMember[] = local.members.map((m) => {
       if (m.charId !== charId || m.role === 'owner') return m
-      return { ...m, role: m.role === 'admin' ? 'member' : 'admin' }
+      const role: GroupMemberRole = m.role === 'admin' ? 'member' : 'admin'
+      return { ...m, role }
     })
     await persist(next)
     const pid = playerIdentityId.trim()

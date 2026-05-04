@@ -5482,6 +5482,7 @@ function WeChatAppInner({ onBack }: Props) {
                       })
                       return
                     }
+                    if (chat.kind === 'group') return
                     const pc = state.wechatPersonaContacts.find((c) => c.characterId === chat.characterId)
                     setRoute({
                       name: 'contact-profile',

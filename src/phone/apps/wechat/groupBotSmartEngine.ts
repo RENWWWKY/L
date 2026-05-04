@@ -1,4 +1,4 @@
-import type { ApiConfig } from '../../api/types'
+import type { ApiConfig } from '../api/types'
 import type { GroupChatRow, GroupMember, WeChatChatMessage } from './newFriendsPersona/types'
 import { openAiCompatibleChat, type OpenAiCompatibleMessage } from './newFriendsPersona/ai'
 import { WECHAT_GROUP_BOT_CHARACTER_ID } from './wechatConversationKey'
