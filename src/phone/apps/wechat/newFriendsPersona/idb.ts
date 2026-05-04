@@ -9,6 +9,8 @@ import type {
   HeartWhisperRow,
   Favorite,
   GroupChatRow,
+  GroupMember,
+  GroupRobotRule,
   MemorySettingsRow,
   NetworkGraphViewRecord,
   NotificationAudioConfig,
@@ -31,11 +33,20 @@ import type {
   WeChatMessageSearchIndexRow,
   WorldBackground,
 } from './types'
+import { parseGroupRobotTriggerWordInput } from '../groupChatUtils'
 import { formatWeChatMessageListTimestamp as formatWeChatMessageListTimestampFn } from './chatMessageTimestampFormat'
 import { emptyWorldBackgroundSettings, formatTimelineEventDate } from './types'
 import { DEFAULT_WORLD_BACKGROUND_ID } from './worldBackgroundConstants'
 import { buildPresetWorldBackgrounds } from './worldBackgroundSeed'
-import { WECHAT_LUMI_PEER_CHARACTER_ID, wechatConversationKey } from '../wechatConversationKey'
+import {
+  WECHAT_GROUP_USER_CHAR_ID,
+  WECHAT_LUMI_PEER_CHARACTER_ID,
+  isWechatGroupConversationKey,
+  parseGroupIdFromConversationKey,
+  wechatConversationKey,
+  wechatGroupConversationKey,
+  wechatGroupPeerCharacterId,
+} from '../wechatConversationKey'
 import { maybeNotifyWeChatCharacterMessage } from '../wechatSystemNotify'
 import { getWeChatBuiltInNotifySoundMeta, playWeChatNotifySound } from '../wechatNotifySound'
 import { normalizeWeChatTimeConfig } from '../time/wechatTimeUtils'
@@ -47,7 +58,7 @@ import {
 } from '../chatTheme/types'
 
 const DB_NAME = 'wechat-personas-v1'
-const DB_VERSION = 21
+const DB_VERSION = 22
 
 /** 复合索引：按会话 + 时间戳范围查询（日历、按日跳转） */
 const CHAT_MSG_INDEX_CONV_TS = 'conversationKey_timestamp'
@@ -831,8 +842,34 @@ function normalizeWeChatChatMessage(input: unknown): WeChatChatMessage | null {
   const recallTimestamp =
     typeof recallRaw === 'number' && Number.isFinite(recallRaw) ? Math.max(0, Math.floor(recallRaw)) : undefined
   const recalledByRaw = (m as { recalledBy?: unknown }).recalledBy
-  const recalledBy = recalledByRaw === 'player' || recalledByRaw === 'character' ? recalledByRaw : undefined
-  return {
+  const recalledBy =
+    recalledByRaw === 'player' || recalledByRaw === 'character' || recalledByRaw === 'moderator'
+      ? recalledByRaw
+      : undefined
+  const rawExt = (m as { ext?: unknown }).ext
+  let ext: WeChatChatMessage['ext']
+  if (rawExt && typeof rawExt === 'object') {
+    const o = rawExt as Record<string, unknown>
+    const groupBotDarkBubble = o.groupBotDarkBubble === true
+    const centerSystemStrip = o.centerSystemStrip === true
+    const shieldedMessageContent =
+      typeof o.shieldedMessageContent === 'string'
+        ? String(o.shieldedMessageContent).trim().slice(0, 8000)
+        : undefined
+    const muteSuppressStrip = o.muteSuppressStrip === true
+    const mutedMessageVisibleToModeratorsOnly = o.mutedMessageVisibleToModeratorsOnly === true
+    if (groupBotDarkBubble || centerSystemStrip || mutedMessageVisibleToModeratorsOnly) {
+      ext = {
+        groupBotDarkBubble: groupBotDarkBubble ? true : undefined,
+        centerSystemStrip: centerSystemStrip ? true : undefined,
+        shieldedMessageContent: shieldedMessageContent || undefined,
+        muteSuppressStrip: muteSuppressStrip ? true : undefined,
+        mutedMessageVisibleToModeratorsOnly: mutedMessageVisibleToModeratorsOnly ? true : undefined,
+      }
+    }
+  }
+
+  const base: WeChatChatMessage = {
     id: m.id,
     characterId: m.characterId,
     playerIdentityId: m.playerIdentityId,
@@ -854,6 +891,7 @@ function normalizeWeChatChatMessage(input: unknown): WeChatChatMessage | null {
     isRead,
     conversationKey,
   }
+  return ext ? { ...base, ext } : base
 }
 
 function normalizeFavorite(input: unknown): Favorite | null {
@@ -896,6 +934,14 @@ function normalizeChatConversationSettingsRow(input: unknown): ChatConversationS
       ? !!(r as { showThinkingChain?: unknown }).showThinkingChain
       : false,
     isDanmakuMode: typeof r.isDanmakuMode === 'boolean' ? r.isDanmakuMode : false,
+    showGroupMemberNicknameInChat:
+      typeof (r as { showGroupMemberNicknameInChat?: unknown }).showGroupMemberNicknameInChat === 'boolean'
+        ? !!(r as { showGroupMemberNicknameInChat?: boolean }).showGroupMemberNicknameInChat
+        : true,
+    showGroupRankBadgesInChat:
+      typeof (r as { showGroupRankBadgesInChat?: unknown }).showGroupRankBadgesInChat === 'boolean'
+        ? !!(r as { showGroupRankBadgesInChat?: boolean }).showGroupRankBadgesInChat
+        : false,
     chatBackground: typeof r.chatBackground === 'string' ? r.chatBackground : '',
     lastMessageTime:
       typeof r.lastMessageTime === 'number' && Number.isFinite(r.lastMessageTime) ? r.lastMessageTime : 0,
@@ -903,18 +949,131 @@ function normalizeChatConversationSettingsRow(input: unknown): ChatConversationS
   }
 }
 
+function normalizeGroupMember(input: unknown): GroupMember | null {
+  const m = (input ?? {}) as Partial<GroupMember>
+  const charId = typeof m.charId === 'string' ? m.charId.trim() : ''
+  if (!charId) return null
+  const role: GroupMember['role'] = m.role === 'owner' || m.role === 'admin' || m.role === 'member' ? m.role : 'member'
+  const rawNick = typeof m.groupNickname === 'string' ? m.groupNickname.trim().slice(0, 64) : ''
+  /** 用户占位成员不要用 charId 回填昵称（会变成 `__wx_group_user__`）；NPC 仍可用 id 作兜底展示 */
+  let groupNickname = rawNick
+  if (charId === WECHAT_GROUP_USER_CHAR_ID) {
+    if (!groupNickname || groupNickname === WECHAT_GROUP_USER_CHAR_ID) groupNickname = ''
+  } else if (!groupNickname) {
+    groupNickname = charId
+  }
+  const bvRaw = (m as { botViolation?: unknown }).botViolation
+  let botViolation: GroupMember['botViolation'] = undefined
+  if (bvRaw && typeof bvRaw === 'object') {
+    const b = bvRaw as Record<string, unknown>
+    const violationCount =
+      typeof b.violationCount === 'number' && Number.isFinite(b.violationCount)
+        ? Math.max(0, Math.floor(b.violationCount))
+        : 0
+    const lastViolationTurn =
+      typeof b.lastViolationTurn === 'number' && Number.isFinite(b.lastViolationTurn)
+        ? Math.floor(b.lastViolationTurn)
+        : -1
+    const lastEvRaw = (b as { lastViolationEventSeq?: unknown }).lastViolationEventSeq
+    const lastViolationEventSeq =
+      typeof lastEvRaw === 'number' && Number.isFinite(lastEvRaw) ? Math.floor(lastEvRaw) : undefined
+    const me = b.muteExpiresAt
+    const muteExpiresAt =
+      typeof me === 'number' && Number.isFinite(me) && me > 0 ? me : null
+    botViolation = {
+      violationCount,
+      lastViolationTurn,
+      ...(typeof lastViolationEventSeq === 'number' && lastViolationEventSeq >= 0
+        ? { lastViolationEventSeq }
+        : {}),
+      muteExpiresAt,
+    }
+  }
+
+  return {
+    charId,
+    groupNickname,
+    role,
+    isMuted: typeof m.isMuted === 'boolean' ? m.isMuted : false,
+    warnings: typeof m.warnings === 'number' && Number.isFinite(m.warnings) ? Math.max(0, Math.floor(m.warnings)) : 0,
+    botViolation,
+  }
+}
+
+function normalizeGroupRobotRule(input: unknown): GroupRobotRule | null {
+  const x = (input ?? {}) as Partial<GroupRobotRule>
+  const words = Array.isArray(x.triggerWords)
+    ? Array.from(
+        new Set(
+          (x.triggerWords as unknown[]).flatMap((w) => parseGroupRobotTriggerWordInput(String(w ?? ''))),
+        ),
+      ).slice(0, 32)
+    : []
+  if (!words.length) return null
+  const action: GroupRobotRule['action'] = x.action === 'mute' ? 'mute' : 'warn'
+  const warningText =
+    typeof x.warningText === 'string' && x.warningText.trim() ? x.warningText.trim().slice(0, 500) : '请注意群规。'
+  return { triggerWords: words, action, warningText }
+}
+
 function normalizeGroupChatRow(input: unknown): GroupChatRow | null {
-  const r = (input ?? {}) as Partial<GroupChatRow>
+  const r = (input ?? {}) as Partial<GroupChatRow> & { members?: unknown[]; memberIds?: unknown[] }
   if (typeof r.id !== 'string' || !r.id.trim()) return null
   const now = Date.now()
-  const memberIds = Array.isArray(r.memberIds)
-    ? (r.memberIds as unknown[]).filter((x): x is string => typeof x === 'string')
+  const pid = typeof r.playerIdentityId === 'string' && r.playerIdentityId.trim() ? r.playerIdentityId.trim() : ''
+
+  let members: GroupMember[] = []
+  if (Array.isArray(r.members)) {
+    members = (r.members as unknown[]).map(normalizeGroupMember).filter((x): x is GroupMember => !!x)
+  }
+  const legacyIds = Array.isArray(r.memberIds)
+    ? (r.memberIds as unknown[]).filter((x): x is string => typeof x === 'string' && !!x.trim()).map((x) => x.trim())
     : []
+  if (!members.length && legacyIds.length) {
+    members = legacyIds.map((cid, i) => ({
+      charId: cid,
+      groupNickname: cid,
+      role: i === 0 ? ('owner' as const) : ('member' as const),
+      isMuted: false,
+      warnings: 0,
+    }))
+  }
+
+  let robotRules: GroupRobotRule[] = []
+  if (Array.isArray(r.robotRules)) {
+    robotRules = (r.robotRules as unknown[]).map(normalizeGroupRobotRule).filter((x): x is GroupRobotRule => !!x)
+  }
+
+  const robotAvatarRaw = typeof r.robotAvatarUrl === 'string' ? r.robotAvatarUrl.trim() : ''
+  const robotAvatarUrl = robotAvatarRaw ? robotAvatarRaw.slice(0, 500_000) : undefined
+
+  const seqRaw = (r as { chatTurnSequence?: unknown }).chatTurnSequence
+  const chatTurnSequence =
+    typeof seqRaw === 'number' && Number.isFinite(seqRaw) ? Math.max(0, Math.floor(seqRaw)) : undefined
+  const violSeqRaw = (r as { smartBotViolationSeq?: unknown }).smartBotViolationSeq
+  const smartBotViolationSeq =
+    typeof violSeqRaw === 'number' && Number.isFinite(violSeqRaw) ? Math.max(0, Math.floor(violSeqRaw)) : undefined
+  const aliasesRaw = (r as { robotMentionAliases?: unknown }).robotMentionAliases
+  const robotMentionAliases = Array.isArray(aliasesRaw)
+    ? (aliasesRaw as unknown[]).map((x) => String(x ?? '').trim()).filter(Boolean).slice(0, 16)
+    : undefined
+
   return {
     id: r.id.trim(),
-    name: typeof r.name === 'string' ? r.name : '群聊',
+    playerIdentityId: pid,
+    chatTurnSequence,
+    smartBotViolationSeq,
+    robotMentionAliases: robotMentionAliases?.length ? robotMentionAliases : undefined,
+    name: typeof r.name === 'string' && r.name.trim() ? r.name.trim().slice(0, 64) : '群聊',
+    remark: typeof r.remark === 'string' ? r.remark.trim().slice(0, 64) : '',
     avatar: typeof r.avatar === 'string' ? r.avatar : '',
-    memberIds,
+    members,
+    robotRules,
+    robotAvatarUrl,
+    announcement:
+      typeof r.announcement === 'string' ? r.announcement.trim().slice(0, 2000) : undefined,
+    backgroundUrl: typeof r.backgroundUrl === 'string' ? r.backgroundUrl : undefined,
+    memberIds: legacyIds.length ? legacyIds : undefined,
     createdAt: typeof r.createdAt === 'number' ? r.createdAt : now,
     updatedAt: typeof r.updatedAt === 'number' ? r.updatedAt : now,
   }
@@ -974,6 +1133,19 @@ function normalizeCharacterMemory(input: unknown): CharacterMemory | null {
   const m = (input ?? {}) as Partial<CharacterMemory>
   if (typeof m.id !== 'string' || typeof m.characterId !== 'string') return null
   const now = Date.now()
+  const scopeRaw = m.memoryScope
+  const memoryScope: CharacterMemory['memoryScope'] =
+    scopeRaw === 'group' || scopeRaw === 'private' ? scopeRaw : undefined
+  let involvedCharIds: string[] | undefined
+  if (Array.isArray(m.involvedCharIds)) {
+    involvedCharIds = (m.involvedCharIds as unknown[])
+      .map((x) => String(x ?? '').trim())
+      .filter(Boolean)
+      .slice(0, 64)
+    if (!involvedCharIds.length) involvedCharIds = undefined
+  }
+  const groupId =
+    typeof m.groupId === 'string' && m.groupId.trim() ? m.groupId.trim().slice(0, 128) : undefined
   return {
     id: m.id,
     characterId: m.characterId,
@@ -981,6 +1153,9 @@ function normalizeCharacterMemory(input: unknown): CharacterMemory | null {
     createdAt: typeof m.createdAt === 'number' ? m.createdAt : now,
     updatedAt: typeof m.updatedAt === 'number' ? m.updatedAt : now,
     isAutoGenerated: typeof m.isAutoGenerated === 'boolean' ? m.isAutoGenerated : false,
+    memoryScope,
+    groupId,
+    involvedCharIds,
   }
 }
 
@@ -2016,6 +2191,8 @@ export class PersonaDb {
       conversationKey?: string
       /** 对方消息用于系统通知标题；不传则不尝试 Notification */
       notifyPeerTitle?: string
+      /** 为 true 时不播放新消息提示音（如群系统灰条） */
+      quiet?: boolean
     },
   ): Promise<void> {
     const db = await openDb()
@@ -2023,7 +2200,7 @@ export class PersonaDb {
       db.close()
       return
     }
-    const { notifyPeerTitle, ...msgRow } = row
+    const { notifyPeerTitle, quiet, ...msgRow } = row
     const conversationKey =
       msgRow.conversationKey?.trim() || wechatConversationKey(msgRow.characterId, msgRow.playerIdentityId)
     const normalized = normalizeWeChatChatMessage({ ...msgRow, conversationKey })
@@ -2032,9 +2209,16 @@ export class PersonaDb {
     tx.objectStore(CHAT_MSG_STORE).put(normalized)
     await txDone(tx)
     db.close()
+    const peerForMerge = (() => {
+      if (isWechatGroupConversationKey(conversationKey)) {
+        const gid = parseGroupIdFromConversationKey(conversationKey)
+        return gid ? wechatGroupPeerCharacterId(gid) : normalized.characterId
+      }
+      return normalized.characterId
+    })()
     await this.mergeConversationLastMessageTime({
       conversationKey,
-      peerCharacterId: normalized.characterId,
+      peerCharacterId: peerForMerge,
       playerIdentityId: normalized.playerIdentityId,
       messageTimestamp: normalized.timestamp,
     })
@@ -2048,7 +2232,7 @@ export class PersonaDb {
       })
     }
 
-    if (normalized.type === 'character') {
+    if (normalized.type === 'character' && !quiet) {
       await this.maybePlayWeChatNewMessageSound({
         conversationKey,
         peerCharacterId: normalized.characterId,
@@ -3250,12 +3434,58 @@ export class PersonaDb {
     emitWeChatStorageChanged()
   }
 
-  /** 拼成注入系统提示的【长期记忆】正文；无条目时返回空串 */
+  /** 涉及某角色的群聊提炼记忆（memoryScope=group 且 involvedCharIds 含该 id） */
+  async listGroupMemoriesInvolvingCharacter(characterId: string): Promise<CharacterMemory[]> {
+    const cid = characterId.trim()
+    if (!cid) return []
+    const all = await this.listAllCharacterMemories()
+    return all
+      .filter(
+        (m) =>
+          m.memoryScope === 'group' &&
+          Array.isArray(m.involvedCharIds) &&
+          m.involvedCharIds.some((x) => x.trim() === cid),
+      )
+      .sort((a, b) => a.createdAt - b.createdAt)
+  }
+
+  /** 拼成注入系统提示的【长期记忆】正文；含私聊 + 共同参与群聊的穿透合并；无条目时返回空串 */
   async formatCharacterMemoriesForPrompt(characterId: string): Promise<string> {
-    const list = await this.listCharacterMemoriesForCharacter(characterId)
-    const sorted = [...list].sort((a, b) => a.createdAt - b.createdAt)
-    if (!sorted.length) return ''
-    return sorted.map((m, i) => `${i + 1}. ${m.content.trim()}`).join('\n')
+    const cid = characterId.trim()
+    if (!cid) return ''
+
+    const privRaw = await this.listCharacterMemoriesForCharacter(cid)
+    const privateList = privRaw.filter((m) => m.memoryScope !== 'group').sort((a, b) => a.createdAt - b.createdAt)
+
+    const groupList = await this.listGroupMemoriesInvolvingCharacter(cid)
+
+    const groupIds = [...new Set(groupList.map((m) => m.groupId).filter((x): x is string => !!x?.trim()))]
+    const groupNameById = new Map<string, string>()
+    for (const gid of groupIds) {
+      const g = await this.getGroupChat(gid.trim())
+      groupNameById.set(gid.trim(), g?.name?.trim() || '群聊')
+    }
+
+    const chunks: string[] = []
+    if (privateList.length) {
+      chunks.push(
+        `【与该角色的私聊长期记忆】\n${privateList.map((m, i) => `${i + 1}. ${m.content.trim()}`).join('\n')}`,
+      )
+    }
+    if (groupList.length) {
+      chunks.push(
+        `【你们共同参与过的群聊中被提炼的长期记忆】\n${groupList
+          .map((m, i) => {
+            const gid = m.groupId?.trim()
+            const gn = gid ? groupNameById.get(gid) ?? '群聊' : '群聊'
+            return `${i + 1}. （群：${gn}）${m.content.trim()}`
+          })
+          .join('\n')}`,
+      )
+    }
+    if (!chunks.length) return ''
+    const body = chunks.join('\n\n')
+    return `${body}\n\n（以上包含该角色与你的私聊记忆，以及你们共同参与的群聊记忆；请根据情境自然地回忆。）`
   }
 
   // -------- chat theme (IndexedDB) --------
@@ -3848,6 +4078,8 @@ export class PersonaDb {
         | 'notifyEnabled'
         | 'showThinkingChain'
         | 'isDanmakuMode'
+        | 'showGroupMemberNicknameInChat'
+        | 'showGroupRankBadgesInChat'
         | 'chatBackground'
         | 'lastMessageTime'
       >
@@ -3865,6 +4097,10 @@ export class PersonaDb {
       notifyEnabled: params.notifyEnabled ?? existing?.notifyEnabled ?? true,
       showThinkingChain: params.showThinkingChain ?? existing?.showThinkingChain ?? false,
       isDanmakuMode: params.isDanmakuMode ?? existing?.isDanmakuMode ?? false,
+      showGroupMemberNicknameInChat:
+        params.showGroupMemberNicknameInChat ?? existing?.showGroupMemberNicknameInChat ?? true,
+      showGroupRankBadgesInChat:
+        params.showGroupRankBadgesInChat ?? existing?.showGroupRankBadgesInChat ?? false,
       chatBackground: params.chatBackground ?? existing?.chatBackground ?? '',
       lastMessageTime: params.lastMessageTime ?? existing?.lastMessageTime ?? 0,
       updatedAt: now,
@@ -3964,7 +4200,7 @@ export class PersonaDb {
       lastMessageTime: merged,
     })
     const peer = params.peerCharacterId.trim()
-    if (peer && peer !== WECHAT_LUMI_PEER_CHARACTER_ID) {
+    if (peer && peer !== WECHAT_LUMI_PEER_CHARACTER_ID && !peer.startsWith('wxgrp:')) {
       const ch = await this.getCharacter(peer)
       if (ch) {
         const cMerged = Math.max(ch.lastMessageTime ?? 0, merged)
@@ -4049,6 +4285,40 @@ export class PersonaDb {
     await txDone(tx)
     db.close()
     return raw.map(normalizeGroupChatRow).filter((x): x is GroupChatRow => !!x)
+  }
+
+  async listGroupChatsForPlayerIdentity(playerIdentityId: string): Promise<GroupChatRow[]> {
+    const pid = playerIdentityId.trim()
+    if (!pid) return []
+    const all = await this.listGroupChats()
+    return all.filter((g) => (g.playerIdentityId || '').trim() === pid)
+  }
+
+  /** 解散并删除本地消息与会话设置（当前身份下） */
+  async deleteGroupChat(groupId: string, playerIdentityId: string): Promise<void> {
+    const gid = groupId.trim()
+    const pid = playerIdentityId.trim()
+    if (!gid || !pid) return
+    const convKey = wechatGroupConversationKey(gid, pid)
+    await this.deleteAllWeChatMessagesForConversation(convKey)
+    const db = await openDb()
+    if (db.objectStoreNames.contains(CHAT_CONV_SETTINGS_STORE) && db.objectStoreNames.contains(GROUP_CHATS_STORE)) {
+      const tx = db.transaction([CHAT_CONV_SETTINGS_STORE, GROUP_CHATS_STORE], 'readwrite')
+      tx.objectStore(CHAT_CONV_SETTINGS_STORE).delete(convKey)
+      tx.objectStore(GROUP_CHATS_STORE).delete(gid)
+      await txDone(tx)
+    } else if (db.objectStoreNames.contains(GROUP_CHATS_STORE)) {
+      const tx = db.transaction(GROUP_CHATS_STORE, 'readwrite')
+      tx.objectStore(GROUP_CHATS_STORE).delete(gid)
+      await txDone(tx)
+    }
+    db.close()
+    emitWeChatStorageChanged()
+  }
+
+  /** 仅移除当前用户并清空会话（仍保留群与他人数据可供扩展；此处等同删除会话记录） */
+  async leaveGroupChat(groupId: string, playerIdentityId: string): Promise<void> {
+    await this.deleteGroupChat(groupId, playerIdentityId)
   }
 }
 

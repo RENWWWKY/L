@@ -1,6 +1,10 @@
 import { useCallback, useMemo, useRef } from 'react'
 
 import type { WeChatBubbleTheme } from '../../../types'
+import {
+  ChatGroupSenderNicknameWithRank,
+  ChatGroupSpeakerRankOnAvatar,
+} from '../group/ChatGroupSpeakerAvatarWrap'
 import { useLongPress } from '../hooks/useWeChatLongPress'
 import { RedPacketBubble, type RedPacketBubbleData } from './RedPacketBubble'
 
@@ -13,6 +17,10 @@ type Props = {
   showAvatarColumn: boolean
   chatSelfAvatarUrl?: string
   chatOtherAvatarUrl?: string
+  chatOtherSenderNickname?: string
+  chatOtherAvatarRankBadge?: 'owner' | 'admin' | null
+  chatSelfAvatarRankBadge?: 'owner' | 'admin' | null
+  groupRankShowBesideNickname?: boolean
   selected?: boolean
   onOpen: () => void
   onLongPress?: (anchorRect: DOMRect) => void
@@ -30,6 +38,10 @@ export function RedPacketChatRow({
   showAvatarColumn,
   chatSelfAvatarUrl,
   chatOtherAvatarUrl,
+  chatOtherSenderNickname,
+  chatOtherAvatarRankBadge = null,
+  chatSelfAvatarRankBadge = null,
+  groupRankShowBesideNickname = true,
   selected = false,
   onOpen,
   onLongPress,
@@ -97,17 +109,116 @@ export function RedPacketChatRow({
   const reserveAvatarGutter = showAvatar
   const selfChatAvatarSrc = isSelf ? (chatSelfAvatarUrl?.trim() ?? '') : ''
   const otherChatAvatarSrc = !isSelf ? (chatOtherAvatarUrl?.trim() ?? '') : ''
+  const rankBeside = groupRankShowBesideNickname !== false
 
   if (!isSelf) {
     return (
-      <div className="w-[100vw] max-w-[100vw] shrink-0 overflow-x-hidden" data-wx-msg-id={_id}>
+      <div className="w-[100vw] max-w-[100vw] shrink-0 overflow-x-visible" data-wx-msg-id={_id}>
         {!showAvatar ? (
           <div className="ml-[24px] mr-auto min-w-0">{packetBlock}</div>
         ) : showAvatarVisual ? (
           <div className="ml-[24px] mr-auto flex max-w-full flex-row items-start gap-[12px]">
-            {otherChatAvatarSrc ? (
+            {rankBeside || !chatOtherAvatarRankBadge ? (
+              otherChatAvatarSrc ? (
+                <img
+                  src={otherChatAvatarSrc}
+                  alt=""
+                  width={avatarPx}
+                  height={avatarPx}
+                  className="h-10 w-10 shrink-0 object-cover"
+                  style={{
+                    borderRadius: `${bubble.avatarRadiusPx}px`,
+                    border: '1px solid color-mix(in oklab, var(--wx-border) 70%, transparent)',
+                  }}
+                  aria-hidden
+                />
+              ) : (
+                <div
+                  className="h-10 w-10 shrink-0"
+                  style={{
+                    borderRadius: `${bubble.avatarRadiusPx}px`,
+                    background: 'rgba(0,0,0,0.06)',
+                    border: '1px solid color-mix(in oklab, var(--wx-border) 70%, transparent)',
+                  }}
+                  aria-hidden
+                />
+              )
+            ) : (
+              <ChatGroupSpeakerRankOnAvatar rankBadge={chatOtherAvatarRankBadge}>
+                {otherChatAvatarSrc ? (
+                  <img
+                    src={otherChatAvatarSrc}
+                    alt=""
+                    width={avatarPx}
+                    height={avatarPx}
+                    className="h-10 w-10 shrink-0 object-cover"
+                    style={{
+                      borderRadius: `${bubble.avatarRadiusPx}px`,
+                      border: '1px solid color-mix(in oklab, var(--wx-border) 70%, transparent)',
+                    }}
+                    aria-hidden
+                  />
+                ) : (
+                  <div
+                    className="h-10 w-10 shrink-0"
+                    style={{
+                      borderRadius: `${bubble.avatarRadiusPx}px`,
+                      background: 'rgba(0,0,0,0.06)',
+                      border: '1px solid color-mix(in oklab, var(--wx-border) 70%, transparent)',
+                    }}
+                    aria-hidden
+                  />
+                )}
+              </ChatGroupSpeakerRankOnAvatar>
+            )}
+            <div className="flex min-w-0 flex-1 flex-col items-start gap-[3px]">
+              {rankBeside ? (
+                <ChatGroupSenderNicknameWithRank nickname={chatOtherSenderNickname} rankBadge={chatOtherAvatarRankBadge ?? null} />
+              ) : chatOtherSenderNickname?.trim() ? (
+                <span
+                  className="max-w-[min(200px,calc(100vw-24px-24px-40px-12px))] truncate text-[11px] leading-snug"
+                  style={{ color: 'var(--wx-text-muted, #888)' }}
+                >
+                  {chatOtherSenderNickname.trim()}
+                </span>
+              ) : null}
+              {packetBlock}
+            </div>
+          </div>
+        ) : reserveAvatarGutter ? (
+          <div className="ml-[24px] mr-auto flex max-w-full flex-row items-start gap-[12px]">
+            {rankBeside || !chatOtherAvatarRankBadge ? (
+              <div className="h-10 w-10 shrink-0" aria-hidden />
+            ) : (
+              <ChatGroupSpeakerRankOnAvatar rankBadge={chatOtherAvatarRankBadge}>
+                <div className="h-10 w-10 shrink-0" aria-hidden />
+              </ChatGroupSpeakerRankOnAvatar>
+            )}
+            <div className="flex min-w-0 flex-1 flex-col items-start gap-[3px]">
+              {rankBeside ? (
+                <ChatGroupSenderNicknameWithRank nickname={chatOtherSenderNickname} rankBadge={chatOtherAvatarRankBadge ?? null} />
+              ) : null}
+              {packetBlock}
+            </div>
+          </div>
+        ) : (
+          <div className="ml-[24px] mr-auto min-w-0">{packetBlock}</div>
+        )}
+      </div>
+    )
+  }
+
+  return (
+    <div className="flex w-[100vw] max-w-[100vw] shrink-0 items-end justify-end gap-[4px] overflow-x-visible" data-wx-msg-id={_id}>
+      {!showAvatar ? (
+        <div className="mr-[24px] ml-auto min-w-0">{packetBlock}</div>
+      ) : showAvatarVisual ? (
+        <div className="mr-[24px] ml-auto flex max-w-full flex-row items-start gap-[12px]">
+          {packetBlock}
+          {rankBeside || !chatSelfAvatarRankBadge ? (
+            selfChatAvatarSrc ? (
               <img
-                src={otherChatAvatarSrc}
+                src={selfChatAvatarSrc}
                 alt=""
                 width={avatarPx}
                 height={avatarPx}
@@ -123,61 +234,49 @@ export function RedPacketChatRow({
                 className="h-10 w-10 shrink-0"
                 style={{
                   borderRadius: `${bubble.avatarRadiusPx}px`,
-                  background: 'rgba(0,0,0,0.06)',
-                  border: '1px solid color-mix(in oklab, var(--wx-border) 70%, transparent)',
+                  background: 'rgba(0,0,0,0.04)',
                 }}
                 aria-hidden
               />
-            )}
-            {packetBlock}
-          </div>
-        ) : reserveAvatarGutter ? (
-          <div className="ml-[24px] mr-auto flex max-w-full flex-row items-start gap-[12px]">
-            <div className="h-10 w-10 shrink-0" aria-hidden />
-            {packetBlock}
-          </div>
-        ) : (
-          <div className="ml-[24px] mr-auto min-w-0">{packetBlock}</div>
-        )}
-      </div>
-    )
-  }
-
-  return (
-    <div className="flex w-[100vw] max-w-[100vw] shrink-0 items-end justify-end gap-[4px] overflow-x-hidden" data-wx-msg-id={_id}>
-      {!showAvatar ? (
-        <div className="mr-[24px] ml-auto min-w-0">{packetBlock}</div>
-      ) : showAvatarVisual ? (
-        <div className="mr-[24px] ml-auto flex max-w-full flex-row items-start gap-[12px]">
-          {packetBlock}
-          {selfChatAvatarSrc ? (
-            <img
-              src={selfChatAvatarSrc}
-              alt=""
-              width={avatarPx}
-              height={avatarPx}
-              className="h-10 w-10 shrink-0 object-cover"
-              style={{
-                borderRadius: `${bubble.avatarRadiusPx}px`,
-                border: '1px solid color-mix(in oklab, var(--wx-border) 70%, transparent)',
-              }}
-              aria-hidden
-            />
+            )
           ) : (
-            <div
-              className="h-10 w-10 shrink-0"
-              style={{
-                borderRadius: `${bubble.avatarRadiusPx}px`,
-                background: 'rgba(0,0,0,0.04)',
-              }}
-              aria-hidden
-            />
+            <ChatGroupSpeakerRankOnAvatar rankBadge={chatSelfAvatarRankBadge}>
+              {selfChatAvatarSrc ? (
+                <img
+                  src={selfChatAvatarSrc}
+                  alt=""
+                  width={avatarPx}
+                  height={avatarPx}
+                  className="h-10 w-10 shrink-0 object-cover"
+                  style={{
+                    borderRadius: `${bubble.avatarRadiusPx}px`,
+                    border: '1px solid color-mix(in oklab, var(--wx-border) 70%, transparent)',
+                  }}
+                  aria-hidden
+                />
+              ) : (
+                <div
+                  className="h-10 w-10 shrink-0"
+                  style={{
+                    borderRadius: `${bubble.avatarRadiusPx}px`,
+                    background: 'rgba(0,0,0,0.04)',
+                  }}
+                  aria-hidden
+                />
+              )}
+            </ChatGroupSpeakerRankOnAvatar>
           )}
         </div>
       ) : reserveAvatarGutter ? (
         <div className="mr-[24px] ml-auto flex max-w-full flex-row items-start gap-[12px]">
           {packetBlock}
-          <div className="h-10 w-10 shrink-0" aria-hidden />
+          {rankBeside || !chatSelfAvatarRankBadge ? (
+            <div className="h-10 w-10 shrink-0" aria-hidden />
+          ) : (
+            <ChatGroupSpeakerRankOnAvatar rankBadge={chatSelfAvatarRankBadge}>
+              <div className="h-10 w-10 shrink-0" aria-hidden />
+            </ChatGroupSpeakerRankOnAvatar>
+          )}
         </div>
       ) : (
         <div className="mr-[24px] ml-auto min-w-0">{packetBlock}</div>

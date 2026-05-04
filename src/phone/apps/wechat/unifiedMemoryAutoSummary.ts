@@ -1,6 +1,17 @@
 import type { ApiConfig } from '../api/types'
+import { findGroupMember } from './groupChatUtils'
 import { personaDb, pullPhoneKvWithLocalStorageLegacy } from './newFriendsPersona/idb'
-import { requestUnifiedMemorySummary, type ChatTranscriptTurn } from './wechatChatAi'
+import type { GroupChatRow, GroupMember, WeChatChatMessage } from './newFriendsPersona/types'
+import {
+  requestGroupChatMemorySummary,
+  requestUnifiedMemorySummary,
+  type ChatTranscriptTurn,
+} from './wechatChatAi'
+import {
+  groupMemoryBucketCharacterId,
+  WECHAT_GROUP_BOT_CHARACTER_ID,
+  WECHAT_GROUP_USER_CHAR_ID,
+} from './wechatConversationKey'
 
 const DATING_ARCHIVES_KV = 'wechat-dating-archives-v1'
 
@@ -153,5 +164,166 @@ export async function runUnifiedAutoMemorySummaryAfterThreshold(params: {
     if (maxPlotTs > 0) {
       await personaDb.setDatingPlotSummaryCursor(cid, maxPlotTs)
     }
+  }
+}
+
+function buildGroupArchiveText(group: GroupChatRow | null): string {
+  if (!group) return ''
+  const lines: string[] = []
+  lines.push(`群名：${group.name.trim() || '群聊'}`)
+  const userGn = group.members.find((m) => m.charId === WECHAT_GROUP_USER_CHAR_ID)?.groupNickname?.trim()
+  if (userGn) lines.push(`用户在本群的昵称：${userGn}`)
+  const roleLabel = (r: GroupMember['role']) =>
+    r === 'owner' ? '群主' : r === 'admin' ? '管理员' : '成员'
+  const roster = group.members
+    .map((m) => {
+      const rl = roleLabel(m.role)
+      const mute = m.isMuted ? '（禁言中）' : ''
+      return `${(m.groupNickname || m.charId).trim()}（${rl}）${mute}`
+    })
+    .join('；')
+  lines.push(`成员与身份：${roster}`)
+  const ann = (group.announcement ?? '').trim()
+  if (ann) {
+    lines.push(`群公告：${ann.slice(0, 400)}${ann.length > 400 ? '…' : ''}`)
+  }
+  const muted = group.members.filter(
+    (m) => m.isMuted && m.charId.trim() !== WECHAT_GROUP_USER_CHAR_ID,
+  )
+  if (muted.length) {
+    lines.push(`当前被禁言的成员（不含系统占位）：${muted.map((m) => m.groupNickname).join('、')}`)
+  }
+  return lines.join('\n')
+}
+
+function chunkMessagesToGroupTranscript(
+  chunkMessages: WeChatChatMessage[],
+  group: GroupChatRow | null,
+): ChatTranscriptTurn[] {
+  const out: ChatTranscriptTurn[] = []
+  for (const m of chunkMessages) {
+    const fromSelf = m.type === 'player'
+    let speakerLabel: string | undefined
+    if (!fromSelf) {
+      const cid = m.characterId.trim()
+      if (cid === WECHAT_GROUP_BOT_CHARACTER_ID) speakerLabel = '群管家'
+      else if (group) {
+        const mem = findGroupMember(group, cid)
+        speakerLabel = mem?.groupNickname?.trim() || cid.slice(0, 12)
+      }
+    }
+    let text = String(m.content || '').trim()
+    const ext = (m as { ext?: { mutedMessageVisibleToModeratorsOnly?: boolean } }).ext
+    if (ext?.mutedMessageVisibleToModeratorsOnly === true) {
+      const who = fromSelf ? '我' : speakerLabel || '群成员'
+      text = `（${who}在禁言期间尝试发言；群内未展示原文）`
+    } else if (m.isRecalled) {
+      const who = fromSelf ? '我' : speakerLabel || '群成员'
+      text = `（${who}撤回了一条消息）`
+    } else if (m.voice) {
+      const vt = m.voice.transcriptText?.trim() || text || '（语音）'
+      const emo = m.voice.emotionLabel?.trim()
+      text = emo ? `（语音，情绪：${emo}）${vt}` : `（语音）${vt}`
+    } else if (m.images?.length && !text) {
+      text = '（发送了图片）'
+    } else if (m.redPacket) {
+      if (!text) text = `（红包，约 ¥${m.redPacket.amountYuan}）`
+    } else if (m.transfer && !text) {
+      text = '（转账）'
+    }
+    if (!text) continue
+    out.push({ id: m.id, from: fromSelf ? 'self' : 'other', text, speakerLabel })
+  }
+  return out
+}
+
+/**
+ * 群聊：在达到自动总结阈值后调用（与私聊共用 `bumpMemoryAiRoundCount` / 会话游标）。
+ * 将未游标群消息与当前群成员/禁言等快照合并总结，并为每位**真实角色成员**各写入一条相同内容的长期记忆（便于在记忆管理页按联系人查看）。
+ */
+export async function runGroupChatMemorySummaryAfterThreshold(params: {
+  apiConfig: ApiConfig | null
+  conversationKey: string
+  groupId: string
+  playerIdentityId: string
+}): Promise<void> {
+  const gid = params.groupId.trim()
+  const ck = params.conversationKey.trim()
+  const pid = params.playerIdentityId.trim()
+  if (!gid || !ck) return
+
+  const group = await personaDb.getGroupChat(gid)
+  if (group && group.playerIdentityId.trim() && pid && group.playerIdentityId.trim() !== pid) {
+    await personaDb.rollbackMemoryAiRoundCountForRetry(ck)
+    return
+  }
+
+  const cursorTs = await personaDb.getMemorySummaryCursorTimestamp(ck)
+  const fromTs = (cursorTs ?? 0) + 1
+  const chunkMessages = await personaDb.listWeChatChatMessagesFromTimestampAsc({
+    conversationKey: ck,
+    fromTimestampInclusive: fromTs,
+    limit: 500,
+  })
+
+  const onlineTranscript = chunkMessagesToGroupTranscript(chunkMessages, group)
+  const archiveBlock = buildGroupArchiveText(group)
+
+  const hadOnline = onlineTranscript.length > 0
+  const hadArchive = archiveBlock.trim().length > 0
+  if (!hadOnline && !hadArchive) {
+    await personaDb.rollbackMemoryAiRoundCountForRetry(ck)
+    return
+  }
+
+  const summary = await requestGroupChatMemorySummary({
+    apiConfig: params.apiConfig,
+    onlineTranscript,
+    groupArchiveBlock: hadArchive ? archiveBlock : '',
+  })
+
+  let trimmed = summary.trim().slice(0, 2000)
+  if (!trimmed) {
+    await personaDb.rollbackMemoryAiRoundCountForRetry(ck)
+    return
+  }
+
+  const tagPrefix =
+    `${hadOnline ? '[线上]' : ''}${hadArchive ? '[群聊]' : ''}${hadOnline || hadArchive ? ' ' : ''}`
+  trimmed = tagPrefix + trimmed
+
+  const memoryTargets =
+    group?.members
+      .map((m) => m.charId.trim())
+      .filter(
+        (cid) =>
+          cid &&
+          cid !== WECHAT_GROUP_USER_CHAR_ID &&
+          cid !== WECHAT_GROUP_BOT_CHARACTER_ID,
+      ) ?? []
+
+  const now = Date.now()
+  if (memoryTargets.length) {
+    await personaDb.upsertCharacterMemory({
+      id: `mem-g-${gid}-${now}-${Math.random().toString(36).slice(2, 9)}`,
+      characterId: groupMemoryBucketCharacterId(gid),
+      content: trimmed,
+      createdAt: now,
+      updatedAt: now,
+      isAutoGenerated: true,
+      memoryScope: 'group',
+      groupId: gid,
+      involvedCharIds: [...memoryTargets],
+    })
+  }
+
+  if (hadOnline && chunkMessages.length) {
+    const latestTs = chunkMessages[chunkMessages.length - 1]!.timestamp
+    if (typeof latestTs === 'number' && Number.isFinite(latestTs)) {
+      await personaDb.setMemorySummaryCursorTimestamp(ck, latestTs)
+    }
+  } else if (!hadOnline && hadArchive) {
+    // 仅群档案、无新消息游标时仍须推进，否则会反复触发同一段总结
+    await personaDb.setMemorySummaryCursorTimestamp(ck, Date.now())
   }
 }

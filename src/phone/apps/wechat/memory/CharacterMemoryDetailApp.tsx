@@ -96,13 +96,15 @@ export function CharacterMemoryDetailApp({
 
   const [deleteTarget, setDeleteTarget] = useState<CharacterMemory | null>(null)
 
-  const reload = useCallback(async () => {
-    setLoading(true)
+  const reload = useCallback(async (options?: { silent?: boolean }) => {
+    const silent = options?.silent === true
+    if (!silent) setLoading(true)
     try {
-      const [mems, ch] = await Promise.all([
+      const [memsRaw, ch] = await Promise.all([
         personaDb.listCharacterMemoriesForCharacter(characterId),
         personaDb.getCharacter(characterId),
       ])
+      const mems = memsRaw.filter((m) => m.memoryScope !== 'group')
       setList(mems)
 
       if (titleRemark?.trim()) {
@@ -115,7 +117,7 @@ export function CharacterMemoryDetailApp({
         setDisplayName('角色')
       }
     } finally {
-      setLoading(false)
+      if (!silent) setLoading(false)
     }
   }, [characterId, titleRemark])
 
@@ -124,7 +126,7 @@ export function CharacterMemoryDetailApp({
   }, [reload])
 
   useEffect(() => {
-    const onEvt = () => void reload()
+    const onEvt = () => void reload({ silent: true })
     window.addEventListener('wechat-storage-changed', onEvt)
     return () => window.removeEventListener('wechat-storage-changed', onEvt)
   }, [reload])
@@ -165,14 +167,14 @@ export function CharacterMemoryDetailApp({
       })
     }
     setEditOpen(false)
-    await reload()
+    await reload({ silent: true })
   }
 
   const confirmDelete = async () => {
     if (!deleteTarget) return
     await personaDb.deleteCharacterMemory(deleteTarget.id)
     setDeleteTarget(null)
-    await reload()
+    await reload({ silent: true })
   }
 
   const title = displayName ? `${displayName}的记忆` : '记忆'

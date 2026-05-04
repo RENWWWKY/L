@@ -252,9 +252,51 @@ export function getStickerCatalogEntries(): StickerCatalogEntry[] {
  * 将模型输出的 `[表情包]` 行载荷解析为资源库中的真实 url。
  * 优先支持「引用名」（与《表情包资源》中 ref 一致）；兼容旧版完整 URL / Phone 路径等。
  */
+function stripLeadingStickerLabelGarbage(s: string): string {
+  let t = s.trim()
+  for (let k = 0; k < 4; k += 1) {
+    const next = t
+      // 常见误写：emoji： / emoji: / 全角冒号 U+FF1A、兼容 U+FE55 U+2236
+      .replace(/^(?:emoji|emotes?|stickers?)\s*[:：﹕∶]\s*/i, '')
+      .replace(/^(?:表情|表情包)\s*[:：﹕∶]\s*/, '')
+      .trim()
+    if (next === t) break
+    t = next
+  }
+  return t
+}
+
+/**
+ * 模型可能用非常规冒号（不在 [:：﹕∶] 里）写「emoji︰爷…」，正则剥不掉；从首汉字起截断可恢复资源库匹配。
+ * 仅处理 emoji / sticker 前缀，避免误伤以「emotion…」开头的合法引用名。
+ */
+function stripLatinLabelNoiseBeforeFirstHan(s: string): string {
+  const t = s.trim()
+  if (!t) return t
+  if (!/^emoji/i.test(t) && !/^sticker/i.test(t)) return t
+  const i = t.search(/[\u4E00-\u9FFF]/)
+  if (i <= 0) return t
+  return t.slice(i).trim()
+}
+
+/** 目录名与模型输出：NFKC、去零宽、统一括号形态，减少「只错一张」的字符级不一致 */
+function normalizeStickerLabel(s: string): string {
+  return s
+    .normalize('NFKC')
+    .replace(/[\u200B-\u200D\uFEFF]/g, '')
+    .replace(/\(/g, '（')
+    .replace(/\)/g, '）')
+    .replace(/\s+/g, ' ')
+    .trim()
+}
+
 export function resolveStickerOutputRef(rawInput: string): string | null {
   let ref = String(rawInput ?? '').trim().replace(/^['"`「」]+|['"`」]+$/g, '').trim()
-  ref = ref.replace(/[，。！？!?,、；;:：）\])》】]+$/g, '').trim()
+  ref = ref.normalize('NFKC')
+  ref = stripLeadingStickerLabelGarbage(ref)
+  ref = stripLatinLabelNoiseBeforeFirstHan(ref)
+  // 去掉模型缀在**末尾**的句号等。**不要**去掉结尾的「）」——引用名里常有「（无语流汗）」一类括号，误删会导致永远匹配不到目录
+  ref = ref.replace(/[，。！？!?,、；;:：》】]+$/g, '').trim()
   if (!ref) return null
 
   const urlHit = resolveKnownStickerUrl(ref)
@@ -273,11 +315,28 @@ export function resolveStickerOutputRef(rawInput: string): string | null {
   for (const e of entries) {
     if (e.description === ref || e.description === decoded) return e.url
   }
+
+  const normRef = normalizeStickerLabel(ref)
+  const normDecoded = normalizeStickerLabel(decoded)
+  for (const e of entries) {
+    const nr = normalizeStickerLabel(e.ref)
+    if (nr && (nr === normRef || nr === normDecoded)) return e.url
+  }
+  for (const e of entries) {
+    const nd = normalizeStickerLabel(e.description)
+    if (nd && (nd === normRef || nd === normDecoded)) return e.url
+  }
+
   const slash = ref.indexOf('/')
   if (slash > 0) {
     const gname = ref.slice(0, slash).trim()
     const d = ref.slice(slash + 1).trim()
-    const hit = entries.find((e) => e.groupName === gname && e.description === d)
+    const hit = entries.find(
+      (e) =>
+        (e.groupName === gname && e.description === d) ||
+        (normalizeStickerLabel(e.groupName) === normalizeStickerLabel(gname) &&
+          normalizeStickerLabel(e.description) === normalizeStickerLabel(d)),
+    )
     if (hit) return hit.url
   }
 

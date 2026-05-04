@@ -14,6 +14,7 @@ import type {
 import { personaDb } from '../newFriendsPersona/idb'
 import { ChatTimeSettingsScreen } from './ChatTimeSettingsScreen'
 import { ChatFindChatHistoryScreen } from './ChatFindChatHistoryScreen'
+import { CreateGroupPickContactsSheet, type CreateGroupContactPick } from '../group/CreateGroupPickContactsSheet'
 
 function WxSwitch({ on, onToggle }: { on: boolean; onToggle: () => void }) {
   return (
@@ -90,15 +91,16 @@ export type ChatSettingsScreenProps = {
   peerAvatarUrl?: string
   /** 打开「人设编辑」时使用的角色 id；Lumi 未绑人设时为 null */
   personaEditTargetId: string | null
-  /** 通讯录人设（用于邀请群聊多选） */
-  personaContacts: Array<{ characterId: string; remarkName: string; avatarUrl?: string }>
   onClose: () => void
   onOpenPersonaEdit: (characterId: string) => void
-  onOpenGroupChat: (groupId: string) => void
   /** 查找聊天记录：定位到消息后关闭设置并回聊天页 */
   onJumpToChatMessage: (messageId: string) => void
   /** 点击对方头像进入联系人资料卡 */
   onOpenPeerProfile?: () => void
+  /** 非空时展示「发起群聊」入口：与当前私聊对象一并拉群 */
+  inviteGroupFromPeerCharacterId?: string | null
+  personaContactsForGroup?: CreateGroupContactPick[]
+  onInviteCreateGroup?: (extraCharacterIds: string[]) => void | Promise<void>
 }
 
 export function ChatSettingsScreen({
@@ -108,12 +110,13 @@ export function ChatSettingsScreen({
   peerDisplayName,
   peerAvatarUrl,
   personaEditTargetId,
-  personaContacts,
   onClose,
   onOpenPersonaEdit,
-  onOpenGroupChat,
   onJumpToChatMessage,
   onOpenPeerProfile,
+  inviteGroupFromPeerCharacterId = null,
+  personaContactsForGroup = [],
+  onInviteCreateGroup,
 }: ChatSettingsScreenProps) {
   const { state } = useCustomization()
   const disableTransitions = state.ui.disablePageTransitions
@@ -127,10 +130,12 @@ export function ChatSettingsScreen({
   const [chatBgDraft, setChatBgDraft] = useState('')
   const [chatBgCropSrc, setChatBgCropSrc] = useState<string | null>(null)
   const [timeSettingsOpen, setTimeSettingsOpen] = useState(false)
-  const [inviteOpen, setInviteOpen] = useState(false)
   const [clearOpen, setClearOpen] = useState(false)
-  const [selectedInvite, setSelectedInvite] = useState<Set<string>>(() => new Set())
+  const [inviteGroupOpen, setInviteGroupOpen] = useState(false)
   const chatBgFileRef = useRef<HTMLInputElement | null>(null)
+
+  const peerForInvite = inviteGroupFromPeerCharacterId?.trim() || ''
+  const canInviteToGroup = !!peerForInvite && !!onInviteCreateGroup && personaContactsForGroup.length > 0
 
   const load = useCallback(async () => {
     const [row, nextGs] = await Promise.all([personaDb.getChatConversationSettings(conversationKey), personaDb.getGlobalSettings()])
@@ -170,6 +175,8 @@ export function ChatSettingsScreen({
       notifyEnabled: true,
       showThinkingChain: false,
       isDanmakuMode: false,
+      showGroupMemberNicknameInChat: true,
+      showGroupRankBadgesInChat: false,
       chatBackground: '',
       lastMessageTime: 0,
     }),
@@ -260,48 +267,6 @@ export function ChatSettingsScreen({
     })
     await load()
   }, [conversationKey, peerCharacterId, playerIdentityId, effective.isPinned, load])
-
-  const inviteCandidates = useMemo(
-    () => personaContacts.filter((c) => c.characterId !== peerCharacterId),
-    [personaContacts, peerCharacterId],
-  )
-
-  const toggleInvite = (id: string) => {
-    setSelectedInvite((prev) => {
-      const next = new Set(prev)
-      if (next.has(id)) next.delete(id)
-      else next.add(id)
-      return next
-    })
-  }
-
-  const createGroup = async () => {
-    const extra = Array.from(selectedInvite)
-    if (extra.length === 0) {
-      window.alert('请至少选择一位联系人')
-      return
-    }
-    const memberIds = [peerCharacterId, ...extra]
-    const names = [
-      peerDisplayName,
-      ...extra.map((id) => personaContacts.find((c) => c.characterId === id)?.remarkName || id),
-    ]
-    const name = names.slice(0, 3).join('、') + (names.length > 3 ? '…' : '')
-    const id = `grp-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
-    const now = Date.now()
-    await personaDb.putGroupChat({
-      id,
-      name: name || '群聊',
-      avatar: '',
-      memberIds,
-      createdAt: now,
-      updatedAt: now,
-    })
-    setInviteOpen(false)
-    setSelectedInvite(new Set())
-    onClose()
-    onOpenGroupChat(id)
-  }
 
   useEffect(() => {
     if (stub !== 'chat-bg') return
@@ -476,7 +441,7 @@ export function ChatSettingsScreen({
       </header>
 
       <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain [scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden">
-        {/* 顶部群聊邀请区 */}
+        {/* 聊天对象 */}
         <div
           className="mx-4 mt-4 rounded-[12px] bg-white px-5 py-5"
           style={{ boxShadow: '0 1px 3px rgba(0,0,0,0.06)' }}
@@ -518,25 +483,21 @@ export function ChatSettingsScreen({
                 </>
               )}
             </div>
-
-            <button
-              type="button"
-              className="flex w-[60px] shrink-0 flex-col items-center border-0 bg-transparent p-0"
-              onClick={() => {
-                setSelectedInvite(new Set())
-                setInviteOpen(true)
-              }}
-            >
-              <div
-                className="flex h-[60px] w-[60px] shrink-0 items-center justify-center rounded-full border border-dashed bg-white"
-                style={{ borderColor: '#c7c7cc' }}
-              >
-                <Plus className="size-6 text-[#8e8e8e]" strokeWidth={2} />
+            {canInviteToGroup ? (
+              <div className="flex w-[60px] shrink-0 flex-col items-center">
+                <Pressable
+                  type="button"
+                  aria-label="发起群聊"
+                  onClick={() => setInviteGroupOpen(true)}
+                  className="flex h-[60px] w-[60px] shrink-0 items-center justify-center rounded-[12px] border border-dashed border-[#9CA3AF] bg-white text-[#111827]"
+                >
+                  <Plus className="size-6" strokeWidth={2} aria-hidden />
+                </Pressable>
+                <p className="mt-1 line-clamp-2 text-center text-[12px] text-[#9CA3AF]" style={{ marginTop: 4 }}>
+                  发起群聊
+                </p>
               </div>
-              <p className="text-center text-[12px] text-[#8e8e8e]" style={{ marginTop: 4 }}>
-                邀请
-              </p>
-            </button>
+            ) : null}
           </div>
         </div>
 
@@ -619,77 +580,6 @@ export function ChatSettingsScreen({
         onClose={() => setTimeSettingsOpen(false)}
       />
 
-      {/* 底部邀请面板 */}
-      {inviteOpen ? (
-        <div className="fixed inset-0 z-[300] flex flex-col justify-end bg-black/40" role="presentation">
-          <Pressable
-            type="button"
-            aria-label="关闭"
-            className="min-h-0 flex-1"
-            onClick={() => setInviteOpen(false)}
-          >
-            {null}
-          </Pressable>
-          <motion.div
-            initial={disableTransitions ? false : { y: '100%' }}
-            animate={{ y: 0 }}
-            transition={disableTransitions ? { duration: 0 } : { duration: 0.28, ease: [0.22, 1, 0.36, 1] }}
-            className="max-h-[72vh] overflow-hidden rounded-t-[16px] bg-white"
-            style={{ paddingBottom: 'max(16px, env(safe-area-inset-bottom, 0px))' }}
-          >
-            <div className="border-b border-[#f2f2f7] px-4 py-3">
-              <p className="text-center text-[16px] font-semibold text-black">选择联系人</p>
-            </div>
-            <div className="max-h-[48vh] overflow-y-auto px-2 py-2">
-              {inviteCandidates.length === 0 ? (
-                <p className="px-3 py-6 text-center text-[14px] text-[#8e8e8e]">暂无可选角色，请先在「新的朋友」创建并同步到通讯录</p>
-              ) : (
-                inviteCandidates.map((c) => {
-                  const checked = selectedInvite.has(c.characterId)
-                  return (
-                    <Pressable
-                      key={c.characterId}
-                      type="button"
-                      onClick={() => toggleInvite(c.characterId)}
-                      className="flex w-full items-center gap-3 rounded-xl px-3 py-3 text-left"
-                    >
-                      <span
-                        className="flex h-6 w-6 shrink-0 items-center justify-center rounded border"
-                        style={{
-                          borderColor: '#c7c7cc',
-                          background: checked ? '#000000' : '#ffffff',
-                        }}
-                        aria-hidden
-                      >
-                        {checked ? <span className="text-[12px] text-white">✓</span> : null}
-                      </span>
-                      <div
-                        className="h-10 w-10 shrink-0 overflow-hidden rounded-full border bg-[#f2f2f7]"
-                        style={{ borderColor: '#e5e5e5' }}
-                      >
-                        {c.avatarUrl?.trim() ? (
-                          <img src={c.avatarUrl} alt="" className="h-full w-full object-cover" />
-                        ) : null}
-                      </div>
-                      <span className="min-w-0 flex-1 truncate text-[16px] text-black">{c.remarkName}</span>
-                    </Pressable>
-                  )
-                })
-              )}
-            </div>
-            <div className="px-4 pt-2">
-              <Pressable
-                type="button"
-                onClick={() => void createGroup()}
-                className="flex w-full items-center justify-center rounded-xl bg-black py-3 text-[16px] font-medium text-white"
-              >
-                创建群聊
-              </Pressable>
-            </div>
-          </motion.div>
-        </div>
-      ) : null}
-
       {clearOpen ? (
         <div className="fixed inset-0 z-[400] flex items-center justify-center bg-black/45 px-6">
           <div className="w-full max-w-[320px] rounded-[14px] bg-white p-5">
@@ -717,6 +607,22 @@ export function ChatSettingsScreen({
               </button>
             </div>
           </div>
+        </div>
+      ) : null}
+
+      {inviteGroupOpen && canInviteToGroup ? (
+        <div className="absolute inset-0 z-[120] flex min-h-0 flex-col bg-[#FFFFFF]">
+          <CreateGroupPickContactsSheet
+            open
+            title="选择群成员"
+            lockedCharacterIds={[peerForInvite]}
+            contacts={personaContactsForGroup}
+            minExtraSelections={1}
+            onClose={() => setInviteGroupOpen(false)}
+            onConfirm={(extra) => {
+              void Promise.resolve(onInviteCreateGroup?.(extra)).finally(() => setInviteGroupOpen(false))
+            }}
+          />
         </div>
       ) : null}
 

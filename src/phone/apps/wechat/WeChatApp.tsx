@@ -1,5 +1,5 @@
 import { animate, AnimatePresence, motion, Reorder, useDragControls, useMotionValue } from 'framer-motion'
-import { BellOff, EyeOff, MoreHorizontal, Pin, PinOff, Trash2, CircleDot } from 'lucide-react'
+import { BellOff, EyeOff, MoreHorizontal, Pin, PinOff, Plus, Trash2, CircleDot } from 'lucide-react'
 import {
   useCallback,
   useEffect,
@@ -35,6 +35,9 @@ import { NewFriendsPersonaApp } from './newFriendsPersona/NewFriendsPersonaApp'
 import type { FriendRequest } from './newFriendsPersona/NewFriendsList'
 import { PlayerIdentityApp } from './playerIdentity/PlayerIdentityApp'
 import { ChatSettingsScreen } from './chatSettings/ChatSettingsScreen'
+import { CreateGroupPickContactsSheet } from './group/CreateGroupPickContactsSheet'
+import { ContactsGroupChatsScreen } from './group/ContactsGroupChatsScreen'
+import { GroupInfoScreen, createWeChatGroupAndSeedConversation } from './group/GroupInfoScreen'
 import { ContactProfileCardScreen } from './ContactProfileCardScreen'
 import { ContactProfileSettingsScreen } from './ContactProfileSettingsScreen'
 import { ContactComplaintScreen } from './ContactComplaintScreen'
@@ -49,13 +52,18 @@ import { WeChatProfileEditModal } from './WeChatProfileEditModal'
 import { ChatThemeProvider, useChatTheme } from './ChatThemeContext'
 import { WeChatConsoleFloatingPanel } from './WeChatConsoleFloatingPanel'
 import { WeChatConsoleProvider, useWeChatConsole } from './WeChatConsoleContext'
-import { CharacterMemoryDetailApp } from './memory/CharacterMemoryDetailApp'
 import { MemoryManagementApp } from './memory/MemoryManagementApp'
 import { emitWeChatStorageChanged, personaDb } from './newFriendsPersona/idb'
-import { WECHAT_LUMI_PEER_CHARACTER_ID, wechatConversationKey } from './wechatConversationKey'
+import { stripWechatGroupEventNoticePrefix } from './groupChatEventNotice'
+import {
+  WECHAT_LUMI_PEER_CHARACTER_ID,
+  wechatConversationKey,
+  wechatGroupConversationKey,
+  wechatGroupPeerCharacterId,
+} from './wechatConversationKey'
 import { WeChatMessageBubbleRow } from './WeChatMessageBubbleRow'
 import { WeChatForwardSelectChatScreen, type WeChatForwardMode } from './WeChatForwardSelectChatScreen'
-import type { WeChatChatMessage } from './newFriendsPersona/types'
+import type { GroupChatRow, WeChatChatMessage } from './newFriendsPersona/types'
 import { useMuteStatus } from './hooks/useMuteStatus'
 import { setWeChatForegroundConversationKey } from './wechatSystemNotify'
 import { useCurrentApiConfig } from '../api/ApiSettingsContext'
@@ -96,8 +104,8 @@ const WECHAT_APPEARANCE_GUIDE_SEEN_KEY = 'lumi-wechat-appearance-guide-seen-v1'
 
 type TabId = 'messages' | 'contacts' | 'dates' | 'discover' | 'profile'
 
-/** 当前打开的会话：Lumi 小助手，或通讯录中某个人设角色 */
-type WxActiveChat = { kind: 'lumi' } | { kind: 'persona'; characterId: string }
+/** 当前打开的会话：Lumi 小助手、私聊人设角色，或群聊 */
+type WxActiveChat = { kind: 'lumi' } | { kind: 'persona'; characterId: string } | { kind: 'group'; groupId: string }
 
 /** 红包详情导航载荷（与 ChatRoom.onNavigateRedPacketDetail 对齐） */
 type WxRedPacketDetailPayload = {
@@ -124,7 +132,8 @@ type WxRoute =
       returnToChat?: WxActiveChat
       source?: 'contacts' | 'profile'
     }
-  | { name: 'group-chat'; groupId: string }
+  /** 通讯录 → 群聊列表 */
+  | { name: 'contacts-group-chats' }
   | { name: 'player-identities' }
   | { name: 'wallet-cards' }
   | { name: 'wallet-transactions' }
@@ -135,7 +144,6 @@ type WxRoute =
   | { name: 'sticker-center' }
   | { name: 'affection-pay'; chat: WxActiveChat }
   | { name: 'memory-manage' }
-  | { name: 'memory-character'; characterId: string; titleRemark?: string }
   | {
       name: 'contact-profile'
       target: { kind: 'lumi' } | { kind: 'persona'; characterId: string }
@@ -493,6 +501,8 @@ function Header({
   titleTrailingInteractive = false,
   /** 聊天室：右上角为「当前聊天设置」（三点）；其它页为外观主题（太阳图标） */
   rightMode = 'appearance',
+  /** 若提供则替换右上角按钮（例如消息 Tab 的「+」） */
+  customRight,
   showAppearanceGuide = false,
   onDismissAppearanceGuide,
 }: {
@@ -512,6 +522,7 @@ function Header({
   titleTrailing?: ReactNode
   titleTrailingInteractive?: boolean
   rightMode?: 'appearance' | 'chat-room-settings'
+  customRight?: ReactNode
   showAppearanceGuide?: boolean
   onDismissAppearanceGuide?: () => void
 }) {
@@ -663,41 +674,45 @@ function Header({
       <div className="relative flex w-10 shrink-0 items-center justify-end">
         {showRight ? (
           <>
-            <Pressable
-              onClick={onOpenTheme}
-              className="relative z-[2] flex h-9 w-9 items-center justify-center rounded-full"
-              style={{ color: 'var(--wx-text)' }}
-              aria-label={rightMode === 'chat-room-settings' ? '当前聊天设置' : '外观与主题'}
-            >
-              {rightMode === 'chat-room-settings' ? (
-                <MoreHorizontal size={22} strokeWidth={2} aria-hidden />
-              ) : (
-                <svg
-                  width="19"
-                  height="19"
-                  viewBox="0 0 24 24"
-                  fill="none"
-                  stroke="currentColor"
-                  strokeWidth="1.35"
-                  strokeLinecap="round"
-                >
-                  <path d="M12 2v2.2" />
-                  <path d="M12 19.8V22" />
-                  <path d="M2 12h2.2" />
-                  <path d="M19.8 12H22" />
-                  <path d="M4.5 4.5l1.6 1.6" />
-                  <path d="M17.9 17.9l1.6 1.6" />
-                  <path d="M4.5 19.5l1.6-1.6" />
-                  <path d="M17.9 6.1l1.6-1.6" />
-                  <circle cx="12" cy="12" r="3.6" />
-                </svg>
-              )}
-            </Pressable>
-            {showAppearanceGuide && rightMode === 'appearance' ? (
+            {customRight ? (
+              <div className="relative z-[2] flex items-center justify-end">{customRight}</div>
+            ) : (
+              <Pressable
+                onClick={onOpenTheme}
+                className="relative z-[2] flex h-9 w-9 items-center justify-center rounded-full"
+                style={{ color: 'var(--wx-text)' }}
+                aria-label={rightMode === 'chat-room-settings' ? '当前聊天设置' : '外观与主题'}
+              >
+                {rightMode === 'chat-room-settings' ? (
+                  <MoreHorizontal size={22} strokeWidth={2} aria-hidden />
+                ) : (
+                  <svg
+                    width="19"
+                    height="19"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="1.35"
+                    strokeLinecap="round"
+                  >
+                    <path d="M12 2v2.2" />
+                    <path d="M12 19.8V22" />
+                    <path d="M2 12h2.2" />
+                    <path d="M19.8 12H22" />
+                    <path d="M4.5 4.5l1.6 1.6" />
+                    <path d="M17.9 17.9l1.6 1.6" />
+                    <path d="M4.5 19.5l1.6-1.6" />
+                    <path d="M17.9 6.1l1.6-1.6" />
+                    <circle cx="12" cy="12" r="3.6" />
+                  </svg>
+                )}
+              </Pressable>
+            )}
+            {showAppearanceGuide && rightMode === 'appearance' && !customRight ? (
               <>
                 <div
-                  className="pointer-events-none absolute right-0 top-0 z-[1] h-9 w-9 rounded-full border-2 border-[#D4AF37]"
-                  style={{ boxShadow: '0 0 0 6px rgba(212,175,55,0.22)' }}
+                  className="pointer-events-none absolute right-0 top-0 z-[1] h-9 w-9 rounded-full border-2 border-[#111827]"
+                  style={{ boxShadow: '0 0 0 4px rgba(17,24,39,0.12)' }}
                   aria-hidden
                 />
                 <div className="absolute right-0 top-full z-[3] mt-2 w-[190px] rounded-[12px] border bg-white/95 p-2.5 shadow-[0_10px_28px_rgba(0,0,0,0.18)]">
@@ -836,6 +851,19 @@ type MessagesThreadRow =
       conversationKey: string
       peerCharacterId: string
       characterId: string
+      isPinned: boolean
+      name: string
+      time: string
+      preview: string
+      avatarUrl?: string
+      unread: number
+    }
+  | {
+      key: string
+      kind: 'group'
+      groupId: string
+      conversationKey: string
+      peerCharacterId: string
       isPinned: boolean
       name: string
       time: string
@@ -1086,7 +1114,13 @@ function MessageThreadListItem({
               void animate(x, 0, MSG_THREAD_SWIPE_SPRING)
               return
             }
-            onOpenChat(t.kind === 'lumi' ? { kind: 'lumi' } : { kind: 'persona', characterId: t.characterId })
+            onOpenChat(
+              t.kind === 'lumi'
+                ? { kind: 'lumi' }
+                : t.kind === 'group'
+                  ? { kind: 'group', groupId: t.groupId }
+                  : { kind: 'persona', characterId: t.characterId },
+            )
           }}
           onContextMenu={(e) => e.preventDefault()}
           className={
@@ -1242,11 +1276,16 @@ function MessagesTab({
 
   const applyDeleteThread = useCallback(async () => {
     if (!deleteConfirmThread) return
-    await personaDb.deleteAllWeChatMessagesForConversation(deleteConfirmThread.conversationKey)
+    if (deleteConfirmThread.kind === 'group') {
+      const pid = playerIdentityId?.trim()
+      if (pid) await personaDb.leaveGroupChat(deleteConfirmThread.groupId, pid)
+    } else {
+      await personaDb.deleteAllWeChatMessagesForConversation(deleteConfirmThread.conversationKey)
+    }
     setDeleteConfirmThread(null)
     setSwipeOpenThreadKey(null)
     onListDataMutated()
-  }, [deleteConfirmThread, onListDataMutated])
+  }, [deleteConfirmThread, onListDataMutated, playerIdentityId])
 
   return (
     <div className="flex h-full min-h-0 w-full flex-1 flex-col overflow-hidden">
@@ -1404,7 +1443,7 @@ function MessagesTab({
             <div className="px-5 py-4">
               <h3 className="text-[17px] font-medium text-black">确认删除聊天？</h3>
               <p className="mt-2 text-[13px] leading-6 text-[#666666]">
-                将删除与「{deleteConfirmThread.name}」的全部聊天记录，且不可恢复。
+                {`将删除与「${deleteConfirmThread.name}」的全部聊天记录，且不可恢复。`}
               </p>
             </div>
             <div className="flex border-t border-[#e5e5e5]">
@@ -3317,6 +3356,9 @@ function WeChatAppInner({ onBack }: Props) {
   const [themeOpen, setThemeOpen] = useState(false)
   const [themePanelBoot, setThemePanelBoot] = useState<ThemePanelBoot>({})
   const [chatSettingsOpen, setChatSettingsOpen] = useState(false)
+  const [messagesPlusMenuOpen, setMessagesPlusMenuOpen] = useState(false)
+  const [newGroupFromMessagesOpen, setNewGroupFromMessagesOpen] = useState(false)
+  const [activeGroupRow, setActiveGroupRow] = useState<GroupChatRow | null>(null)
   const [wxGlobalNav, setWxGlobalNav] = useState<WxGlobalNavState>(null)
   const [showAppearanceGuide, setShowAppearanceGuide] = useState(false)
   const dismissAppearanceGuide = useCallback(() => {
@@ -3338,6 +3380,16 @@ function WeChatAppInner({ onBack }: Props) {
   const [chatOtherTyping, setChatOtherTyping] = useState(false)
   const newFriendsUnreadCount = useMemo(() => pendingNewFriendRequests.filter((x) => !!x.unread).length, [pendingNewFriendRequests])
 
+  const personaContactsForGroupPick = useMemo(
+    () =>
+      state.wechatPersonaContacts.map((c) => ({
+        characterId: c.characterId,
+        remarkName: c.remarkName,
+        avatarUrl: c.avatarUrl,
+      })),
+    [state.wechatPersonaContacts],
+  )
+
   useEffect(() => {
     if (typeof window === 'undefined') return
     try {
@@ -3354,6 +3406,17 @@ function WeChatAppInner({ onBack }: Props) {
     if (chat.kind === 'lumi') {
       return weChatMergedContacts?.find((c) => c.id === 'wechat-lumi-assistant') ?? WECHAT_LUMI_ASSISTANT_CONTACT
     }
+    if (chat.kind === 'group') {
+      const g = activeGroupRow
+      const count = g?.members.length ?? 0
+      const base = g ? g.remark.trim() || g.name : '群聊'
+      return {
+        id: `group-${chat.groupId}`,
+        remarkName: g ? `${base}（${count}）` : '群聊',
+        avatarUrl: g?.avatar?.trim() || undefined,
+        tag: undefined,
+      }
+    }
     const row = state.wechatPersonaContacts.find((c) => c.characterId === chat.characterId)
     if (!row) {
       return {
@@ -3363,7 +3426,21 @@ function WeChatAppInner({ onBack }: Props) {
       }
     }
     return { id: row.id, remarkName: row.remarkName, avatarUrl: row.avatarUrl }
-  }, [route, weChatMergedContacts, state.wechatPersonaContacts])
+  }, [route, activeGroupRow, weChatMergedContacts, state.wechatPersonaContacts])
+
+  useEffect(() => {
+    if (route.name !== 'chat' || route.chat.kind !== 'group') {
+      setActiveGroupRow(null)
+      return
+    }
+    let cancelled = false
+    void personaDb.getGroupChat(route.chat.groupId).then((g) => {
+      if (!cancelled) setActiveGroupRow(g)
+    })
+    return () => {
+      cancelled = true
+    }
+  }, [route])
 
   /** 转账页对方信息 */
   const lumiTransferPeer = useMemo(() => {
@@ -3414,6 +3491,7 @@ function WeChatAppInner({ onBack }: Props) {
   const activeConversationCharacterId = useMemo(() => {
     if (route.name !== 'chat') return null
     if (route.chat.kind === 'lumi') return WECHAT_LUMI_PEER_CHARACTER_ID
+    if (route.chat.kind === 'group') return wechatGroupPeerCharacterId(route.chat.groupId)
     return route.chat.characterId
   }, [route])
 
@@ -3424,6 +3502,7 @@ function WeChatAppInner({ onBack }: Props) {
 
   const chatRoomPersonaCharacterId = useMemo(() => {
     if (route.name !== 'chat') return null
+    if (route.chat.kind === 'group') return null
     if (route.chat.kind === 'persona') return route.chat.characterId
     return lumiBindingPersonaCharacterId
   }, [route, lumiBindingPersonaCharacterId])
@@ -3451,6 +3530,10 @@ function WeChatAppInner({ onBack }: Props) {
     if (!pid || pid === '__none__') return
     void personaDb.migrateWeChatDataFromNonePlayerIdentity(pid)
   }, [playerIdentityId])
+
+  useEffect(() => {
+    if (!(route.name === 'tabs' && route.tab === 'messages')) setMessagesPlusMenuOpen(false)
+  }, [route])
 
   const { isConversationMuted } = useMuteStatus(playerIdentityId)
 
@@ -3570,7 +3653,8 @@ function WeChatAppInner({ onBack }: Props) {
       const msgTs = last ? last.timestamp : 0
       const sortTs = Math.max(msgTs, st?.lastMessageTime ?? 0)
       if (last) {
-        preview = last.content.trim().slice(0, 48) + (last.content.length > 48 ? '…' : '')
+        const pc = stripWechatGroupEventNoticePrefix(last.content.trim())
+        preview = pc.slice(0, 48) + (pc.length > 48 ? '…' : '')
         const d = new Date(last.timestamp)
         time = `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`
       }
@@ -3616,7 +3700,50 @@ function WeChatAppInner({ onBack }: Props) {
       }),
     )
 
-    const pack: Array<MessagesThreadRow & { sortTs: number }> = [lumiRowData, ...personaRowsData]
+    const groups = await personaDb.listGroupChatsForPlayerIdentity(pid)
+    const groupRowsData: Array<MessagesThreadRow & { sortTs: number }> = await Promise.all(
+      groups.map(async (g) => {
+        const conversationKey = wechatGroupConversationKey(g.id, pid)
+        const peerCharacterId = wechatGroupPeerCharacterId(g.id)
+        const st = settingsByKey.get(conversationKey) ?? null
+        const isPinned = st?.isPinned ?? false
+        const unread = await personaDb.countUnreadWeChatCharacterMessages(conversationKey)
+        const recent = await personaDb.listWeChatChatMessagesRecent({ conversationKey, limit: 1 })
+        const last = recent[recent.length - 1]
+        let preview = '点击开始群聊'
+        let time = '—'
+        const msgTs = last ? last.timestamp : 0
+        const sortTs = Math.max(msgTs, st?.lastMessageTime ?? 0)
+        if (last) {
+          const pc = stripWechatGroupEventNoticePrefix(last.content.trim())
+          preview = pc.slice(0, 48) + (pc.length > 48 ? '…' : '')
+          const d = new Date(last.timestamp)
+          time = `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`
+        }
+        const listTitle = g.remark.trim() || g.name
+        const avatarUrl = g.avatar.trim() || undefined
+        return {
+          key: `group-${g.id}`,
+          kind: 'group' as const,
+          groupId: g.id,
+          conversationKey,
+          peerCharacterId,
+          isPinned,
+          name: listTitle,
+          time,
+          preview,
+          avatarUrl,
+          unread,
+          sortTs,
+        }
+      }),
+    )
+
+    const pack: Array<MessagesThreadRow & { sortTs: number }> = [
+      lumiRowData,
+      ...personaRowsData,
+      ...groupRowsData,
+    ]
     const visiblePack = pack.filter((r) => !(settingsByKey.get(r.conversationKey)?.hiddenFromMessageList ?? false))
     const pinned = visiblePack.filter((r) => r.isPinned).sort((a, b) => b.sortTs - a.sortTs)
     const normal = visiblePack.filter((r) => !r.isPinned).sort((a, b) => b.sortTs - a.sortTs)
@@ -3644,8 +3771,9 @@ function WeChatAppInner({ onBack }: Props) {
 
   const activeConversationKey = useMemo(() => {
     if (route.name !== 'chat' || !chatRouteIdentityId || !activeConversationCharacterId) return null
+    if (route.chat.kind === 'group') return wechatGroupConversationKey(route.chat.groupId, chatRouteIdentityId)
     return wechatConversationKey(activeConversationCharacterId, chatRouteIdentityId)
-  }, [route.name, chatRouteIdentityId, activeConversationCharacterId])
+  }, [route, chatRouteIdentityId, activeConversationCharacterId])
 
   // 转发：选择聊天页当前待转发消息（单条/多条）
   const [forwardPendingMessages, setForwardPendingMessages] = useState<WeChatChatMessage[] | null>(null)
@@ -3694,7 +3822,12 @@ function WeChatAppInner({ onBack }: Props) {
           ? WECHAT_LUMI_PEER_CHARACTER_ID
         : null
   const { getCurrentTimeMs } = useWeChatCurrentTime({
-    characterId: route.name === 'chat' ? activeConversationCharacterId : routeTimeCharacterId,
+    characterId:
+      route.name === 'chat'
+        ? route.chat.kind === 'group'
+          ? null
+          : activeConversationCharacterId
+        : routeTimeCharacterId,
   })
 
   const resolveRedPacketPeer = useCallback(
@@ -3715,6 +3848,17 @@ function WeChatAppInner({ onBack }: Props) {
     let cancelled = false
     const loadBusy = async () => {
       if (route.name !== 'chat' || !activeConversationCharacterId || !activeConversationKey) {
+        if (!cancelled) {
+          setChatHeaderBusyOn(false)
+          setChatHeaderBusyEndTime(0)
+          setChatHeaderBusyReason('')
+          setChatHeaderBusyStartTime(0)
+          setChatHeaderBusyDurationMinutes(0)
+          setBusyDetailOpen(false)
+        }
+        return
+      }
+      if (activeConversationCharacterId.startsWith('wxgrp:')) {
         if (!cancelled) {
           setChatHeaderBusyOn(false)
           setChatHeaderBusyEndTime(0)
@@ -3860,7 +4004,12 @@ function WeChatAppInner({ onBack }: Props) {
     return () => setWeChatForegroundConversationKey(null)
   }, [activeConversationKey])
 
-  const [chatSessionPrefs, setChatSessionPrefs] = useState<{ danmaku: boolean; bg: string } | null>(null)
+  const [chatSessionPrefs, setChatSessionPrefs] = useState<{
+    danmaku: boolean
+    bg: string
+    showGroupMemberNicknameInChat: boolean
+    showGroupRankBadgesInChat: boolean
+  } | null>(null)
   const [pendingScrollToMessageId, setPendingScrollToMessageId] = useState<string | null>(null)
   const clearPendingScrollToMessage = useCallback(() => setPendingScrollToMessageId(null), [])
 
@@ -3882,6 +4031,8 @@ function WeChatAppInner({ onBack }: Props) {
         setChatSessionPrefs({
           danmaku: s?.isDanmakuMode ?? false,
           bg: (s?.chatBackground ?? '').trim(),
+          showGroupMemberNicknameInChat: s?.showGroupMemberNicknameInChat !== false,
+          showGroupRankBadgesInChat: !!s?.showGroupRankBadgesInChat,
         })
       })
     }
@@ -3927,8 +4078,8 @@ function WeChatAppInner({ onBack }: Props) {
   }, [activeConversationKey, refreshMessageThreadsMeta])
 
   const title = useMemo(() => {
-    if (route.name === 'group-chat') return '群聊'
     if (route.name === 'new-friends-persona') return '新的朋友'
+    if (route.name === 'contacts-group-chats') return '群聊'
     if (route.name === 'player-identities') return '我的身份'
     if (route.name === 'wallet-cards') return '卡包'
     if (route.name === 'wallet-transactions') return '交易流水'
@@ -3938,8 +4089,7 @@ function WeChatAppInner({ onBack }: Props) {
     if (route.name === 'wallet-wealth') return 'Lumi理财'
     if (route.name === 'sticker-center') return '表情'
     if (route.name === 'affection-pay') return '亲情卡支付'
-    if (route.name === 'memory-manage') return '记忆管理'
-    if (route.name === 'memory-character') return '记忆'
+    if (route.name === 'memory-manage') return '记忆档案馆'
     if (route.name === 'forward-select-chat') return '选择聊天'
     if (route.name === 'contact-profile-settings') return '资料设置'
     if (route.name === 'contact-recommend-select') return '选择联系人'
@@ -3970,9 +4120,12 @@ function WeChatAppInner({ onBack }: Props) {
   const hideTabChrome =
     (route.name === 'tabs' && route.tab === 'dates' && hideDatingChrome) ||
     (route.name === 'tabs' && route.tab === 'discover' && discoverMomentsOpen) ||
-    wxGlobalNav != null
+    wxGlobalNav != null ||
+    (route.name === 'tabs' && newGroupFromMessagesOpen) ||
+    (route.name === 'contacts-group-chats' && newGroupFromMessagesOpen)
   const hideWeChatHeader =
     route.name === 'new-friends-persona' ||
+    route.name === 'contacts-group-chats' ||
     route.name === 'player-identities' ||
     route.name === 'wallet-cards' ||
     route.name === 'wallet-transactions' ||
@@ -3983,8 +4136,6 @@ function WeChatAppInner({ onBack }: Props) {
     route.name === 'sticker-center' ||
     route.name === 'affection-pay' ||
     route.name === 'memory-manage' ||
-    route.name === 'memory-character' ||
-    route.name === 'group-chat' ||
     route.name === 'forward-select-chat' ||
     route.name === 'contact-profile' ||
     route.name === 'red-packet-send' ||
@@ -3994,7 +4145,9 @@ function WeChatAppInner({ onBack }: Props) {
     route.name === 'transfer-detail' ||
     wxGlobalNav != null ||
     (route.name === 'tabs' && route.tab === 'discover' && discoverMomentsOpen) ||
-    (route.name === 'chat' && chatSettingsOpen)
+    (route.name === 'chat' && chatSettingsOpen) ||
+    (route.name === 'tabs' && newGroupFromMessagesOpen) ||
+    (route.name === 'contacts-group-chats' && newGroupFromMessagesOpen)
   const activeTabBgFill = useMemo(() => {
     const byTab = wechatTheme.pageBgByTab?.[activeTab as WeChatTabId]
     return byTab ?? wechatTheme.pageBgGlobal
@@ -4054,7 +4207,11 @@ function WeChatAppInner({ onBack }: Props) {
         const block = formatWorldBackgroundForPrompt(wbg)
         if (block.trim()) worldBackgroundPrompt = block
       }
-      const allMemories = await personaDb.listCharacterMemoriesForCharacter(character.id)
+      const privMem = (await personaDb.listCharacterMemoriesForCharacter(character.id)).filter(
+        (m) => m.memoryScope !== 'group',
+      )
+      const groupMem = await personaDb.listGroupMemoriesInvolvingCharacter(character.id)
+      const allMemories = [...privMem, ...groupMem].sort((a, b) => a.createdAt - b.createdAt)
       let longTermMemoryNotes = ''
       if (allMemories.length <= 10) {
         longTermMemoryNotes = [...allMemories]
@@ -4301,7 +4458,9 @@ function WeChatAppInner({ onBack }: Props) {
           title={route.name === 'chat' && chatPeerContact ? chatPeerContact.remarkName : title}
           titleSub={route.name === 'chat' && chatPeerContact?.tag ? chatPeerContact.tag : undefined}
           showTyping={route.name === 'chat' && chatOtherTyping}
-          typingText="对方正在输入…"
+          typingText={
+            route.name === 'chat' && route.chat.kind === 'group' ? '成员正在回复…' : '对方正在输入…'
+          }
           showBack={route.name !== 'tabs'}
           showHome={route.name === 'tabs'}
           onBack={() => {
@@ -4345,7 +4504,55 @@ function WeChatAppInner({ onBack }: Props) {
           rightMode={route.name === 'chat' ? 'chat-room-settings' : 'appearance'}
           showRight={route.name === 'tabs' || route.name === 'chat'}
           onOpenTheme={route.name === 'chat' ? () => setChatSettingsOpen(true) : openWeChatAppearance}
-          showAppearanceGuide={showAppearanceGuide && route.name === 'tabs'}
+          customRight={
+            route.name === 'tabs' && route.tab === 'messages' ? (
+              <div className="relative flex justify-end">
+                <Pressable
+                  type="button"
+                  aria-label="新建会话"
+                  onClick={() => setMessagesPlusMenuOpen((o) => !o)}
+                  className="flex h-9 w-9 items-center justify-center rounded-full text-[#111827]"
+                >
+                  <Plus size={22} strokeWidth={2} aria-hidden />
+                </Pressable>
+                {messagesPlusMenuOpen ? (
+                  <>
+                    <Pressable
+                      type="button"
+                      aria-label="关闭"
+                      className="fixed inset-0 z-[198]"
+                      onClick={() => setMessagesPlusMenuOpen(false)}
+                    >
+                      {null}
+                    </Pressable>
+                    <div className="absolute right-0 top-[calc(100%+6px)] z-[199] min-w-[172px] overflow-hidden rounded-[10px] border border-[#F3F4F6] bg-white py-1 shadow-[0_8px_24px_rgba(0,0,0,0.08)]">
+                      <Pressable
+                        type="button"
+                        className="flex w-full px-4 py-3 text-left text-[15px] text-[#111827] active:bg-[#F9FAFB]"
+                        onClick={() => {
+                          setMessagesPlusMenuOpen(false)
+                          setNewGroupFromMessagesOpen(true)
+                        }}
+                      >
+                        发起群聊
+                      </Pressable>
+                      <Pressable
+                        type="button"
+                        className="flex w-full px-4 py-3 text-left text-[15px] text-[#111827] active:bg-[#F9FAFB]"
+                        onClick={() => {
+                          setMessagesPlusMenuOpen(false)
+                          window.alert('添加朋友功能预留')
+                        }}
+                      >
+                        添加朋友
+                      </Pressable>
+                    </div>
+                  </>
+                ) : null}
+              </div>
+            ) : undefined
+          }
+          showAppearanceGuide={showAppearanceGuide && route.name === 'tabs' && route.tab !== 'messages'}
           onDismissAppearanceGuide={dismissAppearanceGuide}
           titleUnreadCount={
             route.name === 'tabs' && route.tab === 'messages' ? messagesTabUnreadTotal : undefined
@@ -4424,6 +4631,10 @@ function WeChatAppInner({ onBack }: Props) {
                       if (id === 'new-friend') {
                         markNewFriendRequestsRead()
                         setRoute({ name: 'new-friends-persona', source: 'contacts' })
+                        return
+                      }
+                      if (id === 'group-chats') {
+                        setRoute({ name: 'contacts-group-chats' })
                       }
                     }}
                     onContactClick={(contactId) => {
@@ -4501,9 +4712,13 @@ function WeChatAppInner({ onBack }: Props) {
                   peerNotifyTitle={chatPeerContact?.remarkName ?? '聊天'}
                   chatBackgroundUrl={chatSessionPrefs?.bg || undefined}
                   danmakuEnabled={chatSessionPrefs?.danmaku ?? false}
+                  showGroupMemberNicknameInChat={chatSessionPrefs?.showGroupMemberNicknameInChat !== false}
+                  showGroupRankBadgesInChat={!!chatSessionPrefs?.showGroupRankBadgesInChat}
                   useLumiProjectAssistantPrompt={
                     route.name === 'chat' && route.chat.kind === 'lumi'
                   }
+                  roomType={route.name === 'chat' && route.chat.kind === 'group' ? 'group' : 'private'}
+                  groupId={route.name === 'chat' && route.chat.kind === 'group' ? route.chat.groupId : null}
                   conversationCharacterId={activeConversationCharacterId ?? ''}
                   playerIdentityId={chatRouteIdentityId}
                   scrollToMessageId={pendingScrollToMessageId}
@@ -4786,49 +5001,14 @@ function WeChatAppInner({ onBack }: Props) {
                 正在加载…
               </div>
             </motion.div>
-          ) : route.name === 'group-chat' ? (
-            <motion.div key={`gc-${route.groupId}`} className="flex h-full min-h-0 flex-col bg-[#ededed]" {...pageProps}>
-              <div
-                className="flex shrink-0 items-center border-b border-[#e5e5e5] bg-[#ededed] px-3 pb-3"
-                style={{ paddingTop: 'max(12px, env(safe-area-inset-top, 0px))' }}
-              >
-                <div className="flex w-full items-center">
-                  <Pressable
-                    type="button"
-                    aria-label="返回"
-                    onClick={() => setRoute({ name: 'tabs', tab: 'messages' })}
-                    className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full text-black"
-                  >
-                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
-                      <path d="M15 18l-6-6 6-6" />
-                    </svg>
-                  </Pressable>
-                  <h1 className="min-w-0 flex-1 text-center text-[18px] font-bold text-black">群聊</h1>
-                  <div className="w-10 shrink-0" />
-                </div>
-              </div>
-              <div className="flex flex-1 flex-col items-center justify-center px-6">
-                <p className="text-center text-[15px] text-[#8e8e8e]">群聊会话页开发中</p>
-                <p className="mt-2 text-center text-[12px] text-[#c7c7cc]">群数据已写入 IndexedDB，后续可在此接入消息流</p>
-              </div>
-            </motion.div>
           ) : route.name === 'memory-manage' ? (
             <motion.div key="memory-manage" className="flex h-full min-h-0 flex-col" {...pageProps}>
               <MemoryManagementApp
                 contacts={memoryManageContacts ?? []}
-                onBack={() => setRoute({ name: 'tabs', tab: 'profile' })}
-                onOpenCharacter={(characterId, titleRemark) =>
-                  setRoute({ name: 'memory-character', characterId, titleRemark })
-                }
-              />
-            </motion.div>
-          ) : route.name === 'memory-character' ? (
-            <motion.div key="memory-character" className="flex h-full min-h-0 flex-col" {...pageProps}>
-              <CharacterMemoryDetailApp
-                characterId={route.characterId}
-                titleRemark={route.titleRemark}
                 playerIdentityId={playerIdentityId}
-                onBack={() => setRoute({ name: 'memory-manage' })}
+                playerDisplayName={state.profile.displayName || '我'}
+                playerAvatarUrl={state.profile.avatarImageUrl ?? undefined}
+                onBack={() => setRoute({ name: 'tabs', tab: 'profile' })}
               />
             </motion.div>
           ) : route.name === 'player-identities' ? (
@@ -4883,6 +5063,22 @@ function WeChatAppInner({ onBack }: Props) {
           ) : route.name === 'sticker-center' ? (
             <motion.div key="sticker-center" className="flex h-full min-h-0 flex-col" {...pageProps}>
               <StickerCenterPage onBack={() => setRoute({ name: 'tabs', tab: 'profile' })} />
+            </motion.div>
+          ) : route.name === 'contacts-group-chats' ? (
+            <motion.div key="contacts-group-chats" className="flex h-full min-h-0 flex-col" {...pageProps}>
+              <ContactsGroupChatsScreen
+                playerIdentityId={playerIdentityId}
+                onBack={() => setRoute({ name: 'tabs', tab: 'contacts' })}
+                onOpenGroup={(groupId) => setRoute({ name: 'chat', chat: { kind: 'group', groupId } })}
+                onRequestCreateGroup={() => {
+                  const pid = playerIdentityId?.trim()
+                  if (!pid || pid === '__none__') {
+                    window.alert('请先完成身份选择后再创建群聊。')
+                    return
+                  }
+                  setNewGroupFromMessagesOpen(true)
+                }}
+              />
             </motion.div>
           ) : (
             <motion.div
@@ -5210,59 +5406,119 @@ function WeChatAppInner({ onBack }: Props) {
           activeConversationCharacterId &&
           activeConversationKey ? (
             <motion.div
-              key="wx-chat-settings"
+              key={route.chat.kind === 'group' ? 'wx-group-info' : 'wx-chat-settings'}
               initial={disableTransitions ? false : { x: '100%' }}
               animate={{ x: 0 }}
               exit={disableTransitions ? { x: 0 } : { x: '100%' }}
               transition={disableTransitions ? { duration: 0 } : { duration: 0.28, ease: [0.22, 1, 0.36, 1] }}
-              className="absolute inset-0 z-[220] flex flex-col bg-[#ededed]"
+              className={`absolute inset-0 z-[220] flex flex-col ${route.chat.kind === 'group' ? 'bg-[#F3F4F6]' : 'bg-[#ededed]'}`}
             >
-              <ChatSettingsScreen
-                conversationKey={activeConversationKey}
-                peerCharacterId={activeConversationCharacterId}
-                playerIdentityId={playerIdentityId}
-                peerDisplayName={chatPeerContact?.remarkName ?? '聊天'}
-                peerAvatarUrl={chatPeerContact?.avatarUrl}
-                personaEditTargetId={
-                  route.chat.kind === 'persona' ? route.chat.characterId : lumiBindingPersonaCharacterId
-                }
-                personaContacts={state.wechatPersonaContacts.map((c) => ({
-                  characterId: c.characterId,
-                  remarkName: c.remarkName,
-                  avatarUrl: c.avatarUrl,
-                }))}
-                onClose={() => setChatSettingsOpen(false)}
-                onOpenPersonaEdit={(characterId) => {
-                  setChatSettingsOpen(false)
-                  setRoute({ name: 'new-friends-persona', editCharacterId: characterId, returnToChat: route.chat })
-                }}
-                onOpenGroupChat={(groupId) => {
-                  setChatSettingsOpen(false)
-                  setRoute({ name: 'group-chat', groupId })
-                }}
-                onJumpToChatMessage={(messageId) => setPendingScrollToMessageId(messageId)}
-                onOpenPeerProfile={() => {
-                  if (route.name !== 'chat') return
-                  const chat = route.chat
-                  setChatSettingsOpen(false)
-                  if (chat.kind === 'lumi') {
+              {route.chat.kind === 'group' ? (
+                <GroupInfoScreen
+                  groupId={route.chat.groupId}
+                  playerIdentityId={playerIdentityId}
+                  playerDisplayName={state.profile.displayName || '我'}
+                  playerAvatarUrl={state.profile.avatarImageUrl ?? undefined}
+                  personaContacts={personaContactsForGroupPick}
+                  onClose={() => setChatSettingsOpen(false)}
+                  onAfterLeave={() => {
+                    setChatSettingsOpen(false)
+                    exitChatToMessages()
+                  }}
+                />
+              ) : (
+                <ChatSettingsScreen
+                  conversationKey={activeConversationKey}
+                  peerCharacterId={activeConversationCharacterId}
+                  playerIdentityId={playerIdentityId}
+                  peerDisplayName={chatPeerContact?.remarkName ?? '聊天'}
+                  peerAvatarUrl={chatPeerContact?.avatarUrl}
+                  personaEditTargetId={
+                    route.chat.kind === 'persona' ? route.chat.characterId : lumiBindingPersonaCharacterId
+                  }
+                  inviteGroupFromPeerCharacterId={route.chat.kind === 'persona' ? route.chat.characterId : null}
+                  personaContactsForGroup={personaContactsForGroupPick}
+                  onInviteCreateGroup={async (extra) => {
+                    if (route.name !== 'chat' || route.chat.kind !== 'persona' || !playerIdentityId) return
+                    const peer = route.chat.characterId
+                    const nickByCharacterId: Record<string, string> = {}
+                    for (const c of personaContactsForGroupPick) nickByCharacterId[c.characterId] = c.remarkName
+                    const { groupId } = await createWeChatGroupAndSeedConversation({
+                      playerIdentityId,
+                      playerDisplayName: state.profile.displayName || '我',
+                      characterIds: [peer, ...extra],
+                      nickByCharacterId,
+                    })
+                    setChatSettingsOpen(false)
+                    await refreshMessageThreadsMeta()
+                    setRoute({ name: 'chat', chat: { kind: 'group', groupId } })
+                  }}
+                  onClose={() => setChatSettingsOpen(false)}
+                  onOpenPersonaEdit={(characterId) => {
+                    setChatSettingsOpen(false)
+                    setRoute({ name: 'new-friends-persona', editCharacterId: characterId, returnToChat: route.chat })
+                  }}
+                  onJumpToChatMessage={(messageId) => setPendingScrollToMessageId(messageId)}
+                  onOpenPeerProfile={() => {
+                    if (route.name !== 'chat') return
+                    const chat = route.chat
+                    setChatSettingsOpen(false)
+                    if (chat.kind === 'lumi') {
+                      setRoute({
+                        name: 'contact-profile',
+                        target: { kind: 'lumi' },
+                        remarkName: chatPeerContact?.remarkName ?? 'Lumi',
+                        avatarUrl: chatPeerContact?.avatarUrl ?? lumiWechatAvatarUrl,
+                        returnTo: { mode: 'chat', chat, reopenChatSettings: true },
+                      })
+                      return
+                    }
+                    const pc = state.wechatPersonaContacts.find((c) => c.characterId === chat.characterId)
                     setRoute({
                       name: 'contact-profile',
-                      target: { kind: 'lumi' },
-                      remarkName: chatPeerContact?.remarkName ?? 'Lumi',
-                      avatarUrl: chatPeerContact?.avatarUrl ?? lumiWechatAvatarUrl,
+                      target: { kind: 'persona', characterId: chat.characterId },
+                      remarkName: pc?.remarkName ?? chatPeerContact?.remarkName ?? '聊天',
+                      avatarUrl: pc?.avatarUrl ?? chatPeerContact?.avatarUrl,
                       returnTo: { mode: 'chat', chat, reopenChatSettings: true },
                     })
-                    return
-                  }
-                  const pc = state.wechatPersonaContacts.find((c) => c.characterId === chat.characterId)
-                  setRoute({
-                    name: 'contact-profile',
-                    target: { kind: 'persona', characterId: chat.characterId },
-                    remarkName: pc?.remarkName ?? chatPeerContact?.remarkName ?? '聊天',
-                    avatarUrl: pc?.avatarUrl ?? chatPeerContact?.avatarUrl,
-                    returnTo: { mode: 'chat', chat, reopenChatSettings: true },
+                  }}
+                />
+              )}
+            </motion.div>
+          ) : null}
+        </AnimatePresence>
+
+        <AnimatePresence>
+          {(route.name === 'tabs' || route.name === 'contacts-group-chats') &&
+          newGroupFromMessagesOpen &&
+          playerIdentityId ? (
+            <motion.div
+              key="wx-new-group-pick"
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              transition={{ duration: 0.2 }}
+              className="absolute inset-0 z-[330] bg-[#FFFFFF]"
+            >
+              <CreateGroupPickContactsSheet
+                open
+                title="发起群聊"
+                lockedCharacterIds={[]}
+                contacts={personaContactsForGroupPick}
+                minExtraSelections={2}
+                onClose={() => setNewGroupFromMessagesOpen(false)}
+                onConfirm={async (extra) => {
+                  const nickByCharacterId: Record<string, string> = {}
+                  for (const c of personaContactsForGroupPick) nickByCharacterId[c.characterId] = c.remarkName
+                  const { groupId } = await createWeChatGroupAndSeedConversation({
+                    playerIdentityId,
+                    playerDisplayName: state.profile.displayName || '我',
+                    characterIds: extra,
+                    nickByCharacterId,
                   })
+                  setNewGroupFromMessagesOpen(false)
+                  await refreshMessageThreadsMeta()
+                  setRoute({ name: 'chat', chat: { kind: 'group', groupId } })
                 }}
               />
             </motion.div>

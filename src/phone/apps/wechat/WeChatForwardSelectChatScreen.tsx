@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { Search, X } from 'lucide-react'
 
 import { Pressable } from '../../components/Pressable'
-import { WECHAT_LUMI_PEER_CHARACTER_ID, wechatConversationKey } from './wechatConversationKey'
+import { WECHAT_LUMI_PEER_CHARACTER_ID, wechatConversationKey, wechatGroupConversationKey } from './wechatConversationKey'
 import type { WeChatChatMessage } from './newFriendsPersona/types'
 import { personaDb } from './newFriendsPersona/idb'
 import { resolveWeChatCurrentTimeMs } from './time/wechatTimeUtils'
@@ -18,6 +18,14 @@ type Thread =
       conversationKey: string
       peerCharacterId: string
       characterId: string
+    }
+  | {
+      kind: 'group'
+      name: string
+      avatarUrl?: string
+      conversationKey: string
+      peerCharacterId: string
+      groupId: string
     }
 
 type Contact = {
@@ -119,11 +127,13 @@ export function WeChatForwardSelectChatScreen({
   currentConversationKey: string | null
   lumiAvatarUrl: string
   onClose: () => void
-  onPickChat: (chat: { kind: 'lumi' } | { kind: 'persona'; characterId: string }) => void
+  onPickChat: (chat: { kind: 'lumi' } | { kind: 'persona'; characterId: string } | { kind: 'group'; groupId: string }) => void
   title?: string
   recentTitle?: string
   listTitle?: string
-  onPickTarget?: (chat: { kind: 'lumi' } | { kind: 'persona'; characterId: string }) => void | Promise<void>
+  onPickTarget?: (
+    chat: { kind: 'lumi' } | { kind: 'persona'; characterId: string } | { kind: 'group'; groupId: string },
+  ) => void | Promise<void>
 }) {
   const [query, setQuery] = useState('')
   const [debounced, setDebounced] = useState('')
@@ -210,17 +220,30 @@ export function WeChatForwardSelectChatScreen({
 
   const forwardTo = async (t: Thread) => {
     if (onPickTarget) {
-      const picked = t.kind === 'lumi' ? { kind: 'lumi' as const } : { kind: 'persona' as const, characterId: t.characterId }
+      const picked =
+        t.kind === 'lumi'
+          ? { kind: 'lumi' as const }
+          : t.kind === 'group'
+            ? { kind: 'group' as const, groupId: t.groupId }
+            : { kind: 'persona' as const, characterId: t.characterId }
       const nextKeys = clampRecent([t.conversationKey, ...recentForwardKeys], 12)
       setRecentForwardKeys(nextKeys)
       void personaDb.setPhoneKv(RECENT_FORWARD_KV_KEY, nextKeys)
       await onPickTarget(picked)
       return
     }
-    const peerId = t.kind === 'lumi' ? WECHAT_LUMI_PEER_CHARACTER_ID : t.characterId
-    const [gs, roleTime] = await Promise.all([personaDb.getGlobalSettings(), personaDb.getCharacterTimeSettings(peerId)])
-    const now = resolveWeChatCurrentTimeMs(roleTime?.config ?? gs.globalTimeConfig)
-    const conversationKey = wechatConversationKey(peerId, playerIdentityId)
+    const peerId =
+      t.kind === 'lumi' ? WECHAT_LUMI_PEER_CHARACTER_ID : t.kind === 'group' ? t.peerCharacterId : t.characterId
+    const gs = await personaDb.getGlobalSettings()
+    const conversationKey =
+      t.kind === 'group' ? wechatGroupConversationKey(t.groupId, playerIdentityId) : t.conversationKey.trim()
+    let now: number
+    if (t.kind === 'group') {
+      now = resolveWeChatCurrentTimeMs(gs.globalTimeConfig)
+    } else {
+      const roleTime = await personaDb.getCharacterTimeSettings(peerId)
+      now = resolveWeChatCurrentTimeMs(roleTime?.config ?? gs.globalTimeConfig)
+    }
     const msgs = forward.messages ?? []
     if (forward.mode === 'multi-item') {
       const sorted = [...msgs].sort((a, b) => a.timestamp - b.timestamp)
@@ -287,7 +310,13 @@ export function WeChatForwardSelectChatScreen({
 
     // 关闭并跳转到目标聊天室
     onClose()
-    onPickChat(t.kind === 'lumi' ? { kind: 'lumi' } : { kind: 'persona', characterId: t.characterId })
+    onPickChat(
+      t.kind === 'lumi'
+        ? { kind: 'lumi' }
+        : t.kind === 'group'
+          ? { kind: 'group', groupId: t.groupId }
+          : { kind: 'persona', characterId: t.characterId },
+    )
   }
 
   if (!open) return null
@@ -345,7 +374,7 @@ export function WeChatForwardSelectChatScreen({
       <div className="mt-3">
         <div className="flex gap-4 overflow-x-auto px-4 pb-2 [-webkit-overflow-scrolling:touch]">
           {recentForwardTargets.map((t) => {
-            const avatar = t.kind === 'lumi' ? t.avatarUrl : t.avatarUrl
+            const avatar = t.avatarUrl
             return (
               <Pressable
                 key={t.conversationKey}

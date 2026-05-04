@@ -37,7 +37,7 @@ const LETTER_INDEX = [
 
 type LetterKey = (typeof LETTER_INDEX)[number]
 
-type EntryActionId = 'new-friend' | 'group-chat' | 'tags' | 'chat-only'
+type EntryActionId = 'new-friend' | 'group-chats' | 'tags' | 'chat-only'
 
 type EntryAction = {
   id: EntryActionId
@@ -67,7 +67,7 @@ export type WeChatContactsInstagramProps = {
 
 const ENTRY_ACTIONS: EntryAction[] = [
   { id: 'new-friend', label: '新的朋友', icon: UserPlus },
-  { id: 'group-chat', label: '群聊', icon: Users },
+  { id: 'group-chats', label: '群聊', icon: Users },
   { id: 'tags', label: '标签', icon: Tag },
   { id: 'chat-only', label: '仅聊天的朋友', icon: MessageSquare },
 ]
@@ -293,7 +293,7 @@ export function WeChatContactsInstagram({
           >
             <div className="border-b border-[#dbdbdb] px-4 py-3">
               <div className="flex items-center gap-2">
-                <Star className="size-[18px] shrink-0 text-[#f4b400]" fill="#f4b400" strokeWidth={1.6} />
+                <Star className="size-[18px] shrink-0 text-[#111827]" fill="#111827" strokeWidth={1.6} />
                 <span className="text-[15px] font-semibold text-[#262626]">星标朋友</span>
               </div>
             </div>

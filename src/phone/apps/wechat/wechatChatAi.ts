@@ -14,6 +14,8 @@ import { logConsole } from './consoleLogger'
 import { VOICE_CALL_SYSTEM_PROMPT } from './voiceCall/voiceCallSystemPrompt'
 import { VOICE_CALL_DECISION_SYSTEM_PROMPT } from './voiceCall/callDecisionSystemPrompt'
 import { buildMbtiPersonalityWorldBookText, getMbtiPersonalityWorldBookName, isMbtiPersonalityWorldBookName, normalizeMbti } from './mbtiPersonalityWorldBook'
+import type { WeChatGroupMultiSpeakerOrderedItem } from './groupChatModelMeta'
+import { WECHAT_GROUP_BOT_CHARACTER_ID, WECHAT_GROUP_USER_CHAR_ID } from './wechatConversationKey'
 
 /** 微信单聊主回复（含思维链解析路径）completion 上限；仍受模型/API 限制 */
 export const WECHAT_PEER_REPLY_MAX_OUTPUT_TOKENS = 30000
@@ -84,7 +86,14 @@ ${customScenarios.length ? `- 忙碌场景参考：${customScenarios.join('；')
 const WORLD_BOOK_MAX_CHARS = 6000
 export const WECHAT_HISTORY_MAX_MESSAGES = 50
 
-export type ChatTranscriptTurn = { id?: string; from: 'self' | 'other'; text: string; replyTo?: WeChatReplyToMeta }
+export type ChatTranscriptTurn = {
+  id?: string
+  from: 'self' | 'other'
+  text: string
+  replyTo?: WeChatReplyToMeta
+  /** 群聊：用于拼装上下文的发送者展示名 */
+  speakerLabel?: string
+}
 
 const FICTIONAL_COT_APPENDIX = `
 ---
@@ -160,11 +169,33 @@ export function buildCharacterCard(character: Character | null): string {
   return bits.join('\n')
 }
 
+export function buildWeChatPlayerIdentityPromptBlock(playerIdentity: PlayerIdentity | null): string {
+  return buildPlayerIdentitySection(playerIdentity)
+}
+
+/** 微信/群聊：第三人称指「玩家本人」时与身份卡性别对齐（防 NPC 背称用户时他/她串台） */
+export function buildWeChatPlayerThirdPersonPronounIronRule(playerIdentity: PlayerIdentity | null): string {
+  if (!playerIdentity) return ''
+  const g = playerIdentity.gender
+  if (g === 'female') {
+    return (
+      `\n【第三人称·用户本人·铁律】身份卡性别：**女**。凡指**玩家/用户本人**（含 NPC 对白里背称用户、群内提到用户时）必须用「**她**」，**禁止**用「他」；多人同场勿把代词接到男性 NPC 身上。\n`
+    )
+  }
+  if (g === 'male') {
+    return (
+      `\n【第三人称·用户本人·铁律】身份卡性别：**男**。凡指**玩家/用户本人**（含 NPC 对白里背称用户、群内提到用户时）必须用「**他**」，**禁止**用「她」；**禁止**因场上有女性 NPC、「总裁/总」等称谓而把用户写成女性人称。\n`
+    )
+  }
+  return `\n【第三人称·用户本人】身份卡为**非二元/其它**：背称用户优先用「其」、职位或「对方」，避免错配「他/她」。\n`
+}
+
 function buildPlayerIdentitySection(playerIdentity: PlayerIdentity | null): string {
   if (!playerIdentity) return ''
   const card = buildCharacterCard(playerIdentity)
   const wb = buildWorldBookText(playerIdentity)
   let s = `\n\n---\n【玩家身份档案】\n${card}\n`
+  s += buildWeChatPlayerThirdPersonPronounIronRule(playerIdentity)
   if (wb.trim()) s += `\n---\n【玩家身份世界书】\n${wb}\n`
   return s
 }
@@ -194,7 +225,7 @@ function safeScheduleJson(s: ScheduleTable): string {
   }
 }
 
-function formatCurrentTimeBlock(currentTimeMs?: number, opts?: { forLumiAssistant?: boolean }): string {
+export function formatCurrentTimeBlock(currentTimeMs?: number, opts?: { forLumiAssistant?: boolean }): string {
   const ts = Number(currentTimeMs)
   const safeTs = Number.isFinite(ts) && ts > 0 ? ts : Date.now()
   const d = new Date(safeTs)
@@ -229,7 +260,7 @@ export function buildSystemContent(params: {
     params.promptMode === 'lumi-assistant'
       ? `对方消息里的「我」「我的」默认指${player}本人在自述；勿把这些遭遇误写成发生在助手自己身上。\n`
       : `对方发来的内容里出现的「我」「我的」，默认指${player}本人正在自述——不要把那些事当成角色自己的遭遇来接续叙述。\n`
-  const peerLine = `\n\n---\n【会话对方】对方的微信资料名或备注可能显示为：${player}。请用自然称呼，不要机械重复全名除非语境需要。\n${attributionLine}`
+  const peerLine = `\n\n---\n【会话对方】对方的微信资料名或备注可能显示为：${player}。请用自然称呼，不要机械重复全名除非语境需要。\n${attributionLine}【技术席位说明】在本请求的消息列表里：role 为 user 的条目即该真人已发送内容；role 为 assistant 的条目即你（对方角色）已发送过的历史。你本轮只生成新的 assistant 侧回复。禁止身份倒错、禁止替该真人续写其下一句台词。\n`
   const mem = buildLongTermMemorySection(params.longTermMemoryNotes)
   const offlinePlots = params.offlineDatingPlotsContext?.trim()
     ? `\n\n---\n${params.offlineDatingPlotsContext.trim()}\n`
@@ -268,9 +299,10 @@ export function buildSystemContent(params: {
   return `${WECHAT_ROLEPLAY_SYSTEM_PROMPT}${mem}${offlinePlots}${replyBias}${currentTime}${schedule}${pi}${fictionCot}${extra}${peerLine}`
 }
 
-function transcriptToMessages(turns: ChatTranscriptTurn[]): OpenAiCompatibleMessage[] {
+function transcriptToMessages(turns: ChatTranscriptTurn[], opts?: { groupChat?: boolean }): OpenAiCompatibleMessage[] {
   const tail = turns.slice(-WECHAT_HISTORY_MAX_MESSAGES)
   const out: OpenAiCompatibleMessage[] = []
+  const groupChat = !!opts?.groupChat
   for (const t of tail) {
     const content = String(t.text || '').trim()
     if (!content) continue
@@ -283,10 +315,21 @@ function transcriptToMessages(turns: ChatTranscriptTurn[]): OpenAiCompatibleMess
           `发送者=${(replyTo.senderName || (replyTo.isUser ? '用户' : '对方')).trim()}；` +
           `原文=${String(replyTo.content || '').trim() || '（空）'}`
         : ''
-    out.push({
-      role: t.from === 'self' ? 'user' : 'assistant',
-      content: `${idPrefix}${content}${replyCtx}`,
-    })
+    if (groupChat) {
+      const who =
+        t.from === 'self'
+          ? '我'
+          : (t.speakerLabel?.trim() || '群成员')
+      out.push({
+        role: 'user',
+        content: `${idPrefix}[${who}] ${content}${replyCtx}`,
+      })
+    } else {
+      out.push({
+        role: t.from === 'self' ? 'user' : 'assistant',
+        content: `${idPrefix}${content}${replyCtx}`,
+      })
+    }
   }
   return out
 }
@@ -331,6 +374,58 @@ function splitSingleLineWechatBubble(line: string): string[] {
   }
   if (acc) out.push(acc)
   return out.length ? out : [src]
+}
+
+const WECHAT_STICKER_LINE_MARKER = '[表情包]'
+
+/**
+ * 把「普通文字 + 同行 [表情包]…」拆成多条气泡文本。
+ * 客户端 `parseCharacterStickerLine` 要求整行以 `[表情包]` 开头才能匹配资源库；群模型常把二者粘在 SPEAKER 同一行，故在解析层强制拆开。
+ * 按物理行切分：同一行内多个 `[表情包]` 各自成条；换行后的文字不与上一行的表情包粘成一条。
+ */
+export function splitInlineStickerPayloadsFromPlainText(input: string): string[] {
+  const raw = String(input ?? '').trim()
+  if (!raw) return []
+  /** 须先按物理行拆：续行无 <<SPEAKER>> 时整段会 merge 进本字段，若整段无 [表情包] 时曾错误 return [raw]，导致多行被合成一条巨气泡。 */
+  const lines = raw.split(/\r?\n/)
+  const out: string[] = []
+  for (const line of lines) {
+    const s = line.trim()
+    if (!s) continue
+    out.push(...splitSinglePhysicalLineByStickerMarkers(s))
+  }
+  return out
+}
+
+function splitSinglePhysicalLineByStickerMarkers(line: string): string[] {
+  const s = String(line ?? '')
+  const marker = WECHAT_STICKER_LINE_MARKER
+  if (!s.includes(marker)) {
+    const t = s.trim()
+    return t ? [t] : []
+  }
+  const out: string[] = []
+  let pos = 0
+  const len = s.length
+  while (pos < len) {
+    const idx = s.indexOf(marker, pos)
+    if (idx === -1) {
+      const tail = s.slice(pos).trim()
+      if (tail) out.push(tail)
+      break
+    }
+    if (idx > pos) {
+      const before = s.slice(pos, idx).trim()
+      if (before) out.push(before)
+    }
+    const from = idx
+    const nextSticker = s.indexOf(marker, from + marker.length)
+    const end = nextSticker === -1 ? len : nextSticker
+    const sticker = s.slice(from, end).trim()
+    if (sticker) out.push(sticker)
+    pos = end
+  }
+  return out
 }
 
 function logWeChatAiReplyDebug(tag: string, raw: string, bubbles: string[]) {
@@ -402,7 +497,8 @@ export function parseWeChatPeerReplyWithThinking(raw: string): WeChatPeerReplyRe
     .map((s) => stripMessageIdMeta(s))
     .filter((s) => s.length > 0)
   const expanded = lines.flatMap((line) => expandRecallProtocolLine(line))
-  const source = expanded.length ? expanded : lines
+  const base = expanded.length ? expanded : lines
+  const source = base.flatMap((ln) => splitInlineStickerPayloadsFromPlainText(ln))
   const bubbles =
     source.length !== 1
       ? source
@@ -488,6 +584,8 @@ export async function requestWeChatPeerReplyBubbles(params: {
   includeThinkingChain?: boolean
   currentTimeMs?: number
   danmakuConfig?: WeChatDanmakuInlineConfig
+  /** 群聊：历史统一走 user 角色并带发言者前缀，避免多角色 assistant 交错 */
+  groupChatTranscript?: boolean
 }): Promise<WeChatPeerReplyResult> {
   const cfg = params.apiConfig
   if (!cfg?.apiUrl?.trim() || !cfg.apiKey?.trim() || !cfg.modelId?.trim()) {
@@ -527,7 +625,7 @@ export async function requestWeChatPeerReplyBubbles(params: {
     : `${WECHAT_REPLY_OUTPUT_APPENDIX}\n\n${WECHAT_THINKING_CHAIN_APPENDIX}`
   const system = `${busyPrefix ? `${busyPrefix}\n\n` : ''}${base}\n\n${recallGuide}\n\n${outputAppendix}${danmakuInstruction ? `\n\n${danmakuInstruction}` : ''}\n\n${stickerCat}`
 
-  const history = transcriptToMessages(params.transcript)
+  const history = transcriptToMessages(params.transcript, { groupChat: params.groupChatTranscript })
   const messages: OpenAiCompatibleMessage[] = [{ role: 'system', content: system }, ...history]
 
   const text = await openAiCompatibleChat(cfg, messages, {
@@ -715,6 +813,7 @@ export async function requestWeChatPeerReplyBubblesWithImage(params: {
   includeThinkingChain?: boolean
   currentTimeMs?: number
   danmakuConfig?: WeChatDanmakuInlineConfig
+  groupChatTranscript?: boolean
 }): Promise<WeChatPeerReplyResult> {
   const cfg = params.apiConfig
   if (!cfg?.apiUrl?.trim() || !cfg.apiKey?.trim() || !cfg.modelId?.trim()) {
@@ -758,7 +857,7 @@ export async function requestWeChatPeerReplyBubblesWithImage(params: {
     : `${WECHAT_REPLY_OUTPUT_APPENDIX}\n\n${WECHAT_THINKING_CHAIN_APPENDIX}`
   const system = `${busyPrefix ? `${busyPrefix}\n\n` : ''}${base}\n\n${recallGuide}\n\n---\n【图片消息附加要求】\n${imgRules}\n\n${outputAppendix}${danmakuInstruction ? `\n\n${danmakuInstruction}` : ''}\n\n${stickerCat}`
 
-  const history = transcriptToMessages(params.transcript)
+  const history = transcriptToMessages(params.transcript, { groupChat: params.groupChatTranscript })
 
   // vision user message: text + dataURL image
   const dataUrl = `data:${params.imageMime};base64,${params.imageBase64}`
@@ -1066,7 +1165,11 @@ export async function requestUnifiedMemorySummary(params: {
   }
   const tail = params.onlineTranscript.slice(-40)
   const onlineLines = tail
-    .map((t) => `${t.from === 'self' ? '我' : '对方'}：${String(t.text || '').trim()}`)
+    .map((t) => {
+      const who =
+        t.from === 'self' ? '我' : (t.speakerLabel?.trim() || '对方')
+      return `${who}：${String(t.text || '').trim()}`
+    })
     .filter((s) => s.length > 3)
   const onlineBlock = onlineLines.length ? onlineLines.join('\n') : '（无）'
   let offlineBlock = String(params.offlineTextBlock || '').trim()
@@ -1088,7 +1191,63 @@ export async function requestUnifiedMemorySummary(params: {
   })
   return text
     .replace(/^\s*【[^】]+】\s*/g, '')
-    .replace(/^\s*(\[线上\]|\[线下\])+\s*/g, '')
+    .replace(/^\s*(\[线上\]|\[线下\]|\[群聊\])+\s*/g, '')
+    .trim()
+}
+
+const GROUP_CHAT_MEMORY_SUMMARY_SYSTEM = `
+你是「长期记忆」提取助手。用户会提供两段材料：「线上群聊摘录」与「群成员与群状态快照」，任一段可能为「（无）」。
+要求：
+- 必须使用第一人称“我”，站在用户视角叙述（像“我在群里…某某说了…群管家…”），把两段里**实际发生**的信息合成一条连贯备忘。
+- 必须覆盖：谁在群里、谁发了什么要点、角色之间有无互相接话；若有群状态快照中的**群主/管理员/禁言**等，也要如实写入（仅基于快照，勿编造未写明的操作）。
+- 只总结本次材料中可直接核对的事实；禁止混入材料外的剧情。
+- 禁止写“我怎么想/我觉得/我感到”等主观心理；禁止推断角色未说出口的心理。
+- 若某一栏为「（无）」，不要编造该栏内容；另一栏有内容则正常总结。
+- 口语化、具体、可回忆；长度以 80～220 字为宜（信息很少时可更短）。
+- 只输出一段正文，不要标题、序号、引号或 Markdown。
+- 不要在正文里自行添加「[线上]」「[群聊]」等来源标签（程序会统一加前缀）。
+- 若摘录里仅有「消息被自动屏蔽」「禁言无法显示」等系统提示、**未出现**被拦下的具体原话，总结中**禁止**编造该原话；普通成员视角下可写「有人被屏了/不知道发了啥」等事实层面表述即可。
+`.trim()
+
+/** 微信群聊：合并未游标群消息与群档案快照，供自动总结入库（调用方加 [线上][群聊] 等前缀）。 */
+export async function requestGroupChatMemorySummary(params: {
+  apiConfig: ApiConfig | null
+  onlineTranscript: ChatTranscriptTurn[]
+  groupArchiveBlock: string
+}): Promise<string> {
+  const cfg = params.apiConfig
+  if (!cfg?.apiUrl?.trim() || !cfg.apiKey?.trim() || !cfg.modelId?.trim()) {
+    throw new Error('未配置 AI API')
+  }
+  const tail = params.onlineTranscript.slice(-40)
+  const onlineLines = tail
+    .map((t) => {
+      const who =
+        t.from === 'self' ? '我' : (t.speakerLabel?.trim() || '群成员')
+      return `${who}：${String(t.text || '').trim()}`
+    })
+    .filter((s) => s.length > 3)
+  const onlineBlock = onlineLines.length ? onlineLines.join('\n') : '（无）'
+  let archive = String(params.groupArchiveBlock || '').trim()
+  if (!archive) archive = '（无）'
+  if (archive.length > 6000) archive = `${archive.slice(0, 6000)}\n\n（群档案因长度已截断）`
+  const messages: OpenAiCompatibleMessage[] = [
+    { role: 'system', content: GROUP_CHAT_MEMORY_SUMMARY_SYSTEM },
+    {
+      role: 'user',
+      content:
+        `以下是「尚未总结」的材料，请仅基于这些内容生成一条长期记忆：\n\n` +
+        `【线上群聊摘录】\n${onlineBlock}\n\n` +
+        `【群成员与群状态快照】\n${archive}`,
+    },
+  ]
+  const text = await openAiCompatibleChat(cfg, messages, {
+    temperature: 0.35,
+    max_tokens: 720,
+  })
+  return text
+    .replace(/^\s*【[^】]+】\s*/g, '')
+    .replace(/^\s*(\[线上\]|\[线下\]|\[群聊\])+\s*/g, '')
     .trim()
 }
 
@@ -1242,7 +1401,7 @@ ${userBlock}
 ---`.trim()
 }
 
-function buildDanmakuInlineInstruction(params: {
+export function buildDanmakuInlineInstruction(params: {
   enabled: boolean
   useMemory: boolean
   generateCount: number
@@ -1385,4 +1544,535 @@ export async function requestWeChatDanmakuVarietyShow(params: {
   } catch {
     return []
   }
+}
+
+/** 与 Lumi 机 WeChat 群聊对齐：单次 completion 内多名成员用 <<SPEAKER:角色ID>> 分行输出 */
+const WECHAT_GROUP_MULTI_SPEAKER_LUMI_RULES = `
+【群聊多角色模式（覆盖上文「仅私聊一人」的席位说明）】
+你是本微信群中的多名 NPC 成员，与真人用户同群聊天。每一行是一条气泡；**行首**必须用说话人标记区分是谁发的。
+
+【SPEAKER 标记（必须逐条添加）】
+- 格式严格为：<<SPEAKER:角色ID>>紧跟本条气泡正文（同一行或换行接续均可）；**角色ID** 必须与上方「群成员 ID 列表」中的某项 **完全一致**（通常是一串角色 characterId），禁止编造、禁止把群昵称当 ID、禁止省略。
+- <<SPEAKER:…>> 只给程序解析，玩家侧不会看到该标记；正文中不要再写「小明：」「小李：」这类前缀。
+- **群管家（群机器人系统号）** 出镜时：该行正文**禁止**以 \`@群助手\`、\`@ 群助手\`、\`@群管家\`、\`@群机器人\` 或本群自定义机器人别名加 @ 的形式**自称开头**（客户端已用头像与昵称标识发件人；如此写会像未消隐的路由标记）。**禁止**在正文开头写 \`群管家：\`、\`群助手：\` 等「称呼+冒号」假聊天气泡前缀。对他人使用 @ 接话、调侃仍可照常。
+- 示例（展示**插话 + 同一人可连发短句**，勿照抄字面）：
+<<SPEAKER:char_id_a>>我觉得好脑残
+<<SPEAKER:char_id_b>>就是！
+<<SPEAKER:char_id_a>>是吧！！我就说吧！！
+<<SPEAKER:char_id_a>>谁不生气啊
+<<SPEAKER:char_id_c>>就是就是 他还没自知之明
+
+【SPEAKER 与对用户的称呼｜强约束】
+- 每条 <<SPEAKER:角色ID>> **仅**代表该行对应的**一名** NPC；该行台词里对用户的称呼、姓氏、职务、绰号必须对齐**该成员小节内「身份对齐」、人设绑定玩家身份与私聊摘录**，不得与其他 SPEAKER 串台。
+- **禁止**看见上一条 NPC 叫了某个名字/职务就跟抄同一种称呼（除非你人设本应知晓多层身份或剧情已当众挑明）。
+- **禁止**把全局展示的「会话玩家身份档案」或会话登录档常用名当成每名 NPC 都必须遵用的称谓；多成员绑定身份不同时，那份档案往往只对应**其中一档**，错误沿用会导致全员喊错（典型：绑定卫总线的角色却喊祁）。
+
+【表情包（强约束｜与文字禁止同一行）】
+- 客户端只会把**整行以** \`[表情包]\` **开头**的行识别为表情包气泡；若写成「一句对白 + 同行 [表情包]…」，会整段当普通字、资源匹配失败。
+- **正确**：先发完**纯文字**的一行（可带 <<SPEAKER>>），下一行再发**仅含** \`[表情包]\` +《表情包资源》**引用名原文** 的一行（须重新写 <<SPEAKER:同一角色ID>>，或依赖程序续行同说话人时也要保证**该行只有表情包载荷**）。
+- **错误示例（禁止）**：\`<<SPEAKER:id>>大人你居然还在笑！[表情包]爷真的服了（无语流汗）\`
+- **正确示例**：\`<<SPEAKER:id>>大人你居然还在笑！\` 换行后 \`<<SPEAKER:id>>[表情包]爷真的服了（无语流汗）\`
+- **禁止** \`emoji:\` / \`emoji：\`、\`表情:\`、\`sticker:\` 等前缀；否则无法匹配资源。
+
+【群助手风纪（剧情向｜非强制）】
+- 群内存在按敏感词拦截的「群助手」：若你人设腹黑、想制造修罗场，**可以**在合理范围内诱导他人在不知情下踩线（仍须服从人设与后果自负的常识）；**禁止**写成对真人用户的恶意骚扰指引。
+
+【@群管家 / 群机器人（与客户端一致）】
+- **任意群成员**（含普通成员、群主、管理员；剧情中用户亦可）均可使用 **@群管家、@群助手、@群机器人** 等本群认可的称呼，与**群机器人（群助手）**搭话、追问、调侃或求助；成员之间也可在台词里互相提醒「你问下 @群管家」。
+- **禁止**编造「只有群主才能 @ 群管家」「普通成员不许和机器人说话」等与本产品能力不符的设定；**禁止**把「能否 @ 机器人」与敏感词规则的**编辑权限**（**群主或管理员**可改规则）混为一谈——前者人人可用，后者才是职务限制。
+- **群管家人设（与客户端机器人一致）**：叙事里可把群管家理解为**热心会来事的「大妈子 + 管家助手」**——会安慰人、会讲理、会适度幽默热场，也会提醒规则；**不要**把群管家写成只会冰冷训斥、刻薄嘲讽的纯系统音（除非剧情刻意反讽），以免与真实 @ 回复气质脱节。
+
+【违禁屏蔽与禁言未展示台词｜群内知情边界（强约束）】
+**【禁言仍发言｜气泡全员隐藏 + 管理端点灰条查看（必须与客户端一致）】**
+- **禁言≠禁演**：后台自检 §5 列为「禁言中」的成员，你仍应照常为其输出 \`<<SPEAKER:该角色ID>>\` 台词（例如先发一条踩线被屏、禁言后再接「真给我禁言了？算你狠…」等），除非人设本轮主动闭嘴。**禁止**把禁言写成「彻底无法生成任何一句对白」除非剧情刻意哑火。
+- **公屏一致**：禁言期间该成员在客户端**不再出现正常聊天气泡**；**全员**在会话里都看不到那句的「普通气泡形态」。**仅**展示居中灰条，文案固定为「本群昵称**因被禁言已自动隐藏这条消息**」（仅此一种，无前缀变体）。**群主（\`owner\`）与群管理员（\`admin\`）**（用户占位为该职务时）灰条**末尾追加「查看」**，可点读本地存档原文；**普通成员**（用户占位为 \`member\`）**无「查看」**、界面不知原文。被禁言角色仍自知台词内容，可接「真给我禁言了？」等；**不得**写全员气泡里都看见了原文。
+- **当事人本人**：仍**清楚自己心里、嘴上想说什么**；可写懊恼、不服、腹诽、接着发下一条（仍会被灰条隐藏）；**禁止**把未对全员气泡展示的原句，写成好像**所有人聊天窗口里都看见了那句的气泡**。
+- 聊天历史里的**居中灰条**：违禁为「消息被自动屏蔽」等；禁言隐藏仅为「某某因被禁言已自动隐藏这条消息」。**违禁与禁言**两类灰条所附「查看」均为**群主/管理员**可用，原文**未以普通气泡展示**；**普通成员（\`member\`）**不得声称从界面读过他人被拦原文。
+- **其他普通成员 NPC**：对**他人**被拦截或禁言隐藏的台词**不知原文**；**禁止**逐字复述、禁止当众念屏；可疑惑、吃瓜、打圆场、「你刚发了啥？」「我这边啥也看不见」。
+- **群主 / 管理员 NPC 与用户占位为 owner/admin 时**：可将点「查看」读到的、或「风纪后台记录」中的信息与职务行为对齐；**禁止**让普通成员若无其事说出**他人**被拦句子的具体措辞（除非剧情已当众宣读）。
+
+【节奏与气泡粒度｜强约束（真微信群交流感）】
+- 每条气泡要像真人微信：**短、快、碎**——多数气泡 **一两句、不超过两三行**；优先接梗、附和、反问、吐槽半句、打断，**忌**单人长篇独白、忌一人用很多条 SPEAKER **独占一大块**再换另一人又独占一大块（像轮流演讲）。
+- **整体顺序要像多人插话**：优先 **A 一句 → B 一句 → … → 再回到 A 连发 2～3 条短句**；允许同一人**意犹未尽连发 2～3 条**，但同一 SPEAKER **不宜连续超过约 4 条**才把话头交给别人（除非剧情刻意连环追打，也须尽快有人插嘴接话）。
+- **禁止**「角色 A 先堆一长串、再角色 B 堆一长串」的块状结构；需要同一人多说几句时，**拆成多条短 SPEAKER 行**优于单条超长正文。
+- 本轮建议 **至少 2 名、常见 2～4 名** NPC 都带 <<SPEAKER>> 有台词；人数少时更要用**短句互怼**撑满交流感。
+
+【私聊近况与多角关系｜强约束】
+- 每名成员小节中的 **「与用户的关系与好感站位」**（若有）：综合人脉连线、长期记忆与私聊摘录，列出你对用户的**关系档位、好感大致区间、是否倾向恋爱/暧昧/地下恋、占有欲强弱**。你必须以此为锚决定群内反应——**禁止**全员一成不变的「路人捧哏」腔。
+- **吃醋 / 阴阳 / 宣示 / 装不熟**：当你对用户的好感或恋爱倾向**偏高**时，若用户在群里明显关照另一位 NPC、喊昵称、接梗暧昧，你应更敏感（酸、阴阳、抢话、试探、冷一下均可，服从人设）；倾向低或为损友则拱火、看戏、吐槽。**禁止**明明连着地下恋/暧昧设定却在群里永远佛系吃瓜、毫无波澜。
+- 每名成员小节中若含 **「与该用户的私聊近况摘录」**：这些内容来自**群外私聊**，**仅该 NPC 本人视角下的记忆**；**禁止**让其他 NPC 若无其事地说出「只有那一方私聊里才有的具体细节」（除非剧情里早已当众挑明）。你自己私聊摘录里的事，你可以在群里用**暗示、吃醋、点到为止**的方式接话。
+- 若多名在场 NPC 与用户之间存在**不同亲密度或保密关系**（例如一方地下恋、一方暧昧、身份档不同），群内须保留 **修罗场／张力感**：吃醋、阴阳、装不熟、抢话、护食、话里有话均可；**禁止**全员像完全陌生的路人只聊表情包梗而**集体忘掉**私下关系与情绪铺垫。
+- **禁止**把私聊摘录里刚发生的约定、称呼、冲突在群里说成「没这回事」；群聊口气可与私聊不同（克制、装、端着），但**认知要连贯**。
+
+【多玩家身份同台｜称呼错位】
+- 若上文出现程序注入块 **「多玩家身份同台｜称呼错位与追问」**：表示群内多名 NPC 的人设绑定玩家身份彼此不同，和/或与**当前群会话所用玩家身份**不一致。此时 **NPC 之间允许**围绕「你对TA怎么称呼」「那你让他喊你什么」等展开**疑问、递话、试探**；也 **允许两名及以上 NPC 对用户追问**称呼、身份或在圆哪一套。**禁止**全员突然 OOC 刑侦突审，语气仍要像真微信群。
+- 扮演时可自然体现：不同 NPC **沿用各自绑定身份下的称呼习惯**称呼用户，形成群内可见的**称呼温差**，不必强行统一；另一方可据此纳闷、杠一句或 @ 用户。
+
+【群名 / 本群昵称（可选｜与对白同一轮输出）】
+- **本群昵称**指**仅在群内展示的称呼**（口语化、有梗、好玩，如「干饭大王」「叫我大人」），与通讯录里的**微信昵称是两套东西**；改名指令改的是「群内马甲」，**禁止**把剧情写成「把群昵称改成了自己的微信昵称」除非刻意设定二者恰好相同。
+- **角色可自行更换自己想要的、喜欢的个人群昵称（本群昵称）**：剧情需要时（心情、玩梗、躲熟人、单纯想换个顺口马甲等），NPC 可为**自己**发起改名；仍须输出独立一行 \`<<GROUP_SET_NICK|自己的角色ID|新昵称全文>>\`，并遵守下文「仅改自己」「勿滥用」等约束。
+- 若剧情里某成员**真的**在本轮改了**群聊名称**或**自己在本群的昵称**，必须额外输出**独立一行**机器指令（不要写进 <<SPEAKER>> 正文里），程序会据此更新本地数据并在聊天里插入与「撤回提示」同款的灰色系统条；**对白里仍要用 <<SPEAKER:角色ID>> 正常写出台词**，可与指令交错出现，顺序自定。
+- 改群名：\`<<GROUP_SET_TITLE|角色ID|新群名全文>>\`  
+  - **角色ID** 为执行改名者的 characterId（可与 SPEAKER 一致）；新群名内不要含竖线 \`|\`，长度合理。
+- 改自己在群里的昵称（**群内专属称呼，≠ 改微信昵称**）：\`<<GROUP_SET_NICK|角色ID|新昵称全文>>\`  
+  - **角色ID** 为被改名者；普通成员仅能改**自己**；**代改他人本群昵称仅群主**职务合理（与后台自检 **第 0 节** 一致）。新昵称内不要含竖线 \`|\`。
+- 更新**群公告**（**仅群主**）：\`<<GROUP_SET_ANNOUNCEMENT|角色ID|群公告全文>>\`  
+  - **角色ID** 必须为当前群主的 characterId；正文内不要含独立的 \`>>\` 串以免截断解析。**禁止**代替真人用户发布或修改群公告（用户占位 id **不得**在本指令中冒充群主行事），除非剧情明确是用户本人在操作客户端。
+- **任命 / 撤销群管理员**（**仅群主**）：\`<<GROUP_SET_ADMIN|群主角色ID|目标成员角色ID|admin>>\` 或 \`<<GROUP_SET_ADMIN|群主角色ID|目标成员角色ID|member>>\`（撤销管理员，目标降为普通成员）。第四段只能是 \`admin\` 或 \`member\`（小写）；目标不得为群主，不得为群管家系统号；**角色ID** 须与成员表一致。用户可被设为管理员时目标 id 用 \`${WECHAT_GROUP_USER_CHAR_ID}\`。
+- 用户在本群的占位 id 为 \`${WECHAT_GROUP_USER_CHAR_ID}\`：用于用户本人相关的 \`<<GROUP_SET_NICK>>\`、被任命为管理员的 \`<<GROUP_SET_ADMIN>>\` 目标等；**SPEAKER** 仍只用真实 NPC id。
+- 不要滥用：无改名剧情时不要输出上述两行指令。
+
+【群聊行为（对齐 Lumi 机微信群规则）】
+- 【后台自检快照】若上文包含「后台自检快照｜发送前核对」段落：其中 **第 0 节**为职务权限产品规则，**第 1～9 节**（含群公告与群管家规则快照）所列事实均为程序生成的**唯一事实**；对白与心理活动不得与之矛盾。**第 10 节（编演自检）**提醒自问改名、管人、群管理员/转让群主/群公告/群管家敏感词等；**全程禁止替用户做决定**（勿代替用户确认设置、勿擅自替用户占位下发改名类指令）。注意：职务边界以 **第 0 节**为准——**群机器人敏感词与触发规则**：任意成员可查看，**群主或管理员可编辑**；群主/管理员可用的禁言、踢人、改群名等与 **第 0 节**一致；**普通成员**不可代管。**任免群管理员**须用本段规定的 \`<<GROUP_SET_ADMIN|…>>\` 落库；**禁言、踢人、转让群主**尚无专用 \`<<…>>\` 时勿编造其它格式。
+- 【禁止替用户做决定】所有群主/管理员操作、群管家违禁词、禁言踢人等叙事均为 **NPC 角色行为**；**禁止**输出代替真人用户决策、代替用户保存群设置、代替用户发言的内容；用户占位 id 仅用于用户本人剧情明确时的改名等指令，**禁止 NPC 替用户下发**。
+- 只能扮演列表中的已知成员，禁止凭空创造新成员。
+- 至少有一位要正面接住用户最近的发言；其余用 **短句插话、起哄、互损** 推进，**多让不同 SPEAKER 交替出现**，避免整轮只剩一人在输出、其他人潜水。
+- 允许成员之间先简短互嘴再顺带回应用户；不要所有气泡都机械复读用户原话。
+- 用户只回「行」「好」「可以」等短时，优先让成员之间把话题撑开，而不是每人复读确认。
+- 若用户消息里明确 @ 了某位（@其群昵称或相关称呼），主要由对应成员先接；其他人最多补一句短的。
+- 除非人设明确拒回（极端冷脸、激烈冲突中拒答、正忙到不能分神），被 @ 的成员至少输出 1 条带其 SPEAKER 的可见回复；不要对 @ 装看不见。
+- 成员知晓当前群的正式名称以及每人**在本群里的称呼（本群昵称）**（见上方列表：可与微信昵称完全不同）。闲聊时可偶尔自然提及群名、某人的群内梗名，或善意打趣；**不必每轮都写**，忌生硬罗列设定、忌为吐槽而吐槽。
+- 【本名与群称】两名 NPC 之间若无人脉里的「角色↔角色」关系（即非「玩家身份↔角色」的绑定线），则彼此**不应**知晓或直呼对方人设/资料本名；群内互称**优先**用上方的**本群昵称**（群内专属称呼），必要时才涉及通讯录侧的微信昵称。人设卡/世界书/记忆摘录里如出现他人本名：若与该对象无人脉角色↔角色关系，群聊台词与心理活动中须改写为**群内称呼**。若下方列出具体成员对，该对必须遵守「互不知本名」。
+`.trim()
+
+export type WeChatGroupMultiSpeakerMemberPrompt = {
+  charId: string
+  /** 群内专属称呼（本群昵称）；可与微信昵称完全不同，宜口语化有梗 */
+  groupNickname: string
+  /** 通讯录微信昵称；与「本群昵称」独立 */
+  wechatNickname?: string
+  characterCard: string
+  worldBook: string
+  memoryNotes: string
+  worldBackground?: string
+  /** 人脉连线 + 亲密向记忆摘要 + 站位须知（好感/恋爱倾向/吃醋校准） */
+  relationshipRomanceProfile?: string
+  /** 与该用户在私聊里的近期消息摘录（群会话 history 不含私聊；仅供本成员卡片使用） */
+  privateChatDigest?: string
+}
+
+export type WeChatGroupMultiSpeakerSegment = { characterId: string; text: string }
+
+export type WeChatGroupMultiSpeakerResult = {
+  /** 发言气泡与元数据指令的**输出顺序**（客户端按序落库） */
+  orderedItems: WeChatGroupMultiSpeakerOrderedItem[]
+  /** 仅气泡，顺序与 orderedItems 中 bubble 一致 */
+  segments: WeChatGroupMultiSpeakerSegment[]
+  thinking?: string
+  danmakuLines?: string[]
+}
+
+export function buildWeChatGroupMultiSpeakerSystem(params: {
+  groupName: string
+  groupId: string
+  members: WeChatGroupMultiSpeakerMemberPrompt[]
+  playerSection: string
+  replyBias?: string
+  offlinePlotsCombined?: string
+  /** 无人脉「角色↔角色」边的成员对（本群昵称展示），强化互不知本名 */
+  groupStrangerPairsPrompt?: string
+  /** 群聊后台自检快照（成员/职务/禁言/人脉/身份绑定），插在群信息之后 */
+  groupSelfAuditBlock?: string
+  /** 违禁/禁言未展示台词的后台原文摘录：仅提示词内供群主/管理员角色知情，不写入普通成员视角的气泡历史 */
+  groupShieldedModeratorAnnex?: string
+  /** 多名 NPC 绑定不同玩家身份时：称呼错位与可追问情节（插在群规则与陌生人规则之间） */
+  multiIdentityCoPresenceBlock?: string
+  currentTimeMs?: number
+  promptMode: WeChatChatPromptMode
+  danmakuInstruction?: string
+}): string {
+  const isLumi = params.promptMode === 'lumi-assistant'
+  const list = params.members
+    .map((m) => {
+      const gn = (m.groupNickname || '').trim() || m.charId
+      const wx = (m.wechatNickname || '').trim()
+      const wxSeg = wx && wx !== gn ? `；微信昵称（通讯录，≠本群昵称）：${wx}` : ''
+      return `- 角色ID：\`${m.charId}\`（本群昵称｜群内称呼：${gn}${wxSeg}）`
+    })
+    .join('\n')
+  const cards = params.members
+    .map((m) => {
+      const wb = (m.worldBook || '').trim().slice(0, 4500)
+      const mem = (m.memoryNotes || '').trim().slice(0, 2200)
+      const wbg = (m.worldBackground || '').trim().slice(0, 900)
+      const relRom = (m.relationshipRomanceProfile || '').trim().slice(0, 4200)
+      const digest = (m.privateChatDigest || '').trim().slice(0, 4500)
+      return (
+        `### 成员「${(m.groupNickname || '').trim() || m.charId}」角色ID=\`${m.charId}\`\n` +
+        `${(m.characterCard || '').trim()}\n` +
+        (wbg ? `【世界背景摘录】\n${wbg}\n` : '') +
+        (wb ? `【世界书摘录】\n${wb}\n` : '') +
+        (mem ? `【长期记忆摘录】\n${mem}\n` : '') +
+        (relRom
+          ? `【与用户的关系与好感站位（程序摘录｜仅供本角色校准群内吃醋、阴阳与亲密度）】\n${relRom}\n`
+          : '') +
+        (digest ? `【与该用户的私聊近况摘录（群外会话｜仅本角色知晓，勿当众宣读私密细节）】\n${digest}\n` : '')
+      )
+    })
+    .join('\n\n---\n\n')
+  const strangerBlock = params.groupStrangerPairsPrompt?.trim()
+    ? `\n\n---\n【互不知本名的成员对（当前群内）】\n下列组合在人脉中**没有**「角色↔角色」关系边（不含玩家身份↔角色绑定）。双方**互不知晓**对方人设卡/资料本名；台词与心理活动中提及对方**优先**用上方的**本群昵称（群内称呼）**，必要时才用微信昵称；**禁止**照搬各人设摘要里可能出现的对方本名。\n${params.groupStrangerPairsPrompt.trim()}\n`
+    : ''
+  const auditBlock = params.groupSelfAuditBlock?.trim() ? `\n${params.groupSelfAuditBlock.trim()}` : ''
+  const shieldAnnexRaw = params.groupShieldedModeratorAnnex?.trim() ?? ''
+  const shieldAnnexBlock = shieldAnnexRaw
+    ? `\n\n---\n【风纪后台记录｜剧情知情分层】\n以下为近期被群助手拦截或禁言隐藏的**原文摘录**（客户端对**全员**均不在聊天气泡侧展示这些原文；群主/管理员仅与会话内可点的系统灰条「查看」一致）。生成台词时：\n- **当事人本人**（条目中「谁」对应该 <<SPEAKER>>）：可据**与自己相关**的那一条理解自己被拦下的措辞，与上文「本人自知」一致；**禁止**把附录里**他人**条目当成自己也该在剧情里公开说出的内容。\n- **其他普通成员（member）**：**禁止**根据附录中**他人**条目声称读过、禁止逐字复述**别人**被拦原文、禁止替**别的角色**念出被屏句子；对「他人被屏内容」仍只能写不知情反应。\n- **群主（owner）与群管理员（admin）**：可合理引用或点破附录中的管理端信息（与会话内职务可「查看」的边界一致）。\n\n${shieldAnnexRaw}\n`
+    : ''
+  const multiIdBlock = params.multiIdentityCoPresenceBlock?.trim()
+    ? `\n\n---\n${params.multiIdentityCoPresenceBlock.trim()}\n`
+    : ''
+  const core = `【当前微信群】名称：${params.groupName}\n群会话 ID：${params.groupId}${auditBlock}${shieldAnnexBlock}\n\n【群成员 ID 列表（SPEAKER 只能从这些 ID 里选）】\n${list}\n\n${WECHAT_GROUP_MULTI_SPEAKER_LUMI_RULES}${multiIdBlock}${strangerBlock}\n\n---\n【各成员人设与记忆摘录】\n${cards}\n`
+  const offline = params.offlinePlotsCombined?.trim()
+    ? `\n\n---\n【线下剧情摘录（多成员合并；与会话相关者自辨）】\n${params.offlinePlotsCombined.trim().slice(0, 12000)}\n`
+    : ''
+  const bias = params.replyBias?.trim() ? `\n\n---\n【本轮回复偏向】\n${params.replyBias.trim()}\n` : ''
+  const time = formatCurrentTimeBlock(params.currentTimeMs, { forLumiAssistant: isLumi })
+  const stickerCat = buildStickerCatalogPromptBlock()
+  const danmakuInstr = params.danmakuInstruction?.trim() ?? ''
+  const recallGuide = isLumi
+    ? `【撤回】仅在明显误发时可极少使用输出协议中的撤回格式；禁止用于恋爱拉扯或虚构剧情。`
+    : WECHAT_CHARACTER_RECALL_GUIDE
+  const outputAppendix = isLumi
+    ? WECHAT_LUMI_ASSISTANT_OUTPUT_APPENDIX
+    : `${WECHAT_REPLY_OUTPUT_APPENDIX}\n\n${WECHAT_THINKING_CHAIN_APPENDIX}`
+
+  if (isLumi) {
+    return `${LUMI_ASSISTANT_SYSTEM_PROMPT}\n\n${core}${offline}${bias}${time}\n${params.playerSection}${recallGuide ? `\n\n${recallGuide}` : ''}\n\n${outputAppendix}${danmakuInstr ? `\n\n${danmakuInstr}` : ''}\n\n${stickerCat}`
+  }
+  const fictionCot = `\n\n${FICTIONAL_COT_APPENDIX}\n`
+  return `【群聊多角色输出协议｜最高优先】\n${core}${offline}${bias}\n\n----------\n${WECHAT_ROLEPLAY_SYSTEM_PROMPT}${fictionCot}${params.playerSection}${time}\n\n${recallGuide}\n\n${outputAppendix}${danmakuInstr ? `\n\n${danmakuInstr}` : ''}\n\n${stickerCat}`
+}
+
+/** 单行是否以群管家/群助手名义开头（与 ChatRoom emit 推断一致） */
+function lineClaimsGroupBotRole(line: string): boolean {
+  return /^(群管家|群助手|群机器人)\s*[：:]/u.test(String(line ?? '').trimStart())
+}
+
+/**
+ * 一段气泡内多行时：模型常在第一行写 NPC 台词、下一行写「群管家：…」。仅看整段开头会错绑 NPC，需按行切分。
+ */
+function splitMultiLineBubbleByRoleColonLead(
+  speakerId: string,
+  text: string,
+): Array<{ characterId: string; text: string }> {
+  const sid = speakerId.trim()
+  const bot = WECHAT_GROUP_BOT_CHARACTER_ID
+  const raw = String(text ?? '').trim()
+  if (!raw) return []
+  const lines = raw
+    .split(/\r?\n/)
+    .map((l) => l.trim())
+    .filter(Boolean)
+  if (!lines.length) return []
+
+  const chunks: Array<{ characterId: string; lines: string[] }> = []
+  for (const line of lines) {
+    const lineSpeaker = lineClaimsGroupBotRole(line) ? bot : sid
+    const prev = chunks[chunks.length - 1]
+    if (prev && prev.characterId === lineSpeaker) {
+      prev.lines.push(line)
+    } else {
+      chunks.push({ characterId: lineSpeaker, lines: [line] })
+    }
+  }
+  return chunks.map((c) => ({
+    characterId: c.characterId,
+    text: c.lines.join('\n'),
+  }))
+}
+
+/**
+ * 模型常错配：<<SPEAKER:NPC>> 但正文以「群管家：」开头。按正文纠正为群管家系统号，否则头像/气泡会挂在 NPC 上。
+ */
+function coerceGroupMultiSpeakerToBotIfTextClaimsRole(
+  text: string,
+  characterId: string,
+): { characterId: string; text: string } {
+  const bot = WECHAT_GROUP_BOT_CHARACTER_ID
+  if (characterId.trim() === bot) return { characterId, text }
+  const lead = /^(群管家|群助手|群机器人)\s*[：:]/u
+  if (lead.test(String(text ?? '').trimStart())) {
+    return { characterId: bot, text }
+  }
+  return { characterId, text }
+}
+
+function resolveGroupSpeakerId(
+  raw: string,
+  allowed: Set<string>,
+  nickToId?: Map<string, string>,
+): string | null {
+  const t = raw.trim()
+  if (allowed.has(t)) return t
+  if (nickToId) {
+    const hit = nickToId.get(t)
+    if (hit && allowed.has(hit)) return hit
+    const lower = t.toLowerCase()
+    for (const [k, v] of nickToId) {
+      if (k.toLowerCase() === lower && allowed.has(v)) return v
+    }
+  }
+  return null
+}
+
+export function parseWeChatGroupMultiSpeakerModelText(
+  raw: string,
+  options: { allowedCharIds: Set<string>; nickToId?: Map<string, string> },
+): WeChatGroupMultiSpeakerResult {
+  const t0 = stripAssistantFence(raw)
+  const { visible: noThinking, thinking } = extractThinkingBlock(t0)
+  const { visible, danmakuLines } = extractDanmakuBlock(noThinking)
+  const normalized = visible.replace(/\\n/g, '\n').trim()
+  if (!normalized) return { orderedItems: [], segments: [], thinking, danmakuLines }
+
+  const lines = normalized
+    .split(/\r?\n/)
+    .map((s) => stripMessageIdMeta(s))
+    .map((s) => s.trim())
+    .filter(Boolean)
+
+  const orderedItems: WeChatGroupMultiSpeakerOrderedItem[] = []
+  const segments: WeChatGroupMultiSpeakerSegment[] = []
+  const allowed = options.allowedCharIds
+  const metaAllowed = new Set(allowed)
+  metaAllowed.add(WECHAT_GROUP_USER_CHAR_ID)
+  const fallbackId = [...allowed][0] || ''
+
+  const pushBubble = (characterId: string, text: string) => {
+    const t0 = text.trim()
+    if (!t0) return
+    for (const part of splitMultiLineBubbleByRoleColonLead(characterId, t0)) {
+      for (const piece of splitInlineStickerPayloadsFromPlainText(part.text)) {
+        const trimmed = piece.trim()
+        if (!trimmed) continue
+        const co = coerceGroupMultiSpeakerToBotIfTextClaimsRole(trimmed, part.characterId)
+        orderedItems.push({ kind: 'bubble', characterId: co.characterId, text: co.text })
+        segments.push({ characterId: co.characterId, text: co.text })
+      }
+    }
+  }
+
+  for (const line of lines) {
+    const titleMeta = line.match(/^<<GROUP_SET_TITLE\|([^|]+)\|(.*)>>\s*$/u)
+    if (titleMeta) {
+      const rawActor = String(titleMeta[1] ?? '').trim()
+      const titleRaw = String(titleMeta[2] ?? '').trim()
+      const aid = resolveGroupSpeakerId(rawActor, metaAllowed, options.nickToId)
+      if (aid && titleRaw) {
+        orderedItems.push({
+          kind: 'meta',
+          action: { type: 'group_title', actorCharacterId: aid, title: titleRaw },
+        })
+      }
+      continue
+    }
+    const announceMeta = line.match(/^<<GROUP_SET_ANNOUNCEMENT\|([^|]+)\|(.*)>>\s*$/u)
+    if (announceMeta) {
+      const rawActor = String(announceMeta[1] ?? '').trim()
+      const annRaw = String(announceMeta[2] ?? '').trim()
+      const aid = resolveGroupSpeakerId(rawActor, metaAllowed, options.nickToId)
+      if (aid && annRaw) {
+        orderedItems.push({
+          kind: 'meta',
+          action: { type: 'group_announcement', actorCharacterId: aid, text: annRaw },
+        })
+      }
+      continue
+    }
+    const nickMeta = line.match(/^<<GROUP_SET_NICK\|([^|]+)\|(.*)>>\s*$/u)
+    if (nickMeta) {
+      const rawWho = String(nickMeta[1] ?? '').trim()
+      const nickRaw = String(nickMeta[2] ?? '').trim()
+      const cid = resolveGroupSpeakerId(rawWho, metaAllowed, options.nickToId)
+      if (cid && nickRaw) {
+        orderedItems.push({
+          kind: 'meta',
+          action: { type: 'member_nick', characterId: cid, nickname: nickRaw },
+        })
+      }
+      continue
+    }
+    const adminMeta = line.match(/^<<GROUP_SET_ADMIN\|([^|]+)\|([^|]+)\|(admin|member)>>\s*$/iu)
+    if (adminMeta) {
+      const rawActor = String(adminMeta[1] ?? '').trim()
+      const rawTarget = String(adminMeta[2] ?? '').trim()
+      const mode = String(adminMeta[3] ?? '').trim().toLowerCase()
+      const aid = resolveGroupSpeakerId(rawActor, metaAllowed, options.nickToId)
+      const tid = resolveGroupSpeakerId(rawTarget, metaAllowed, options.nickToId)
+      if (aid && tid && (mode === 'admin' || mode === 'member')) {
+        orderedItems.push({
+          kind: 'meta',
+          action: {
+            type: 'group_admin_role',
+            actorCharacterId: aid,
+            targetCharacterId: tid,
+            toRole: mode === 'admin' ? 'admin' : 'member',
+          },
+        })
+      }
+      continue
+    }
+    const m = line.match(/^<<SPEAKER:([^>]+)>>\s*(.*)$/u)
+    if (m) {
+      const rawId = String(m[1] ?? '').trim()
+      const text = String(m[2] ?? '').trim()
+      const id = resolveGroupSpeakerId(rawId, allowed, options.nickToId) || fallbackId
+      if (text) pushBubble(id, text)
+      continue
+    }
+    const lastOrd = orderedItems[orderedItems.length - 1]
+    if (lastOrd?.kind === 'bubble') {
+      // 续行单独出现「群管家：」时不可并入上一条 NPC 气泡，否则头像/样式会整段错绑。
+      if (lineClaimsGroupBotRole(line) && lastOrd.characterId.trim() !== WECHAT_GROUP_BOT_CHARACTER_ID) {
+        pushBubble(WECHAT_GROUP_BOT_CHARACTER_ID, line)
+        continue
+      }
+      const merged = `${lastOrd.text}\n${line}`.trim()
+      const mergedCo = coerceGroupMultiSpeakerToBotIfTextClaimsRole(line.trim(), lastOrd.characterId)
+      orderedItems.pop()
+      if (segments.length) segments.pop()
+      for (const piece of splitInlineStickerPayloadsFromPlainText(merged)) {
+        const t = piece.trim()
+        if (!t) continue
+        const co = coerceGroupMultiSpeakerToBotIfTextClaimsRole(t, mergedCo.characterId)
+        orderedItems.push({ kind: 'bubble', characterId: co.characterId, text: co.text })
+        segments.push({ characterId: co.characterId, text: co.text })
+      }
+      continue
+    } else if (fallbackId && line) {
+      pushBubble(fallbackId, line)
+    }
+  }
+
+  const hasMeta = orderedItems.some((x) => x.kind === 'meta')
+  if (!segments.length) {
+    if (hasMeta) {
+      return { orderedItems, segments: [], thinking, danmakuLines }
+    }
+    const plain = parseWeChatPeerReplyWithThinking(normalized)
+    const id = fallbackId
+    const oi: WeChatGroupMultiSpeakerOrderedItem[] = []
+    for (const b of plain.bubbles) {
+      const t0 = String(b ?? '').trim()
+      if (!t0) continue
+      for (const sp of splitInlineStickerPayloadsFromPlainText(t0)) {
+        for (const part of splitMultiLineBubbleByRoleColonLead(id, sp)) {
+          const co = coerceGroupMultiSpeakerToBotIfTextClaimsRole(part.text.trim(), part.characterId)
+          oi.push({ kind: 'bubble', characterId: co.characterId, text: co.text })
+          segments.push({ characterId: co.characterId, text: co.text })
+        }
+      }
+    }
+    const fbBubbles = oi.filter((x) => x.kind === 'bubble').map((x) => `<<SPEAKER:${x.characterId}>>${x.text}`)
+    logWeChatAiReplyDebug('group-multi', normalized, fbBubbles)
+    return {
+      orderedItems: oi,
+      segments,
+      thinking: plain.thinking ?? thinking,
+      danmakuLines: plain.danmakuLines?.length ? plain.danmakuLines : danmakuLines,
+    }
+  }
+
+  const dbgBubbles = orderedItems.filter((x) => x.kind === 'bubble').map((x) => `<<SPEAKER:${x.characterId}>>${x.text}`)
+  logWeChatAiReplyDebug('group-multi', normalized, dbgBubbles)
+  return { orderedItems, segments, thinking, danmakuLines }
+}
+
+export async function requestWeChatGroupMultiSpeakerReplyBubbles(params: {
+  apiConfig: ApiConfig | null
+  transcript: ChatTranscriptTurn[]
+  promptMode: WeChatChatPromptMode
+  systemContent: string
+  allowedCharIds: string[]
+  nickToId?: Map<string, string>
+}): Promise<WeChatGroupMultiSpeakerResult> {
+  const cfg = params.apiConfig
+  if (!cfg?.apiUrl?.trim() || !cfg.apiKey?.trim() || !cfg.modelId?.trim()) {
+    throw new Error('未配置 AI API')
+  }
+  const history = transcriptToMessages(params.transcript, { groupChat: true })
+  const messages: OpenAiCompatibleMessage[] = [{ role: 'system', content: params.systemContent }, ...history]
+  const text = await openAiCompatibleChat(cfg, messages, {
+    temperature: params.promptMode === 'lumi-assistant' ? 0.62 : 0.82,
+    max_tokens: WECHAT_PEER_REPLY_MAX_OUTPUT_TOKENS,
+  })
+  const allowed = new Set(params.allowedCharIds.map((x) => x.trim()).filter(Boolean))
+  return parseWeChatGroupMultiSpeakerModelText(text, { allowedCharIds: allowed, nickToId: params.nickToId })
+}
+
+export async function requestWeChatGroupMultiSpeakerReplyBubblesWithImage(params: {
+  apiConfig: ApiConfig | null
+  transcript: ChatTranscriptTurn[]
+  promptMode: WeChatChatPromptMode
+  systemContent: string
+  allowedCharIds: string[]
+  nickToId?: Map<string, string>
+  imageBase64: string
+  imageMime: 'image/jpeg' | 'image/png' | 'image/gif' | 'image/webp'
+  userImageIsSticker?: boolean
+}): Promise<WeChatGroupMultiSpeakerResult> {
+  const cfg = params.apiConfig
+  if (!cfg?.apiUrl?.trim() || !cfg.apiKey?.trim() || !cfg.modelId?.trim()) {
+    throw new Error('未配置 AI API')
+  }
+  const history = transcriptToMessages(params.transcript, { groupChat: true })
+  const dataUrl = `data:${params.imageMime};base64,${params.imageBase64}`
+  const visionUserText = params.userImageIsSticker ? '（我发来了一张表情包）' : '（我发来了一张图片）'
+  const visionMessages: unknown[] = [
+    { role: 'system', content: params.systemContent },
+    ...history,
+    {
+      role: 'user',
+      content: [
+        { type: 'text', text: visionUserText },
+        { type: 'image_url', image_url: { url: dataUrl } },
+      ],
+    },
+  ]
+  const allowed = new Set(params.allowedCharIds.map((x) => x.trim()).filter(Boolean))
+  const parse = (txt: string) => parseWeChatGroupMultiSpeakerModelText(txt, { allowedCharIds: allowed, nickToId: params.nickToId })
+
+  try {
+    const text = await openAiCompatibleChatAny(cfg, visionMessages, {
+      temperature: params.promptMode === 'lumi-assistant' ? 0.62 : 0.82,
+      max_tokens: WECHAT_PEER_REPLY_MAX_OUTPUT_TOKENS,
+    })
+    return parse(text)
+  } catch {
+    logConsole('ai', `群聊多说话人带图：主视觉调用失败，尝试兼容变体`)
+  }
+  try {
+    const alt1: unknown[] = [
+      { role: 'system', content: params.systemContent },
+      ...history,
+      {
+        role: 'user',
+        content: [
+          { type: 'text', text: visionUserText },
+          { type: 'image_url', image_url: dataUrl },
+        ],
+      },
+    ]
+    const text = await openAiCompatibleChatAny(cfg, alt1, {
+      temperature: params.promptMode === 'lumi-assistant' ? 0.62 : 0.82,
+      max_tokens: WECHAT_PEER_REPLY_MAX_OUTPUT_TOKENS,
+    })
+    return parse(text)
+  } catch {
+    /* continue */
+  }
+  const fallbackMessages: OpenAiCompatibleMessage[] = [
+    { role: 'system', content: params.systemContent },
+    ...history,
+    {
+      role: 'user',
+      content:
+        '我刚发了一张图片，但接口可能不支持看图。请用群内多成员 SPEAKER 格式说明你看不见图，并引导我用文字描述；仍须遵守 <<SPEAKER:角色ID>> 每行标记。',
+    },
+  ]
+  const text = await openAiCompatibleChat(cfg, fallbackMessages, {
+    temperature: params.promptMode === 'lumi-assistant' ? 0.62 : 0.82,
+    max_tokens: 1200,
+  })
+  return parse(text)
 }

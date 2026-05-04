@@ -562,7 +562,8 @@ function extractGeminiUserTextFromOpenAiLikeMessages(messages: unknown[]): strin
     const c = mm?.content
     if (typeof c === 'string') {
       const t = c.trim()
-      if (t) lines.push(role === 'system' ? t : role === 'assistant' ? `对方：${t}` : `我：${t}`)
+      // 群聊 transcript 里历史多为 role:user，内容已含「[谁] …」；勿统一加「我：」以免误导 Gemini。
+      if (t) lines.push(role === 'system' ? t : role === 'assistant' ? `对方：${t}` : t)
       continue
     }
     // content parts：提取 text part 组成上下文
@@ -574,7 +575,7 @@ function extractGeminiUserTextFromOpenAiLikeMessages(messages: unknown[]): strin
         })
         .join('')
         .trim()
-      if (t) lines.push(role === 'assistant' ? `对方：${t}` : `我：${t}`)
+      if (t) lines.push(role === 'assistant' ? `对方：${t}` : t)
       continue
     }
   }

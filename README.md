@@ -1,5 +1,11 @@
 # React + TypeScript + Vite
 
+## 开发笔记（群聊多行解析）
+
+- `wechatChatAi.ts` 中 `splitInlineStickerPayloadsFromPlainText`：续行无 `<<SPEAKER>>` 时，多行会合并为一段。若**整段**没有 `[表情包]` 标记，旧逻辑会整段视为**一条**气泡，导致多行/表情包全挤在一条里。现改为**始终**先按换行切物理行，再对每行做行内 `[表情包]` 拆分，与解析层 `count=17` 的拆分意图一致。
+
+---
+
 This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
 
 Currently, two official plugins are available:

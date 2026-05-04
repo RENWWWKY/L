@@ -1,6 +1,10 @@
 import { useCallback, useLayoutEffect, useRef, useState, type CSSProperties, type ReactNode, type RefObject } from 'react'
 
 import type { WeChatBubbleTheme } from '../../types'
+import {
+  ChatGroupSenderNicknameWithRank,
+  ChatGroupSpeakerRankOnAvatar,
+} from './group/ChatGroupSpeakerAvatarWrap'
 import { useWeChatLongPress } from './hooks/useWeChatLongPress'
 
 /** 聊天气泡最大宽：100vw - 左右基准线 24px×2 - 头像列预留 80px（40 头像 + 12 间距 + 28 冗余） */
@@ -11,6 +15,8 @@ const PREVIEW_BUBBLE_MAX = 'max-w-[min(100%,calc(100vw-24px-24px-80px))]'
 export type WeChatMessageBubbleRowProps = {
   messageText: string
   messagePrefixIcon?: ReactNode
+  /** 群助手：黑底白字极简高冷 */
+  luxuryDarkAdminBubble?: boolean
   isSelf: boolean
   bubble: WeChatBubbleTheme
   showAvatar: boolean
@@ -43,6 +49,14 @@ export type WeChatMessageBubbleRowProps = {
   chatSelfAvatarUrl?: string
   /** 聊天页对方头像（角色微信头像或 Lumi 助手图）；无则灰色占位，勿与己方混淆 */
   chatOtherAvatarUrl?: string
+  /** 群聊等：头像右侧展示的发送者昵称 */
+  chatOtherSenderNickname?: string
+  /** 群聊：对方头像左上角头衔（群主/管理员） */
+  chatOtherAvatarRankBadge?: 'owner' | 'admin' | null
+  /** 群聊：己方头像左上角头衔 */
+  chatSelfAvatarRankBadge?: 'owner' | 'admin' | null
+  /** 群聊：头衔是否与昵称并排；关闭显示成员昵称时为 false，头衔叠头像角 */
+  groupRankShowBesideNickname?: boolean
   /** 聊天页：点击对方头像 */
   onOtherAvatarClick?: () => void
   /** 长按气泡触发操作面板（微信一致） */
@@ -116,13 +130,27 @@ function useMessageBubbleSingleLine(contentRef: RefObject<HTMLDivElement | null>
   useLayoutEffect(() => {
     const el = contentRef.current
     if (!el) return
-    const measure = () => {
-      setSingleLine(measureBubbleSingleLine(el))
+    let raf = 0
+    const measureNow = () => {
+      const node = contentRef.current
+      if (!node) return
+      const next = measureBubbleSingleLine(node)
+      setSingleLine((prev) => (prev === next ? prev : next))
     }
-    measure()
-    const ro = new ResizeObserver(measure)
+    const scheduleMeasure = () => {
+      if (raf) cancelAnimationFrame(raf)
+      raf = requestAnimationFrame(() => {
+        raf = 0
+        measureNow()
+      })
+    }
+    measureNow()
+    const ro = new ResizeObserver(scheduleMeasure)
     ro.observe(el)
-    return () => ro.disconnect()
+    return () => {
+      ro.disconnect()
+      if (raf) cancelAnimationFrame(raf)
+    }
   }, [text])
   return singleLine
 }
@@ -130,6 +158,7 @@ function useMessageBubbleSingleLine(contentRef: RefObject<HTMLDivElement | null>
 export function WeChatMessageBubbleRow({
   messageText,
   messagePrefixIcon,
+  luxuryDarkAdminBubble = false,
   isSelf,
   bubble,
   showAvatar,
@@ -146,6 +175,10 @@ export function WeChatMessageBubbleRow({
   chatSolidBubbleBg,
   chatSelfAvatarUrl,
   chatOtherAvatarUrl,
+  chatOtherSenderNickname,
+  chatOtherAvatarRankBadge = null,
+  chatSelfAvatarRankBadge = null,
+  groupRankShowBesideNickname = true,
   onOtherAvatarClick,
   onBubbleLongPress,
   bubbleSelected = false,
@@ -167,7 +200,13 @@ export function WeChatMessageBubbleRow({
   const bubbleTextPreview = isSelf ? 'var(--wx-self-bubble-text)' : 'var(--wx-other-bubble-text)'
   const bubbleRadius = isSelf ? `${bubble.selfBubbleRadiusPx}px` : `${bubble.otherBubbleRadiusPx}px`
   const solidChatBg = variant === 'chat' ? chatSolidBubbleBg?.trim() : ''
-  const bubbleBgChatResolved = solidChatBg ? solidChatBg : bubbleBgChat
+  let bubbleBgChatResolved = solidChatBg ? solidChatBg : bubbleBgChat
+  let bubbleTextResolved = variant === 'chat' ? bubbleTextChat : bubbleTextPreview
+  const luxuryDark = variant === 'chat' && !isSelf && luxuryDarkAdminBubble
+  if (luxuryDark) {
+    bubbleBgChatResolved = '#0a0a0a'
+    bubbleTextResolved = '#f5f5f5'
+  }
 
   const textCls = variant === 'chat' ? 'text-[15px]' : 'text-[14px]'
 
@@ -180,6 +219,7 @@ export function WeChatMessageBubbleRow({
   const rowAlign = alignWithAvatarMid ? 'items-center' : 'items-start'
   const selfChatAvatarSrc = variant === 'chat' && isSelf ? chatSelfAvatarUrl?.trim() : ''
   const otherChatAvatarSrc = variant === 'chat' && !isSelf ? chatOtherAvatarUrl?.trim() : ''
+  const rankBeside = groupRankShowBesideNickname !== false
 
   const onLongPress = useCallback(
     () => {
@@ -212,7 +252,7 @@ export function WeChatMessageBubbleRow({
         className={`relative z-[1] inline-block max-w-full px-3 py-2 leading-[1.5] select-none transition-[transform,opacity,background-color] duration-150 ease-out ${textCls} ${bubbleContentClassName}`}
         style={{
           backgroundColor: variant === 'chat' ? bubbleBgChatResolved : bubbleBgPreview,
-          color: variant === 'chat' ? bubbleTextChat : bubbleTextPreview,
+          color: variant === 'chat' ? bubbleTextResolved : bubbleTextPreview,
           borderRadius: bubbleRadius,
           userSelect: variant === 'chat' ? 'none' : undefined,
           WebkitUserSelect: variant === 'chat' ? ('none' as any) : undefined,
@@ -221,9 +261,11 @@ export function WeChatMessageBubbleRow({
             variant === 'chat' && pressing && !bubbleSelected ? 'scale(0.98)' : variant === 'chat' ? 'scale(1)' : undefined,
           opacity: variant === 'chat' && pressing && !bubbleSelected ? 0.9 : 1,
           transformOrigin: variant === 'chat' ? (isSelf ? 'right bottom' : 'left bottom') : undefined,
-          ...(variant === 'chat' && chatBubbleShowBorder
-            ? { border: `1px solid ${chatBubbleBorderColor}` }
-            : {}),
+          ...(variant === 'chat' && luxuryDark
+            ? { border: '1px solid rgba(255,255,255,0.12)' }
+            : variant === 'chat' && chatBubbleShowBorder
+              ? { border: `1px solid ${chatBubbleBorderColor}` }
+              : {}),
         }}
         {...(variant === 'chat' ? bind : {})}
       >
@@ -253,43 +295,101 @@ export function WeChatMessageBubbleRow({
   if (variant === 'chat') {
     if (!isSelf) {
       return (
-        <div className={`w-full max-w-full shrink-0 overflow-x-hidden ${rowClassName}`}>
+        <div className={`w-full max-w-full shrink-0 overflow-x-visible ${rowClassName}`}>
           {!showAvatar ? (
             <div className="ml-[24px] mr-auto min-w-0">{bubbleBlock}</div>
           ) : showAvatarVisual ? (
-            <div className={`ml-[24px] mr-auto flex max-w-full flex-row ${rowAlign} gap-[12px]`}>
-              {otherChatAvatarSrc ? (
-                <img
-                  src={otherChatAvatarSrc}
-                  alt=""
-                  width={avatarPx}
-                  height={avatarPx}
-                  className={`h-10 w-10 shrink-0 object-cover ${avatarMotionCls}`}
-                  style={{
-                    borderRadius: `${bubble.avatarRadiusPx}px`,
-                    border: '1px solid color-mix(in oklab, var(--wx-border) 70%, transparent)',
-                  }}
-                  onClick={onOtherAvatarClick}
-                  aria-hidden
-                />
+            <div
+              className={`ml-[24px] mr-auto flex max-w-full flex-row gap-[12px] ${
+                chatOtherSenderNickname?.trim() || (rankBeside && chatOtherAvatarRankBadge) ? 'items-start' : rowAlign
+              }`}
+            >
+              {rankBeside || !chatOtherAvatarRankBadge ? (
+                otherChatAvatarSrc ? (
+                  <img
+                    src={otherChatAvatarSrc}
+                    alt=""
+                    width={avatarPx}
+                    height={avatarPx}
+                    className={`h-10 w-10 shrink-0 object-cover ${avatarMotionCls}`}
+                    style={{
+                      borderRadius: `${bubble.avatarRadiusPx}px`,
+                      border: '1px solid color-mix(in oklab, var(--wx-border) 70%, transparent)',
+                    }}
+                    onClick={onOtherAvatarClick}
+                    aria-hidden
+                  />
+                ) : (
+                  <div
+                    className={`h-10 w-10 shrink-0 ${avatarMotionCls}`}
+                    style={{
+                      borderRadius: `${bubble.avatarRadiusPx}px`,
+                      background: 'rgba(0,0,0,0.06)',
+                      border: '1px solid color-mix(in oklab, var(--wx-border) 70%, transparent)',
+                    }}
+                    onClick={onOtherAvatarClick}
+                    aria-hidden
+                  />
+                )
               ) : (
-                <div
-                  className={`h-10 w-10 shrink-0 ${avatarMotionCls}`}
-                  style={{
-                    borderRadius: `${bubble.avatarRadiusPx}px`,
-                    background: 'rgba(0,0,0,0.06)',
-                    border: '1px solid color-mix(in oklab, var(--wx-border) 70%, transparent)',
-                  }}
-                  onClick={onOtherAvatarClick}
-                  aria-hidden
-                />
+                <ChatGroupSpeakerRankOnAvatar rankBadge={chatOtherAvatarRankBadge}>
+                  {otherChatAvatarSrc ? (
+                    <img
+                      src={otherChatAvatarSrc}
+                      alt=""
+                      width={avatarPx}
+                      height={avatarPx}
+                      className={`h-10 w-10 shrink-0 object-cover ${avatarMotionCls}`}
+                      style={{
+                        borderRadius: `${bubble.avatarRadiusPx}px`,
+                        border: '1px solid color-mix(in oklab, var(--wx-border) 70%, transparent)',
+                      }}
+                      onClick={onOtherAvatarClick}
+                      aria-hidden
+                    />
+                  ) : (
+                    <div
+                      className={`h-10 w-10 shrink-0 ${avatarMotionCls}`}
+                      style={{
+                        borderRadius: `${bubble.avatarRadiusPx}px`,
+                        background: 'rgba(0,0,0,0.06)',
+                        border: '1px solid color-mix(in oklab, var(--wx-border) 70%, transparent)',
+                      }}
+                      onClick={onOtherAvatarClick}
+                      aria-hidden
+                    />
+                  )}
+                </ChatGroupSpeakerRankOnAvatar>
               )}
-              {bubbleBlock}
+              <div className="flex min-w-0 flex-1 flex-col items-start gap-[3px]">
+                {rankBeside ? (
+                  <ChatGroupSenderNicknameWithRank nickname={chatOtherSenderNickname} rankBadge={chatOtherAvatarRankBadge ?? null} />
+                ) : chatOtherSenderNickname?.trim() ? (
+                  <span
+                    className="max-w-[min(200px,calc(100vw-24px-24px-40px-12px))] truncate text-[11px] leading-snug"
+                    style={{ color: 'var(--wx-text-muted, #888)' }}
+                  >
+                    {chatOtherSenderNickname.trim()}
+                  </span>
+                ) : null}
+                {bubbleBlock}
+              </div>
             </div>
           ) : reserveAvatarGutter ? (
             <div className={`ml-[24px] mr-auto flex max-w-full flex-row ${rowAlign} gap-[12px]`}>
-              <div className="h-10 w-10 shrink-0" aria-hidden />
-              {bubbleBlock}
+              {rankBeside || !chatOtherAvatarRankBadge ? (
+                <div className="h-10 w-10 shrink-0" aria-hidden />
+              ) : (
+                <ChatGroupSpeakerRankOnAvatar rankBadge={chatOtherAvatarRankBadge}>
+                  <div className="h-10 w-10 shrink-0" aria-hidden />
+                </ChatGroupSpeakerRankOnAvatar>
+              )}
+              <div className="flex min-w-0 flex-1 flex-col items-start gap-[3px]">
+                {rankBeside ? (
+                  <ChatGroupSenderNicknameWithRank nickname={chatOtherSenderNickname} rankBadge={chatOtherAvatarRankBadge ?? null} />
+                ) : null}
+                {bubbleBlock}
+              </div>
             </div>
           ) : (
             <div className="ml-[24px] mr-auto min-w-0">{bubbleBlock}</div>
@@ -300,7 +400,7 @@ export function WeChatMessageBubbleRow({
 
     return (
       <div
-        className={`flex w-full max-w-full shrink-0 items-end justify-end gap-[4px] overflow-x-hidden ${rowClassName}`}
+        className={`flex w-full max-w-full shrink-0 items-end justify-end gap-[4px] overflow-x-visible ${rowClassName}`}
       >
         {chatAccessory}
         {!showAvatar ? (
@@ -308,34 +408,68 @@ export function WeChatMessageBubbleRow({
         ) : showAvatarVisual ? (
           <div className={`mr-[24px] ml-auto flex max-w-full flex-row ${rowAlign} gap-[12px]`}>
             {bubbleBlock}
-            {selfChatAvatarSrc ? (
-              <img
-                src={selfChatAvatarSrc}
-                alt=""
-                width={avatarPx}
-                height={avatarPx}
-                className="h-10 w-10 shrink-0 object-cover"
-                style={{
-                  borderRadius: `${bubble.avatarRadiusPx}px`,
-                  border: '1px solid color-mix(in oklab, var(--wx-border) 70%, transparent)',
-                }}
-                aria-hidden
-              />
+            {rankBeside || !chatSelfAvatarRankBadge ? (
+              selfChatAvatarSrc ? (
+                <img
+                  src={selfChatAvatarSrc}
+                  alt=""
+                  width={avatarPx}
+                  height={avatarPx}
+                  className="h-10 w-10 shrink-0 object-cover"
+                  style={{
+                    borderRadius: `${bubble.avatarRadiusPx}px`,
+                    border: '1px solid color-mix(in oklab, var(--wx-border) 70%, transparent)',
+                  }}
+                  aria-hidden
+                />
+              ) : (
+                <div
+                  className="h-10 w-10 shrink-0"
+                  style={{
+                    borderRadius: `${bubble.avatarRadiusPx}px`,
+                    background: 'rgba(0,0,0,0.04)',
+                  }}
+                  aria-hidden
+                />
+              )
             ) : (
-              <div
-                className="h-10 w-10 shrink-0"
-                style={{
-                  borderRadius: `${bubble.avatarRadiusPx}px`,
-                  background: 'rgba(0,0,0,0.04)',
-                }}
-                aria-hidden
-              />
+              <ChatGroupSpeakerRankOnAvatar rankBadge={chatSelfAvatarRankBadge}>
+                {selfChatAvatarSrc ? (
+                  <img
+                    src={selfChatAvatarSrc}
+                    alt=""
+                    width={avatarPx}
+                    height={avatarPx}
+                    className="h-10 w-10 shrink-0 object-cover"
+                    style={{
+                      borderRadius: `${bubble.avatarRadiusPx}px`,
+                      border: '1px solid color-mix(in oklab, var(--wx-border) 70%, transparent)',
+                    }}
+                    aria-hidden
+                  />
+                ) : (
+                  <div
+                    className="h-10 w-10 shrink-0"
+                    style={{
+                      borderRadius: `${bubble.avatarRadiusPx}px`,
+                      background: 'rgba(0,0,0,0.04)',
+                    }}
+                    aria-hidden
+                  />
+                )}
+              </ChatGroupSpeakerRankOnAvatar>
             )}
           </div>
         ) : reserveAvatarGutter ? (
           <div className={`mr-[24px] ml-auto flex max-w-full flex-row ${rowAlign} gap-[12px]`}>
             {bubbleBlock}
-            <div className="h-10 w-10 shrink-0" aria-hidden />
+            {rankBeside || !chatSelfAvatarRankBadge ? (
+              <div className="h-10 w-10 shrink-0" aria-hidden />
+            ) : (
+              <ChatGroupSpeakerRankOnAvatar rankBadge={chatSelfAvatarRankBadge}>
+                <div className="h-10 w-10 shrink-0" aria-hidden />
+              </ChatGroupSpeakerRankOnAvatar>
+            )}
           </div>
         ) : (
           <div className="mr-[24px] ml-auto min-w-0">{bubbleBlock}</div>

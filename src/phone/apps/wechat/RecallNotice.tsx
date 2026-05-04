@@ -9,6 +9,8 @@ export function RecallNotice({
   text: string
   onClick?: () => void
 }) {
+  const pillClass =
+    'rounded-full bg-gray-50/80 px-3 py-1 text-xs text-gray-400' + (onClick ? ' hover:bg-gray-100/90' : '')
   return (
     <motion.div
       initial={{ opacity: 0, y: 5 }}
@@ -16,13 +18,15 @@ export function RecallNotice({
       transition={{ duration: 0.2, ease: 'easeOut' }}
       className="flex justify-center"
     >
-      <Pressable
-        type="button"
-        className="rounded-full bg-gray-50/80 px-3 py-1 text-xs text-gray-400 hover:bg-gray-100/90"
-        onClick={onClick}
-      >
-        {text}
-      </Pressable>
+      {onClick ? (
+        <Pressable type="button" className={pillClass} onClick={onClick}>
+          {text}
+        </Pressable>
+      ) : (
+        <span className={pillClass} role="status">
+          {text}
+        </span>
+      )}
     </motion.div>
   )
 }
