@@ -65,7 +65,10 @@ import {
 } from './wechatChatAi'
 import type { WeChatGroupMetaAction, WeChatGroupMultiSpeakerOrderedItem } from './groupChatModelMeta'
 import { applyWeChatGroupMetaFromModel } from './groupChatMetaApply'
-import { buildNpcPrivateChatDigestForGroupPrompt } from './groupChatPrivateDigest'
+import {
+  buildNpcGroupChatsRecentDigestForPrivatePrompt,
+  buildNpcPrivateChatDigestForGroupPrompt,
+} from './groupChatPrivateDigest'
 import { buildNpcRelationshipRomanceProfileForGroupPrompt } from './groupChatMemberRelationshipPrompt'
 import {
   buildGroupLeanSessionIdentityPromptBlock,
@@ -1518,6 +1521,30 @@ export function ChatRoom({
     return () => window.removeEventListener('wechat-storage-changed', onStorage)
   }, [conversationCharacterId, roomType])
 
+  /**
+   * 私聊专用：仅从 IndexedDB 拼「群聊近期消息摘录」，**不调用模型**（与约会线下剧情参考同源思路）。
+   * 注入系统提示独立区块 {@link recentGroupChatsReference}，与长期记忆总结分列。
+   */
+  const loadPrivateGroupChatsRecentReference = useCallback(async (): Promise<string> => {
+    if (roomType === 'group' || useLumiProjectAssistantPrompt) return ''
+    const pc = personaCharacterId?.trim()
+    if (!pc || pc === WECHAT_LUMI_PEER_CHARACTER_ID) return ''
+    try {
+      const ch = await personaDb.getCharacter(pc)
+      return (
+        await buildNpcGroupChatsRecentDigestForPrivatePrompt({
+          npcCharacterId: pc,
+          sessionPlayerIdentityId: playerIdentityId.trim(),
+          boundPlayerIdentityId: ch?.playerIdentityId,
+          messageCap: 50,
+          charCap: 4500,
+        })
+      ).trim()
+    } catch {
+      return ''
+    }
+  }, [roomType, useLumiProjectAssistantPrompt, personaCharacterId, playerIdentityId])
+
   const formatWxTimeLabel = useCallback((ts: number) => {
     return formatWeChatChatTimestamp(ts, currentTimeMs)
   }, [currentTimeMs])
@@ -2404,12 +2431,31 @@ export function ChatRoom({
     [showCenterToast, MAX_MULTI_SELECT],
   )
 
-  const resolveSenderName = useCallback(
-    (isSelf: boolean) => {
-      if (isSelf) return (playerDisplayName.trim() || '我').slice(0, 64)
-      return (peerNotifyTitle.trim() || '对方').slice(0, 64)
+  /** 引用条/落库 replyTo：群聊对方用发言者本群昵称（非会话标题/群名） */
+  const resolveGroupQuoteSenderLabel = useCallback(
+    (isSelfMsg: boolean, senderCharacterId: string | undefined): string => {
+      const g = groupLive ?? groupDocRef.current
+      if (roomType !== 'group') {
+        return isSelfMsg ? (playerDisplayName.trim() || '我').slice(0, 64) : (peerNotifyTitle.trim() || '对方').slice(0, 64)
+      }
+      if (!g) {
+        return isSelfMsg ? (playerDisplayName.trim() || '我').slice(0, 64) : (peerNotifyTitle.trim() || '群成员').slice(0, 64)
+      }
+      if (isSelfMsg) {
+        const mem = findGroupMember(g, WECHAT_GROUP_USER_CHAR_ID)
+        let gn = (mem?.groupNickname || '').trim()
+        if (gn === WECHAT_GROUP_USER_CHAR_ID) gn = ''
+        return (gn || playerDisplayName.trim() || '我').slice(0, 64)
+      }
+      const sid = senderCharacterId?.trim()
+      if (!sid) return (peerNotifyTitle.trim() || '群成员').slice(0, 64)
+      if (sid === WECHAT_GROUP_BOT_CHARACTER_ID) return '群管家'
+      const mem = findGroupMember(g, sid)
+      let gn = (mem?.groupNickname || '').trim()
+      if (gn === WECHAT_GROUP_USER_CHAR_ID) gn = ''
+      return (gn || groupNoticeMemberNickname(mem)).slice(0, 64)
     },
-    [playerDisplayName, peerNotifyTitle],
+    [roomType, groupLive, playerDisplayName, peerNotifyTitle],
   )
 
   const buildReplyMetaById = useCallback(
@@ -2418,7 +2464,7 @@ export function ChatRoom({
       if (local) {
         return {
           messageId: local.id,
-          senderName: resolveSenderName(local.from === 'self'),
+          senderName: resolveGroupQuoteSenderLabel(local.from === 'self', local.senderCharacterId),
           content: messagePlainPreview(local).slice(0, 300),
           isUser: local.from === 'self',
         }
@@ -2431,7 +2477,10 @@ export function ChatRoom({
       if (msg.isRecalled) {
         return {
           messageId: msg.id,
-          senderName: resolveSenderName(msg.type === 'player'),
+          senderName: resolveGroupQuoteSenderLabel(
+            msg.type === 'player',
+            msg.type === 'character' ? msg.characterId : undefined,
+          ),
           content: '该消息已撤回',
           isUser: msg.type === 'player',
         }
@@ -2442,12 +2491,15 @@ export function ChatRoom({
         : (msg.content?.trim() || (msg.images?.length ? '[图片]' : '...')).slice(0, 300)
       return {
         messageId: msg.id,
-        senderName: resolveSenderName(msg.type === 'player'),
+        senderName: resolveGroupQuoteSenderLabel(
+          msg.type === 'player',
+          msg.type === 'character' ? msg.characterId : undefined,
+        ),
         content: snap,
         isUser: msg.type === 'player',
       }
     },
-    [resolveSenderName],
+    [resolveGroupQuoteSenderLabel],
   )
 
   const jumpToMessage = useCallback(
@@ -3071,6 +3123,7 @@ export function ChatRoom({
         promptMode === 'persona' && pcid
           ? await loadOfflineDatingPlotsPromptBlock(pcid, character?.name ?? null)
           : ''
+      const groupRef = await loadPrivateGroupChatsRecentReference()
       const whisper = await requestWeChatHeartWhisper({
         apiConfig,
         character,
@@ -3082,6 +3135,7 @@ export function ChatRoom({
         longTermMemoryNotes: memoryNotesForPrompt.trim() || undefined,
         worldBackgroundPrompt,
         offlineDatingPlotsContext: offlineDatingPlotsContext || undefined,
+        recentGroupChatsReference: groupRef || undefined,
       })
       await personaDb.putHeartWhisper(conversationCharacterId, whisper)
       setHeartWhisperData(whisper)
@@ -3098,6 +3152,7 @@ export function ChatRoom({
     getCurrentTimeMs,
     heartWhisperLoading,
     memoryNotesForPrompt,
+    loadPrivateGroupChatsRecentReference,
     personaCharacterId,
     playerDisplayName,
     playerIdentityId,
@@ -3149,6 +3204,10 @@ export function ChatRoom({
         let persistCharacterId = conversationCharacterId
         let notifyPeerRound = peerNotifyTitle.trim() || '对方'
         let memoryRound = memoryNotesForPrompt.trim()
+        let recentGroupChatsReference =
+          roomType !== 'group' && !useLumiProjectAssistantPrompt
+            ? (await loadPrivateGroupChatsRecentReference()).trim()
+            : ''
 
         if (roomType === 'group' && groupId?.trim()) {
           const gid = groupId.trim()
@@ -3165,6 +3224,7 @@ export function ChatRoom({
           persistCharacterId = firstNpc
           notifyPeerRound = findGroupMember(gFresh, firstNpc)?.groupNickname || '群成员'
           memoryRound = ''
+          recentGroupChatsReference = ''
         }
 
         const transcript = itemsToTranscript(itemsRef.current, {
@@ -3664,6 +3724,7 @@ export function ChatRoom({
                   longTermMemoryNotes: memoryRound.trim() || undefined,
                   worldBackgroundPrompt,
                   offlineDatingPlotsContext: offlineDatingPlotsContext || undefined,
+                  recentGroupChatsReference: recentGroupChatsReference || undefined,
                   replyBias: finalReplyBias || undefined,
                   busyContext,
                   includeThinkingChain,
@@ -3685,6 +3746,7 @@ export function ChatRoom({
                   longTermMemoryNotes: memoryRound.trim() || undefined,
                   worldBackgroundPrompt,
                   offlineDatingPlotsContext: offlineDatingPlotsContext || undefined,
+                  recentGroupChatsReference: recentGroupChatsReference || undefined,
                   replyBias: finalReplyBias || undefined,
                   busyContext,
                   includeThinkingChain,
@@ -3704,6 +3766,7 @@ export function ChatRoom({
                 longTermMemoryNotes: memoryRound.trim() || undefined,
                 worldBackgroundPrompt,
                 offlineDatingPlotsContext: offlineDatingPlotsContext || undefined,
+                recentGroupChatsReference: recentGroupChatsReference || undefined,
                 replyBias: finalReplyBias || undefined,
                 busyContext,
                 includeThinkingChain,
@@ -3727,6 +3790,7 @@ export function ChatRoom({
                   longTermMemoryNotes: memoryRound.trim() || undefined,
                   worldBackgroundPrompt,
                   offlineDatingPlotsContext: offlineDatingPlotsContext || undefined,
+                  recentGroupChatsReference: recentGroupChatsReference || undefined,
                 })
                 logger.log('ai', `[DMDBG] split-call enabled lines=${splitLines.length}`)
                 if (splitLines.length > 0) queueMicrotask(() => enqueueDanmakuLines(splitLines))
@@ -4752,6 +4816,7 @@ export function ChatRoom({
     scrollToBottomSmooth,
     state.profile.displayName,
     useLumiProjectAssistantPrompt,
+    loadPrivateGroupChatsRecentReference,
     memoryNotesForPrompt,
     peerNotifyTitle,
     enqueueDanmakuLines,
@@ -6120,8 +6185,12 @@ export function ChatRoom({
       const target = msgById.get(reply.messageId)
       const targetExists = !!target
       const recalled = target?.isRecalled === true
+      let senderName = reply.senderName || '未知'
+      if (roomType === 'group' && target) {
+        senderName = resolveGroupQuoteSenderLabel(target.from === 'self', target.senderCharacterId)
+      }
       return {
-        senderName: reply.senderName || '未知',
+        senderName,
         content: recalled ? '该消息已撤回' : reply.content || '...',
         deleted: !targetExists || recalled,
         recalled,
@@ -6970,6 +7039,7 @@ export function ChatRoom({
     groupAvatarByCharId,
     showGroupMemberNicknameInChat,
     showGroupRankBadgesInChat,
+    resolveGroupQuoteSenderLabel,
   ])
 
   const btnPx = chatTheme.inputBar.buttonSize
@@ -7565,6 +7635,7 @@ export function ChatRoom({
               ? await loadOfflineDatingPlotsPromptBlock(pcid, character?.name ?? null)
               : ''
           const transcript = itemsToTranscript(itemsRef.current)
+          const groupRef = await loadPrivateGroupChatsRecentReference()
           const res = await requestWeChatVoiceCallDecision({
             apiConfig,
             character,
@@ -7575,6 +7646,7 @@ export function ChatRoom({
             longTermMemoryNotes: memoryNotesForPrompt.trim() || undefined,
             worldBackgroundPrompt,
             offlineDatingPlotsContext: offlineDatingPlotsContext || undefined,
+            recentGroupChatsReference: groupRef || undefined,
             currentTimeMs: getCurrentTimeMs(),
           })
           if (res.decision === 'ACCEPT') {
@@ -7674,6 +7746,7 @@ export function ChatRoom({
                   : text,
             },
           ]
+          const groupRef = await loadPrivateGroupChatsRecentReference()
           return await requestWeChatVoiceCallReplyText({
             apiConfig,
             character,
@@ -7684,6 +7757,7 @@ export function ChatRoom({
             longTermMemoryNotes: memoryNotesForPrompt.trim() || undefined,
             worldBackgroundPrompt,
             offlineDatingPlotsContext: offlineDatingPlotsContext || undefined,
+            recentGroupChatsReference: groupRef || undefined,
             currentTimeMs: getCurrentTimeMs(),
           })
         }}

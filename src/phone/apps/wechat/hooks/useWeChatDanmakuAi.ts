@@ -26,6 +26,7 @@ export function useWeChatDanmakuAi() {
       longTermMemoryNotes?: string
       worldBackgroundPrompt?: string
       offlineDatingPlotsContext?: string
+      recentGroupChatsReference?: string
     }) => {
       return requestWeChatDanmakuVarietyShow(params)
     },

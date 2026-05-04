@@ -250,6 +250,11 @@ export function buildSystemContent(params: {
   worldBackgroundPrompt?: string
   /** 约会页最近若干条线下剧情正文（与微信同一角色时间线）；由调用方拉取 */
   offlineDatingPlotsContext?: string
+  /**
+   * 私聊专用：与线下剧情同理，仅注入**本地聊天记录摘录**（IndexedDB），**不经过模型**；
+   * 用于群聊→私聊时承接近期群内对话，与 `longTermMemoryNotes`（已落库总结）分开展示。
+   */
+  recentGroupChatsReference?: string
   /** 当前轮次的回复偏向（仅本轮生效） */
   replyBias?: string
   /** 当前会话时间戳（毫秒）；未传时默认系统时间 */
@@ -265,6 +270,9 @@ export function buildSystemContent(params: {
   const offlinePlots = params.offlineDatingPlotsContext?.trim()
     ? `\n\n---\n${params.offlineDatingPlotsContext.trim()}\n`
     : ''
+  const groupChatsRecent = params.recentGroupChatsReference?.trim()
+    ? `\n\n---\n【群聊近期参考（本地消息摘录，非模型总结；用法同上方线下剧情参考）】\n${params.recentGroupChatsReference.trim()}\n`
+    : ''
   const replyBias = params.replyBias?.trim() ? `\n\n---\n【本轮回复偏向（最高优先级）】\n${params.replyBias.trim()}\n` : ''
   const isLumiAssistant = params.promptMode === 'lumi-assistant'
   const currentTime = formatCurrentTimeBlock(params.currentTimeMs, { forLumiAssistant: isLumiAssistant })
@@ -277,7 +285,7 @@ export function buildSystemContent(params: {
 
   if (isLumiAssistant) {
     // 助手模式：不注入「虚构沙盒」免责声明，避免诱导沉浸式扮演。
-    return `${LUMI_ASSISTANT_SYSTEM_PROMPT}${mem}${offlinePlots}${replyBias}${currentTime}${schedule}${pi}${peerLine}`
+    return `${LUMI_ASSISTANT_SYSTEM_PROMPT}${mem}${offlinePlots}${groupChatsRecent}${replyBias}${currentTime}${schedule}${pi}${peerLine}`
   }
 
   const wb = buildWorldBookText(params.character)
@@ -296,7 +304,7 @@ export function buildSystemContent(params: {
     extra += `\n\n---\n【当前状态】未绑定完整人设档案（无世界书）。请以友善、有分寸的微信好友身份交谈，仍须遵守上述通用铁则，且绝不暴露非人类身份。\n`
   }
 
-  return `${WECHAT_ROLEPLAY_SYSTEM_PROMPT}${mem}${offlinePlots}${replyBias}${currentTime}${schedule}${pi}${fictionCot}${extra}${peerLine}`
+  return `${WECHAT_ROLEPLAY_SYSTEM_PROMPT}${mem}${offlinePlots}${groupChatsRecent}${replyBias}${currentTime}${schedule}${pi}${fictionCot}${extra}${peerLine}`
 }
 
 function transcriptToMessages(turns: ChatTranscriptTurn[], opts?: { groupChat?: boolean }): OpenAiCompatibleMessage[] {
@@ -579,6 +587,7 @@ export async function requestWeChatPeerReplyBubbles(params: {
   longTermMemoryNotes?: string
   worldBackgroundPrompt?: string
   offlineDatingPlotsContext?: string
+  recentGroupChatsReference?: string
   replyBias?: string
   busyContext?: BusyRuntimeContext
   includeThinkingChain?: boolean
@@ -600,6 +609,7 @@ export async function requestWeChatPeerReplyBubbles(params: {
     longTermMemoryNotes: params.longTermMemoryNotes,
     worldBackgroundPrompt: params.worldBackgroundPrompt,
     offlineDatingPlotsContext: params.offlineDatingPlotsContext,
+    recentGroupChatsReference: params.recentGroupChatsReference,
     replyBias: params.replyBias,
     currentTimeMs: params.currentTimeMs,
   })
@@ -653,6 +663,7 @@ export async function requestWeChatVoiceCallReplyText(params: {
   longTermMemoryNotes?: string
   worldBackgroundPrompt?: string
   offlineDatingPlotsContext?: string
+  recentGroupChatsReference?: string
   currentTimeMs?: number
 }): Promise<string> {
   const cfg = params.apiConfig
@@ -667,6 +678,7 @@ export async function requestWeChatVoiceCallReplyText(params: {
     longTermMemoryNotes: params.longTermMemoryNotes,
     worldBackgroundPrompt: params.worldBackgroundPrompt,
     offlineDatingPlotsContext: params.offlineDatingPlotsContext,
+    recentGroupChatsReference: params.recentGroupChatsReference,
     currentTimeMs: params.currentTimeMs,
   })
   const system = `${base}\n\n---\n【语音通话场景规则】\n${VOICE_CALL_SYSTEM_PROMPT}\n`
@@ -735,6 +747,7 @@ export async function requestWeChatVoiceCallDecision(params: {
   longTermMemoryNotes?: string
   worldBackgroundPrompt?: string
   offlineDatingPlotsContext?: string
+  recentGroupChatsReference?: string
   currentTimeMs?: number
 }): Promise<VoiceCallDecision> {
   const cfg = params.apiConfig
@@ -749,6 +762,7 @@ export async function requestWeChatVoiceCallDecision(params: {
     longTermMemoryNotes: params.longTermMemoryNotes,
     worldBackgroundPrompt: params.worldBackgroundPrompt,
     offlineDatingPlotsContext: params.offlineDatingPlotsContext,
+    recentGroupChatsReference: params.recentGroupChatsReference,
     currentTimeMs: params.currentTimeMs,
   })
   const system = `${base}\n\n---\n【呼叫接听决策】\n${VOICE_CALL_DECISION_SYSTEM_PROMPT}\n`
@@ -808,6 +822,7 @@ export async function requestWeChatPeerReplyBubblesWithImage(params: {
   longTermMemoryNotes?: string
   worldBackgroundPrompt?: string
   offlineDatingPlotsContext?: string
+  recentGroupChatsReference?: string
   replyBias?: string
   busyContext?: BusyRuntimeContext
   includeThinkingChain?: boolean
@@ -827,6 +842,7 @@ export async function requestWeChatPeerReplyBubblesWithImage(params: {
     longTermMemoryNotes: params.longTermMemoryNotes,
     worldBackgroundPrompt: params.worldBackgroundPrompt,
     offlineDatingPlotsContext: params.offlineDatingPlotsContext,
+    recentGroupChatsReference: params.recentGroupChatsReference,
     replyBias: params.replyBias,
     currentTimeMs: params.currentTimeMs,
   })
@@ -974,6 +990,7 @@ export async function requestWeChatPeerReply(params: {
   longTermMemoryNotes?: string
   worldBackgroundPrompt?: string
   offlineDatingPlotsContext?: string
+  recentGroupChatsReference?: string
   currentTimeMs?: number
   /** 默认 `persona`；内置 Lumi 会话固定 `lumi-assistant`（与人设绑定无关）。 */
   promptMode?: WeChatChatPromptMode
@@ -992,6 +1009,7 @@ export async function requestWeChatPeerReply(params: {
     longTermMemoryNotes: params.longTermMemoryNotes,
     worldBackgroundPrompt: params.worldBackgroundPrompt,
     offlineDatingPlotsContext: params.offlineDatingPlotsContext,
+    recentGroupChatsReference: params.recentGroupChatsReference,
     currentTimeMs: params.currentTimeMs,
   })
   const history = transcriptToMessages(params.transcript)
@@ -1055,6 +1073,7 @@ export async function requestWeChatHeartWhisper(params: {
   longTermMemoryNotes?: string
   worldBackgroundPrompt?: string
   offlineDatingPlotsContext?: string
+  recentGroupChatsReference?: string
 }): Promise<HeartWhisper> {
   const cfg = params.apiConfig
   if (!cfg?.apiUrl?.trim() || !cfg.apiKey?.trim() || !cfg.modelId?.trim()) {
@@ -1068,6 +1087,7 @@ export async function requestWeChatHeartWhisper(params: {
     longTermMemoryNotes: params.longTermMemoryNotes,
     worldBackgroundPrompt: params.worldBackgroundPrompt,
     offlineDatingPlotsContext: params.offlineDatingPlotsContext,
+    recentGroupChatsReference: params.recentGroupChatsReference,
     currentTimeMs: params.nowMs,
   })
   const history = transcriptToMessages(params.transcript.slice(-24))
@@ -1492,6 +1512,7 @@ export async function requestWeChatDanmakuVarietyShow(params: {
   longTermMemoryNotes?: string
   worldBackgroundPrompt?: string
   offlineDatingPlotsContext?: string
+  recentGroupChatsReference?: string
 }): Promise<string[]> {
   const cfg = params.apiConfig
   if (!cfg?.apiUrl?.trim() || !cfg.apiKey?.trim() || !cfg.modelId?.trim()) {
@@ -1524,6 +1545,7 @@ export async function requestWeChatDanmakuVarietyShow(params: {
       longTermMemoryNotes: params.longTermMemoryNotes,
       worldBackgroundPrompt: params.worldBackgroundPrompt,
       offlineDatingPlotsContext: params.offlineDatingPlotsContext,
+      recentGroupChatsReference: params.recentGroupChatsReference,
     })
     const system = `${base}\n\n${identityCtx}\n\n---\n【弹幕生成附加铁则】\n${rulesBlock}`
     const history = transcriptToMessages(params.transcript)
