@@ -846,6 +846,7 @@ function normalizeWeChatChatMessage(input: unknown): WeChatChatMessage | null {
     recalledByRaw === 'player' || recalledByRaw === 'character' || recalledByRaw === 'moderator'
       ? recalledByRaw
       : undefined
+  const quiet = typeof (m as { quiet?: unknown }).quiet === 'boolean' ? !!(m as { quiet?: boolean }).quiet : undefined
   const rawExt = (m as { ext?: unknown }).ext
   let ext: WeChatChatMessage['ext']
   if (rawExt && typeof rawExt === 'object') {
@@ -890,6 +891,7 @@ function normalizeWeChatChatMessage(input: unknown): WeChatChatMessage | null {
     timestamp,
     isRead,
     conversationKey,
+    quiet,
   }
   return ext ? { ...base, ext } : base
 }

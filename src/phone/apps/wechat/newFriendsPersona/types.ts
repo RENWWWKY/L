@@ -439,6 +439,8 @@ export type WeChatChatMessage = {
   isRead: boolean
   /** `${characterId}::${playerIdentityId}`，便于索引 */
   conversationKey: string
+  /** 为 true 时不触发新消息提示音等（程序化系统条等） */
+  quiet?: boolean
   /** 扩展展示/群助手管线（IndexedDB 透传） */
   ext?: {
     /** 群助手程序化回复：黑底白字高冷风 */

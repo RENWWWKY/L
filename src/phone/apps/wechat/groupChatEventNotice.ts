@@ -4,7 +4,7 @@ import { uid } from './newFriendsPersona/utils'
 import { WECHAT_GROUP_BOT_CHARACTER_ID, WECHAT_GROUP_USER_CHAR_ID, wechatGroupConversationKey } from './wechatConversationKey'
 
 /** 群系统通知文案中的成员展示名：仅用本群昵称 `groupNickname`；空时用户占位为「我」，其余为 charId */
-export function groupNoticeMemberNickname(member: GroupMember | undefined): string {
+export function groupNoticeMemberNickname(member: GroupMember | null | undefined): string {
   if (!member) return '…'
   let gn = (member.groupNickname || '').trim()
   /** 历史数据曾把占位 id 误写入昵称字段 */

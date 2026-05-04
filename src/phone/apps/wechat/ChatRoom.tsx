@@ -1299,7 +1299,7 @@ export function ChatRoom({
   onNavigateTransferDetail,
   roomType = 'private' as 'private' | 'group',
   groupId = null as string | null,
-  onOpenGroupInfo,
+  onOpenGroupInfo: _onOpenGroupInfo,
 }: {
   onBack: () => void
   /** 同步「对方正在输入」到顶栏（替代底部提示） */
@@ -1357,7 +1357,7 @@ export function ChatRoom({
   const groupDocRef = useRef<GroupChatRow | null>(null)
 
   // `ChatRoom` 顶栏由上层承载，这里仅保留引用以避免未使用告警
-  useEffect(() => {}, [_onBack])
+  useEffect(() => {}, [_onBack, _onOpenGroupInfo])
   const { state, setUi } = useCustomization()
   const { wechatTheme } = state
   const { chatTheme } = useChatTheme()
@@ -4110,7 +4110,7 @@ export function ChatRoom({
                     type: 'character' as const,
                     content: seg || '[语音]',
                     thinking: !thinkingAttached ? thinking : undefined,
-                    replyTo: replyToMetaM,
+                    replyTo: replyToMetaM ?? undefined,
                     timestamp: tsM,
                     isRead: true,
                     conversationKey,
@@ -4246,7 +4246,7 @@ export function ChatRoom({
                   type: 'character' as const,
                   content: hidden,
                   thinking: !thinkingAttached ? thinking : undefined,
-                  replyTo: replyToMetaT,
+                  replyTo: replyToMetaT ?? undefined,
                   timestamp: tsT,
                   isRead: true,
                   conversationKey,
