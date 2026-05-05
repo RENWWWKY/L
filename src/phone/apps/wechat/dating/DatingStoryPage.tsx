@@ -233,17 +233,33 @@ function stripInnerThoughtDecorators(text: string): string {
   return t
 }
 
+type SplitTaggedVnLineResult =
+  | { mode: 'tagged-narration'; body: string }
+  | { mode: 'tagged-inner'; body: string; innerSpeaker: string | null }
+  | { mode: 'tagged-dialogue'; body: string }
+  | { mode: 'legacy'; body: string }
+
 /**
  * 行首标签为唯一气泡类型来源（与提示词一致）；不做正文语义推断。
  * 无标签行：若符合「姓名：」语法则视为**兼容旧稿的对白**，否则整行视为旁白。
+ * 【内心｜姓名】先于 【内心】 匹配，用于姓名条与剧情日志展示「谁的内心」。
  */
-function splitTaggedVnLine(raw: string): { mode: 'tagged-narration' | 'tagged-inner' | 'tagged-dialogue' | 'legacy'; body: string } {
+function splitTaggedVnLine(raw: string): SplitTaggedVnLineResult {
   const t = String(raw || '').trim()
   if (!t) return { mode: 'legacy', body: '' }
   const nar = t.match(/^【\s*旁白\s*】\s*(.*)$/su)
   if (nar) return { mode: 'tagged-narration', body: String(nar[1] || '').trim() }
+  const innNamed = t.match(/^【\s*(?:内心|心声|OS|os)\s*[｜|]\s*([^】]+?)\s*】\s*(.*)$/su)
+  if (innNamed) {
+    const innerSpeaker = String(innNamed[1] || '').trim()
+    return {
+      mode: 'tagged-inner',
+      body: String(innNamed[2] || '').trim(),
+      innerSpeaker: innerSpeaker.length ? innerSpeaker : null,
+    }
+  }
   const inn = t.match(/^【\s*(?:内心|心声|OS|os)\s*】\s*(.*)$/su)
-  if (inn) return { mode: 'tagged-inner', body: String(inn[1] || '').trim() }
+  if (inn) return { mode: 'tagged-inner', body: String(inn[1] || '').trim(), innerSpeaker: null }
   const dia = t.match(/^【\s*对白\s*】\s*(.+)$/su)
   if (dia) return { mode: 'tagged-dialogue', body: String(dia[1] || '').trim() }
   return { mode: 'legacy', body: t }
@@ -310,10 +326,11 @@ function splitVnContentToBubbles(
       }
     } else if (tagged.mode === 'tagged-inner') {
       isInnerThoughtLine = true
+      speaker = tagged.innerSpeaker?.trim() ? tagged.innerSpeaker.trim() : null
       const stripped = stripInnerThoughtDecorators(tagged.body)
       clean = sanitizeDanglingThoughtMarker(String(stripped || '').replace(/\*\*/g, ''))
       if (userDisplayName?.trim()) {
-        clean = stripMisplacedYouInDialogueBody(clean, userDisplayName.trim(), null)
+        clean = stripMisplacedYouInDialogueBody(clean, userDisplayName.trim(), speaker)
       }
     } else if (tagged.mode === 'tagged-dialogue') {
       const parsed = parseVnBubble(tagged.body, defaultSpeaker)
@@ -1551,8 +1568,7 @@ function DatingStoryPageInner({ onBackToSelect }: Props) {
         out.push({
           id: `${p.id}-ai-${i}`,
           kind,
-          name:
-            kind === 'narration' ? '旁白' : kind === 'innerThought' ? '内心' : b.speaker?.trim() || currentCharacter.realName,
+          name: kind === 'narration' ? '旁白' : b.speaker?.trim() || currentCharacter.realName,
           text,
           isUser: (() => {
             const n = String(b.speaker || '').replace(/\s+/g, '')
@@ -3149,7 +3165,7 @@ function DatingStoryPageInner({ onBackToSelect }: Props) {
                 name={vnDialogName}
                 loading={vnBoxLoading}
                 innerVoice={vnBubbleIsInnerThought}
-                showNameTag={!!vnBubble.speaker && !vnBubbleIsInnerThought}
+                showNameTag={!!vnBubble.speaker || vnBubbleIsInnerThought}
                 canPlayVoice={vnCanPlayBubbleVoice}
                 voiceDisabled={!!currentArchive.vnVoiceDisabled}
                 voiceGenerating={vnLineVoiceGenerating}
