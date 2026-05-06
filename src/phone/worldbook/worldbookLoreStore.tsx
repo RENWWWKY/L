@@ -6,9 +6,6 @@ import {
   type LoreArchiveStoreShapeV3,
   type LoreEntry,
 } from './loreArchiveTypes'
-import type { GlobalWechatWorldBook } from './globalWorldBookTypes'
-import { normalizeGlobalWechatWorldBookScope } from './globalWorldBookTypes'
-import type { WorldBookItem } from '../apps/wechat/newFriendsPersona/types'
 import { personaDb, pullPhoneKvWithLocalStorageLegacy } from '../apps/wechat/newFriendsPersona/idb'
 
 export const LUMI_LORE_ARCHIVE_KV_KEY = 'lumi-lore-archive-v1'
@@ -21,51 +18,6 @@ let persistTimer: ReturnType<typeof setTimeout> | null = null
 
 function emit() {
   listeners.forEach((l) => l())
-}
-
-function parseWorldBookItem(o: Record<string, unknown>): WorldBookItem | null {
-  const id = typeof o.id === 'string' ? o.id.trim() : ''
-  if (!id) return null
-  return {
-    id,
-    name: typeof o.name === 'string' ? o.name : '',
-    enabled: o.enabled !== false,
-    priority: 'before',
-    keywords: '',
-    content: typeof o.content === 'string' ? o.content : '',
-    updatedAt: typeof o.updatedAt === 'number' && Number.isFinite(o.updatedAt) ? o.updatedAt : Date.now(),
-    collapsed: o.collapsed === true,
-  }
-}
-
-function parseWechatWorldBooks(wechatSection: unknown): GlobalWechatWorldBook[] {
-  if (!wechatSection || typeof wechatSection !== 'object') return []
-  const arr = (wechatSection as Record<string, unknown>).worldBooks
-  if (!Array.isArray(arr)) return []
-  const out: GlobalWechatWorldBook[] = []
-  for (const it of arr) {
-    if (!it || typeof it !== 'object') continue
-    const o = it as Record<string, unknown>
-    const id = typeof o.id === 'string' ? o.id.trim() : ''
-    if (!id) continue
-    const itemsRaw = Array.isArray(o.items) ? o.items : []
-    const items: WorldBookItem[] = []
-    for (const x of itemsRaw) {
-      if (!x || typeof x !== 'object') continue
-      const pi = parseWorldBookItem(x as Record<string, unknown>)
-      if (pi) items.push(pi)
-    }
-    out.push({
-      id,
-      name: typeof o.name === 'string' ? o.name : '世界书',
-      enabled: o.enabled !== false,
-      collapsed: o.collapsed === true,
-      scope: normalizeGlobalWechatWorldBookScope(o.scope),
-      items,
-      updatedAt: typeof o.updatedAt === 'number' && Number.isFinite(o.updatedAt) ? o.updatedAt : Date.now(),
-    })
-  }
-  return out
 }
 
 /** v1 / 无 version 字段时的法则条目 */

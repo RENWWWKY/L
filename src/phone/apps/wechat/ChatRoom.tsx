@@ -3401,7 +3401,9 @@ export function ChatRoom({
       const groupRef = await loadPrivateGroupChatsRecentReference()
       const tx = itemsToTranscript(itemsRef.current)
       const memPack = await buildPrivateMemoryInjectionForAi(tx, '')
-      const wbHeartIds = [...new Set([pcid?.trim()].filter((x) => !!x && x !== '__none__'))]
+      const wbHeartIds: string[] = [
+        ...new Set([pcid?.trim()].filter((x): x is string => !!x && x !== '__none__')),
+      ]
       const whisper = await requestWeChatHeartWhisper({
         apiConfig,
         character,
@@ -3597,7 +3599,9 @@ export function ChatRoom({
         const pm = lumiAssistantChat ? 'lumi-assistant' : 'persona'
         /** 档案室法则仅匹配 NPC，不包含玩家身份 */
         const privateWorldbookMemberIds: string[] = [
-          ...new Set([personaCharacterId?.trim()].filter((x) => !!x && x !== '__none__')),
+          ...new Set(
+            [personaCharacterId?.trim()].filter((x): x is string => !!x && x !== '__none__'),
+          ),
         ]
         let loreSceneMemberIds: string[] = privateWorldbookMemberIds
         const offlineDatingPlotsContext =

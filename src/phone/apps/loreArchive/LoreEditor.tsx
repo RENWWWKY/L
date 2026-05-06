@@ -1,5 +1,5 @@
 import { AnimatePresence, motion } from 'framer-motion'
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef } from 'react'
 import type { LoreEntry } from '../../worldbook/loreArchiveTypes'
 import type { GlobalWechatPlate } from '../../worldbook/globalWorldBookTypes'
 import { GLOBAL_WECHAT_PLATE_LABELS } from '../../worldbook/globalWorldBookTypes'
@@ -179,12 +179,14 @@ export function LoreEditor({ draft, roster, onChange, onBack, autoSaveLabel }: P
           {!plateAll && draft.plateScope.mode === 'plates' ? (
             <div className="mt-3 flex flex-wrap gap-2">
               {ALL_PLATES.map((plate) => {
-                const on = draft.plateScope.plates.includes(plate)
+                const scope = draft.plateScope
+                const plates = scope.mode === 'plates' ? scope.plates : []
+                const on = plates.includes(plate)
                 return (
                   <button
                     key={plate}
                     type="button"
-                    onClick={() => setPlateScope(togglePlateInScope(draft.plateScope, plate))}
+                    onClick={() => setPlateScope(togglePlateInScope(scope, plate))}
                     className="rounded-full border px-3 py-1.5 text-[11px] font-medium transition-all"
                     style={{
                       borderColor: 'rgba(0,0,0,0.08)',
