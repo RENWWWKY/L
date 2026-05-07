@@ -98,7 +98,16 @@ export type DockStyle = {
 }
 
 export type AppSlot = {
-  id: 'wechat' | 'takeout' | 'weibo' | 'api' | 'voiceprint' | 'dataArchive' | 'loreArchive' | 'appearance'
+  id:
+    | 'wechat'
+    | 'takeout'
+    | 'weibo'
+    | 'api'
+    | 'voiceprint'
+    | 'dataArchive'
+    | 'loreArchive'
+    | 'recycleBin'
+    | 'appearance'
   label: string
   /** 可选：自定义图标图片 URL（优先于线框 SVG） */
   iconImageUrl: string
@@ -425,9 +434,10 @@ export const DEFAULT_CUSTOMIZATION: CustomizationState = {
     { id: 'voiceprint', label: '声纹档案', iconImageUrl: '', iconRadius: 18 },
     { id: 'dataArchive', label: '数据中心', iconImageUrl: '', iconRadius: 18 },
     { id: 'loreArchive', label: '档案室', iconImageUrl: '', iconRadius: 18 },
+    { id: 'recycleBin', label: '回收站', iconImageUrl: '', iconRadius: 18 },
     { id: 'appearance', label: '外观', iconImageUrl: '', iconRadius: 18 },
   ],
-  desktopLayout: ['voiceprint', 'dataArchive', 'appearance', null, null, null, null, null],
+  desktopLayout: ['voiceprint', 'dataArchive', 'appearance', 'recycleBin', null, null, null, null],
   ui: {
     showStatusBar: true,
     fullScreen: false,
@@ -450,6 +460,7 @@ export const DEFAULT_CUSTOMIZATION: CustomizationState = {
     voiceprint: { ...DEFAULT_APP_PAGE_STYLE, pageBg: '#ffffff' },
     dataArchive: { ...DEFAULT_APP_PAGE_STYLE, pageBg: '#f3efea' },
     loreArchive: { ...DEFAULT_APP_PAGE_STYLE, pageBg: '#fafafa' },
+    recycleBin: { ...DEFAULT_APP_PAGE_STYLE, pageBg: '#f4f4f5' },
     /** 「外观与文案」页本身底图：与微信默认聊天壁纸一致，避免与微信 Tab 纯色底冲突观感 */
     appearance: {
       ...DEFAULT_APP_PAGE_STYLE,

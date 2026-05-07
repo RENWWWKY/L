@@ -76,28 +76,6 @@ export function WeChatConsoleFloatingPanel({
     if (filter === 'all') return all
     return all.filter((l) => l.type === filter)
   }, [all, filter])
-  const danmakuDebug = useMemo(() => {
-    const reversed = [...all].reverse()
-    const latestExtract = reversed.find((l) => l.content.includes('[DMDBG] extract'))
-    const latestEnqueue = reversed.find((l) => l.content.includes('[DMDBG] enqueue'))
-    const latestSplit = reversed.find((l) => l.content.includes('[DMDBG] split-call'))
-    const pickNums = (text: string, keys: string[]) => {
-      const out: Record<string, number> = {}
-      keys.forEach((k) => {
-        const m = text.match(new RegExp(`${k}=(-?\\d+)`))
-        if (m) out[k] = Number(m[1])
-      })
-      return out
-    }
-    return {
-      extractTs: latestExtract?.timestamp ?? 0,
-      enqueueTs: latestEnqueue?.timestamp ?? 0,
-      splitTs: latestSplit?.timestamp ?? 0,
-      extract: latestExtract ? pickNums(latestExtract.content, ['inline', 'fallback', 'total', 'bubblesAfterClean']) : {},
-      enqueue: latestEnqueue ? pickNums(latestEnqueue.content, ['lines', 'poolBefore']) : {},
-      split: latestSplit ? pickNums(latestSplit.content, ['lines']) : {},
-    }
-  }, [all])
 
   useEffect(() => {
     if (!open || minimized || !autoScroll) return
@@ -292,25 +270,10 @@ export function WeChatConsoleFloatingPanel({
         })}
       </div>
 
-      {/* 弹幕调试卡 */}
-      <div className="px-3 pb-1">
-        <div className="rounded-[8px] border border-[rgba(0,0,0,0.08)] bg-[#f7f7f7] px-2 py-1.5 text-[11px] text-[#222]">
-          <div className="font-semibold">弹幕调试</div>
-          <div className="mt-0.5">
-            提取 inline/fallback/total：
-            {`${danmakuDebug.extract.inline ?? 0}/${danmakuDebug.extract.fallback ?? 0}/${danmakuDebug.extract.total ?? 0}`}
-          </div>
-          <div>
-            入队 lines/poolBefore：{`${danmakuDebug.enqueue.lines ?? 0}/${danmakuDebug.enqueue.poolBefore ?? 0}`}
-          </div>
-          <div>副接口 lines：{`${danmakuDebug.split.lines ?? 0}`}</div>
-        </div>
-      </div>
-
       {/* 日志区 */}
       <div
         ref={listRef}
-        className="h-[calc(100%-132px)] overflow-y-auto bg-[#fafafa] px-3 py-2 [scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden"
+        className="h-[calc(100%-88px)] overflow-y-auto bg-[#fafafa] px-3 py-2 [scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden"
         onClick={() => setAutoScroll((v) => !v)}
         style={{ touchAction: 'pan-y' }}
       >

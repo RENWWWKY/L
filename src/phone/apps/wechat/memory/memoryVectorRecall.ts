@@ -109,13 +109,13 @@ export async function backfillMemoryEmbeddingsBestEffort(params: {
   }
 }
 
-export function pickMemoriesByVectorSimilarity(params: {
+function scoreMemoriesByVectorSimilarity(params: {
   candidates: CharacterMemory[]
   queryVec: number[]
   topK: number
   minSim: number
   excludeIds: Set<string>
-}): CharacterMemory[] {
+}): { m: CharacterMemory; sim: number }[] {
   const { candidates, queryVec, topK, minSim, excludeIds } = params
   const scored: { m: CharacterMemory; sim: number }[] = []
   for (const m of candidates) {
@@ -127,7 +127,28 @@ export function pickMemoriesByVectorSimilarity(params: {
     if (sim >= minSim) scored.push({ m, sim })
   }
   scored.sort((a, b) => b.sim - a.sim)
-  return scored.slice(0, topK).map((x) => x.m)
+  return scored.slice(0, topK)
+}
+
+export function pickMemoriesByVectorSimilarity(params: {
+  candidates: CharacterMemory[]
+  queryVec: number[]
+  topK: number
+  minSim: number
+  excludeIds: Set<string>
+}): CharacterMemory[] {
+  return scoreMemoriesByVectorSimilarity(params).map((x) => x.m)
+}
+
+/** 与 {@link pickMemoriesByVectorSimilarity} 相同筛选规则，额外返回余弦相似度（供思维溯源等 UI） */
+export function pickMemoriesByVectorSimilarityScored(params: {
+  candidates: CharacterMemory[]
+  queryVec: number[]
+  topK: number
+  minSim: number
+  excludeIds: Set<string>
+}): { memory: CharacterMemory; score: number }[] {
+  return scoreMemoriesByVectorSimilarity(params).map(({ m, sim }) => ({ memory: m, score: sim }))
 }
 
 export type MemoryVectorRecallOpts = {

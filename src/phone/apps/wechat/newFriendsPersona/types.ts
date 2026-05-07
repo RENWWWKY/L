@@ -143,6 +143,11 @@ export type ChatConversationSettingsRow = {
   isMuted: boolean
   /** 信息页列表中隐藏该会话（仍可从通讯录进入聊天） */
   hiddenFromMessageList: boolean
+  /**
+   * 仅影响聊天界面展示：时间戳 ≤ 该值的本地消息在气泡列表中隐藏，但仍参与 AI 上下文转写。
+   * 彻底删除聊天记录时应清除该字段。
+   */
+  uiOnlyHiddenBeforeTimestamp?: number
   /** 会话级通知提醒开关（仅在全局通知模式下使用；按角色模式下由角色表驱动并与聊天信息页同步） */
   notifyEnabled: boolean
   /** 是否在回复中输出可见思维链（关闭可节省 token） */
@@ -157,6 +162,11 @@ export type ChatConversationSettingsRow = {
   /** 最后一条消息时间戳，用于会话列表排序（与消息表同步更新） */
   lastMessageTime: number
   updatedAt: number
+  /**
+   * 同意好友申请的时刻（毫秒）。私聊界面据此在验证期记录与加回后的聊天之间插入「以上为验证消息」系统条（仅 UI）。
+   * 彻底清空聊天记录时应清除该字段。
+   */
+  friendRequestAcceptedAtMs?: number
 }
 
 export type NotificationAudioConfig =

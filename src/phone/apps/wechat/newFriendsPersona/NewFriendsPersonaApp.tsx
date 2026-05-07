@@ -4,7 +4,7 @@ import { createPortal } from 'react-dom'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { personaDb } from './idb'
 import type { Character, Gender, PlayerIdentity, Relationship } from './types'
-import { IDENTITY_POOL, daysInMonth, formatMD, randomChineseName, uid, zodiacFromMD } from './utils'
+import { IDENTITY_POOL, daysInMonth, formatMD, genderLabelZh, randomChineseName, uid, zodiacFromMD } from './utils'
 import { formatLinkedNpcsForWorldBookPrompt, generateCharacterBio, generateCharacterOpeningLines, generateWechatProfilesForPersonaCharacters } from './ai'
 import { WorldBooksEditor } from './WorldBooksEditor'
 import { useCurrentApiConfig } from '../../api/ApiSettingsContext'
@@ -476,9 +476,6 @@ function IdentityPickModal({
   )
 }
 
-function pickGenderLabel(g: Gender) {
-  return g === 'male' ? '男' : g === 'female' ? '女' : '其他'
-}
 
 function parseHeightCm(raw: string): number | null {
   const t = String(raw || '').trim().toLowerCase()
@@ -791,7 +788,7 @@ export function NewFriendsPersonaApp({
                           {c.name || '未命名'}
                         </p>
                         <p className="mt-1 truncate text-[12px]" style={{ color: sub, fontWeight: 300 }}>
-                          {c.identity} · {pickGenderLabel(c.gender)} · {c.zodiac || '未设置生日'}
+                          {c.identity} · {genderLabelZh(c.gender)} · {c.zodiac || '未设置生日'}
                         </p>
                         <p className="mt-1 truncate text-[12px]" style={{ color: sub, fontWeight: 300 }}>
                           绑定身份：
@@ -1673,7 +1670,7 @@ function PersonaEditPage({
                     color: text,
                   }}
                 >
-                  {pickGenderLabel(g)}
+                  {genderLabelZh(g)}
                 </button>
               ))}
             </div>

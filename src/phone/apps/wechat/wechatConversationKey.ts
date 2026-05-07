@@ -31,6 +31,30 @@ export function wechatConversationKey(characterId: string, playerIdentityId: str
   return `${characterId}::${pid}`
 }
 
+/**
+ * 私聊在 IndexedDB 中使用的身份段：与 ChatRoom 的 `chatRouteIdentityId` 一致——
+ * 优先角色表绑定的 `playerIdentityId`，否则为当前 App 选用身份；皆无则为 `__none__`。
+ */
+export function resolvePrivateChatSessionPlayerIdentityId(
+  characterRow: { playerIdentityId?: string } | null | undefined,
+  appPlayerIdentityId: string | null | undefined,
+): string {
+  const bound = characterRow?.playerIdentityId?.trim()
+  if (bound) return bound
+  const app = appPlayerIdentityId?.trim()
+  if (app) return app
+  return '__none__'
+}
+
+export function resolvePrivateWeChatConversationKey(
+  characterId: string,
+  characterRow: { playerIdentityId?: string } | null | undefined,
+  appPlayerIdentityId: string | null | undefined,
+): string {
+  const sid = resolvePrivateChatSessionPlayerIdentityId(characterRow, appPlayerIdentityId)
+  return wechatConversationKey(characterId.trim(), sid)
+}
+
 /** 与会话设置 `peerCharacterId` 一致：群聊占位 id，避免与真实角色 id 冲突 */
 export function wechatGroupPeerCharacterId(groupId: string): string {
   return `${GROUP_CONV_PREFIX}${groupId.trim()}`

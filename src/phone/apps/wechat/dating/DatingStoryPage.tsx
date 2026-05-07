@@ -21,7 +21,7 @@ import {
   useRef,
   useState,
 } from 'react'
-import { AnimatePresence, motion } from 'framer-motion'
+import { AnimatePresence, motion, useAnimation } from 'framer-motion'
 import { useCurrentApiConfig } from '../../api/ApiSettingsContext'
 import { personaDb } from '../newFriendsPersona/idb'
 import type { Character, CharacterDanmakuSettingsRow, PlayerIdentity, WeChatGlobalSettingsRow } from '../newFriendsPersona/types'
@@ -43,13 +43,19 @@ import { VNBottomControls } from './VNBottomControls'
 import { VNStoreProvider, useActiveSprite, useVNStore } from './useVNStore'
 import { SpriteEditorPage } from './SpriteEditorPage'
 import { ChromaKeyRenderer } from './ChromaKeyRenderer'
-import { extractVnBackgroundCue, resolveVnBackgroundByName, VN_BACKGROUND_ASSETS } from './vnBackgroundCatalog'
+import {
+  extractVnBackgroundCue,
+  isVnIndoorSceneBackground,
+  resolveVnBackgroundByName,
+  VN_BACKGROUND_ASSETS,
+} from './vnBackgroundCatalog'
 import {
   extractVnBgmCueName,
   resolveVnBgmByName,
   vnBgmAssetDiversityKey,
   VN_BGM_DIVERSITY_WINDOW,
 } from './vnBgmCatalog'
+import { VnRainOverlay } from './vnAtmosphereEffects'
 import { createMiniMaxT2ASyncAudioBlob } from '../../voiceprint/services/minimaxApi'
 import { densityToTrackCount, hexAndOpacityToRgba, resolveEffectiveDanmakuVisuals } from '../danmakuResolve'
 import { DanmakuOverlay, type DanmakuOverlayBullet } from '../DanmakuOverlay'
@@ -276,9 +282,19 @@ function splitTaggedVnLine(raw: string): SplitTaggedVnLineResult {
   }
   const inn = t.match(/^【\s*(?:内心|心声|OS|os)\s*】\s*(.*)$/su)
   if (inn) return { mode: 'tagged-inner', body: String(inn[1] || '').trim(), innerSpeaker: null }
-  const dia = t.match(/^【\s*对白\s*】\s*(.+)$/su)
+  const dia = t.match(/^【\s*对白\s*】\s*(.*)$/su)
   if (dia) return { mode: 'tagged-dialogue', body: String(dia[1] || '').trim() }
   return { mode: 'legacy', body: t }
+}
+
+type VnSplitBubble = {
+  text: string
+  speaker: string | null
+  isInnerThought: boolean
+  bgmCueName: string | null
+  backgroundCueName: string | null
+  isFlashback: boolean
+  shouldShake: boolean
 }
 
 /** 一行即一个气泡；不在此按字数/标点切段，边界完全由模型正文换行决定（见 DatingContext VN 格式说明）。 */
@@ -286,32 +302,20 @@ function splitVnContentToBubbles(
   raw: string,
   defaultSpeaker: string,
   userDisplayName?: string,
-): Array<{
-  text: string
-  speaker: string | null
-  isInnerThought: boolean
-  bgmCueName: string | null
-  backgroundCueName: string | null
-  isFlashback: boolean
-}> {
+): { bubbles: VnSplitBubble[]; rainDirective: boolean | null } {
   const source = String(raw || '').trim()
-  if (!source) return []
+  if (!source) return { bubbles: [], rainDirective: null }
   const lines = source
     .split(/\r?\n/)
     .map((x) => x.trim())
     .filter(Boolean)
   const blocks = lines.length ? lines : [source]
-  const out: Array<{
-    text: string
-    speaker: string | null
-    isInnerThought: boolean
-    bgmCueName: string | null
-    backgroundCueName: string | null
-    isFlashback: boolean
-  }> = []
+  const out: VnSplitBubble[] = []
   let pendingBgmCue: string | null = null
   let pendingBgCue: string | null = null
   let flashbackMode = false
+  let rainDirective: boolean | null = null
+  let pendingShakeNext = false
   for (const block of blocks) {
     const flashbackCue = extractVnFlashbackCue(block)
     if (flashbackCue.kind === 'start') {
@@ -320,8 +324,19 @@ function splitVnContentToBubbles(
     if (flashbackCue.kind === 'end') {
       flashbackMode = false
     }
-    const coreLine = flashbackCue.rest
+    const coreLine = flashbackCue.rest.trim()
     if (!coreLine) continue
+    const rainM = coreLine.match(/^【\s*VN雨\s*】\s*(.+)\s*$/u)
+    if (rainM) {
+      const v = String(rainM[1] || '').trim().toLowerCase()
+      if (['开', '开启', 'on', 'true', '1', 'yes'].includes(v)) rainDirective = true
+      else if (['关', '关闭', 'off', 'false', '0', 'no'].includes(v)) rainDirective = false
+      continue
+    }
+    if (/^【\s*VN抖\s*】\s*$/u.test(coreLine)) {
+      pendingShakeNext = true
+      continue
+    }
     const bgmCueName = extractVnBgmCueName(coreLine)
     if (bgmCueName) {
       pendingBgmCue = bgmCueName
@@ -349,6 +364,8 @@ function splitVnContentToBubbles(
         clean = stripMisplacedYouInDialogueBody(clean, userDisplayName.trim(), speaker)
       }
     } else if (tagged.mode === 'tagged-dialogue') {
+      // 模型偶发单独一行「【对白】」无姓名：内容；若走 legacy 会把整行当旁白，日志里露出标签。
+      if (!String(tagged.body || '').trim()) continue
       const parsed = parseVnBubble(tagged.body, defaultSpeaker)
       if (!parsed.text) continue
       speaker = String(parsed.speaker || '').trim() || null
@@ -379,11 +396,13 @@ function splitVnContentToBubbles(
       bgmCueName: pendingBgmCue,
       backgroundCueName: pendingBgCue,
       isFlashback: flashbackMode,
+      shouldShake: pendingShakeNext,
     })
+    pendingShakeNext = false
     pendingBgmCue = null
     pendingBgCue = null
   }
-  return out
+  return { bubbles: out, rainDirective }
 }
 
 function vnProgressLsKey(characterId: string): string {
@@ -1196,6 +1215,11 @@ function DatingStoryPageInner({ onBackToSelect }: Props) {
   const [vnBgCurrentUrl, setVnBgCurrentUrl] = useState<string>(VN_BACKGROUND_ASSETS[0]?.url || VN_BG_FALLBACK)
   const [vnBgPrevUrl, setVnBgPrevUrl] = useState<string | null>(null)
   const [vnBgFlashOn, setVnBgFlashOn] = useState(false)
+  const [vnShakeTick, setVnShakeTick] = useState(0)
+  /** 由模型 `【VN雨】开/关` 控制；本段未输出雨指令时为 null，不改动此项（见 vnSplitPack.rainDirective）。 */
+  const [vnModelRainOn, setVnModelRainOn] = useState(false)
+  const vnLastShakeSigRef = useRef('')
+  const vnViewportShake = useAnimation()
   const [vnBgmCurrentName, setVnBgmCurrentName] = useState('')
   const [vnBgmAwaitingGesture, setVnBgmAwaitingGesture] = useState(false)
   const [vnLineVoicePlaying, setVnLineVoicePlaying] = useState(false)
@@ -1573,9 +1597,11 @@ function DatingStoryPageInner({ onBackToSelect }: Props) {
     return extracted
   }, [currentArchive.vnVoiceDisabled, vnRawContent])
   const vnBgCue = useMemo(() => extractVnBackgroundCue(vnVoiceParamsCue.cleanedText), [vnVoiceParamsCue.cleanedText])
-  const vnBubbles = useMemo(() => {
-    return splitVnContentToBubbles(vnBgCue.cleanedText, currentCharacter.realName, vnUserDisplayName)
-  }, [currentCharacter.realName, vnBgCue.cleanedText, vnUserDisplayName])
+  const vnSplitPack = useMemo(
+    () => splitVnContentToBubbles(vnBgCue.cleanedText, currentCharacter.realName, vnUserDisplayName),
+    [currentCharacter.realName, vnBgCue.cleanedText, vnUserDisplayName],
+  )
+  const vnBubbles = vnSplitPack.bubbles
   const vnCurrentBubble = useMemo(
     () => vnBubbles[Math.max(0, Math.min(vnBubbles.length - 1, vnBubbleIndex))] ?? null,
     [vnBubbles, vnBubbleIndex],
@@ -1611,6 +1637,49 @@ function DatingStoryPageInner({ onBackToSelect }: Props) {
     () => ({ text: vnBubbleText, speaker: vnBubbleSpeaker }),
     [vnBubbleSpeaker, vnBubbleText],
   )
+
+  useEffect(() => {
+    vnLastShakeSigRef.current = ''
+    setVnModelRainOn(false)
+  }, [currentCharacter.id])
+
+  useEffect(() => {
+    if (!isVn) return
+    const d = vnSplitPack.rainDirective
+    if (d !== null) setVnModelRainOn(d)
+  }, [isVn, vnSplitPack.rainDirective])
+
+  const vnSuppressRainForIndoorScene = useMemo(
+    () => isVnIndoorSceneBackground(vnEffectiveBackgroundCueName),
+    [vnEffectiveBackgroundCueName],
+  )
+  const vnShowRainFx = isVn && vnModelRainOn && !vnSuppressRainForIndoorScene
+
+  useEffect(() => {
+    if (!isVn) return
+    const bubble = vnCurrentBubble
+    if (!bubble?.shouldShake) return
+    const idx = vnBubbleIndex
+    const aiId = String(latestAi?.id || '')
+    const sig = `${aiId}:${idx}`
+    if (vnLastShakeSigRef.current === sig) return
+    vnLastShakeSigRef.current = sig
+    setVnShakeTick((t) => t + 1)
+  }, [isVn, latestAi?.id, vnBubbleIndex, vnCurrentBubble])
+
+  useEffect(() => {
+    if (!vnShakeTick) return
+    void vnViewportShake.start({
+      x: [0, -7, 7, -5, 5, -3, 3, 0],
+      y: [0, 4, -4, 3, -2, 2, 0],
+      transition: { duration: 0.38, ease: [0.22, 0.61, 0.36, 1] },
+    })
+  }, [vnShakeTick, vnViewportShake])
+
+  useEffect(() => {
+    if (!isVn) void vnViewportShake.set({ x: 0, y: 0 })
+  }, [isVn, vnViewportShake])
+
   const getCharacterVoiceMap = useCallback((): Record<string, unknown> => {
     try {
       const raw = localStorage.getItem('minimax:characterVoiceMap') || '{}'
@@ -1748,7 +1817,7 @@ function DatingStoryPageInner({ onBackToSelect }: Props) {
       const voiceStripped = extractVnVoiceParamsBlock(aiRaw).cleanedText
       const cleaned = extractVnBackgroundCue(voiceStripped).cleanedText
       if (!cleaned) continue
-      const bubbles = splitVnContentToBubbles(cleaned, currentCharacter.realName, vnUserDisplayName)
+      const bubbles = splitVnContentToBubbles(cleaned, currentCharacter.realName, vnUserDisplayName).bubbles
       if (!bubbles.length) continue
       const isCurrentAi = latestAi?.id === p.id
       let shown = bubbles
@@ -3129,7 +3198,7 @@ function DatingStoryPageInner({ onBackToSelect }: Props) {
           </div>
         </div>
       ) : (
-        <div ref={vnRootRef} className="relative h-full">
+        <motion.div ref={vnRootRef} className="relative h-full" animate={vnViewportShake} initial={false}>
           {vnToast ? (
             <div className="pointer-events-none absolute left-1/2 top-16 z-[80] -translate-x-1/2 rounded-xl bg-white/90 px-4 py-2 text-[13px] text-[#1f2937] shadow-[0_10px_22px_rgba(0,0,0,0.12)] backdrop-blur">
               {vnToast}
@@ -3150,6 +3219,7 @@ function DatingStoryPageInner({ onBackToSelect }: Props) {
               transition={{ duration: 0.42, ease: 'easeOut' }}
             />
           ) : null}
+          <VnRainOverlay active={vnShowRainFx} />
           <div
             className="pointer-events-none absolute inset-0 z-[8] bg-white transition-opacity duration-150"
             style={{ opacity: vnBgFlashOn ? 0.72 : 0 }}
@@ -3443,7 +3513,7 @@ function DatingStoryPageInner({ onBackToSelect }: Props) {
               </div>
             </div>
           ) : null}
-        </div>
+        </motion.div>
       )}
 
       <AnimatePresence>

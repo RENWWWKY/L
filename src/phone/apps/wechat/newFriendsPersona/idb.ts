@@ -36,6 +36,9 @@ import type {
   WeChatMessageSearchIndexRow,
   WorldBackground,
 } from './types'
+import { buildCharacterFullTrashArchive, type PersonaDbTrashSource } from '../../recycleBin/archiveCharacterDeletion'
+import { INDEXED_TRASH_RETENTION_MS, emitIndexedTrashChanged } from '../../recycleBin/recycleBinEvents'
+import type { IndexedTrashEntry } from '../../recycleBin/indexedTrashTypes'
 import {
   MEMORY_ALWAYS_INJECT_CAP,
   isMemoryAlwaysTrigger,
@@ -52,6 +55,7 @@ import {
   MEMORY_VECTOR_TOP_GROUP,
   MEMORY_VECTOR_TOP_PRIVATE,
   pickMemoriesByVectorSimilarity,
+  pickMemoriesByVectorSimilarityScored,
   resolveMemoryEmbeddingModelId,
   type MemoryVectorRecallOpts,
 } from '../memory/memoryVectorRecall'
@@ -80,7 +84,7 @@ import {
 } from '../chatTheme/types'
 
 const DB_NAME = 'wechat-personas-v1'
-const DB_VERSION = 23
+const DB_VERSION = 25
 
 /** 复合索引：按会话 + 时间戳范围查询（日历、按日跳转） */
 const CHAT_MSG_INDEX_CONV_TS = 'conversationKey_timestamp'
@@ -108,6 +112,7 @@ const CHARACTER_TIME_STORE = 'characterTimeSettings'
 const FAVORITES_STORE = 'favorites'
 const HEART_WHISPER_STORE = 'heartWhispers'
 const GROUP_PSYCHE_STORE = 'groupPsyche'
+const INDEXED_TRASH_STORE = 'indexedTrash'
 
 /** 与 DatingContext / loadOfflineDatingPlotsForWechatPrompt 一致（IndexedDB phoneKv） */
 const WECHAT_DATING_ARCHIVES_KV_KEY = 'wechat-dating-archives-v1'
@@ -1011,6 +1016,16 @@ function normalizeChatConversationSettingsRow(input: unknown): ChatConversationS
     lastMessageTime:
       typeof r.lastMessageTime === 'number' && Number.isFinite(r.lastMessageTime) ? r.lastMessageTime : 0,
     updatedAt: typeof r.updatedAt === 'number' ? r.updatedAt : now,
+    ...(typeof r.uiOnlyHiddenBeforeTimestamp === 'number' &&
+    Number.isFinite(r.uiOnlyHiddenBeforeTimestamp) &&
+    r.uiOnlyHiddenBeforeTimestamp > 0
+      ? { uiOnlyHiddenBeforeTimestamp: r.uiOnlyHiddenBeforeTimestamp }
+      : {}),
+    ...(typeof r.friendRequestAcceptedAtMs === 'number' &&
+    Number.isFinite(r.friendRequestAcceptedAtMs) &&
+    r.friendRequestAcceptedAtMs > 0
+      ? { friendRequestAcceptedAtMs: r.friendRequestAcceptedAtMs }
+      : {}),
   }
 }
 
@@ -1382,6 +1397,11 @@ export type FriendRequestRow = {
   status: 'pending' | 'accepted' | 'declined'
   createdAt: number
   updatedAt: number
+  /**
+   * 「重新添加」验证阶段起始时间：仅展示 timestamp ≥ 该值的会话消息到「新的朋友」，避免删除前的私聊串入。
+   * 缺省时回退为 {@link createdAt}。
+   */
+  verificationEpochMs?: number
 }
 
 function normalizeFriendRequestRow(input: unknown): FriendRequestRow | null {
@@ -1400,6 +1420,11 @@ function normalizeFriendRequestRow(input: unknown): FriendRequestRow | null {
     r.status === 'accepted' || r.status === 'declined' || r.status === 'pending' ? r.status : 'pending'
   const createdAt = typeof r.createdAt === 'number' && Number.isFinite(r.createdAt) ? r.createdAt : now
   const updatedAt = typeof r.updatedAt === 'number' && Number.isFinite(r.updatedAt) ? r.updatedAt : now
+  const verificationEpochMsRaw = (r as { verificationEpochMs?: unknown }).verificationEpochMs
+  const verificationEpochMs =
+    typeof verificationEpochMsRaw === 'number' && Number.isFinite(verificationEpochMsRaw) && verificationEpochMsRaw > 0
+      ? verificationEpochMsRaw
+      : undefined
   return {
     id,
     characterId,
@@ -1408,6 +1433,7 @@ function normalizeFriendRequestRow(input: unknown): FriendRequestRow | null {
     status,
     createdAt,
     updatedAt,
+    ...(verificationEpochMs ? { verificationEpochMs } : {}),
   }
 }
 
@@ -1528,6 +1554,11 @@ function openDb(): Promise<IDBDatabase> {
       if (!db.objectStoreNames.contains(GROUP_PSYCHE_STORE)) {
         db.createObjectStore(GROUP_PSYCHE_STORE, { keyPath: 'conversationId' })
       }
+      /** 回收站：任意升级路径下只要缺失就创建（避免 v24 已升版但 store 未创建的静默失败） */
+      if (!db.objectStoreNames.contains(INDEXED_TRASH_STORE)) {
+        const tr = db.createObjectStore(INDEXED_TRASH_STORE, { keyPath: 'id' })
+        tr.createIndex('expiresAt', 'expiresAt', { unique: false })
+      }
     }
     req.onsuccess = () => resolve(req.result)
     req.onerror = () => reject(req.error ?? new Error('open indexeddb failed'))
@@ -1548,6 +1579,217 @@ export function emitWeChatStorageChanged(): void {
 }
 
 export class PersonaDb {
+  private __indexedTrashSuspendDepth = 0
+
+  isIndexedTrashSuspended(): boolean {
+    return this.__indexedTrashSuspendDepth > 0
+  }
+
+  async runWithIndexedTrashSuspended<T>(fn: () => Promise<T>): Promise<T> {
+    this.__indexedTrashSuspendDepth += 1
+    try {
+      return await fn()
+    } finally {
+      this.__indexedTrashSuspendDepth -= 1
+    }
+  }
+
+  // -------- 本地回收站（IndexedDB 删除快照，5 天过期） --------
+
+  async appendIndexedTrashEntry(
+    partial: Omit<IndexedTrashEntry, 'id' | 'deletedAt' | 'expiresAt'>,
+  ): Promise<string> {
+    if (this.__indexedTrashSuspendDepth > 0) return ''
+    const db0 = await openDb()
+    if (!db0.objectStoreNames.contains(INDEXED_TRASH_STORE)) {
+      db0.close()
+      return ''
+    }
+    db0.close()
+    const id = `trash-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`
+    const now = Date.now()
+    const row: IndexedTrashEntry = {
+      ...partial,
+      id,
+      deletedAt: now,
+      expiresAt: now + INDEXED_TRASH_RETENTION_MS,
+    }
+    const db = await openDb()
+    const tx = db.transaction(INDEXED_TRASH_STORE, 'readwrite')
+    tx.objectStore(INDEXED_TRASH_STORE).put(row)
+    await txDone(tx)
+    db.close()
+    emitIndexedTrashChanged()
+    return id
+  }
+
+  async listIndexedTrashEntries(): Promise<IndexedTrashEntry[]> {
+    const db = await openDb()
+    if (!db.objectStoreNames.contains(INDEXED_TRASH_STORE)) {
+      db.close()
+      return []
+    }
+    const tx = db.transaction(INDEXED_TRASH_STORE, 'readonly')
+    const req = tx.objectStore(INDEXED_TRASH_STORE).getAll()
+    const raw = await new Promise<IndexedTrashEntry[]>((resolve, reject) => {
+      req.onsuccess = () => resolve((req.result as IndexedTrashEntry[]) ?? [])
+      req.onerror = () => reject(req.error ?? new Error('indexedTrash getAll'))
+    })
+    await txDone(tx)
+    db.close()
+    return raw.sort((a, b) => (b.deletedAt ?? 0) - (a.deletedAt ?? 0))
+  }
+
+  async getIndexedTrashEntry(id: string): Promise<IndexedTrashEntry | null> {
+    const tid = id.trim()
+    if (!tid) return null
+    const db = await openDb()
+    if (!db.objectStoreNames.contains(INDEXED_TRASH_STORE)) {
+      db.close()
+      return null
+    }
+    const tx = db.transaction(INDEXED_TRASH_STORE, 'readonly')
+    const req = tx.objectStore(INDEXED_TRASH_STORE).get(tid)
+    const row = await new Promise<IndexedTrashEntry | undefined>((resolve, reject) => {
+      req.onsuccess = () => resolve(req.result as IndexedTrashEntry | undefined)
+      req.onerror = () => reject(req.error ?? new Error('indexedTrash get'))
+    })
+    await txDone(tx)
+    db.close()
+    return row ?? null
+  }
+
+  async removeIndexedTrashEntry(id: string): Promise<void> {
+    const tid = id.trim()
+    if (!tid) return
+    const db = await openDb()
+    if (!db.objectStoreNames.contains(INDEXED_TRASH_STORE)) {
+      db.close()
+      return
+    }
+    const tx = db.transaction(INDEXED_TRASH_STORE, 'readwrite')
+    tx.objectStore(INDEXED_TRASH_STORE).delete(tid)
+    await txDone(tx)
+    db.close()
+    emitIndexedTrashChanged()
+  }
+
+  /** 物理清除已过期的回收站条目，返回删除条数 */
+  async purgeExpiredIndexedTrash(): Promise<number> {
+    const db = await openDb()
+    if (!db.objectStoreNames.contains(INDEXED_TRASH_STORE)) {
+      db.close()
+      return 0
+    }
+    const tx = db.transaction(INDEXED_TRASH_STORE, 'readwrite')
+    const store = tx.objectStore(INDEXED_TRASH_STORE)
+    const idx = store.index('expiresAt')
+    const now = Date.now()
+    let removed = 0
+    await new Promise<void>((resolve, reject) => {
+      const req = idx.openCursor(IDBKeyRange.upperBound(now))
+      req.onsuccess = () => {
+        const cur = req.result
+        if (cur) {
+          cur.delete()
+          removed += 1
+          cur.continue()
+        } else resolve()
+      }
+      req.onerror = () => reject(req.error ?? new Error('purge indexedTrash'))
+    })
+    await txDone(tx)
+    db.close()
+    if (removed) emitIndexedTrashChanged()
+    return removed
+  }
+
+  async listAllChatConversationSettings(): Promise<ChatConversationSettingsRow[]> {
+    const db = await openDb()
+    if (!db.objectStoreNames.contains(CHAT_CONV_SETTINGS_STORE)) {
+      db.close()
+      return []
+    }
+    const tx = db.transaction(CHAT_CONV_SETTINGS_STORE, 'readonly')
+    const req = tx.objectStore(CHAT_CONV_SETTINGS_STORE).getAll()
+    const raw = await new Promise<unknown[]>((resolve, reject) => {
+      req.onsuccess = () => resolve((req.result as unknown[]) ?? [])
+      req.onerror = () => reject(req.error ?? new Error('listAllChatConversationSettings'))
+    })
+    await txDone(tx)
+    db.close()
+    return raw.map(normalizeChatConversationSettingsRow).filter((x): x is ChatConversationSettingsRow => !!x)
+  }
+
+  async listAllNetworkGraphViews(): Promise<NetworkGraphViewRecord[]> {
+    const db = await openDb()
+    if (!db.objectStoreNames.contains(GRAPH_VIEW_STORE)) {
+      db.close()
+      return []
+    }
+    const tx = db.transaction(GRAPH_VIEW_STORE, 'readonly')
+    const req = tx.objectStore(GRAPH_VIEW_STORE).getAll()
+    const raw = await new Promise<unknown[]>((resolve, reject) => {
+      req.onsuccess = () => resolve((req.result as unknown[]) ?? [])
+      req.onerror = () => reject(req.error ?? new Error('listAllNetworkGraphViews'))
+    })
+    await txDone(tx)
+    db.close()
+    const out: NetworkGraphViewRecord[] = []
+    for (const x of raw) {
+      const n = normalizeNetworkGraphView(x)
+      if (n) out.push(n)
+    }
+    return out
+  }
+
+  async getRawPlayerLinksRow(
+    rootCharacterId: string,
+  ): Promise<{ rootCharacterId: string; links: PlayerNetworkLink[]; updatedAt: number } | null> {
+    const rid = rootCharacterId.trim()
+    if (!rid) return null
+    const db = await openDb()
+    if (!db.objectStoreNames.contains(PLAYER_LINKS_STORE)) {
+      db.close()
+      return null
+    }
+    const tx = db.transaction(PLAYER_LINKS_STORE, 'readonly')
+    const req = tx.objectStore(PLAYER_LINKS_STORE).get(rid)
+    const row = await new Promise<PlayerLinksRecord | undefined>((resolve, reject) => {
+      req.onsuccess = () => resolve(req.result as PlayerLinksRecord | undefined)
+      req.onerror = () => reject(req.error ?? new Error('playerLinks get raw'))
+    })
+    await txDone(tx)
+    db.close()
+    if (!row || typeof row.rootCharacterId !== 'string') return null
+    const now = Date.now()
+    const links = Array.isArray(row.links) ? row.links.map((l) => normalizePlayerLink(l, now)) : []
+    return { rootCharacterId: row.rootCharacterId, links, updatedAt: typeof row.updatedAt === 'number' ? row.updatedAt : now }
+  }
+
+  async listWeChatChatMessagesByConversationKey(conversationKey: string): Promise<WeChatChatMessage[]> {
+    const k = conversationKey.trim()
+    if (!k) return []
+    const db = await openDb()
+    if (!db.objectStoreNames.contains(CHAT_MSG_STORE)) {
+      db.close()
+      return []
+    }
+    const tx = db.transaction(CHAT_MSG_STORE, 'readonly')
+    const idx = tx.objectStore(CHAT_MSG_STORE).index('conversationKey')
+    const req = idx.getAll(k)
+    const raw = await new Promise<unknown[]>((resolve, reject) => {
+      req.onsuccess = () => resolve((req.result as unknown[]) ?? [])
+      req.onerror = () => reject(req.error ?? new Error('listWeChatChatMessagesByConversationKey'))
+    })
+    await txDone(tx)
+    db.close()
+    return raw
+      .map((x) => normalizeWeChatChatMessage(x))
+      .filter((x): x is WeChatChatMessage => !!x)
+      .sort((a, b) => a.timestamp - b.timestamp)
+  }
+
   // -------- player identity --------
 
   async listPlayerIdentities(): Promise<PlayerIdentity[]> {
@@ -1587,10 +1829,30 @@ export class PersonaDb {
   }
 
   async deletePlayerIdentity(id: string): Promise<void> {
+    const pid = id.trim()
+    if (!pid) return
+    if (!this.isIndexedTrashSuspended()) {
+      const identity = await this.getPlayerIdentity(pid)
+      const rels = await this.listAllRelationships()
+      const removedRels = rels.filter(
+        (r) => r.isPlayerIdentity && (r.fromCharacterId === pid || r.toCharacterId === pid),
+      )
+      const currentId = await this.getCurrentIdentityId()
+      await this.appendIndexedTrashEntry({
+        kind: 'player-identity',
+        title: `删除身份「${identity?.name?.trim() || pid}」`,
+        summary: identity ? `${removedRels.length} 条身份关系` : '身份数据',
+        payload: {
+          identity,
+          removedRelationships: removedRels,
+          hadCurrentIdentity: currentId === pid,
+        },
+      })
+    }
     const db = await openDb()
     const stores: string[] = [IDENTITY_STORE, REL_STORE, CONFIG_STORE]
     const tx = db.transaction(stores, 'readwrite')
-    tx.objectStore(IDENTITY_STORE).delete(id)
+    tx.objectStore(IDENTITY_STORE).delete(pid)
 
     // 清理身份相关关系
     const relStore = tx.objectStore(REL_STORE)
@@ -1600,7 +1862,7 @@ export class PersonaDb {
       relReq.onerror = () => reject(relReq.error ?? new Error('rel getAll'))
     })
     for (const r of rels) {
-      if (r.isPlayerIdentity && (r.fromCharacterId === id || r.toCharacterId === id)) relStore.delete(r.id)
+      if (r.isPlayerIdentity && (r.fromCharacterId === pid || r.toCharacterId === pid)) relStore.delete(r.id)
     }
 
     // 若删除的是当前身份，清空 currentIdentityId
@@ -1610,7 +1872,7 @@ export class PersonaDb {
       cfgReq.onsuccess = () => resolve((cfgReq.result as Record<string, unknown>) ?? null)
       cfgReq.onerror = () => resolve(null)
     })
-    if (cfg && cfg.currentIdentityId === id) {
+    if (cfg && cfg.currentIdentityId === pid) {
       cfgStore.put({ ...cfg, id: 'global', currentIdentityId: '' })
     }
 
@@ -1799,6 +2061,10 @@ export class PersonaDb {
   }
 
   async deleteCharacter(id: string): Promise<void> {
+    if (!this.isIndexedTrashSuspended()) {
+      const snap = await buildCharacterFullTrashArchive(this as unknown as PersonaDbTrashSource, id)
+      if (snap) await this.appendIndexedTrashEntry(snap)
+    }
     const npcs = await this.listNpcsFor(id)
     const idsToRemove = new Set<string>([id, ...npcs.map((n) => n.id)])
     const db = await openDb()
@@ -2030,14 +2296,77 @@ export class PersonaDb {
    * 清理通讯录侧数据（聊天/记忆/会话设置/弹幕/图谱视图/玩家链接），
    * 保留角色本体与角色-角色关系边。
    */
-  async deleteCharacterDataKeepNetworkRelationships(characterIds: string[]): Promise<void> {
+  async deleteCharacterDataKeepNetworkRelationships(
+    characterIds: string[],
+    opts?: { preserveWeChatConversationKeys?: string[] },
+  ): Promise<void> {
     if (!characterIds.length) return
     const idsToRemove = new Set(characterIds.map((x) => x.trim()).filter(Boolean))
     if (!idsToRemove.size) return
 
-    await this.purgeWechatDatingArtifactsAndMemoryTracksForCharacterIds([...idsToRemove])
+    const idsArr = [...idsToRemove]
+    const preserveConv = new Set(
+      (opts?.preserveWeChatConversationKeys ?? []).map((k) => k.trim()).filter(Boolean),
+    )
 
-    const db = await openDb()
+    if (!this.isIndexedTrashSuspended()) {
+      const messagesRaw = await this.listWeChatChatMessagesByCharacterIds(idsArr)
+      const messages = messagesRaw.filter((m) => !preserveConv.has(m.conversationKey.trim()))
+      const allMem = await this.listAllCharacterMemories()
+      const memories = allMem.filter((m) => idsToRemove.has(m.characterId))
+      const allGv = await this.listAllNetworkGraphViews()
+      const graphViews = allGv.filter(
+        (row) => idsToRemove.has(row.rootCharacterId) || idsToRemove.has(row.perspectiveCharacterId),
+      )
+      const allCs = await this.listAllChatConversationSettings()
+      const conversationSettings = allCs.filter(
+        (row) => idsToRemove.has(row.peerCharacterId) && !preserveConv.has(row.conversationKey.trim()),
+      )
+      const danmakuRows: CharacterDanmakuSettingsRow[] = []
+      for (const cid of idsToRemove) {
+        const d = await this.getCharacterDanmakuSettings(cid)
+        if (d) danmakuRows.push(d)
+      }
+      const playerLinksRows: Array<{ rootCharacterId: string; links: PlayerNetworkLink[]; updatedAt: number }> = []
+      for (const cid of idsToRemove) {
+        const row = await this.getRawPlayerLinksRow(cid)
+        if (row) playerLinksRows.push(row)
+      }
+      const heartWhispers: HeartWhisperRow[] = []
+      for (const cid of idsToRemove) {
+        const h = await this.getHeartWhisper(cid)
+        if (h) heartWhispers.push(h)
+      }
+      const datingRaw = await this.getPhoneKv(WECHAT_DATING_ARCHIVES_KV_KEY)
+      const datingArchiveEntries: Record<string, unknown> = {}
+      if (datingRaw && typeof datingRaw === 'object' && !Array.isArray(datingRaw)) {
+        const arch = datingRaw as Record<string, unknown>
+        for (const rid of idsToRemove) {
+          if (rid in arch) datingArchiveEntries[rid] = arch[rid]
+        }
+      }
+      await this.appendIndexedTrashEntry({
+        kind: 'character-soft',
+        title: `清除 ${idsArr.length} 个角色的聊天记录与记忆`,
+        summary: `${messages.length} 条消息 · ${memories.length} 条记忆`,
+        payload: {
+          characterIds: idsArr,
+          messages,
+          memories,
+          graphViews,
+          conversationSettings,
+          danmakuRows,
+          playerLinksRows,
+          heartWhispers,
+          datingArchiveEntries,
+        },
+      })
+    }
+
+    await this.runWithIndexedTrashSuspended(async () => {
+      await this.purgeWechatDatingArtifactsAndMemoryTracksForCharacterIds(idsArr)
+
+      const db = await openDb()
     const stores: string[] = []
     if (db.objectStoreNames.contains(GRAPH_VIEW_STORE)) stores.push(GRAPH_VIEW_STORE)
     if (db.objectStoreNames.contains(CHAT_MSG_STORE)) stores.push(CHAT_MSG_STORE)
@@ -2081,7 +2410,9 @@ export class PersonaDb {
         mReq.onerror = () => reject(mReq.error ?? new Error('chatMessages getAll'))
       })
       for (const msg of allMsgs) {
-        if (idsToRemove.has(msg.characterId)) cms.delete(msg.id)
+        if (!idsToRemove.has(msg.characterId)) continue
+        if (preserveConv.has(msg.conversationKey.trim())) continue
+        cms.delete(msg.id)
       }
     }
 
@@ -2106,7 +2437,10 @@ export class PersonaDb {
       })
       for (const raw of allCs) {
         const row = normalizeChatConversationSettingsRow(raw)
-        if (row && idsToRemove.has(row.peerCharacterId)) css.delete(row.conversationKey)
+        if (row && idsToRemove.has(row.peerCharacterId)) {
+          if (preserveConv.has(row.conversationKey.trim())) continue
+          css.delete(row.conversationKey)
+        }
       }
     }
 
@@ -2131,9 +2465,10 @@ export class PersonaDb {
       }
     }
 
-    await txDone(tx)
-    db.close()
-    emitWeChatStorageChanged()
+      await txDone(tx)
+      db.close()
+      emitWeChatStorageChanged()
+    })
   }
 
   async listAllRelationships(): Promise<Relationship[]> {
@@ -2249,8 +2584,21 @@ export class PersonaDb {
   }
 
   async deleteCharacterNpcOnly(npcId: string): Promise<void> {
-    const existing = await this.getCharacter(npcId)
+    const nid = npcId.trim()
+    if (!nid) return
+    const existing = await this.getCharacter(nid)
     const rootId = existing?.generatedForCharacterId ?? ''
+    if (!this.isIndexedTrashSuspended()) {
+      let graphView: NetworkGraphViewRecord | null = null
+      if (rootId) graphView = await this.getNetworkGraphView(rootId, nid)
+      const linksBefore = rootId ? await this.getRawPlayerLinksRow(rootId) : null
+      await this.appendIndexedTrashEntry({
+        kind: 'npc-only',
+        title: `删除人脉「${existing?.name?.trim() || nid}」`,
+        summary: rootId ? `隶属于主角 ${rootId.slice(0, 8)}…` : '独立 NPC',
+        payload: { npcId: nid, rootCharacterId: rootId, character: existing, graphView, playerLinksRow: linksBefore },
+      })
+    }
     const db = await openDb()
     const stores: string[] = [STORE, REL_STORE]
     if (db.objectStoreNames.contains(GRAPH_VIEW_STORE)) stores.push(GRAPH_VIEW_STORE)
@@ -2264,11 +2612,11 @@ export class PersonaDb {
       relReq.onerror = () => reject(relReq.error ?? new Error('rel getAll'))
     })
     for (const r of rels) {
-      if (r.fromCharacterId === npcId || r.toCharacterId === npcId) relStore.delete(r.id)
+      if (r.fromCharacterId === nid || r.toCharacterId === nid) relStore.delete(r.id)
     }
-    charStore.delete(npcId)
+    charStore.delete(nid)
     if (db.objectStoreNames.contains(GRAPH_VIEW_STORE) && rootId) {
-      tx.objectStore(GRAPH_VIEW_STORE).delete(graphViewId(rootId, npcId))
+      tx.objectStore(GRAPH_VIEW_STORE).delete(graphViewId(rootId, nid))
     }
     if (db.objectStoreNames.contains(PLAYER_LINKS_STORE) && rootId) {
       const plStore = tx.objectStore(PLAYER_LINKS_STORE)
@@ -2280,7 +2628,7 @@ export class PersonaDb {
       if (row?.links?.length) {
         const now = Date.now()
         const next = row.links
-          .filter((l) => l.characterId !== npcId)
+          .filter((l) => l.characterId !== nid)
           .map((l) => normalizePlayerLink(l, now))
         plStore.put({ rootCharacterId: rootId, links: next, updatedAt: now })
       }
@@ -2382,6 +2730,17 @@ export class PersonaDb {
         playerIdentityId: normalized.playerIdentityId,
       })
     }
+
+    // 「删除聊天」后会话从信息列表隐藏；任一方产生新消息后重新显示（与微信体验一致）
+    const stUnhide = await this.getChatConversationSettings(conversationKey)
+    if (stUnhide?.hiddenFromMessageList) {
+      await this.upsertChatConversationSettings({
+        conversationKey,
+        peerCharacterId: stUnhide.peerCharacterId,
+        playerIdentityId: stUnhide.playerIdentityId,
+        hiddenFromMessageList: false,
+      })
+    }
   }
 
   /** 局部更新一条聊天消息（如红包拆封状态），写入后广播 wechat-storage-changed */
@@ -2431,9 +2790,62 @@ export class PersonaDb {
     emitWeChatStorageChanged()
   }
 
+  /** 回收站列表：用备注/微信昵称/姓名与头像展示对方，避免裸 id */
+  private async resolveWeChatTrashPeerLabelAndAvatar(
+    conversationKey: string,
+    conv: ChatConversationSettingsRow | null,
+  ): Promise<{ label: string; avatarUrl: string }> {
+    const k = conversationKey.trim()
+    if (isWechatGroupConversationKey(k)) {
+      const gid = parseGroupIdFromConversationKey(k)
+      if (gid) {
+        const g = await this.getGroupChat(gid)
+        const label = (g?.remark ?? g?.name ?? '').trim() || '群聊'
+        const avatarUrl = (g?.avatar ?? '').trim()
+        return { label, avatarUrl }
+      }
+    }
+    let peerId = (conv?.peerCharacterId ?? '').trim()
+    if (!peerId && k) {
+      const idx = k.lastIndexOf('::')
+      if (idx > 0) peerId = k.slice(0, idx).trim()
+    }
+    if (peerId === WECHAT_LUMI_PEER_CHARACTER_ID) {
+      return { label: 'Lumi', avatarUrl: '' }
+    }
+    if (peerId.startsWith('wxgrp:')) {
+      return { label: '群聊', avatarUrl: '' }
+    }
+    if (!peerId) {
+      return { label: '会话', avatarUrl: '' }
+    }
+    const ch = await this.getCharacter(peerId)
+    const label =
+      ch?.remark?.trim() || ch?.wechatNickname?.trim() || ch?.name?.trim() || '已删除的角色'
+    const avatarUrl = ch?.avatarUrl?.trim() ?? ''
+    return { label, avatarUrl }
+  }
+
   async deleteWeChatChatMessageById(id: string): Promise<void> {
     const tid = id.trim()
     if (!tid) return
+    if (!this.isIndexedTrashSuspended()) {
+      const prev = await this.getWeChatChatMessageById(tid)
+      if (prev) {
+        const ck =
+          prev.conversationKey?.trim() || wechatConversationKey(prev.characterId, prev.playerIdentityId)
+        const conv = await this.getChatConversationSettings(ck)
+        const { label, avatarUrl } = await this.resolveWeChatTrashPeerLabelAndAvatar(ck, conv)
+        await this.appendIndexedTrashEntry({
+          kind: 'wechat-message',
+          title: `与「${label}」的聊天消息`,
+          summary: `${prev.content?.slice(0, 48) || '(空)'}`.trim(),
+          peerDisplayName: label,
+          peerAvatarUrl: avatarUrl,
+          payload: { message: prev },
+        })
+      }
+    }
     const db = await openDb()
     if (!db.objectStoreNames.contains(CHAT_MSG_STORE)) {
       db.close()
@@ -3201,6 +3613,17 @@ export class PersonaDb {
   async deleteFriendRequestById(requestId: string): Promise<void> {
     const id = requestId.trim()
     if (!id) return
+    if (!this.isIndexedTrashSuspended()) {
+      const prev = await this.getFriendRequestById(id)
+      if (prev) {
+        await this.appendIndexedTrashEntry({
+          kind: 'friend-request',
+          title: `删除好友申请`,
+          summary: `${prev.characterId} · ${prev.status}`,
+          payload: { friendRequest: prev },
+        })
+      }
+    }
     const db = await openDb()
     if (!db.objectStoreNames.contains(FRIEND_REQUEST_STORE)) {
       db.close()
@@ -3565,13 +3988,39 @@ export class PersonaDb {
   }
 
   async deleteCharacterMemory(id: string): Promise<void> {
+    const mid = id.trim()
+    if (!mid) return
+    if (!this.isIndexedTrashSuspended()) {
+      const db0 = await openDb()
+      if (db0.objectStoreNames.contains(CHARACTER_MEMORIES_STORE)) {
+        const tx0 = db0.transaction(CHARACTER_MEMORIES_STORE, 'readonly')
+        const req0 = tx0.objectStore(CHARACTER_MEMORIES_STORE).get(mid)
+        const raw0 = await new Promise<unknown>((resolve, reject) => {
+          req0.onsuccess = () => resolve(req0.result)
+          req0.onerror = () => reject(req0.error)
+        })
+        await txDone(tx0)
+        db0.close()
+        const mem = normalizeCharacterMemory(raw0)
+        if (mem) {
+          await this.appendIndexedTrashEntry({
+            kind: 'character-memory',
+            title: `删除记忆`,
+            summary: mem.content?.slice(0, 64) || mem.id,
+            payload: { memory: mem },
+          })
+        }
+      } else {
+        db0.close()
+      }
+    }
     const db = await openDb()
     if (!db.objectStoreNames.contains(CHARACTER_MEMORIES_STORE)) {
       db.close()
       return
     }
     const tx = db.transaction(CHARACTER_MEMORIES_STORE, 'readwrite')
-    tx.objectStore(CHARACTER_MEMORIES_STORE).delete(id)
+    tx.objectStore(CHARACTER_MEMORIES_STORE).delete(mid)
     await txDone(tx)
     db.close()
     emitWeChatStorageChanged()
@@ -3776,6 +4225,124 @@ export class PersonaDb {
     return `${body}\n\n（${tail}）`
   }
 
+  /**
+   * 思维溯源：拆出「关键词 / 始终命中」与「向量召回」条目（与 {@link formatCharacterMemoriesForPromptByRelevance} 同一套筛选）。
+   */
+  async getCharacterMemoryRelevanceTraceByRelevance(
+    characterId: string,
+    relevanceText: string,
+    opts?: MemoryVectorRecallOpts | null,
+  ): Promise<{
+    keywordHits: Array<{ keyword: string; content: string }>
+    vectorRetrievals: Array<{ relevanceScore: number; content: string }>
+  }> {
+    const cid = characterId.trim()
+    if (!cid) return { keywordHits: [], vectorRetrievals: [] }
+    const hay = String(relevanceText || '')
+      .replace(/\s+/g, ' ')
+      .trim()
+      .toLowerCase()
+
+    const memorySettings = await this.getMemorySettings()
+
+    const privRaw = await this.listCharacterMemoriesForCharacter(cid)
+    const privateList = privRaw.filter((m) => m.memoryScope !== 'group')
+    const groupList = await this.listGroupMemoriesInvolvingCharacter(cid)
+
+    const alwaysPrivate = privateList
+      .filter((m) => isMemoryAlwaysTrigger(m))
+      .sort((a, b) => b.updatedAt - a.updatedAt)
+      .slice(0, MEMORY_ALWAYS_INJECT_CAP)
+    const alwaysGroup = groupList
+      .filter((m) => isMemoryAlwaysTrigger(m))
+      .sort((a, b) => b.updatedAt - a.updatedAt)
+      .slice(0, MEMORY_ALWAYS_INJECT_CAP)
+
+    const pickKeywordHits = (list: CharacterMemory[]) =>
+      hay.length >= 2 ? list.filter((m) => !isMemoryAlwaysTrigger(m) && memoryTriggerMatchesHaystack(m, hay)) : []
+
+    const taggedPrivateHits = pickKeywordHits(privateList)
+    const taggedGroupHits = pickKeywordHits(groupList)
+
+    const labelForMemory = (m: CharacterMemory): string => {
+      if (isMemoryAlwaysTrigger(m)) return '始终触发'
+      const bits = [
+        trimMemoryTriggerText(m.memoryTriggerPrecise),
+        trimMemoryTriggerText(m.memoryTriggerCategory),
+        ...(normalizeStoredMemoryEmotionNeedList(m.memoryTriggerEmotionNeed) ?? []).map((x) => trimMemoryTriggerText(x)),
+        ...(String(m.memoryKeywords || '')
+          .split(/[,，;；\n]+/)
+          .map((x) => trimMemoryTriggerText(x))
+          .filter(Boolean) as string[]),
+      ].filter(Boolean)
+      const u = [...new Set(bits)]
+      return u.length ? u.slice(0, 6).join(' · ') : '关键词命中'
+    }
+
+    const keywordHits: Array<{ keyword: string; content: string }> = []
+    const seenKw = new Set<string>()
+    for (const m of [...alwaysPrivate, ...alwaysGroup, ...taggedPrivateHits, ...taggedGroupHits]) {
+      const k = `${labelForMemory(m)}::${m.id}`
+      if (seenKw.has(k)) continue
+      seenKw.add(k)
+      keywordHits.push({ keyword: labelForMemory(m), content: m.content.trim() })
+    }
+
+    const vectorRetrievals: Array<{ relevanceScore: number; content: string }> = []
+    const embedCred = resolveEmbeddingApiCredentials(memorySettings, opts?.apiConfig ?? null)
+    if (opts && isMemoryVectorRecallEnabled(memorySettings, opts) && embedCred) {
+      const rawHay = String(relevanceText || '').trim()
+      if (rawHay.length >= 10) {
+        try {
+          const modelId = resolveMemoryEmbeddingModelId(memorySettings, opts)
+          const queryVec = await fetchEmbeddingVector(embedCred, rawHay, modelId)
+          if (queryVec.length) {
+            const union = [...privateList, ...groupList]
+            await backfillMemoryEmbeddingsBestEffort({
+              memories: union,
+              upsert: (m) => this.upsertCharacterMemory(m),
+              apiConfig: embedCred,
+              modelId,
+              queryDim: queryVec.length,
+            })
+            const privFresh = await this.listCharacterMemoriesForCharacter(cid)
+            const groupFresh = await this.listGroupMemoriesInvolvingCharacter(cid)
+            const privCandidates = privFresh.filter((m) => m.memoryScope !== 'group')
+
+            const exclP = new Set<string>([...alwaysPrivate, ...taggedPrivateHits].map((m) => m.id))
+            const scoredP = pickMemoriesByVectorSimilarityScored({
+              candidates: privCandidates,
+              queryVec,
+              topK: MEMORY_VECTOR_TOP_PRIVATE,
+              minSim: MEMORY_VECTOR_MIN_SIM,
+              excludeIds: exclP,
+            })
+            for (const { memory, score } of scoredP) {
+              vectorRetrievals.push({ relevanceScore: score, content: memory.content.trim() })
+            }
+
+            const exclG = new Set<string>([...alwaysGroup, ...taggedGroupHits].map((m) => m.id))
+            const scoredG = pickMemoriesByVectorSimilarityScored({
+              candidates: groupFresh,
+              queryVec,
+              topK: MEMORY_VECTOR_TOP_GROUP,
+              minSim: MEMORY_VECTOR_MIN_SIM,
+              excludeIds: exclG,
+            })
+            for (const { memory, score } of scoredG) {
+              vectorRetrievals.push({ relevanceScore: score, content: memory.content.trim() })
+            }
+          }
+        } catch {
+          /* 无向量数据 */
+        }
+      }
+    }
+
+    vectorRetrievals.sort((a, b) => b.relevanceScore - a.relevanceScore)
+    return { keywordHits, vectorRetrievals }
+  }
+
   private static mergeMemoriesForPromptPick(matches: CharacterMemory[], legacy: CharacterMemory[]): CharacterMemory[] {
     const seen = new Set<string>()
     const out: CharacterMemory[] = []
@@ -3947,6 +4514,25 @@ export class PersonaDb {
   async deleteWorldBackground(id: string): Promise<void> {
     const wb = await this.getWorldBackground(id)
     if (!wb || wb.isPreset) return
+    if (!this.isIndexedTrashSuspended()) {
+      const snapshot = await this.getWorldBackground(id)
+      if (snapshot) {
+        const chars = await this.listCharacters()
+        const identities = await this.listPlayerIdentities()
+        const touchedChars = chars.filter((c) => c.worldBackgroundId === id).map((c) => ({ ...c }))
+        const touchedIds = identities.filter((p) => p.worldBackgroundId === id).map((p) => ({ ...p }))
+        await this.appendIndexedTrashEntry({
+          kind: 'world-background',
+          title: `删除世界「${snapshot.name?.trim() || id}」`,
+          summary: `将 ${touchedChars.length + touchedIds.length} 个档案切回默认预设`,
+          payload: {
+            worldBackground: snapshot,
+            touchedCharacters: touchedChars,
+            touchedIdentities: touchedIds,
+          },
+        })
+      }
+    }
     const db = await openDb()
     if (!db.objectStoreNames.contains(WORLD_BG_STORE)) {
       db.close()
@@ -4016,13 +4602,26 @@ export class PersonaDb {
   }
 
   async deletePhoneKv(key: string): Promise<void> {
+    const k = key.trim()
+    if (!k) return
+    if (!this.isIndexedTrashSuspended()) {
+      const prev = await this.getPhoneKv(k)
+      if (prev !== null && prev !== undefined) {
+        await this.appendIndexedTrashEntry({
+          kind: 'phone-kv',
+          title: `删除键「${k.slice(0, 40)}」`,
+          summary: typeof prev === 'object' ? 'JSON 数据' : String(prev).slice(0, 48),
+          payload: { key: k, value: prev },
+        })
+      }
+    }
     const db = await openDb()
     if (!db.objectStoreNames.contains(PHONE_KV_STORE)) {
       db.close()
       return
     }
     const tx = db.transaction(PHONE_KV_STORE, 'readwrite')
-    tx.objectStore(PHONE_KV_STORE).delete(key)
+    tx.objectStore(PHONE_KV_STORE).delete(k)
     await txDone(tx)
     db.close()
   }
@@ -4408,6 +5007,10 @@ export class PersonaDb {
       conversationKey: string
       peerCharacterId: string
       playerIdentityId: string
+      /** 为 true 时移除「仅 UI 隐藏」时间戳（与不传该字段不同） */
+      clearUiOnlyHiddenBeforeTimestamp?: boolean
+      /** 为 true 时移除「好友验证分隔」同意时间戳 */
+      clearFriendRequestAcceptedAt?: boolean
     } & Partial<
       Pick<
         ChatConversationSettingsRow,
@@ -4421,11 +5024,37 @@ export class PersonaDb {
         | 'showGroupRankBadgesInChat'
         | 'chatBackground'
         | 'lastMessageTime'
+        | 'uiOnlyHiddenBeforeTimestamp'
+        | 'friendRequestAcceptedAtMs'
       >
     >,
   ): Promise<void> {
     const existing = await this.getChatConversationSettings(params.conversationKey)
     const now = Date.now()
+    let uiOnlyHiddenBeforeTimestamp: number | undefined
+    if (params.clearUiOnlyHiddenBeforeTimestamp) {
+      uiOnlyHiddenBeforeTimestamp = undefined
+    } else if (
+      typeof params.uiOnlyHiddenBeforeTimestamp === 'number' &&
+      Number.isFinite(params.uiOnlyHiddenBeforeTimestamp) &&
+      params.uiOnlyHiddenBeforeTimestamp > 0
+    ) {
+      uiOnlyHiddenBeforeTimestamp = params.uiOnlyHiddenBeforeTimestamp
+    } else {
+      uiOnlyHiddenBeforeTimestamp = existing?.uiOnlyHiddenBeforeTimestamp
+    }
+    let friendRequestAcceptedAtMs: number | undefined
+    if (params.clearFriendRequestAcceptedAt) {
+      friendRequestAcceptedAtMs = undefined
+    } else if (
+      typeof params.friendRequestAcceptedAtMs === 'number' &&
+      Number.isFinite(params.friendRequestAcceptedAtMs) &&
+      params.friendRequestAcceptedAtMs > 0
+    ) {
+      friendRequestAcceptedAtMs = params.friendRequestAcceptedAtMs
+    } else {
+      friendRequestAcceptedAtMs = existing?.friendRequestAcceptedAtMs
+    }
     const row: ChatConversationSettingsRow = {
       conversationKey: params.conversationKey.trim(),
       peerCharacterId: params.peerCharacterId.trim(),
@@ -4443,6 +5072,16 @@ export class PersonaDb {
       chatBackground: params.chatBackground ?? existing?.chatBackground ?? '',
       lastMessageTime: params.lastMessageTime ?? existing?.lastMessageTime ?? 0,
       updatedAt: now,
+      ...(typeof uiOnlyHiddenBeforeTimestamp === 'number' &&
+      Number.isFinite(uiOnlyHiddenBeforeTimestamp) &&
+      uiOnlyHiddenBeforeTimestamp > 0
+        ? { uiOnlyHiddenBeforeTimestamp }
+        : {}),
+      ...(typeof friendRequestAcceptedAtMs === 'number' &&
+      Number.isFinite(friendRequestAcceptedAtMs) &&
+      friendRequestAcceptedAtMs > 0
+        ? { friendRequestAcceptedAtMs }
+        : {}),
     }
     const db = await openDb()
     if (!db.objectStoreNames.contains(CHAT_CONV_SETTINGS_STORE)) {
@@ -4550,9 +5189,150 @@ export class PersonaDb {
     }
   }
 
+  /**
+   * 清空本地消息后：将该会话标为「不在信息列表显示」，直至 {@link appendWeChatChatMessage} 写入新消息。
+   * （与左滑「不显示」共用 `hiddenFromMessageList`，避免删记录后仍占一排「点击开始聊天」。）
+   */
+  private async markConversationHiddenAfterHistoryCleared(
+    conversationKey: string,
+    existing: ChatConversationSettingsRow | null,
+  ): Promise<void> {
+    const k = conversationKey.trim()
+    if (!k) return
+    if (existing) {
+      await this.upsertChatConversationSettings({
+        conversationKey: k,
+        peerCharacterId: existing.peerCharacterId,
+        playerIdentityId: existing.playerIdentityId,
+        hiddenFromMessageList: true,
+        clearUiOnlyHiddenBeforeTimestamp: true,
+        clearFriendRequestAcceptedAt: true,
+      })
+      return
+    }
+    if (isWechatGroupConversationKey(k)) {
+      const gid = parseGroupIdFromConversationKey(k)
+      const idx = k.lastIndexOf('::')
+      const pid = idx >= 0 ? k.slice(idx + 2).trim() : ''
+      if (gid && pid) {
+        await this.upsertChatConversationSettings({
+          conversationKey: k,
+          peerCharacterId: wechatGroupPeerCharacterId(gid),
+          playerIdentityId: pid,
+          hiddenFromMessageList: true,
+          clearUiOnlyHiddenBeforeTimestamp: true,
+          clearFriendRequestAcceptedAt: true,
+        })
+      }
+    } else {
+      const idx = k.lastIndexOf('::')
+      if (idx > 0) {
+        const peer = k.slice(0, idx).trim()
+        const pid = k.slice(idx + 2).trim()
+        if (peer && pid) {
+          await this.upsertChatConversationSettings({
+            conversationKey: k,
+            peerCharacterId: peer,
+            playerIdentityId: pid,
+            hiddenFromMessageList: true,
+            clearUiOnlyHiddenBeforeTimestamp: true,
+            clearFriendRequestAcceptedAt: true,
+          })
+        }
+      }
+    }
+  }
+
+  /**
+   * 仅从聊天界面「清空」展示：本地消息不删；AI 仍按完整历史转写。
+   * 时间戳 ≤ 写入时刻的泡泡在界面隐藏，新消息照常显示。
+   * 与「彻底删除」一致写入回收站快照（payload.uiClearOnly），恢复时仅撤销界面隐藏、不重复插入消息。
+   */
+  async hideWeChatConversationHistoryFromUiKeepAiContext(conversationKey: string): Promise<void> {
+    const k = conversationKey.trim()
+    if (!k) return
+    const msgs = await this.listWeChatChatMessagesByConversationKey(k)
+    const convBefore = await this.getChatConversationSettings(k)
+    if (!this.isIndexedTrashSuspended()) {
+      const { label, avatarUrl } = await this.resolveWeChatTrashPeerLabelAndAvatar(k, convBefore)
+      await this.appendIndexedTrashEntry({
+        kind: 'wechat-conversation',
+        title: `与「${label}」的聊天记录`,
+        summary: msgs.length
+          ? `界面已清空 · ${msgs.length} 条仍保留于本地（可供 AI 参考）`
+          : '会话界面已清空（无消息）',
+        peerDisplayName: label,
+        peerAvatarUrl: avatarUrl,
+        payload: {
+          conversationKey: k,
+          messages: msgs,
+          conversationSettings: convBefore,
+          uiClearOnly: true as const,
+        },
+      })
+    }
+    const existing = convBefore
+    const cut = Date.now()
+    if (existing) {
+      await this.upsertChatConversationSettings({
+        conversationKey: k,
+        peerCharacterId: existing.peerCharacterId,
+        playerIdentityId: existing.playerIdentityId,
+        hiddenFromMessageList: true,
+        uiOnlyHiddenBeforeTimestamp: cut,
+        clearFriendRequestAcceptedAt: true,
+      })
+      return
+    }
+    if (isWechatGroupConversationKey(k)) {
+      const gid = parseGroupIdFromConversationKey(k)
+      const idx = k.lastIndexOf('::')
+      const pid = idx >= 0 ? k.slice(idx + 2).trim() : ''
+      if (gid && pid) {
+        await this.upsertChatConversationSettings({
+          conversationKey: k,
+          peerCharacterId: wechatGroupPeerCharacterId(gid),
+          playerIdentityId: pid,
+          hiddenFromMessageList: true,
+          uiOnlyHiddenBeforeTimestamp: cut,
+          clearFriendRequestAcceptedAt: true,
+        })
+      }
+    } else {
+      const idx = k.lastIndexOf('::')
+      if (idx > 0) {
+        const peer = k.slice(0, idx).trim()
+        const pid = k.slice(idx + 2).trim()
+        if (peer && pid) {
+          await this.upsertChatConversationSettings({
+            conversationKey: k,
+            peerCharacterId: peer,
+            playerIdentityId: pid,
+            hiddenFromMessageList: true,
+            uiOnlyHiddenBeforeTimestamp: cut,
+            clearFriendRequestAcceptedAt: true,
+          })
+        }
+      }
+    }
+  }
+
   async deleteAllWeChatMessagesForConversation(conversationKey: string): Promise<void> {
     const k = conversationKey.trim()
     if (!k) return
+    const msgs = await this.listWeChatChatMessagesByConversationKey(k)
+    const conv = await this.getChatConversationSettings(k)
+    if (!this.isIndexedTrashSuspended()) {
+      const { label, avatarUrl } = await this.resolveWeChatTrashPeerLabelAndAvatar(k, conv)
+      await this.appendIndexedTrashEntry({
+        kind: 'wechat-conversation',
+        title: `与「${label}」的聊天记录`,
+        summary: msgs.length ? `已删除 ${msgs.length} 条消息` : '会话已清空（无消息）',
+        peerDisplayName: label,
+        peerAvatarUrl: avatarUrl,
+        payload: { conversationKey: k, messages: msgs, conversationSettings: conv },
+      })
+    }
     const db = await openDb()
     if (!db.objectStoreNames.contains(CHAT_MSG_STORE)) {
       db.close()
@@ -4574,6 +5354,7 @@ export class PersonaDb {
     await txDone(tx)
     db.close()
     await this.setWechatReadCursor(k, Date.now())
+    await this.markConversationHiddenAfterHistoryCleared(k, conv)
     emitWeChatStorageChanged()
   }
 
@@ -4639,20 +5420,44 @@ export class PersonaDb {
     const pid = playerIdentityId.trim()
     if (!gid || !pid) return
     const convKey = wechatGroupConversationKey(gid, pid)
-    await this.deleteAllWeChatMessagesForConversation(convKey)
-    const db = await openDb()
-    if (db.objectStoreNames.contains(CHAT_CONV_SETTINGS_STORE) && db.objectStoreNames.contains(GROUP_CHATS_STORE)) {
-      const tx = db.transaction([CHAT_CONV_SETTINGS_STORE, GROUP_CHATS_STORE], 'readwrite')
-      tx.objectStore(CHAT_CONV_SETTINGS_STORE).delete(convKey)
-      tx.objectStore(GROUP_CHATS_STORE).delete(gid)
-      await txDone(tx)
-    } else if (db.objectStoreNames.contains(GROUP_CHATS_STORE)) {
-      const tx = db.transaction(GROUP_CHATS_STORE, 'readwrite')
-      tx.objectStore(GROUP_CHATS_STORE).delete(gid)
-      await txDone(tx)
+    if (!this.isIndexedTrashSuspended()) {
+      const group = await this.getGroupChat(gid)
+      const conv = await this.getChatConversationSettings(convKey)
+      const msgs = await this.listWeChatChatMessagesByConversationKey(convKey)
+      const gLabel = (group?.remark ?? group?.name ?? '').trim() || '群聊'
+      const gAvatar = (group?.avatar ?? '').trim()
+      await this.appendIndexedTrashEntry({
+        kind: 'group-chat',
+        title: `群聊「${gLabel}」`,
+        summary: `${msgs.length} 条消息`,
+        peerDisplayName: gLabel,
+        peerAvatarUrl: gAvatar,
+        payload: {
+          groupId: gid,
+          playerIdentityId: pid,
+          conversationKey: convKey,
+          group,
+          conversationSettings: conv,
+          messages: msgs,
+        },
+      })
     }
-    db.close()
-    emitWeChatStorageChanged()
+    await this.runWithIndexedTrashSuspended(async () => {
+      await this.deleteAllWeChatMessagesForConversation(convKey)
+      const db = await openDb()
+      if (db.objectStoreNames.contains(CHAT_CONV_SETTINGS_STORE) && db.objectStoreNames.contains(GROUP_CHATS_STORE)) {
+        const tx = db.transaction([CHAT_CONV_SETTINGS_STORE, GROUP_CHATS_STORE], 'readwrite')
+        tx.objectStore(CHAT_CONV_SETTINGS_STORE).delete(convKey)
+        tx.objectStore(GROUP_CHATS_STORE).delete(gid)
+        await txDone(tx)
+      } else if (db.objectStoreNames.contains(GROUP_CHATS_STORE)) {
+        const tx = db.transaction(GROUP_CHATS_STORE, 'readwrite')
+        tx.objectStore(GROUP_CHATS_STORE).delete(gid)
+        await txDone(tx)
+      }
+      db.close()
+      emitWeChatStorageChanged()
+    })
   }
 
   /** 仅移除当前用户并清空会话（仍保留群与他人数据可供扩展；此处等同删除会话记录） */

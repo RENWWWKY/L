@@ -87,6 +87,7 @@ import {
 } from './groupChatMultiIdentityPrompt'
 import { buildGroupChatSelfAuditPromptSection } from './groupChatSelfAuditPrompt'
 import { loadOfflineDatingPlotsPromptBlock } from './dating/loadOfflineDatingPlotsForWechatPrompt'
+import { publishWeChatGroupMemoryTrace, publishWeChatPrivatePersonaMemoryTrace } from './memoryTracePublisher'
 import {
   runGroupChatMemorySummaryAfterThreshold,
   runUnifiedAutoMemorySummaryAfterThreshold,
@@ -184,8 +185,12 @@ const ENTER_DOUBLE_TAP_WINDOW_MS = 220
 const ENTER_SINGLE_COMMIT_DELAY_MS = 80
 const CHAT_VISIBLE_MSG_INITIAL = 30
 const CHAT_VISIBLE_MSG_STEP = 30
-/** IndexedDB phoneKv：按会话持久化弹幕浮层，避免离开/刷新后丢失 */
+/** IndexedDB phoneKv：按 `conversationKey` 存「当前会话最新一轮」弹幕；新一批生成时整键覆盖，各聊天室互不串 */
 const WECHAT_DM_BULLETS_KV_PREFIX = 'wechat-dm-bullets-v1'
+
+function clearWeChatDmBulletsKv(conversationKey: string): void {
+  void personaDb.setPhoneKv(`${WECHAT_DM_BULLETS_KV_PREFIX}:${conversationKey}`, { v: 1, bullets: [] })
+}
 /** 群聊：每名角色单次「出场」最多落几条气泡再交给下一名，避免一人连刷一长串 */
 const hasSpeechRecognitionApi = true
 const VOICE_HOLD_START_MS = 180
@@ -211,22 +216,6 @@ const VOICE_ALLOWED_TONE_TOKENS = new Set([
   'emm',
   'sneezes',
 ])
-
-/** 让浏览器先合并 setState 再进入长 sleep，避免队列「打字预览」一帧都画不出来 */
-function awaitDoubleRaf(): Promise<void> {
-  return new Promise((resolve) => {
-    requestAnimationFrame(() => {
-      requestAnimationFrame(() => resolve())
-    })
-  })
-}
-
-/** 队列分段间隙：下一条气泡前的「下一位发言者 + 气泡内三点」预览 */
-type ChatQueueTypingPreviewState = {
-  senderCharacterId: string
-  label: string
-  avatarUrl?: string
-}
 
 function isSameApiConfigShape(
   a: ReturnType<typeof useCurrentApiConfig>,
@@ -303,12 +292,6 @@ function bubbleForRole(theme: WeChatTheme, roleKey: string): WeChatBubbleTheme {
   if (!by) return theme.bubbleGlobal
   if (wechatBubbleThemesEqual(by, theme.bubbleGlobal)) return theme.bubbleGlobal
   return by
-}
-
-function sleep(ms: number) {
-  return new Promise<void>((r) => {
-    window.setTimeout(r, ms)
-  })
 }
 
 function sanitizeVoiceTranscriptDisplay(input: string): string {
@@ -444,8 +427,9 @@ function mapDbRecalledByToChatUi(m: Pick<WeChatChatMessage, 'recalledBy'>): Chat
 function filterGroupChatItemsHideModeratorOnlyBubbles(
   items: ChatItem[],
   roomType: 'private' | 'group',
-  _group: GroupChatRow | null,
+  group: GroupChatRow | null,
 ): ChatItem[] {
+  void group
   if (roomType !== 'group') return items
   return items.filter((it) => {
     if (it.kind === 'msg' && it.mutedMessageVisibleToModeratorsOnly) return false
@@ -617,6 +601,34 @@ function parseReplyMarker(raw: string): { replyMessageId?: string; text: string 
     return { replyMessageId, text }
   }
   return { text: line }
+}
+
+/** 将模型气泡行拉平（与逐行循环里的换行展开一致），供纯文本批量渲染 */
+function flattenBubbleLinesForBatch(source: string[]): string[] {
+  const out: string[] = []
+  for (const raw0 of source) {
+    const normalizedRawLine = String(raw0 ?? '').trim().replace(/\\n/g, '\n').trim()
+    const parts = normalizedRawLine
+      .split(/\r?\n/)
+      .map((line) => line.trim())
+      .filter(Boolean)
+    if (parts.length > 1) out.push(...parts)
+    else if (normalizedRawLine) out.push(normalizedRawLine)
+  }
+  return out
+}
+
+/** 需走完整分支（语音/红包/撤回/引用等）时为 true；纯文本批量路径为 false */
+function bubbleLineNeedsSpecialBubbleHandler(line: string): boolean {
+  const t = String(line ?? '').trim()
+  if (!t) return false
+  if (t === WECHAT_RECALL_ACTION_TOKEN) return true
+  if (/^(?:\[语音\]|【语音】)\s*/.test(t)) return true
+  if (parseRedPacketDirective(t)) return true
+  if (parseTransferDirective(t)) return true
+  if (parseVoiceCallDirective(t)) return true
+  if (parseCharacterStickerLine(t)) return true
+  return false
 }
 
 function parseBusyDirective(raw: string): { reason: string; duration: number } | null {
@@ -820,30 +832,6 @@ function randomBetween(min: number, max: number) {
   return Math.floor(min + Math.random() * (max - min + 1))
 }
 
-async function withTimeout<T>(promise: Promise<T>, timeoutMs: number): Promise<T> {
-  return await Promise.race<T>([
-    promise,
-    new Promise<T>((_, reject) =>
-      window.setTimeout(() => reject(new Error(`timeout:${timeoutMs}ms`)), timeoutMs),
-    ),
-  ])
-}
-
-/** 群违禁/群状态与消息连写时 IndexedDB 易排队，过短 timeout 会误失败并加重锁竞争，导致界面长时间 busy */
-const WECHAT_CHAT_APPEND_TIMEOUT_MS = 15_000
-
-/** 超时时等待 80ms 再试一次（同 id 的 put 可覆盖，避免“假失败但后台仍写入”的重复） */
-async function appendWeChatMessageResilient(append: () => Promise<void>, timeoutMs: number): Promise<void> {
-  try {
-    await withTimeout(append(), timeoutMs)
-  } catch (e1) {
-    const msg = e1 instanceof Error ? e1.message : String(e1)
-    if (!msg.includes('timeout:')) throw e1
-    await sleep(80)
-    await withTimeout(append(), timeoutMs)
-  }
-}
-
 function parseDataUrlParts(dataUrl: string): { mime: string; base64: string } | null {
   const m = /^data:([^;]+);base64,(.+)$/i.exec(dataUrl.trim())
   if (!m) return null
@@ -1003,7 +991,47 @@ type ChatMsg = {
 
 type ChatTime = { id: string; kind: 'time'; text: string }
 
-type ChatItem = ChatMsg | ChatTime
+/** 好友验证期与恢复私聊后的分界提示（仅界面，不落库） */
+type ChatVerificationBanner = { id: string; kind: 'fr-verify-banner'; text: string }
+
+type ChatItem = ChatMsg | ChatTime | ChatVerificationBanner
+
+/** DB 合并 / hydrate 排序：时间相同则按 id 稳定次序，避免语音与后续句同毫秒时顺序翻转 */
+function compareChatMsgByRevealOrder(a: ChatMsg, b: ChatMsg): number {
+  const dt = (typeof a.timestamp === 'number' ? a.timestamp : 0) - (typeof b.timestamp === 'number' ? b.timestamp : 0)
+  if (dt !== 0) return dt
+  return a.id.localeCompare(b.id)
+}
+
+/** 对方消息异步露出队列任务（延迟后并入 `items` 并落库） */
+type OpponentRevealJob = { msg: ChatMsg; persist: () => void; afterReveal?: () => void }
+
+/** AI 对方消息逐条露出前的动态间隔（毫秒）：短句偏快，长句偏慢；语音按时长。 */
+function computeOpponentStaggerDelayMs(msg: ChatMsg): number {
+  const dur = msg.voice?.durationSec
+  if (typeof dur === 'number' && dur > 0) {
+    return Math.max(200, Math.min(30_000, Math.round(dur * 1000)))
+  }
+  const text = messagePlainPreview(msg)
+  const n = [...text].length
+  if (n < 200) return Math.max(280, Math.round((n / 5) * 1000))
+  return Math.max(400, Math.round((n / 15) * 1000))
+}
+
+function injectFriendRequestAcceptedDivider(items: ChatItem[], acceptedAtMs: number): ChatItem[] {
+  if (!Number.isFinite(acceptedAtMs) || acceptedAtMs <= 0) return items
+  const idx = items.findIndex((it) => it.kind === 'msg' && it.timestamp > acceptedAtMs)
+  const banner: ChatVerificationBanner = {
+    id: `wx-fr-verify-divider-${acceptedAtMs}`,
+    kind: 'fr-verify-banner',
+    text: '以上为验证消息',
+  }
+  if (idx < 0) {
+    const hasMsg = items.some((it) => it.kind === 'msg')
+    return hasMsg ? [...items, banner] : items
+  }
+  return [...items.slice(0, idx), banner, ...items.slice(idx)]
+}
 
 const GROUP_SHIELDED_ANNEX_MAX_ENTRIES = 8
 const GROUP_SHIELDED_ANNEX_MAX_BODY = 600
@@ -1068,8 +1096,8 @@ function messageBlockSpacing(items: ChatItem[], index: number): string {
   if (index <= 0) return ''
   const cur = items[index]
   const prev = items[index - 1]
-  if (cur.kind === 'time') return 'mt-4'
-  if (prev.kind === 'time') return 'mt-4'
+  if (cur.kind === 'time' || cur.kind === 'fr-verify-banner') return 'mt-4'
+  if (prev.kind === 'time' || prev.kind === 'fr-verify-banner') return 'mt-4'
   if (cur.kind === 'msg' && prev.kind === 'msg') {
     if (cur.from === prev.from) return 'mt-2'
     return 'mt-4'
@@ -1084,7 +1112,7 @@ function consecutiveSameSpeaker(items: ChatItem[], index: number, groupMode?: bo
   if (cur.kind !== 'msg' || cur.isRecalled || cur.isGroupEventStrip || cur.isSystemCenterStrip) return false
   for (let i = index - 1; i >= 0; i -= 1) {
     const prev = items[i]
-    if (prev.kind === 'time') return false
+    if (prev.kind === 'time' || prev.kind === 'fr-verify-banner') return false
     if (prev.kind !== 'msg') continue
     // 已撤回消息只显示撤回提示，不应参与头像“连续同侧”合并判断。
     if (prev.isRecalled || prev.isGroupEventStrip || prev.isSystemCenterStrip) continue
@@ -1161,45 +1189,6 @@ function ChatMessageEnter({ children, isSelf = false }: { children: ReactNode; i
   )
 }
 
-function OtherMessageEnter({
-  messageText,
-  luxuryDarkAdminBubble,
-  bubble,
-  showAvatar,
-  showBubbleTail,
-  showAvatarColumn = true,
-  chatOtherAvatarUrl,
-  chatOtherSenderNickname,
-  chatOtherAvatarRankBadge,
-  groupRankShowBesideNickname,
-  onOtherAvatarClick,
-  onBubbleLongPress,
-  bubbleSelected,
-}: ChatMsgProps & { showAvatarColumn?: boolean }) {
-  return (
-    <ChatMessageEnter isSelf={false}>
-      <WeChatMessageBubbleRow
-        messageText={messageText}
-        luxuryDarkAdminBubble={luxuryDarkAdminBubble}
-        isSelf={false}
-        bubble={bubble}
-        showAvatar={showAvatar}
-        showBubbleTail={showBubbleTail}
-        variant="chat"
-        avatarTapMotion
-        showAvatarColumn={showAvatarColumn}
-        chatOtherAvatarUrl={chatOtherAvatarUrl}
-        chatOtherSenderNickname={chatOtherSenderNickname}
-        chatOtherAvatarRankBadge={chatOtherAvatarRankBadge}
-        groupRankShowBesideNickname={groupRankShowBesideNickname}
-        onOtherAvatarClick={onOtherAvatarClick}
-        onBubbleLongPress={onBubbleLongPress}
-        bubbleSelected={bubbleSelected}
-      />
-    </ChatMessageEnter>
-  )
-}
-
 function FailRetryIcon({ onClick }: { onClick: () => void }) {
   const [visible, setVisible] = useState(false)
   useEffect(() => {
@@ -1219,46 +1208,6 @@ function FailRetryIcon({ onClick }: { onClick: () => void }) {
     >
       ⚠️
     </Pressable>
-  )
-}
-
-function SelfMessageEnter({
-  messageText,
-  bubble,
-  showAvatar,
-  showBubbleTail,
-  showAvatarColumn = true,
-  chatAccessory,
-  chatBubbleOverlay,
-  chatSelfAvatarUrl,
-  chatSelfAvatarRankBadge,
-  groupRankShowBesideNickname,
-  onBubbleLongPress,
-  bubbleSelected,
-}: ChatMsgProps & {
-  showAvatarColumn?: boolean
-  chatAccessory?: ReactNode
-  chatBubbleOverlay?: ReactNode
-}) {
-  return (
-    <ChatMessageEnter isSelf>
-      <WeChatMessageBubbleRow
-        messageText={messageText}
-        isSelf
-        bubble={bubble}
-        showAvatar={showAvatar}
-        showBubbleTail={showBubbleTail}
-        variant="chat"
-        showAvatarColumn={showAvatarColumn}
-        chatAccessory={chatAccessory}
-        chatBubbleOverlay={chatBubbleOverlay}
-        chatSelfAvatarUrl={chatSelfAvatarUrl}
-        chatSelfAvatarRankBadge={chatSelfAvatarRankBadge}
-        groupRankShowBesideNickname={groupRankShowBesideNickname}
-        onBubbleLongPress={onBubbleLongPress}
-        bubbleSelected={bubbleSelected}
-      />
-    </ChatMessageEnter>
   )
 }
 
@@ -1290,8 +1239,7 @@ function normalizeDmBulletRow(x: unknown): DmBullet | null {
   const fontPx = typeof r.fontPx === 'number' && Number.isFinite(r.fontPx) ? Math.max(10, Math.min(36, r.fontPx)) : 14
   const colorRgba = typeof r.colorRgba === 'string' && r.colorRgba.trim() ? r.colorRgba.trim() : 'rgba(0,0,0,0.85)'
   const st = r.style
-  const style: DmBullet['style'] =
-    st === 'gray' || st === 'white' || st === 'none' ? st : 'none'
+  const style: DmBullet['style'] = st === 'gray' || st === 'white' || st === 'none' ? st : 'none'
   const pm = r.positionMode
   const positionMode: DmBullet['positionMode'] =
     pm === 'top' || pm === 'middle' || pm === 'bottom' || pm === 'random' ? pm : 'top'
@@ -1327,9 +1275,7 @@ function parseStoredDmBullets(raw: unknown): DmBullet[] {
   return out
 }
 
-/**
- * 从 KV 恢复时未经过 `dmLaneBusyUntilRef` 调度，多条可能落在同一 track 且仅有较小 startDelay 抖动；按列表顺序为每条轨道维护「下一发最早可开」时间，与同轨 `safeGapMs`（≈0.92×时长，下限约 1.4s）一致，避免同一条水平线上叠字。
- */
+/** 从 KV 恢复时按轨错开 startDelay，避免同轨叠字 */
 function staggerDmBulletsAfterRestore(bullets: DmBullet[], trackCount: number): DmBullet[] {
   const tc = Math.max(1, trackCount)
   const nextEarliestSec = new Map<number, number>()
@@ -1347,6 +1293,7 @@ function staggerDmBulletsAfterRestore(bullets: DmBullet[], trackCount: number): 
 export function ChatRoom({
   onBack: _onBack,
   onOtherTypingChange,
+  onOpponentRevealQueueActive,
   skipBusySignal = 0,
   personaCharacterId = null,
   playerDisplayName = '',
@@ -1387,6 +1334,8 @@ export function ChatRoom({
   onBack: () => void
   /** 同步「对方正在输入」到顶栏（替代底部提示） */
   onOtherTypingChange?: (visible: boolean) => void
+  /** 对方消息异步队列非空（逐条露出阶段），用于顶栏「备注 / 正在输入」呼吸切换 */
+  onOpponentRevealQueueActive?: (active: boolean) => void
   /** 上层点击“跳过忙碌”后递增，用于立即触发一轮忙后回复 */
   skipBusySignal?: number
   /** 与人设库角色 id 绑定后注入世界书；未绑定时仅用通用提示词 */
@@ -1436,7 +1385,6 @@ export function ChatRoom({
   onOpenGroupInfo?: () => void
 }) {
   const logger = useConsoleLogger()
-  const groupReplyQueueRef = useRef<string[]>([])
   const groupDocRef = useRef<GroupChatRow | null>(null)
 
   // `ChatRoom` 顶栏由上层承载，这里仅保留引用以避免未使用告警
@@ -1470,9 +1418,17 @@ export function ChatRoom({
   const [dmBullets, setDmBullets] = useState<DmBullet[]>([])
   const dmBulletsRef = useRef<DmBullet[]>([])
   dmBulletsRef.current = dmBullets
+  /** 新一批模型弹幕入队时递增；过期定时器据此放弃写入，避免与旧弹幕叠在一起 */
+  const danmakuEnqueueGenRef = useRef(0)
+  const onOpponentRevealQueueActiveRef = useRef(onOpponentRevealQueueActive)
+  onOpponentRevealQueueActiveRef.current = onOpponentRevealQueueActive
 
-  /** 从 KV 恢复当前会话弹幕；切换会话时先清空避免串台 */
+  /**
+   * 切换会话：作废旧弹幕调度、清空浮层后从 IndexedDB 读本会话「最新一轮」缓存。
+   * 各会话 key 独立（`wechat-dm-bullets-v1:${conversationKey}`），离开聊天室不会清掉其它会话数据。
+   */
   useEffect(() => {
+    danmakuEnqueueGenRef.current += 1
     setDmBullets([])
     let cancelled = false
     void (async () => {
@@ -1502,33 +1458,18 @@ export function ChatRoom({
     }
   }, [conversationKey, personaCharacterId, conversationCharacterId])
 
-  /** 弹幕列表变更后 debounce 落库。**禁止写入空数组**，避免加载间隙、切换瞬间把 KV 里已有弹幕覆盖掉 */
+  /** 有弹幕时 debounce 落库：整表覆盖写入当前会话 key，即「只保留最新一轮」快照。不在 length===0 时写入，避免切会话瞬间用空数组盖掉刚要异步读出的缓存。 */
   useEffect(() => {
     if (!danmakuEnabled) return
     if (dmBulletsRef.current.length === 0) return
+    const key = conversationKey
     const t = window.setTimeout(() => {
       const snap = dmBulletsRef.current.slice(-180)
       if (snap.length === 0) return
-      void personaDb.setPhoneKv(`${WECHAT_DM_BULLETS_KV_PREFIX}:${conversationKey}`, {
-        v: 1,
-        bullets: snap,
-      })
+      void personaDb.setPhoneKv(`${WECHAT_DM_BULLETS_KV_PREFIX}:${key}`, { v: 1, bullets: snap })
     }, 320)
     return () => window.clearTimeout(t)
   }, [dmBullets, conversationKey, danmakuEnabled])
-
-  /** 离开本会话时立刻保存；空列表不写回，避免卸载/切换瞬间误清空 KV */
-  useEffect(() => {
-    const key = conversationKey
-    return () => {
-      const snap = dmBulletsRef.current.slice(-180)
-      if (snap.length === 0) return
-      void personaDb.setPhoneKv(`${WECHAT_DM_BULLETS_KV_PREFIX}:${key}`, {
-        v: 1,
-        bullets: snap,
-      })
-    }
-  }, [conversationKey])
 
   const dmLaneBusyUntilRef = useRef<number[]>([])
 
@@ -1699,14 +1640,37 @@ export function ChatRoom({
     return formatWeChatChatTimestamp(ts, currentTimeMs)
   }, [currentTimeMs])
 
+  /** 聊天列表（含时间行）；对方 AI 气泡经 `pendingQueue` 逐条并入此 state，避免大批量 setState 卡死 */
   const [items, setItems] = useState<ChatItem[]>([])
   const itemsRef = useRef(items)
   itemsRef.current = items
+  /** 当前会话从 DB 拉取窗口内的完整消息（含「仅 UI 隐藏」），供 AI 转写；与气泡列表展示可不同步 */
+  const aiContextDbMessagesRef = useRef<WeChatChatMessage[]>([])
+  /** 会话设置里的「仅 UI 隐藏」截止时间；≤ 此时间的消息不展示在列表中 */
+  const uiOnlyHiddenCutTsRef = useRef<number | null>(null)
+  /** 与 ref 同步，供列表渲染兜底：即使 items 曾短暂含「仅 UI 清空」区间消息，也不在前端露出（回收站快照对应内容） */
+  const [uiOnlyHiddenCutForView, setUiOnlyHiddenCutForView] = useState<number | null>(null)
+  /** 同意好友申请时刻：用于插入「以上为验证消息」分隔条（仅私聊 UI） */
+  const [friendRequestAcceptedDividerAtMs, setFriendRequestAcceptedDividerAtMs] = useState<number | null>(null)
+  /** 从搜索/日期跳转进聊天时暂时展示全部已加载消息，避免锚点落在被隐藏区间 */
+  const ignoreUiOnlyHiddenInListRef = useRef(false)
   const rebuildWithCurrentTime = useCallback(
     (msgs: ChatMsg[]) => rebuildChatItemsWithTimestamps(msgs, formatWxTimeLabel, currentTimeMs),
     [currentTimeMs, formatWxTimeLabel],
   )
   const extractMessages = useCallback((list: ChatItem[]) => list.filter((it): it is ChatMsg => it.kind === 'msg'), [])
+  const buildChatItemsForAiTranscript = useCallback((): ChatItem[] => {
+    const rows = aiContextDbMessagesRef.current
+    const dbItems = rebuildWithCurrentTime(mapWeChatMessagesToChatItems(rows))
+    const dbIds = new Set(rows.map((r) => r.id))
+    const pending = extractMessages(itemsRef.current).filter((m) => !dbIds.has(m.id))
+    const mergedMsgs = [...extractMessages(dbItems), ...pending].sort(compareChatMsgByRevealOrder)
+    let items = rebuildWithCurrentTime(mergedMsgs)
+    if (roomType === 'group' && groupId?.trim()) {
+      items = filterGroupChatItemsHideModeratorOnlyBubbles(items, roomType, groupDocRef.current)
+    }
+    return items
+  }, [extractMessages, groupId, rebuildWithCurrentTime, roomType])
   const ensureVoiceMessageAudio = useCallback(
     async (messageId: string, voice?: ChatMsg['voice'], opts?: { forceResynthesize?: boolean }): Promise<string> => {
       const msgId = messageId.trim()
@@ -1768,9 +1732,31 @@ export function ChatRoom({
     (prev: ChatItem[], incoming: ChatMsg) => {
       // 与异步 hydrate 并发时，可能已存在同 id 行；先去重再追加，避免短暂双气泡闪烁
       const base = extractMessages(prev).filter((m) => m.id !== incoming.id)
-      return rebuildWithCurrentTime([...base, incoming])
+      let msg = incoming
+      /**
+       * 对方气泡必须与当前列表时间单调一致：否则 hydrate 合并时用 timestamp 排序，
+       * 会把「虚拟时间倒退 / 同毫秒」的新消息排到旧消息前面，看起来像跑到列表顶部。
+       */
+      if (incoming.from === 'other') {
+        let maxTs = 0
+        for (const m of base) {
+          const t = typeof m.timestamp === 'number' ? m.timestamp : 0
+          if (t > maxTs) maxTs = t
+        }
+        const incTs = typeof incoming.timestamp === 'number' ? incoming.timestamp : 0
+        if (incTs <= maxTs) {
+          msg = { ...incoming, timestamp: maxTs + 1 }
+        }
+      }
+      return rebuildWithCurrentTime([...base, msg])
     },
     [extractMessages, rebuildWithCurrentTime],
+  )
+
+  const mergeOtherIncomingForRoom = useCallback(
+    (prev: ChatItem[], incoming: ChatMsg) =>
+      filterGroupChatItemsHideModeratorOnlyBubbles(mergeIncomingMessage(prev, incoming), roomType, null),
+    [roomType, mergeIncomingMessage],
   )
 
   const appendSystemNote = useCallback(
@@ -2038,7 +2024,27 @@ export function ChatRoom({
         }
       }
 
-      let mapped = rebuildWithCurrentTime(mapWeChatMessagesToChatItems(msgs))
+      let convSt: Awaited<ReturnType<typeof personaDb.getChatConversationSettings>> = null
+      try {
+        convSt = await personaDb.getChatConversationSettings(hydrateForKey)
+      } catch {
+        convSt = null
+      }
+      if (!stillThisRun()) return
+      const rawUiCut = convSt?.uiOnlyHiddenBeforeTimestamp
+      const uiCut =
+        typeof rawUiCut === 'number' && Number.isFinite(rawUiCut) && rawUiCut > 0 ? rawUiCut : null
+      uiOnlyHiddenCutTsRef.current = uiCut
+      setUiOnlyHiddenCutForView(uiCut)
+      const rawFrAcc = convSt?.friendRequestAcceptedAtMs
+      setFriendRequestAcceptedDividerAtMs(
+        typeof rawFrAcc === 'number' && Number.isFinite(rawFrAcc) && rawFrAcc > 0 ? rawFrAcc : null,
+      )
+      const applyUiHide = uiCut != null && !ignoreUiOnlyHiddenInListRef.current
+      const displayMsgs = applyUiHide ? msgs.filter((m) => m.timestamp > uiCut) : msgs
+      aiContextDbMessagesRef.current = msgs
+
+      let mapped = rebuildWithCurrentTime(mapWeChatMessagesToChatItems(displayMsgs))
       if (roomType === 'group' && groupId?.trim()) {
         let gSnap = groupDocRef.current
         if (!gSnap) {
@@ -2062,10 +2068,10 @@ export function ChatRoom({
        */
       {
         const dbMsgs = extractMessages(mapped)
-        const dbIds = new Set(dbMsgs.map((m) => m.id))
+        const dbIds = new Set(msgs.map((m) => m.id))
         const pending = extractMessages(itemsRef.current).filter((m) => !dbIds.has(m.id))
         if (pending.length) {
-          const mergedMsgs = [...dbMsgs, ...pending].sort((a, b) => a.timestamp - b.timestamp)
+          const mergedMsgs = [...dbMsgs, ...pending].sort(compareChatMsgByRevealOrder)
           let mergedItems = rebuildWithCurrentTime(mergedMsgs)
           if (roomType === 'group' && groupId?.trim()) {
             mergedItems = filterGroupChatItemsHideModeratorOnlyBubbles(
@@ -2164,8 +2170,6 @@ export function ChatRoom({
 
   /** 须早于依赖它的 storage 监听；与 {@link flushAiReplies} 共用 */
   const flushAiRepliesBusyRef = useRef(false)
-  /** flush 期间跳过 storage 全量拉取时，在 finally 补一次 */
-  const storageCatchupAfterFlushRef = useRef(false)
   const storageHydrateDebounceRef = useRef<number | null>(null)
   const storageGroupSyncDebounceRef = useRef<number | null>(null)
 
@@ -2179,12 +2183,23 @@ export function ChatRoom({
     setHasOlderHistory(false)
     setVisibleMsgLimit(CHAT_VISIBLE_MSG_INITIAL)
     userScrolledRef.current = false
+    ignoreUiOnlyHiddenInListRef.current = false
+    setUiOnlyHiddenCutForView(null)
+    setFriendRequestAcceptedDividerAtMs(null)
     void hydrateMessagesRef.current(true)
   }, [conversationKey])
 
   useEffect(() => {
     const id = scrollToMessageId?.trim()
-    if (!id) return
+    if (!id) {
+      // 搜索/日期定位结束后若无重置，ignore 会一直为 true，后续 hydrate 会跳过「仅 UI 清空」裁剪，
+      // 导致回收站快照里同一批（本地仍保留的）消息重新出现在聊天室。
+      if (ignoreUiOnlyHiddenInListRef.current) {
+        ignoreUiOnlyHiddenInListRef.current = false
+        void hydrateMessagesRef.current(false)
+      }
+      return
+    }
     let cancelled = false
     void (async () => {
       const anchor = await personaDb.getWeChatChatMessageById(id)
@@ -2219,6 +2234,8 @@ export function ChatRoom({
         mapped = filterGroupChatItemsHideModeratorOnlyBubbles(mapped, roomType, gSnap)
       }
       if (cancelled) return
+      ignoreUiOnlyHiddenInListRef.current = true
+      aiContextDbMessagesRef.current = merged
       setItems(mapped)
       itemsRef.current = mapped
       // 来自「按日期/搜索定位」的跳转必须能直接看到目标消息：
@@ -2250,10 +2267,7 @@ export function ChatRoom({
   useEffect(() => {
     const debounceMs = 160
     const onStorage = () => {
-      if (flushAiRepliesBusyRef.current) {
-        storageCatchupAfterFlushRef.current = true
-        return
-      }
+      if (flushAiRepliesBusyRef.current) return
       if (storageHydrateDebounceRef.current != null) window.clearTimeout(storageHydrateDebounceRef.current)
       storageHydrateDebounceRef.current = window.setTimeout(() => {
         storageHydrateDebounceRef.current = null
@@ -2316,10 +2330,7 @@ export function ChatRoom({
     void sync()
     const debounceMs = 160
     const scheduleSync = () => {
-      if (flushAiRepliesBusyRef.current) {
-        storageCatchupAfterFlushRef.current = true
-        return
-      }
+      if (flushAiRepliesBusyRef.current) return
       if (storageGroupSyncDebounceRef.current != null) window.clearTimeout(storageGroupSyncDebounceRef.current)
       storageGroupSyncDebounceRef.current = window.setTimeout(() => {
         storageGroupSyncDebounceRef.current = null
@@ -2758,6 +2769,152 @@ export function ChatRoom({
     })
   }, [])
 
+  const opponentRevealJobsRef = useRef<OpponentRevealJob[]>([])
+  const opponentRevealTimerRef = useRef<number | null>(null)
+  const [pendingQueue, setPendingQueue] = useState<ChatMsg[]>([])
+
+  const syncPendingQueueFromRef = useCallback(() => {
+    setPendingQueue(opponentRevealJobsRef.current.map((j) => j.msg))
+  }, [])
+
+  /**
+   * 入队前统一写死本条批次的 timestamp：须与 merge 后出现在列表里的顺序一致，
+   * 否则 persist 闭包里仍是生成时的较小 ts，IndexedDB 与 hydrate 的 sort 会把气泡顺序打乱。
+   * 就地修改 `job.msg`（与各处 persist 捕获的引用为同一对象）。
+   */
+  const assignSequentialOpponentRevealTimestamps = useCallback((jobs: OpponentRevealJob[]) => {
+    if (jobs.length === 0) return jobs
+    let maxTs = 0
+    for (const m of extractMessages(itemsRef.current)) {
+      const t = typeof m.timestamp === 'number' ? m.timestamp : 0
+      if (t > maxTs) maxTs = t
+    }
+    for (const j of opponentRevealJobsRef.current) {
+      const t = typeof j.msg.timestamp === 'number' ? j.msg.timestamp : 0
+      if (t > maxTs) maxTs = t
+    }
+    let nextTs = maxTs + 1
+    const now = getCurrentTimeMs()
+    if (nextTs < now) nextTs = now
+    for (const j of jobs) {
+      j.msg.timestamp = nextTs
+      nextTs += 1
+    }
+    return jobs
+  }, [extractMessages, getCurrentTimeMs])
+
+  const cancelOpponentRevealTimer = useCallback(() => {
+    if (opponentRevealTimerRef.current != null) {
+      window.clearTimeout(opponentRevealTimerRef.current)
+      opponentRevealTimerRef.current = null
+    }
+  }, [])
+
+  /** 用户插话等：立刻露出剩余队列，避免与新一轮发送打架 */
+  const flushOpponentRevealQueueImmediate = useCallback(() => {
+    cancelOpponentRevealTimer()
+    const jobs = opponentRevealJobsRef.current.splice(0)
+    if (jobs.length === 0) return
+    setPendingQueue([])
+    setItems((prev) => {
+      let next = prev
+      for (const j of jobs) {
+        next = mergeOtherIncomingForRoom(next, { ...j.msg, otherAnimated: true })
+      }
+      itemsRef.current = next
+      return next
+    })
+    for (const j of jobs) {
+      try {
+        j.persist()
+      } catch {
+        /* ignore */
+      }
+      j.afterReveal?.()
+    }
+    scrollToBottomSmooth()
+    onOpponentRevealQueueActive?.(false)
+  }, [cancelOpponentRevealTimer, mergeOtherIncomingForRoom, scrollToBottomSmooth, onOpponentRevealQueueActive])
+
+  const kickOpponentRevealProcessor = useCallback(() => {
+    if (opponentRevealTimerRef.current != null) return
+    const run = () => {
+      const q = opponentRevealJobsRef.current
+      if (q.length === 0) {
+        onOpponentRevealQueueActive?.(false)
+        return
+      }
+      const head = q[0]!
+      const delay = computeOpponentStaggerDelayMs(head.msg)
+      opponentRevealTimerRef.current = window.setTimeout(() => {
+        opponentRevealTimerRef.current = null
+        const job = opponentRevealJobsRef.current.shift()
+        if (!job) {
+          run()
+          return
+        }
+        setPendingQueue(opponentRevealJobsRef.current.map((j) => j.msg))
+        const incoming = { ...job.msg, otherAnimated: true }
+        const el = scrollRef.current
+        const atBottomNow = el ? isScrollNearBottom(el) : isAtBottomRef.current
+        const browsingHistory = !!el && userScrolledRef.current && !atBottomNow
+        const shouldStickToBottom = atBottomNow && !browsingHistory
+        isAtBottomRef.current = shouldStickToBottom
+        setIsAtBottom(shouldStickToBottom)
+        setItems((prev) => {
+          const next = mergeOtherIncomingForRoom(prev, incoming)
+          itemsRef.current = next
+          return next
+        })
+        try {
+          job.persist()
+        } catch {
+          /* ignore */
+        }
+        job.afterReveal?.()
+        if (shouldStickToBottom) scrollToBottomSmooth()
+        else setPendingNewCount((c) => c + 1)
+        run()
+      }, delay)
+    }
+    if (opponentRevealJobsRef.current.length > 0) onOpponentRevealQueueActive?.(true)
+    run()
+  }, [mergeOtherIncomingForRoom, scrollToBottomSmooth, onOpponentRevealQueueActive])
+
+  const enqueueOpponentMessagesSequential = useCallback(
+    (jobs: OpponentRevealJob[]) => {
+      if (jobs.length === 0) return
+      assignSequentialOpponentRevealTimestamps(jobs)
+      opponentRevealJobsRef.current.push(...jobs)
+      syncPendingQueueFromRef()
+      onOpponentRevealQueueActive?.(true)
+      kickOpponentRevealProcessor()
+    },
+    [
+      assignSequentialOpponentRevealTimestamps,
+      kickOpponentRevealProcessor,
+      onOpponentRevealQueueActive,
+      syncPendingQueueFromRef,
+    ],
+  )
+
+  /** 仅切换 conversationKey 时执行：未露出队列落库。勿依赖「回调引用」否则会每次父组件重渲染都清空队列，导致气泡永远不显示。 */
+  useEffect(() => {
+    cancelOpponentRevealTimer()
+    const jobs = opponentRevealJobsRef.current.splice(0)
+    if (jobs.length === 0) return
+    setPendingQueue([])
+    for (const j of jobs) {
+      try {
+        j.persist()
+      } catch {
+        /* ignore */
+      }
+      j.afterReveal?.()
+    }
+    onOpponentRevealQueueActiveRef.current?.(false)
+  }, [conversationKey, cancelOpponentRevealTimer])
+
   const onActionPanelAction = useCallback(
     async (id: WeChatMessageActionId) => {
       const mid = actionMessageId?.trim() || ''
@@ -3136,7 +3293,6 @@ export function ChatRoom({
   const processingSendRef = useRef(false)
 
   const [typingVisible, setTypingVisible] = useState(false)
-  const [queueTypingPreview, setQueueTypingPreview] = useState<ChatQueueTypingPreviewState | null>(null)
   const [flushUiBusy, setFlushUiBusy] = useState(false)
   const [awaitingAiKick, setAwaitingAiKick] = useState(false)
   const pendingAiRepliesRef = useRef(0)
@@ -3152,48 +3308,9 @@ export function ChatRoom({
     }
   }, [typingVisible, onOtherTypingChange])
 
-  useLayoutEffect(() => {
-    if (!queueTypingPreview) return
-    scrollToBottomSmooth({ force: true })
-  }, [queueTypingPreview, scrollToBottomSmooth])
-
-  // moved earlier
-
   const jumpToBottom = useCallback(() => {
     scrollToBottomSmooth({ force: true })
   }, [scrollToBottomSmooth])
-
-  /**
-   * 普通文本消息队列节奏：
-   * - 首条不等待
-   * - 后续按“每 5 字 = 1 秒”计算（10 字=2 秒）
-   */
-  const gapBeforeBubbleMs = useCallback((currentSegmentLength: number, isFirst: boolean) => {
-    if (isFirst) return 0
-    const chars = Math.max(1, currentSegmentLength)
-    return Math.min(25000, Math.ceil(chars / 5) * 1000)
-  }, [])
-
-  /**
-   * 分段等待：改为确定性等待，避免随机切片导致“看起来卡住”。
-   * - 传入 queuePreview 时：列表底部显示该发言者头像 + 气泡三点（不顶栏打字）
-   * - 未传时：沿用顶栏「对方正在输入」
-   */
-  const gapDelayWithTyping = useCallback(async (totalMs: number, queuePreview?: ChatQueueTypingPreviewState | null) => {
-    if (totalMs <= 0 || opponentQueueStopRef.current) return
-    if (queuePreview) {
-      setQueueTypingPreview(queuePreview)
-      await awaitDoubleRaf()
-    } else {
-      setTypingVisible(true)
-    }
-    await sleep(totalMs)
-    if (queuePreview) {
-      setQueueTypingPreview(null)
-    } else {
-      setTypingVisible(false)
-    }
-  }, [])
 
   /** 消费模型返回的弹幕行；当本地配置尚未加载完成时，回退实时读取 DB，避免“首轮丢弹幕”。 */
   const enqueueDanmakuLines = useCallback(async (lines: string[]) => {
@@ -3206,17 +3323,16 @@ export function ChatRoom({
       eff = resolveEffectiveDanmakuVisuals(g, pid, row)
     }
     if (!eff || eff.skipCharacter) return
-    logger.log(
-      'ai',
-      `[DMDBG] enqueue lines=${lines.length} poolBefore=${dmBullets.length} density=${eff.density} pos=${eff.position}`,
-    )
+
+    const gen = ++danmakuEnqueueGenRef.current
+    setDmBullets([])
+    clearWeChatDmBulletsKv(conversationKey)
+
     const trackCount = densityToTrackCount(eff.density)
+    dmLaneBusyUntilRef.current = Array.from({ length: trackCount }, () => 0)
     const durationSec = eff.scrollDurationSec
     const fontPx = eff.fontSize
     const colorRgba = hexAndOpacityToRgba(eff.color, eff.opacity)
-    if (dmLaneBusyUntilRef.current.length !== trackCount) {
-      dmLaneBusyUntilRef.current = Array.from({ length: trackCount }, () => 0)
-    }
 
     /** 同一批入队：错峰入场，避免首轮多条同时从右侧涌出（累积延迟：首条略晚，其后每条再等一轮随机间隔） */
     let waveAccumMs = 0
@@ -3225,6 +3341,7 @@ export function ChatRoom({
       waveAccumMs += stepMs
       const scheduleDelay = waveAccumMs
       window.setTimeout(() => {
+        if (gen !== danmakuEnqueueGenRef.current) return
         const pickTrackWithGap = () => {
           const now = Date.now()
           const busy = dmLaneBusyUntilRef.current
@@ -3241,6 +3358,7 @@ export function ChatRoom({
           return { track: best, waitMs: Math.max(0, bestWait) }
         }
         const place = () => {
+          if (gen !== danmakuEnqueueGenRef.current) return
           const { track, waitMs } = pickTrackWithGap()
           if (waitMs > 0) {
             window.setTimeout(place, waitMs)
@@ -3257,6 +3375,7 @@ export function ChatRoom({
               ? Math.min(92, Math.max(2, (track / Math.max(1, trackCount - 1)) * 72 + Math.random() * 6))
               : undefined
           setDmBullets((prev) => {
+            if (gen !== danmakuEnqueueGenRef.current) return prev
             const next = [
               ...prev,
               {
@@ -3272,14 +3391,14 @@ export function ChatRoom({
                 topPct,
               },
             ]
-            // 循环渲染下保留近期窗口，避免数组无限膨胀。
-            return next.slice(-180)
+            // 仅本批若干条在屏上，仍做上限防止异常撑爆
+            return next.slice(-120)
           })
         }
         place()
       }, scheduleDelay)
     })
-  }, [danmakuEnabled, effectiveDm, personaCharacterId, conversationCharacterId, logger, dmBullets.length])
+  }, [conversationKey, danmakuEnabled, effectiveDm, personaCharacterId, conversationCharacterId])
 
   const generateGroupPsyche = useCallback(async () => {
     if (heartWhisperLoading || roomType !== 'group') return
@@ -3303,7 +3422,7 @@ export function ChatRoom({
       }
       const peerName = playerDisplayName.trim() || state.profile.displayName.trim() || '朋友'
       const groupRef = await loadPrivateGroupChatsRecentReference()
-      const tx = itemsToTranscript(itemsRef.current, {
+      const tx = itemsToTranscript(buildChatItemsForAiTranscript(), {
         groupSpeakerLabel: (msg) => {
           if (msg.from === 'self') return undefined
           const sid = msg.senderCharacterId?.trim()
@@ -3368,6 +3487,7 @@ export function ChatRoom({
     roomType,
     showComposerToast,
     state.profile.displayName,
+    buildChatItemsForAiTranscript,
   ])
 
   const generateHeartWhisper = useCallback(async () => {
@@ -3399,7 +3519,7 @@ export function ChatRoom({
           ? await loadOfflineDatingPlotsPromptBlock(pcid, character?.name ?? null)
           : ''
       const groupRef = await loadPrivateGroupChatsRecentReference()
-      const tx = itemsToTranscript(itemsRef.current)
+      const tx = itemsToTranscript(buildChatItemsForAiTranscript())
       const memPack = await buildPrivateMemoryInjectionForAi(tx, '')
       const wbHeartIds: string[] = [
         ...new Set([pcid?.trim()].filter((x): x is string => !!x && x !== '__none__')),
@@ -3443,6 +3563,7 @@ export function ChatRoom({
     showComposerToast,
     state.profile.displayName,
     useLumiProjectAssistantPrompt,
+    buildChatItemsForAiTranscript,
   ])
 
   useEffect(() => {
@@ -3470,10 +3591,14 @@ export function ChatRoom({
       pendingAiRepliesRef.current = 0
       setAwaitingAiKick(false)
       setTypingVisible(false)
-      setQueueTypingPreview(null)
       return
     }
-    if (flushAiRepliesBusyRef.current) return
+    if (flushAiRepliesBusyRef.current) {
+      // 另一次 flush 正跑：pending 已由 bump 写入，本轮 finally 会 queueMicrotask 再调 flush。
+      // 若不解除 awaitingAiKick，用户首条发出后会长期像「卡住」且无法点输入条旁重试。
+      setAwaitingAiKick(false)
+      return
+    }
     flushAiRepliesBusyRef.current = true
     aiCallingRef.current = true
     setAwaitingAiKick(false)
@@ -3505,12 +3630,10 @@ export function ChatRoom({
           const gid = groupId.trim()
           const gFresh = await personaDb.getGroupChat(gid)
           groupDocRef.current = gFresh
-          groupReplyQueueRef.current = []
           const npcs = pickGroupNpcMembersForAiTurn(gFresh, getCurrentTimeMs())
           const firstNpc = npcs[0]?.charId?.trim() || ''
           if (!firstNpc) {
             setTypingVisible(false)
-            setQueueTypingPreview(null)
             continue
           }
           persistCharacterId = firstNpc
@@ -3521,7 +3644,7 @@ export function ChatRoom({
           recentGroupChatsReference = ''
         }
 
-        const transcript = itemsToTranscript(itemsRef.current, {
+        const transcript = itemsToTranscript(buildChatItemsForAiTranscript(), {
           groupSpeakerLabel:
             roomType === 'group'
               ? (msg) => {
@@ -3538,10 +3661,8 @@ export function ChatRoom({
         retryReplyBiasRef.current = ''
 
         setTypingVisible(true)
-        await sleep(randomBetween(520, 1600))
         if (opponentQueueStopRef.current) {
           setTypingVisible(false)
-          setQueueTypingPreview(null)
           continue
         }
 
@@ -3614,6 +3735,16 @@ export function ChatRoom({
         let clearBusyAfterReply = false
         let suppressBusyDirectiveThisRound = false
         let groupMultiOrderedItems: WeChatGroupMultiSpeakerOrderedItem[] | null = null
+        let groupTraceSnapshot: {
+          allowedCharIds: string[]
+          groupName: string
+          primaryNickname: string
+          offlineCombined: string
+          groupUnsummarized: string
+          firstNpcWorldBg: string
+        } | null = null
+        let traceGlobalPlate: 'private_chat' | 'group_chat' = 'private_chat'
+        let traceReplyBias = ''
         try {
           const hasApi =
             !!apiConfig?.apiUrl?.trim() &&
@@ -3624,7 +3755,6 @@ export function ChatRoom({
             showComposerToast('未配置 AI API，无法生成对方回复')
             pendingAiRepliesRef.current = 0
             setTypingVisible(false)
-            setQueueTypingPreview(null)
             continue
           } else {
             const busyGs = await personaDb.getGlobalSettings()
@@ -3662,7 +3792,6 @@ export function ChatRoom({
               continue
             }
             const reversed = [...itemsRef.current].reverse()
-            const lastSelf = reversed.find((x) => x.kind === 'msg' && x.from === 'self') as ChatMsg | undefined
             const lastOther = reversed.find((x) => x.kind === 'msg' && x.from === 'other') as ChatMsg | undefined
             const lastSelfVoice = reversed.find((x) => x.kind === 'msg' && x.from === 'self' && !!x.voice) as ChatMsg | undefined
             const voiceEmotionBias = (() => {
@@ -3718,13 +3847,13 @@ export function ChatRoom({
               if (!mentioned.length) return ''
               return `[系统通知] 用户 @ 了：${mentioned.map((m) => m.groupNickname.trim()).join('、')}。对应角色在本轮输出中至少各出现一行 <<SPEAKER:其角色ID>> 的可见回复（除非人设明确拒回）。`
             })()
-            const finalReplyBias = [mergedReplyBias, recallBias, groupCtxBias, atYouBias].filter((x) => x.trim()).join('\n\n')
+            traceReplyBias = [mergedReplyBias, recallBias, groupCtxBias, atYouBias].filter((x) => x.trim()).join('\n\n')
             pendingRecalledUserTextRef.current = null
             const isPrivatePersonaRound =
               roomType !== 'group' && !lumiAssistantChat && !!personaCharacterId?.trim()
             if (isPrivatePersonaRound) {
               try {
-                const pack = await buildPrivateMemoryInjectionForAi(transcript, finalReplyBias)
+                const pack = await buildPrivateMemoryInjectionForAi(transcript, traceReplyBias)
                 memoryRound = pack.memory
                 unsPrivateRound = pack.unsPrivate
                 unsGroupRound = pack.unsGroup
@@ -3786,11 +3915,7 @@ export function ChatRoom({
               danmakuSubApiEnabled &&
               !isSameApiConfigShape(danmakuApiConfig, apiConfig)
             const shouldSplitDanmakuCall = !!danmakuConfig && hasDanmakuSubApi
-            const globalWechatPlate = roomType === 'group' ? ('group_chat' as const) : ('private_chat' as const)
-            logger.log(
-              'ai',
-              `flushAiReplies: promptMode=${pm} personaCharacterId=${cid || 'none'} offlinePlotsChars=${offlineDatingPlotsContext.length} lastSelf=${lastSelf?.id ?? 'none'} lastOther=${lastOther?.id ?? 'none'} pickedImageFrom=${lastSelfWithImage?.id ?? 'none'} hasImage=${Boolean(img?.base64?.trim())} imgLen=${img?.base64?.trim()?.length ?? 0}`,
-            )
+            traceGlobalPlate = roomType === 'group' ? 'group_chat' : 'private_chat'
             if (roomType === 'group' && groupId?.trim()) {
               const gChat = groupDocRef.current
               const npcMembers = pickGroupNpcMembersForAiTurn(gChat, getCurrentTimeMs())
@@ -3860,7 +3985,7 @@ export function ChatRoom({
                 }
                 const memberHay = buildMemoryRelevanceHaystack([
                   ...transcript.slice(-36).map((t) => `${t.speakerLabel ?? ''} ${t.text}`),
-                  finalReplyBias,
+                  traceReplyBias,
                   privateDigest.slice(0, 1400),
                 ])
                 let memNotes = ''
@@ -4026,12 +4151,20 @@ export function ChatRoom({
               /** 群内仅 NPC characterId 参与档案室匹配 */
               const wbGroupIds = new Set<string>(allowedCharIds)
               loreSceneMemberIds = [...wbGroupIds]
+              groupTraceSnapshot = {
+                allowedCharIds: [...wbGroupIds],
+                groupName: gChat?.name?.trim() || '群聊',
+                primaryNickname: (memberPromptRows[0]?.groupNickname || '').trim() || '群成员',
+                offlineCombined: offlineCombined.trim(),
+                groupUnsummarized: groupUnsummarizedBlock.trim(),
+                firstNpcWorldBg: (memberPromptRows[0]?.worldBackground || '').trim(),
+              }
               const systemContent = buildWeChatGroupMultiSpeakerSystem({
                 groupName: gChat?.name?.trim() || '群聊',
                 groupId: groupId.trim(),
                 members: memberPromptRows,
                 playerSection: piBlock,
-                replyBias: finalReplyBias || undefined,
+                replyBias: traceReplyBias || undefined,
                 offlinePlotsCombined: offlineCombined.trim() || undefined,
                 groupUnsummarizedNotes: groupUnsummarizedBlock || undefined,
                 groupStrangerPairsPrompt,
@@ -4086,14 +4219,14 @@ export function ChatRoom({
                   recentGroupChatsReference: recentGroupChatsReference || undefined,
                   unsummarizedPrivateNotes: unsPrivateRound.trim() || undefined,
                   unsummarizedGroupNotes: unsGroupRound.trim() || undefined,
-                  replyBias: finalReplyBias || undefined,
+                  replyBias: traceReplyBias || undefined,
                   busyContext,
                   includeThinkingChain,
                   currentTimeMs: getCurrentTimeMs(),
                   danmakuConfig: shouldSplitDanmakuCall ? undefined : danmakuConfig,
                   groupChatTranscript: false,
                   chatMemberIds: loreSceneMemberIds,
-                  globalWechatPlate,
+                  globalWechatPlate: traceGlobalPlate,
                 })
               } else {
                 aiReply = await requestWeChatPeerReplyBubblesWithImage({
@@ -4112,14 +4245,14 @@ export function ChatRoom({
                   recentGroupChatsReference: recentGroupChatsReference || undefined,
                   unsummarizedPrivateNotes: unsPrivateRound.trim() || undefined,
                   unsummarizedGroupNotes: unsGroupRound.trim() || undefined,
-                  replyBias: finalReplyBias || undefined,
+                  replyBias: traceReplyBias || undefined,
                   busyContext,
                   includeThinkingChain,
                   currentTimeMs: getCurrentTimeMs(),
                   danmakuConfig: shouldSplitDanmakuCall ? undefined : danmakuConfig,
                   groupChatTranscript: false,
                   chatMemberIds: loreSceneMemberIds,
-                  globalWechatPlate,
+                  globalWechatPlate: traceGlobalPlate,
                 })
               }
             } else {
@@ -4136,14 +4269,14 @@ export function ChatRoom({
                 recentGroupChatsReference: recentGroupChatsReference || undefined,
                 unsummarizedPrivateNotes: unsPrivateRound.trim() || undefined,
                 unsummarizedGroupNotes: unsGroupRound.trim() || undefined,
-                replyBias: finalReplyBias || undefined,
+                replyBias: traceReplyBias || undefined,
                 busyContext,
                 includeThinkingChain,
                 currentTimeMs: getCurrentTimeMs(),
                 danmakuConfig: shouldSplitDanmakuCall ? undefined : danmakuConfig,
                 groupChatTranscript: false,
                 chatMemberIds: loreSceneMemberIds,
-                globalWechatPlate,
+                globalWechatPlate: traceGlobalPlate,
               })
             }
             if (shouldSplitDanmakuCall && danmakuApiConfig && danmakuConfig) {
@@ -4165,9 +4298,8 @@ export function ChatRoom({
                   unsummarizedPrivateNotes: unsPrivateRound.trim() || undefined,
                   unsummarizedGroupNotes: unsGroupRound.trim() || undefined,
                   chatMemberIds: loreSceneMemberIds,
-                  globalWechatPlate,
+                  globalWechatPlate: traceGlobalPlate,
                 })
-                logger.log('ai', `[DMDBG] split-call enabled lines=${splitLines.length}`)
                 if (splitLines.length > 0) queueMicrotask(() => enqueueDanmakuLines(splitLines))
               } catch (err) {
                 logger.log('error', `弹幕副接口调用失败: ${err instanceof Error ? err.message : String(err)}`)
@@ -4187,7 +4319,6 @@ export function ChatRoom({
           }
         } finally {
           setTypingVisible(false)
-          setQueueTypingPreview(null)
         }
 
         if (opponentQueueStopRef.current) continue
@@ -4213,10 +4344,6 @@ export function ChatRoom({
           ...(aiReply.danmakuLines ?? []).map((s) => String(s ?? '').trim()).filter(Boolean),
           ...bubbleExtraction.danmakuLines,
         ].filter(Boolean)
-        logger.log(
-          'ai',
-          `[DMDBG] extract inline=${(aiReply.danmakuLines ?? []).length} fallback=${bubbleExtraction.danmakuLines.length} total=${danmakuLinesCollected.length} bubblesAfterClean=${bubbles.length}`,
-        )
         const busyCandidate = [bubbles?.[0] ?? '', bubbles?.[1] ?? '', bubbles?.[2] ?? ''].join('')
         const busyDirective = parseBusyDirective(busyCandidate.trim())
         // 思维链仅用于模型内部推演，不在聊天室落库/展示。
@@ -4236,6 +4363,46 @@ export function ChatRoom({
           continue
         }
 
+        const traceGroupLines =
+          roomType === 'group' && groupMultiOrderedItems
+            ? groupMultiOrderedItems
+                .filter((x) => x.kind === 'bubble')
+                .map((x) => String(x.text ?? '').trim())
+                .filter(Boolean)
+            : []
+        if (roomType !== 'group' && pm === 'persona' && cid?.trim() && !useLumiProjectAssistantPrompt) {
+          void publishWeChatPrivatePersonaMemoryTrace({
+            character,
+            charDisplayName: character?.name?.trim() || notifyPeerRound,
+            transcript,
+            biasText: traceReplyBias,
+            worldBackgroundPrompt: worldBackgroundPrompt ?? '',
+            offlineDatingPlotsContext: offlineDatingPlotsContext || '',
+            unsPrivateNotes: unsPrivateRound,
+            unsGroupNotes: unsGroupRound,
+            recentGroupChatsReference,
+            chatMemberIds: loreSceneMemberIds,
+            globalWechatPlate: traceGlobalPlate,
+            apiConfig,
+            replyBubbles: bubbles,
+          }).catch(() => {})
+        }
+        if (roomType === 'group' && pm === 'persona' && groupTraceSnapshot) {
+          void publishWeChatGroupMemoryTrace({
+            groupName: groupTraceSnapshot.groupName,
+            transcript,
+            biasText: traceReplyBias,
+            primaryNpcCharacterId: groupTraceSnapshot.allowedCharIds[0] || '',
+            primaryNpcDisplayName: groupTraceSnapshot.primaryNickname,
+            worldBackgroundFirst: groupTraceSnapshot.firstNpcWorldBg,
+            offlinePlotsCombined: groupTraceSnapshot.offlineCombined,
+            groupUnsummarizedNotes: groupTraceSnapshot.groupUnsummarized,
+            wbGroupCharIds: groupTraceSnapshot.allowedCharIds,
+            apiConfig,
+            replyBubbles: traceGroupLines,
+          }).catch(() => {})
+        }
+
         const dedupeBubbleLines = (arr: string[]) =>
           (arr ?? [])
             .map((s) => String(s ?? '').trim())
@@ -4250,7 +4417,7 @@ export function ChatRoom({
 
         let bubbleRuns: Array<
           | { kind: 'meta'; action: WeChatGroupMetaAction }
-          | { kind: 'messages'; characterId: string; notifyTitle: string; bubbles: string[]; lumiTypingGap: boolean }
+          | { kind: 'messages'; characterId: string; notifyTitle: string; bubbles: string[] }
         > = []
         if (roomType === 'group' && groupId?.trim() && groupMultiOrderedItems?.length) {
           for (const it of groupMultiOrderedItems) {
@@ -4269,7 +4436,6 @@ export function ChatRoom({
                   ? '群管家'
                   : findGroupMember(groupDocRef.current, cidRun)?.groupNickname || '群成员',
               bubbles: bubs,
-              lumiTypingGap: true,
             })
           }
         } else {
@@ -4284,28 +4450,10 @@ export function ChatRoom({
               characterId: persistCharacterId,
               notifyTitle: notifyPeerRound,
               bubbles: b,
-              lumiTypingGap: false,
             },
           ]
         }
         if (!bubbleRuns.length) continue
-
-        const snapshotQueueTypingPreview = (cid: string, label: string): ChatQueueTypingPreviewState => {
-          const id = (cid || conversationCharacterId || '').trim()
-          const nick = label.trim() || '…'
-          let avatarUrl: string | undefined
-          if (roomType === 'group' && groupId?.trim()) {
-            const g0 = groupDocRef.current ?? groupLive
-            if (id === WECHAT_GROUP_BOT_CHARACTER_ID) {
-              avatarUrl = resolveGroupRobotAvatarDisplayUrl(g0)
-            } else {
-              avatarUrl = groupAvatarByCharId[id]
-            }
-          } else {
-            avatarUrl = peerAvatarResolved
-          }
-          return { senderCharacterId: id, label: nick, avatarUrl }
-        }
 
         bubbleRunLoop: for (const br of bubbleRuns) {
           if (br.kind === 'meta') {
@@ -4320,25 +4468,12 @@ export function ChatRoom({
                 },
               })
             }
-            await sleep(randomBetween(180, 420))
             if (opponentQueueStopRef.current) break bubbleRunLoop
             continue
           }
           persistCharacterId = br.characterId
           notifyPeerRound = br.notifyTitle
-          let bubbles = [...br.bubbles]
-          setQueueTypingPreview(snapshotQueueTypingPreview(br.characterId, br.notifyTitle))
-          await awaitDoubleRaf()
-          try {
-            if (br.lumiTypingGap) {
-              const main0 = bubbles[0] || ''
-              await sleep(Math.min(8000, Math.max(450, Math.ceil(Math.max(1, main0.length) / 6) * 1000)))
-            } else {
-              await sleep(randomBetween(280, 780))
-            }
-          } finally {
-            setQueueTypingPreview(null)
-          }
+          const bubbles = [...br.bubbles]
           if (opponentQueueStopRef.current) break bubbleRunLoop
 
         let pendingReplyMessageId: string | undefined
@@ -4377,9 +4512,12 @@ export function ChatRoom({
         }
         /**
          * 禁言时系统灰条：全员可见同一文案；`shieldedMessageContent` 存原文供群主/管理员点「查看」。
+         * 仅构造数据，由统一批量 `setItems` 与 microtask 落库。
          */
-        const appendMuteSuppressSystemStrip = async (hiddenPlain?: string | null) => {
-          if (roomType !== 'group' || !groupId?.trim()) return
+        const buildMuteSuppressStripPiece = async (
+          hiddenPlain?: string | null,
+        ): Promise<{ row: WeChatChatMessage; ui: ChatMsg } | null> => {
+          if (roomType !== 'group' || !groupId?.trim()) return null
           const gid = groupId.trim()
           let g0: GroupChatRow | null = null
           try {
@@ -4387,7 +4525,7 @@ export function ChatRoom({
           } catch {
             g0 = groupDocRef.current
           }
-          if (!g0) return
+          if (!g0) return null
           const mem = findGroupMember(g0, persistCharacterId)
           const nick = groupNoticeMemberNickname(mem)
           const ts = getCurrentTimeMs()
@@ -4409,23 +4547,10 @@ export function ChatRoom({
             conversationKey,
             quiet: true,
           }
-          try {
-            await appendWeChatMessageResilient(
-              () => personaDb.appendWeChatChatMessage(row),
-              WECHAT_CHAT_APPEND_TIMEOUT_MS,
-            )
-          } catch {
-            /* ignore */
-          }
           const mappedRows = mapWeChatMessagesToChatItems([row])
           const ui = mappedRows[0]
-          if (!ui) return
-          setItems((prev) => {
-            const next = mergeIncomingMessage(prev, { ...ui, otherAnimated: true })
-            itemsRef.current = next
-            return next
-          })
-          scrollToBottomSmooth()
+          if (!ui) return null
+          return { row, ui }
         }
         const mergeItemsWithGroupModerationFilter = (prev: ChatItem[], incoming: ChatMsg): ChatItem[] =>
           filterGroupChatItemsHideModeratorOnlyBubbles(
@@ -4433,6 +4558,152 @@ export function ChatRoom({
             roomType,
             groupDocRef.current ?? groupLive,
           )
+
+        const appendMuteSuppressSystemStrip = async (hiddenPlain: string) => {
+          const piece = await buildMuteSuppressStripPiece(hiddenPlain)
+          if (!piece) return
+          try {
+            await personaDb.appendWeChatChatMessage(piece.row)
+          } catch {
+            /* ignore */
+          }
+          setItems((prev) => {
+            const next = mergeItemsWithGroupModerationFilter(prev, piece.ui)
+            itemsRef.current = next
+            return next
+          })
+        }
+
+        /** 纯文本多气泡：一次进列表；引用元数据在此 await；落库 microtask（禁言或群机器人规则命中则走逐行分支） */
+        {
+          const flatForBatch = flattenBubbleLinesForBatch(bubbles)
+          let allowPlaintextBatch =
+            flatForBatch.length > 0 && flatForBatch.every((ln) => !bubbleLineNeedsSpecialBubbleHandler(ln))
+          if (allowPlaintextBatch && roomType === 'group' && groupId?.trim()) {
+            if (await skipBubbleForGroupMute()) allowPlaintextBatch = false
+          }
+          const gSnap = roomType === 'group' ? groupDocRef.current ?? groupLive : null
+          if (allowPlaintextBatch && roomType === 'group' && groupId?.trim() && !gSnap) {
+            allowPlaintextBatch = false
+          }
+          if (allowPlaintextBatch) {
+            type PlanRow = { oid: string; ts: number; charId: string; text: string; replyToId?: string }
+            const plans: PlanRow[] = []
+            let pendingInline: string | undefined
+            let bi = 0
+            let abortPlaintextBatch = false
+            const ts0 = getCurrentTimeMs()
+            for (const rawLine of flatForBatch) {
+              const parsed = parseReplyMarker(rawLine)
+              if (parsed.replyMessageId?.trim()) pendingInline = parsed.replyMessageId.trim()
+              const segRaw = parsed.text.trim()
+              const seg = sanitizeVoiceControlForTextBubble(segRaw) || segRaw
+              if (!String(seg).trim()) continue
+              const emitCharacterId =
+                roomType === 'group' &&
+                persistCharacterId.trim() !== WECHAT_GROUP_BOT_CHARACTER_ID &&
+                /^(群管家|群助手|群机器人)\s*[：:]/u.test(seg.trimStart())
+                  ? WECHAT_GROUP_BOT_CHARACTER_ID
+                  : persistCharacterId
+              const segForStore =
+                emitCharacterId === WECHAT_GROUP_BOT_CHARACTER_ID
+                  ? normalizeGroupSmartBotBubblePlaintext(seg, groupDocRef.current ?? groupLive)
+                  : seg
+              if (!String(segForStore).trim()) continue
+              if (
+                roomType === 'group' &&
+                groupId?.trim() &&
+                emitCharacterId !== WECHAT_GROUP_BOT_CHARACTER_ID &&
+                gSnap
+              ) {
+                if (matchGroupRobotRules(seg, gSnap.robotRules ?? [])) {
+                  abortPlaintextBatch = true
+                  break
+                }
+              }
+              const ts = ts0 + bi
+              const oid = `wxm-${ts}-obatch-${bi}-${Math.random().toString(36).slice(2, 6)}`
+              bi += 1
+              const replyToId = pendingInline
+              pendingInline = undefined
+              plans.push({ oid, ts, charId: emitCharacterId, text: segForStore, replyToId })
+            }
+            if (!abortPlaintextBatch && plans.length > 0) {
+              const replyIds = [...new Set(plans.map((p) => p.replyToId).filter((x): x is string => !!x?.trim()))]
+              const metaById = new Map<string, WeChatReplyToMeta>()
+              for (const rid of replyIds) {
+                const meta = await buildReplyMetaById(rid)
+                if (meta) metaById.set(rid, meta)
+              }
+              const thinkingRow = !thinkingAttached && thinking ? thinking : undefined
+              if (thinkingRow) thinkingAttached = true
+              const notifyTitle = notifyPeerRound.trim() || undefined
+              const newMsgs: ChatMsg[] = plans.map((p, j) => ({
+                id: p.oid,
+                kind: 'msg' as const,
+                from: 'other' as const,
+                senderCharacterId: p.charId,
+                text: p.text,
+                thinking: j === 0 ? thinkingRow : undefined,
+                timestamp: p.ts,
+                replyTo: p.replyToId ? metaById.get(p.replyToId) : undefined,
+                otherAnimated: true,
+              }))
+              for (const m of newMsgs) markEmittedThisRound(m.id, m.timestamp, m.text)
+              const afterRevealGroupBump =
+                roomType === 'group' && groupId?.trim()
+                  ? () => {
+                      const gid = groupId.trim()
+                      void (async () => {
+                        try {
+                          const gx = await personaDb.getGroupChat(gid)
+                          if (!gx) return
+                          const bumped = {
+                            ...gx,
+                            chatTurnSequence: (gx.chatTurnSequence ?? 0) + 1,
+                            updatedAt: Date.now(),
+                          }
+                          await personaDb.putGroupChat(bumped)
+                          groupDocRef.current = bumped
+                          setGroupLive(bumped)
+                        } catch {
+                          /* ignore turn bump */
+                        }
+                      })()
+                    }
+                  : undefined
+              enqueueOpponentMessagesSequential(
+                newMsgs.map((m, j) => {
+                  const p = plans[j]!
+                  return {
+                    msg: m,
+                    persist: () => {
+                      void personaDb
+                        .appendWeChatChatMessage({
+                          id: m.id,
+                          characterId: p.charId,
+                          playerIdentityId,
+                          type: 'character',
+                          content: m.text,
+                          thinking: j === 0 ? thinkingRow : undefined,
+                          replyTo: m.replyTo ?? undefined,
+                          timestamp: m.timestamp,
+                          isRead: true,
+                          conversationKey,
+                          notifyPeerTitle:
+                            p.charId === WECHAT_GROUP_BOT_CHARACTER_ID ? '群管家' : notifyTitle,
+                        })
+                        .catch(() => {})
+                    },
+                    afterReveal: afterRevealGroupBump,
+                  }
+                }),
+              )
+              continue bubbleRunLoop
+            }
+          }
+        }
+
         for (let i = 0; i < bubbles.length; i += 1) {
           try {
             if (opponentQueueStopRef.current) break bubbleRunLoop
@@ -4454,7 +4725,6 @@ export function ChatRoom({
               if (!lastId) continue
               const emittedMeta = emittedMessageMetaThisRound.get(lastId)
               setRecallAnimatingIds((prev) => new Set(prev).add(lastId))
-              await sleep(randomBetween(1100, 1800))
               const recalledAt = getCurrentTimeMs()
               let original = emittedMeta?.preview?.trim() || ''
               try {
@@ -4518,29 +4788,7 @@ export function ChatRoom({
                   ttsScript: normalizedScript,
                   transcriptText: seg || '（语音）',
                 }
-                try {
-                  await appendWeChatMessageResilient(
-                    () =>
-                      personaDb.appendWeChatChatMessage({
-                        id: oidM,
-                        characterId: persistCharacterId,
-                        playerIdentityId,
-                        type: 'character',
-                        content: seg || '[语音]',
-                        thinking: !thinkingAttached ? thinking : undefined,
-                        replyTo: replyToMetaM ?? undefined,
-                        timestamp: tsM,
-                        isRead: true,
-                        conversationKey,
-                        notifyPeerTitle: notifyPeerRound.trim() || undefined,
-                        voice: voiceM,
-                        ext: { mutedMessageVisibleToModeratorsOnly: true },
-                      }),
-                    WECHAT_CHAT_APPEND_TIMEOUT_MS,
-                  )
-                } catch {
-                  /* ignore */
-                }
+                const thinkingVoiceM = !thinkingAttached && thinking ? thinking : undefined
                 const mappedVoice = mapWeChatMessagesToChatItems([
                   {
                     id: oidM,
@@ -4548,7 +4796,7 @@ export function ChatRoom({
                     playerIdentityId,
                     type: 'character' as const,
                     content: seg || '[语音]',
-                    thinking: !thinkingAttached ? thinking : undefined,
+                    thinking: thinkingVoiceM,
                     replyTo: replyToMetaM ?? undefined,
                     timestamp: tsM,
                     isRead: true,
@@ -4559,33 +4807,42 @@ export function ChatRoom({
                 ])
                 const uiVoice = mappedVoice[0]
                 if (uiVoice) {
-                  if (!thinkingAttached && thinking) thinkingAttached = true
-                  const elMv = scrollRef.current
-                  const atBottomMv = elMv ? isScrollNearBottom(elMv) : isAtBottomRef.current
-                  const browsingMv = !!elMv && userScrolledRef.current && !atBottomMv
-                  const stickMv = atBottomMv && !browsingMv
-                  isAtBottomRef.current = stickMv
-                  setIsAtBottom(stickMv)
-                  setItems((prev) => {
-                    const next = mergeItemsWithGroupModerationFilter(prev, { ...uiVoice, otherAnimated: true })
-                    itemsRef.current = next
-                    return next
-                  })
+                  if (thinkingVoiceM) thinkingAttached = true
                   markEmittedThisRound(oidM, tsM, seg || '[语音]')
-                  await appendMuteSuppressSystemStrip(seg || '[语音]')
-                  if (stickMv) scrollToBottomSmooth()
-                  else setPendingNewCount((c) => c + 1)
+                  const queuedVoiceMuted = { ...uiVoice, otherAnimated: true as const }
+                  enqueueOpponentMessagesSequential([
+                    {
+                      msg: queuedVoiceMuted,
+                      persist: () => {
+                        void personaDb
+                          .appendWeChatChatMessage({
+                            id: oidM,
+                            characterId: persistCharacterId,
+                            playerIdentityId,
+                            type: 'character',
+                            content: seg || '[语音]',
+                            thinking: thinkingVoiceM,
+                            replyTo: replyToMetaM ?? undefined,
+                            timestamp: queuedVoiceMuted.timestamp,
+                            isRead: true,
+                            conversationKey,
+                            notifyPeerTitle: notifyPeerRound.trim() || undefined,
+                            voice: voiceM,
+                            ext: { mutedMessageVisibleToModeratorsOnly: true },
+                          })
+                          .catch(() => {
+                            /* ignore */
+                          })
+                      },
+                      afterReveal: () => {
+                        void appendMuteSuppressSystemStrip(seg || '[语音]')
+                      },
+                    },
+                  ])
                 }
-                await sleep(randomBetween(60, 140))
                 continue
               }
               const estimatedVoiceSec = Math.max(1, Math.min(30, Math.round(seg.length / 6)))
-              // 语音条按时长出队：避免“语音消息不到 1 秒就弹出”的违和感。
-              const voiceQueueDelayMs = Math.max(1200, Math.min(30000, estimatedVoiceSec * 1000))
-              await gapDelayWithTyping(
-                voiceQueueDelayMs,
-                snapshotQueueTypingPreview(persistCharacterId, notifyPeerRound),
-              )
               if (opponentQueueStopRef.current) break bubbleRunLoop
               const ts = getCurrentTimeMs()
               const oid = `wxm-${ts}-ov-${i}-${Math.random().toString(36).slice(2, 6)}`
@@ -4597,56 +4854,65 @@ export function ChatRoom({
                 ttsScript: normalizedScript,
                 transcriptText: seg || '（语音）',
               }
-              try {
-                await appendWeChatMessageResilient(
-                  () =>
-                    personaDb.appendWeChatChatMessage({
-                      id: oid,
-                      characterId: persistCharacterId,
-                      playerIdentityId,
-                      type: 'character',
-                      content: seg || '[语音]',
-                      thinking: !thinkingAttached ? thinking : undefined,
-                      replyTo: replyToMeta ?? undefined,
-                      timestamp: ts,
-                      isRead: true,
-                      conversationKey,
-                      notifyPeerTitle: notifyPeerRound.trim() || undefined,
-                      voice,
-                    }),
-                  WECHAT_CHAT_APPEND_TIMEOUT_MS,
-                )
-              } catch {
-                /* ignore */
-              }
+              const thinkingVoice = !thinkingAttached && thinking ? thinking : undefined
               const incoming: ChatMsg = {
                 id: oid,
                 kind: 'msg',
                 from: 'other',
                 senderCharacterId: persistCharacterId,
                 text: seg || '[语音]',
-                thinking: !thinkingAttached ? thinking : undefined,
+                thinking: thinkingVoice,
                 timestamp: ts,
                 replyTo: replyToMeta ?? undefined,
                 voice,
                 otherAnimated: true,
               }
-              if (!thinkingAttached && thinking) thinkingAttached = true
-              const el = scrollRef.current
-              const atBottomNow = el ? isScrollNearBottom(el) : isAtBottomRef.current
-              const browsingHistory = !!el && userScrolledRef.current && !atBottomNow
-              const shouldStickToBottom = atBottomNow && !browsingHistory
-              isAtBottomRef.current = shouldStickToBottom
-              setIsAtBottom(shouldStickToBottom)
-              setItems((prev) => {
-                const next = mergeIncomingMessage(prev, incoming)
-                itemsRef.current = next
-                return next
-              })
+              if (thinkingVoice) thinkingAttached = true
               markEmittedThisRound(oid, ts, seg || '[语音]')
-              if (shouldStickToBottom) scrollToBottomSmooth()
-              else setPendingNewCount((c) => c + 1)
-              await sleep(randomBetween(220, 420))
+              const voiceGroupBump =
+                roomType === 'group' && groupId?.trim()
+                  ? () => {
+                      const gid = groupId.trim()
+                      void (async () => {
+                        try {
+                          const gx = await personaDb.getGroupChat(gid)
+                          if (!gx) return
+                          const bumped = { ...gx, chatTurnSequence: (gx.chatTurnSequence ?? 0) + 1, updatedAt: Date.now() }
+                          await personaDb.putGroupChat(bumped)
+                          groupDocRef.current = bumped
+                          setGroupLive(bumped)
+                        } catch {
+                          /* ignore turn bump */
+                        }
+                      })()
+                    }
+                  : undefined
+              enqueueOpponentMessagesSequential([
+                {
+                  msg: incoming,
+                  persist: () => {
+                    void personaDb
+                      .appendWeChatChatMessage({
+                        id: oid,
+                        characterId: persistCharacterId,
+                        playerIdentityId,
+                        type: 'character',
+                        content: seg || '[语音]',
+                        thinking: thinkingVoice,
+                        replyTo: replyToMeta ?? undefined,
+                        timestamp: incoming.timestamp,
+                        isRead: true,
+                        conversationKey,
+                        notifyPeerTitle: notifyPeerRound.trim() || undefined,
+                        voice,
+                      })
+                      .catch(() => {
+                        /* ignore */
+                      })
+                  },
+                  afterReveal: voiceGroupBump,
+                },
+              ])
               continue
             }
             if (await skipBubbleForGroupMute()) {
@@ -4655,28 +4921,7 @@ export function ChatRoom({
               const oidT = `wxm-${tsT}-o-${i}-${Math.random().toString(36).slice(2, 6)}`
               const replyToMetaT = pendingReplyMessageId ? await buildReplyMetaById(pendingReplyMessageId) : null
               pendingReplyMessageId = undefined
-              try {
-                await appendWeChatMessageResilient(
-                  () =>
-                    personaDb.appendWeChatChatMessage({
-                      id: oidT,
-                      characterId: persistCharacterId,
-                      playerIdentityId,
-                      type: 'character',
-                      content: hidden,
-                      thinking: !thinkingAttached ? thinking : undefined,
-                      replyTo: replyToMetaT ?? undefined,
-                      timestamp: tsT,
-                      isRead: true,
-                      conversationKey,
-                      notifyPeerTitle: notifyPeerRound.trim() || undefined,
-                      ext: { mutedMessageVisibleToModeratorsOnly: true },
-                    }),
-                  WECHAT_CHAT_APPEND_TIMEOUT_MS,
-                )
-              } catch {
-                /* ignore */
-              }
+              const thinkingTxtM = !thinkingAttached && thinking ? thinking : undefined
               const mappedTxt = mapWeChatMessagesToChatItems([
                 {
                   id: oidT,
@@ -4684,7 +4929,7 @@ export function ChatRoom({
                   playerIdentityId,
                   type: 'character' as const,
                   content: hidden,
-                  thinking: !thinkingAttached ? thinking : undefined,
+                  thinking: thinkingTxtM,
                   replyTo: replyToMetaT ?? undefined,
                   timestamp: tsT,
                   isRead: true,
@@ -4694,24 +4939,38 @@ export function ChatRoom({
               ])
               const uiTxt = mappedTxt[0]
               if (uiTxt) {
-                if (!thinkingAttached && thinking) thinkingAttached = true
-                const elT = scrollRef.current
-                const atBottomT = elT ? isScrollNearBottom(elT) : isAtBottomRef.current
-                const browsingT = !!elT && userScrolledRef.current && !atBottomT
-                const stickT = atBottomT && !browsingT
-                isAtBottomRef.current = stickT
-                setIsAtBottom(stickT)
-                setItems((prev) => {
-                  const next = mergeItemsWithGroupModerationFilter(prev, { ...uiTxt, otherAnimated: true })
-                  itemsRef.current = next
-                  return next
-                })
+                if (thinkingTxtM) thinkingAttached = true
                 markEmittedThisRound(oidT, tsT, hidden)
-                await appendMuteSuppressSystemStrip(hidden)
-                if (stickT) scrollToBottomSmooth()
-                else setPendingNewCount((c) => c + 1)
+                const queuedTxtMuted = { ...uiTxt, otherAnimated: true as const }
+                enqueueOpponentMessagesSequential([
+                  {
+                    msg: queuedTxtMuted,
+                    persist: () => {
+                      void personaDb
+                        .appendWeChatChatMessage({
+                          id: oidT,
+                          characterId: persistCharacterId,
+                          playerIdentityId,
+                          type: 'character',
+                          content: hidden,
+                          thinking: thinkingTxtM,
+                          replyTo: replyToMetaT ?? undefined,
+                          timestamp: queuedTxtMuted.timestamp,
+                          isRead: true,
+                          conversationKey,
+                          notifyPeerTitle: notifyPeerRound.trim() || undefined,
+                          ext: { mutedMessageVisibleToModeratorsOnly: true },
+                        })
+                        .catch(() => {
+                          /* ignore */
+                        })
+                    },
+                    afterReveal: () => {
+                      void appendMuteSuppressSystemStrip(hidden)
+                    },
+                  },
+                ])
               }
-              await sleep(randomBetween(60, 140))
               continue
             }
             const rpDirective = parseRedPacketDirective(currentLine)
@@ -4725,46 +4984,50 @@ export function ChatRoom({
                 setIncomingCallOpeningLine(vcDirective.openingLine ?? '')
                 incomingRejectLockRef.current = false
                 setIncomingCallOpen(true)
-                await sleep(randomBetween(120, 220))
                 continue
               }
               if (rpDirective) {
                 // 角色发红包给用户：备注可用于安慰/祝福；金额 0.01~200
                 const packetId = `wxrp-${ts}-${Math.random().toString(36).slice(2, 9)}`
                 const seg = rpDirective.remark ? `[红包] ${rpDirective.remark}` : '[红包]'
-                await personaDb.appendWeChatChatMessage({
-                  id: mid,
-                  characterId: persistCharacterId,
-                  playerIdentityId,
-                  type: 'character',
-                  content: seg,
-                  thinking: !thinkingAttached ? thinking : undefined,
-                  timestamp: ts,
-                  isRead: true,
-                  conversationKey,
-                  notifyPeerTitle: notifyPeerRound.trim() || undefined,
-                  redPacket: { packetId, amountYuan: rpDirective.amountYuan, remark: rpDirective.remark, opened: false },
-                })
+                const thinkingRp = !thinkingAttached && thinking ? thinking : undefined
                 const incoming: ChatMsg = {
                   id: mid,
                   kind: 'msg',
                   from: 'other',
                   senderCharacterId: persistCharacterId,
                   text: seg,
-                  thinking: !thinkingAttached ? thinking : undefined,
+                  thinking: thinkingRp,
                   timestamp: ts,
                   redPacket: { packetId, amountYuan: rpDirective.amountYuan, remark: rpDirective.remark, opened: false },
                   otherAnimated: true,
                 }
-                if (!thinkingAttached && thinking) thinkingAttached = true
-                setItems((prev) => {
-                  const next = mergeIncomingMessage(prev, incoming)
-                  itemsRef.current = next
-                  return next
-                })
+                if (thinkingRp) thinkingAttached = true
                 markEmittedThisRound(mid, ts, seg)
-                scrollToBottomSmooth()
-                await sleep(randomBetween(120, 240))
+                enqueueOpponentMessagesSequential([
+                  {
+                    msg: incoming,
+                    persist: () => {
+                      void personaDb
+                        .appendWeChatChatMessage({
+                          id: mid,
+                          characterId: persistCharacterId,
+                          playerIdentityId,
+                          type: 'character',
+                          content: seg,
+                          thinking: thinkingRp,
+                          timestamp: incoming.timestamp,
+                          isRead: true,
+                          conversationKey,
+                          notifyPeerTitle: notifyPeerRound.trim() || undefined,
+                          redPacket: { packetId, amountYuan: rpDirective.amountYuan, remark: rpDirective.remark, opened: false },
+                        })
+                        .catch(() => {
+                          /* ignore */
+                        })
+                    },
+                  },
+                ])
                 continue
               }
               if (tfDirective) {
@@ -4784,39 +5047,44 @@ export function ChatRoom({
                   conversationKey,
                   messageId: transferId,
                 })
-                await personaDb.appendWeChatChatMessage({
-                  id: mid,
-                  characterId: persistCharacterId,
-                  playerIdentityId,
-                  type: 'character',
-                  content: seg,
-                  thinking: !thinkingAttached ? thinking : undefined,
-                  timestamp: ts,
-                  isRead: true,
-                  conversationKey,
-                  notifyPeerTitle: notifyPeerRound.trim() || undefined,
-                  transfer: { transferId },
-                })
+                const thinkingTf = !thinkingAttached && thinking ? thinking : undefined
                 const incoming: ChatMsg = {
                   id: mid,
                   kind: 'msg',
                   from: 'other',
                   senderCharacterId: persistCharacterId,
                   text: seg,
-                  thinking: !thinkingAttached ? thinking : undefined,
+                  thinking: thinkingTf,
                   timestamp: ts,
                   transfer: { transferId },
                   otherAnimated: true,
                 }
-                if (!thinkingAttached && thinking) thinkingAttached = true
-                setItems((prev) => {
-                  const next = mergeIncomingMessage(prev, incoming)
-                  itemsRef.current = next
-                  return next
-                })
+                if (thinkingTf) thinkingAttached = true
                 markEmittedThisRound(mid, ts, seg)
-                scrollToBottomSmooth()
-                await sleep(randomBetween(120, 240))
+                enqueueOpponentMessagesSequential([
+                  {
+                    msg: incoming,
+                    persist: () => {
+                      void personaDb
+                        .appendWeChatChatMessage({
+                          id: mid,
+                          characterId: persistCharacterId,
+                          playerIdentityId,
+                          type: 'character',
+                          content: seg,
+                          thinking: thinkingTf,
+                          timestamp: incoming.timestamp,
+                          isRead: true,
+                          conversationKey,
+                          notifyPeerTitle: notifyPeerRound.trim() || undefined,
+                          transfer: { transferId },
+                        })
+                        .catch(() => {
+                          /* ignore */
+                        })
+                    },
+                  },
+                ])
                 continue
               }
             }
@@ -4835,13 +5103,6 @@ export function ChatRoom({
               const dedupeSticker = `sticker:${url}`
               if (emittedThisRound.has(dedupeSticker)) continue
               emittedThisRound.add(dedupeSticker)
-              const gapSticker = gapBeforeBubbleMs(8, i === 0)
-              if (gapSticker > 0) {
-                await gapDelayWithTyping(
-                  gapSticker,
-                  snapshotQueueTypingPreview(stickerEmitId, stickerNotify),
-                )
-              }
               if (opponentQueueStopRef.current) break bubbleRunLoop
               const replyToSticker = pendingReplyMessageId ? await buildReplyMetaById(pendingReplyMessageId) : null
               pendingReplyMessageId = undefined
@@ -4849,25 +5110,7 @@ export function ChatRoom({
               const oidSticker = `wxm-${tsSticker}-ost-${i}-${Math.random().toString(36).slice(2, 6)}`
               try {
                 const payloadSticker = await stickerUrlToImagePayload(url)
-                const thinkingForSticker = !thinkingAttached ? thinking : undefined
-                await appendWeChatMessageResilient(
-                  () =>
-                    personaDb.appendWeChatChatMessage({
-                      id: oidSticker,
-                      characterId: stickerEmitId,
-                      playerIdentityId,
-                      type: 'character',
-                      content: '[表情包]',
-                      thinking: thinkingForSticker,
-                      replyTo: replyToSticker ?? undefined,
-                      timestamp: tsSticker,
-                      isRead: true,
-                      conversationKey,
-                      notifyPeerTitle: stickerNotify.trim() || undefined,
-                      images: [{ base64: payloadSticker.base64, type: payloadSticker.mime }],
-                    }),
-                  WECHAT_CHAT_APPEND_TIMEOUT_MS,
-                )
+                const thinkingForSticker = !thinkingAttached && thinking ? thinking : undefined
                 if (thinkingForSticker) thinkingAttached = true
                 const incomingSticker: ChatMsg = {
                   id: oidSticker,
@@ -4881,21 +5124,51 @@ export function ChatRoom({
                   images: [{ base64: payloadSticker.base64, type: payloadSticker.mime }],
                   otherAnimated: true,
                 }
-                const elSt = scrollRef.current
-                const atBottomSt = elSt ? isScrollNearBottom(elSt) : isAtBottomRef.current
-                const browsingHistorySt = !!elSt && userScrolledRef.current && !atBottomSt
-                const shouldStickToBottomSt = atBottomSt && !browsingHistorySt
-                isAtBottomRef.current = shouldStickToBottomSt
-                setIsAtBottom(shouldStickToBottomSt)
-                setItems((prev) => {
-                  const next = mergeIncomingMessage(prev, incomingSticker)
-                  itemsRef.current = next
-                  return next
-                })
                 markEmittedThisRound(oidSticker, tsSticker, '[表情包]')
-                if (shouldStickToBottomSt) scrollToBottomSmooth()
-                else setPendingNewCount((c) => c + 1)
-                await sleep(randomBetween(120, 260))
+                const stickerGroupBump =
+                  roomType === 'group' && groupId?.trim()
+                    ? () => {
+                        const gid = groupId.trim()
+                        void (async () => {
+                          try {
+                            const gx = await personaDb.getGroupChat(gid)
+                            if (!gx) return
+                            const bumped = { ...gx, chatTurnSequence: (gx.chatTurnSequence ?? 0) + 1, updatedAt: Date.now() }
+                            await personaDb.putGroupChat(bumped)
+                            groupDocRef.current = bumped
+                            setGroupLive(bumped)
+                          } catch {
+                            /* ignore turn bump */
+                          }
+                        })()
+                      }
+                    : undefined
+                enqueueOpponentMessagesSequential([
+                  {
+                    msg: incomingSticker,
+                    persist: () => {
+                      void personaDb
+                        .appendWeChatChatMessage({
+                          id: oidSticker,
+                          characterId: stickerEmitId,
+                          playerIdentityId,
+                          type: 'character',
+                          content: '[表情包]',
+                          thinking: thinkingForSticker,
+                          replyTo: replyToSticker ?? undefined,
+                          timestamp: incomingSticker.timestamp,
+                          isRead: true,
+                          conversationKey,
+                          notifyPeerTitle: stickerNotify.trim() || undefined,
+                          images: [{ base64: payloadSticker.base64, type: payloadSticker.mime }],
+                        })
+                        .catch((e) => {
+                          logger.log('error', `角色表情包落库失败: ${e instanceof Error ? e.message : String(e)}`)
+                        })
+                    },
+                    afterReveal: stickerGroupBump,
+                  },
+                ])
               } catch (e) {
                 logger.log('error', `角色表情包发送失败: ${e instanceof Error ? e.message : String(e)}`)
               }
@@ -4920,26 +5193,6 @@ export function ChatRoom({
                 ? normalizeGroupSmartBotBubblePlaintext(seg, groupDocRef.current ?? groupLive)
                 : seg
             if (!String(segForStore).trim()) continue
-            const nextIsRecall = bubbles[i + 1] === WECHAT_RECALL_ACTION_TOKEN
-            const dedupeKey = segForStore.replace(/\s+/g, ' ').trim()
-            if (!nextIsRecall && emittedThisRound.has(dedupeKey)) {
-              logger.log('ai', `跳过重复分段#${i + 1}: ${segForStore}`)
-              continue
-            }
-            emittedThisRound.add(dedupeKey)
-            logger.log('ai', `队列分段#${i + 1}/${bubbles.length} len=${segForStore.length} text=${segForStore}`)
-            const gap = gapBeforeBubbleMs(segForStore.length, i === 0)
-            if (gap > 0) {
-              logger.log('ai', `分段等待#${i + 1}: ${gap}ms`)
-              await gapDelayWithTyping(
-                gap,
-                snapshotQueueTypingPreview(
-                  emitCharacterId,
-                  emitCharacterId === WECHAT_GROUP_BOT_CHARACTER_ID ? '群管家' : notifyPeerRound,
-                ),
-              )
-              logger.log('ai', `分段等待结束#${i + 1}`)
-            }
             if (opponentQueueStopRef.current) break bubbleRunLoop
 
             const replyToMeta = pendingReplyMessageId ? await buildReplyMetaById(pendingReplyMessageId) : null
@@ -4979,6 +5232,7 @@ export function ChatRoom({
                     await personaDb.putGroupChat(nextGroup)
                     groupDocRef.current = nextGroup
                     setGroupLive(nextGroup)
+                    const queuedUi: ChatMsg[] = []
                     for (const row of messages) {
                       try {
                         await personaDb.appendWeChatChatMessage(row)
@@ -4987,124 +5241,82 @@ export function ChatRoom({
                       }
                       const mappedRows = mapWeChatMessagesToChatItems([row])
                       const ui = mappedRows[0]
-                      if (!ui) continue
-                      setItems((prev) => {
-                        const next = mergeIncomingMessage(prev, ui)
-                        itemsRef.current = next
-                        return next
-                      })
+                      if (ui) queuedUi.push({ ...ui, otherAnimated: true })
                     }
                     emitWeChatStorageChanged()
-                    scrollToBottomSmooth()
+                    enqueueOpponentMessagesSequential(queuedUi.map((msg) => ({ msg, persist: () => {} })))
                   } catch {
                     /* ignore smart bot pipeline */
                   }
-                  await sleep(randomBetween(120, 260))
                   continue
                 }
               }
             }
-            try {
-              await appendWeChatMessageResilient(
-                () =>
-                  personaDb.appendWeChatChatMessage({
-                    id: oid,
-                    characterId: emitCharacterId,
-                    playerIdentityId,
-                    type: 'character',
-                    content: segForStore,
-                    thinking: !thinkingAttached ? thinking : undefined,
-                    replyTo: replyToMeta ?? undefined,
-                    timestamp: ts,
-                    isRead: true,
-                    conversationKey,
-                    notifyPeerTitle:
-                      emitCharacterId === WECHAT_GROUP_BOT_CHARACTER_ID
-                        ? '群管家'
-                        : notifyPeerRound.trim() || undefined,
-                  }),
-                WECHAT_CHAT_APPEND_TIMEOUT_MS,
-              )
-              logger.log('ai', `已落库分段#${i + 1} id=${oid}`)
-            } catch (err) {
-              logger.log(
-                'error',
-                `分段落库异常#${i + 1} id=${oid} err=${err instanceof Error ? err.message : String(err)}`,
-              )
-            }
-            // 关键：无论后续是否因“近邻重复渲染”跳过 UI，都必须把本条写入 emitted 序列，
-            // 否则紧随其后的撤回 token 将找不到要撤回的目标消息。
-            markEmittedThisRound(oid, ts, segForStore)
-
-            const lastOther = [...itemsRef.current].reverse().find((x) => x.kind === 'msg' && x.from === 'other') as ChatMsg | undefined
-            if (!nextIsRecall && lastOther?.text?.trim() === segForStore) {
-              logger.log('ai', `跳过近邻重复渲染#${i + 1}`)
-              continue
-            }
+            const thinkingForRow = !thinkingAttached && thinking ? thinking : undefined
             const incoming: ChatMsg = {
               id: oid,
               kind: 'msg',
               from: 'other',
               senderCharacterId: emitCharacterId,
               text: segForStore,
-              thinking: !thinkingAttached ? thinking : undefined,
+              thinking: thinkingForRow,
               timestamp: ts,
               replyTo: replyToMeta ?? undefined,
               otherAnimated: true,
             }
-            if (!thinkingAttached && thinking) thinkingAttached = true
-            const el = scrollRef.current
-            const atBottomNow = el ? isScrollNearBottom(el) : isAtBottomRef.current
-            const browsingHistory = !!el && userScrolledRef.current && !atBottomNow
-            const shouldStickToBottom = atBottomNow && !browsingHistory
-            isAtBottomRef.current = shouldStickToBottom
-            setIsAtBottom(shouldStickToBottom)
-            setItems((prev) => {
-              const next = mergeIncomingMessage(prev, incoming)
-              itemsRef.current = next
-              return next
-            })
-            if (shouldStickToBottom) {
-              scrollToBottomSmooth()
-            } else {
-              setPendingNewCount((c) => c + 1)
-            }
-            if (roomType === 'group' && groupId?.trim()) {
-              try {
-                const gid = groupId.trim()
-                const gx = await personaDb.getGroupChat(gid)
-                if (gx) {
-                  const bumped = { ...gx, chatTurnSequence: (gx.chatTurnSequence ?? 0) + 1, updatedAt: Date.now() }
-                  await personaDb.putGroupChat(bumped)
-                  groupDocRef.current = bumped
-                  setGroupLive(bumped)
-                }
-              } catch {
-                /* ignore turn bump */
-              }
-            }
-            const hasMoreInRun = i < bubbles.length - 1
-            if (hasMoreInRun) {
-              const rawNext = String(bubbles[i + 1] ?? '')
-                .replace(/^\s*<<SPEAKER:[^>]+>>\s*/i, '')
-                .trim()
-              const nextPreviewId =
-                roomType === 'group' &&
-                persistCharacterId.trim() !== WECHAT_GROUP_BOT_CHARACTER_ID &&
-                /^(群管家|群助手|群机器人)\s*[：:]/u.test(rawNext.trimStart())
-                  ? WECHAT_GROUP_BOT_CHARACTER_ID
-                  : persistCharacterId
-              const nextPreviewNick =
-                nextPreviewId === WECHAT_GROUP_BOT_CHARACTER_ID ? '群管家' : notifyPeerRound
-              setQueueTypingPreview(snapshotQueueTypingPreview(nextPreviewId, nextPreviewNick))
-              await awaitDoubleRaf()
-            }
-            await sleep(randomBetween(120, 260))
-            if (hasMoreInRun) {
-              setQueueTypingPreview(null)
-            }
+            if (thinkingForRow) thinkingAttached = true
+            markEmittedThisRound(oid, ts, segForStore)
+            const plainGroupBump =
+              roomType === 'group' && groupId?.trim()
+                ? () => {
+                    const gid = groupId.trim()
+                    void (async () => {
+                      try {
+                        const gx = await personaDb.getGroupChat(gid)
+                        if (!gx) return
+                        const bumped = { ...gx, chatTurnSequence: (gx.chatTurnSequence ?? 0) + 1, updatedAt: Date.now() }
+                        await personaDb.putGroupChat(bumped)
+                        groupDocRef.current = bumped
+                        setGroupLive(bumped)
+                      } catch {
+                        /* ignore turn bump */
+                      }
+                    })()
+                  }
+                : undefined
+            enqueueOpponentMessagesSequential([
+              {
+                msg: incoming,
+                persist: () => {
+                  void personaDb
+                    .appendWeChatChatMessage({
+                      id: oid,
+                      characterId: emitCharacterId,
+                      playerIdentityId,
+                      type: 'character',
+                      content: segForStore,
+                      thinking: thinkingForRow,
+                      replyTo: replyToMeta ?? undefined,
+                      timestamp: incoming.timestamp,
+                      isRead: true,
+                      conversationKey,
+                      notifyPeerTitle:
+                        emitCharacterId === WECHAT_GROUP_BOT_CHARACTER_ID
+                          ? '群管家'
+                          : notifyPeerRound.trim() || undefined,
+                    })
+                    .catch((err) => {
+                      logger.log(
+                        'error',
+                        `appendWeChatChatMessage 失败 id=${oid} err=${err instanceof Error ? err.message : String(err)}`,
+                      )
+                    })
+                },
+                afterReveal: plainGroupBump,
+              },
+            ])
           } catch (err) {
-            logger.log('error', `分段处理异常#${i + 1}: ${err instanceof Error ? err.message : String(err)}`)
+            logger.log('error', `处理模型气泡行异常#${i + 1}: ${err instanceof Error ? err.message : String(err)}`)
             continue
           }
         }
@@ -5157,22 +5369,7 @@ export function ChatRoom({
       flushAiRepliesBusyRef.current = false
       setFlushUiBusy(false)
       setTypingVisible(false)
-      setQueueTypingPreview(null)
       aiCallingRef.current = pendingAiRepliesRef.current > 0
-      if (storageCatchupAfterFlushRef.current) {
-        storageCatchupAfterFlushRef.current = false
-        queueMicrotask(() => {
-          void hydrateMessagesRef.current(false)
-          if (roomType === 'group' && groupId?.trim()) {
-            const gid = groupId.trim()
-            void personaDb.getGroupChat(gid).then((g) => {
-              if (!g) return
-              groupDocRef.current = g
-              setGroupLive(g)
-            })
-          }
-        })
-      }
       if (pendingAiRepliesRef.current > 0) {
         queueMicrotask(() => {
           void flushAiReplies()
@@ -5183,8 +5380,6 @@ export function ChatRoom({
     apiConfig,
     conversationCharacterId,
     conversationKey,
-    gapBeforeBubbleMs,
-    gapDelayWithTyping,
     personaCharacterId,
     playerDisplayName,
     playerIdentityId,
@@ -5214,6 +5409,8 @@ export function ChatRoom({
     groupLive,
     groupAvatarByCharId,
     peerAvatarResolved,
+    buildChatItemsForAiTranscript,
+    enqueueOpponentMessagesSequential,
   ])
 
   /** 群聊主回复（含 <<GROUP_SET_…>> 等）单次 completion：pending 恒为 1，避免连发/重叠触发多次模型调用。 */
@@ -5301,8 +5498,9 @@ export function ChatRoom({
         sendQueueRef.current.push({ text, triggerAi })
         return
       }
-      /** 须在 processingSend 判定之后：若仅入队就 return，异步 finally 不会跑，不能把 opponentQueueStopRef 置 true，否则会永久卡住 NPC 气泡队列 */
+      /** 须在 processingSend 判定之后：若仅入队就 return，异步 finally 不会跑，不能把 opponentQueueStopRef 置 true，否则会永久卡住对方回复落库流程 */
       opponentQueueStopRef.current = true
+      flushOpponentRevealQueueImmediate()
       setTypingVisible(false)
       processingSendRef.current = true
       setDraft('')
@@ -5362,7 +5560,10 @@ export function ChatRoom({
                   }
                 }
                 setItems((prev) => {
-                  const next = rebuildWithCurrentTime([...extractMessages(prev), ...appended])
+                  let next = prev
+                  for (const m of appended) {
+                    next = mergeIncomingMessage(next, m)
+                  }
                   itemsRef.current = next
                   return next
                 })
@@ -5506,12 +5707,12 @@ export function ChatRoom({
           aiCallingRef.current = true
           lastUserAiTriggerTsRef.current = ts
           setAwaitingAiKick(true)
-          window.setTimeout(() => {
+          queueMicrotask(() => {
             void (async () => {
+              opponentQueueStopRef.current = false
               if (roomType === 'group' && groupId?.trim()) {
                 const g = await personaDb.getGroupChat(groupId.trim())
                 groupDocRef.current = g
-                groupReplyQueueRef.current = []
               }
               /** @ 群管家：必须先落一条「角色式」回复，再跑多角色群聊；原先写在 flush 之后，flush 失败/久挂会导致永远不回复 */
               const appendGroupSmartBotMentionReply = async (): Promise<void> => {
@@ -5573,7 +5774,7 @@ export function ChatRoom({
                 )
               }
             })()
-          }, 420)
+          })
         }
       })()
     },
@@ -5595,6 +5796,8 @@ export function ChatRoom({
       bumpPendingAiRepliesForReply,
       apiConfig,
       mergeIncomingMessage,
+      personaCharacterId,
+      useLumiProjectAssistantPrompt,
     ],
   )
 
@@ -5808,17 +6011,17 @@ export function ChatRoom({
         aiCallingRef.current = true
         lastUserAiTriggerTsRef.current = ts
         setAwaitingAiKick(true)
-        window.setTimeout(() => {
+        queueMicrotask(() => {
           void (async () => {
+            opponentQueueStopRef.current = false
             if (roomType === 'group' && groupId?.trim()) {
               const g = await personaDb.getGroupChat(groupId.trim())
               groupDocRef.current = g
-              groupReplyQueueRef.current = []
             }
             bumpPendingAiRepliesForReply()
             void flushAiReplies()
           })()
-        }, 420)
+        })
       }
     },
     [
@@ -5835,6 +6038,7 @@ export function ChatRoom({
       roomType,
       groupId,
       bumpPendingAiRepliesForReply,
+      flushOpponentRevealQueueImmediate,
     ],
   )
 
@@ -5855,11 +6059,10 @@ export function ChatRoom({
           !draft.trim() &&
           !sendBusy &&
           !typingVisible &&
-          !queueTypingPreview &&
           !flushUiBusy &&
           !awaitingAiKick,
       ),
-    [messageEditModal, lastChatMsg, draft, sendBusy, typingVisible, queueTypingPreview, flushUiBusy, awaitingAiKick],
+    [messageEditModal, lastChatMsg, draft, sendBusy, typingVisible, flushUiBusy, awaitingAiKick],
   )
 
   const planeCanAct = Boolean(draft.trim() || canNudgeAiReply)
@@ -6099,11 +6302,17 @@ export function ChatRoom({
       manualAiPauseRef.current = false
 
       if (toRemove.length) {
-        for (const id of toRemove) {
-          await personaDb.deleteWeChatChatMessageById(id)
-        }
+        // 重新回复仅替换本轮对方气泡，不应把被删旧稿记入回收站（与用户主动删除区分）
+        await personaDb.runWithIndexedTrashSuspended(async () => {
+          for (const id of toRemove) {
+            await personaDb.deleteWeChatChatMessageById(id)
+          }
+        })
+        const kill = new Set(toRemove)
+        // 与 DB 同步：否则 buildChatItemsForAiTranscript 仍读 aiContextDbMessagesRef 里已删记录，
+        // 且 flush 约在 120ms 后触发，常早于 wechat-storage-changed 的 hydrate debounce（160ms），导致模型上下文仍含旧对方回复 → 解析/逻辑易异常。
+        aiContextDbMessagesRef.current = aiContextDbMessagesRef.current.filter((m) => !kill.has(m.id))
         setItems((prev) => {
-          const kill = new Set(toRemove)
           const next = rebuildWithCurrentTime(extractMessages(prev).filter((it) => !kill.has(it.id)))
           itemsRef.current = next
           return next
@@ -6348,35 +6557,68 @@ export function ChatRoom({
       return
     }
     if (historyExhaustedRef.current) return
-    const beforeTs = oldestMsgTsRef.current
+    let beforeTs = oldestMsgTsRef.current
     if (beforeTs == null) return
     const root = scrollRef.current
     const prevHeight = root?.scrollHeight ?? 0
     const prevTop = root?.scrollTop ?? 0
     setHistoryLoading(true)
     try {
-      const older = await personaDb.listWeChatChatMessagesRecent({
-        conversationKey,
-        limit: 50,
-        beforeTimestamp: beforeTs,
-      })
-      if (older.length === 0) {
+      const effectiveCut = ignoreUiOnlyHiddenInListRef.current ? null : uiOnlyHiddenCutTsRef.current
+      const segments: WeChatChatMessage[][] = []
+      let exhausted = false
+      for (let iter = 0; iter < 10; iter++) {
+        const older = await personaDb.listWeChatChatMessagesRecent({
+          conversationKey,
+          limit: 50,
+          beforeTimestamp: beforeTs,
+        })
+        if (older.length === 0) {
+          exhausted = true
+          break
+        }
+        segments.push(older)
+        beforeTs = older[0]?.timestamp ?? beforeTs
+        oldestMsgTsRef.current = older[0]?.timestamp ?? oldestMsgTsRef.current
+        const vis = effectiveCut == null ? older : older.filter((m) => m.timestamp > effectiveCut)
+        if (vis.length > 0 || older.length < 50) {
+          if (older.length < 50) exhausted = true
+          break
+        }
+        if (older.length < 50) {
+          exhausted = true
+          break
+        }
+      }
+      if (segments.length === 0) {
         historyExhaustedRef.current = true
         setHistoryExhausted(true)
         setHasOlderHistory(false)
         return
       }
-      if (older.length < 50) {
+      const fullChronological = [...segments].reverse().flat()
+      const byId = new Map<string, WeChatChatMessage>()
+      for (const r of fullChronological) byId.set(r.id, r)
+      for (const r of aiContextDbMessagesRef.current) byId.set(r.id, r)
+      aiContextDbMessagesRef.current = [...byId.values()].sort((a, b) => a.timestamp - b.timestamp)
+
+      if (exhausted) {
         historyExhaustedRef.current = true
         setHistoryExhausted(true)
         setHasOlderHistory(false)
       } else {
         setHasOlderHistory(true)
       }
-      oldestMsgTsRef.current = older[0]?.timestamp ?? oldestMsgTsRef.current
-      const prepend = mapWeChatMessagesToChatItems(older)
+
+      const visiblePrependChronological = [...segments].reverse().flatMap((seg) =>
+        effectiveCut == null ? seg : seg.filter((m) => m.timestamp > effectiveCut),
+      )
+      const prepend = mapWeChatMessagesToChatItems(visiblePrependChronological)
       setItems((prev) => {
-        const next = rebuildWithCurrentTime([...prepend, ...extractMessages(prev)])
+        let next = rebuildWithCurrentTime([...prepend, ...extractMessages(prev)])
+        if (roomType === 'group' && groupId?.trim()) {
+          next = filterGroupChatItemsHideModeratorOnlyBubbles(next, roomType, groupDocRef.current)
+        }
         itemsRef.current = next
         return next
       })
@@ -6390,7 +6632,7 @@ export function ChatRoom({
     } finally {
       setHistoryLoading(false)
     }
-  }, [conversationKey, extractMessages, historyLoading, rebuildWithCurrentTime, visibleMsgLimit])
+  }, [conversationKey, extractMessages, groupId, historyLoading, rebuildWithCurrentTime, roomType, visibleMsgLimit])
 
   const onScrollPane = useCallback(() => {
     const el = scrollRef.current
@@ -6509,24 +6751,50 @@ export function ChatRoom({
     setExpandedThinkingIds(new Set())
   }, [conversationKey])
 
-  const totalMsgCount = useMemo(() => items.reduce((n, it) => (it.kind === 'msg' ? n + 1 : n), 0), [items])
+  /** 列表展示用：会话设置「仅 UI 清空」时屏蔽截止时间前的气泡（与回收站快照同源）；查找锚点定位期间临时展示全量。 */
+  const itemsAfterUiOnlyHide = useMemo(() => {
+    const cut = uiOnlyHiddenCutForView
+    if (cut == null || scrollToMessageId?.trim()) return items
+    return items.filter((it) => {
+      if (it.kind !== 'msg') return true
+      return (it.timestamp ?? 0) > cut
+    })
+  }, [items, uiOnlyHiddenCutForView, scrollToMessageId])
+
+  const totalMsgCount = useMemo(
+    () => itemsAfterUiOnlyHide.reduce((n, it) => (it.kind === 'msg' ? n + 1 : n), 0),
+    [itemsAfterUiOnlyHide],
+  )
   const visibleItems = useMemo(() => {
     const cap = Math.max(CHAT_VISIBLE_MSG_INITIAL, visibleMsgLimit)
-    if (totalMsgCount <= cap) return items
-    let msgSeen = 0
-    let start = 0
-    for (let i = items.length - 1; i >= 0; i -= 1) {
-      if (items[i]?.kind === 'msg') {
-        msgSeen += 1
-        if (msgSeen >= cap) {
-          start = i
-          break
+    let sliced: ChatItem[]
+    if (totalMsgCount <= cap) sliced = itemsAfterUiOnlyHide
+    else {
+      let msgSeen = 0
+      let start = 0
+      for (let i = itemsAfterUiOnlyHide.length - 1; i >= 0; i -= 1) {
+        if (itemsAfterUiOnlyHide[i]?.kind === 'msg') {
+          msgSeen += 1
+          if (msgSeen >= cap) {
+            start = i
+            break
+          }
         }
       }
+      while (start > 0 && itemsAfterUiOnlyHide[start - 1]?.kind === 'time') start -= 1
+      sliced = itemsAfterUiOnlyHide.slice(start)
     }
-    while (start > 0 && items[start - 1]?.kind === 'time') start -= 1
-    return items.slice(start)
-  }, [items, totalMsgCount, visibleMsgLimit])
+    if (roomType !== 'group' && friendRequestAcceptedDividerAtMs != null) {
+      return injectFriendRequestAcceptedDivider(sliced, friendRequestAcceptedDividerAtMs)
+    }
+    return sliced
+  }, [
+    itemsAfterUiOnlyHide,
+    totalMsgCount,
+    visibleMsgLimit,
+    roomType,
+    friendRequestAcceptedDividerAtMs,
+  ])
   const hasHiddenLoadedMessages = totalMsgCount > visibleMsgLimit
   const canLoadMoreAtTop = hasHiddenLoadedMessages || hasOlderHistory
 
@@ -6536,7 +6804,7 @@ export function ChatRoom({
       let lastKnownSid: string | undefined
       for (let idx = 0; idx < visibleItems.length; idx += 1) {
         const it = visibleItems[idx]
-        if (it.kind === 'time') {
+        if (it.kind === 'time' || it.kind === 'fr-verify-banner') {
           lastKnownSid = undefined
           continue
         }
@@ -6705,6 +6973,21 @@ export function ChatRoom({
                 >
                   {time}
                 </span>
+              </span>
+            </div>
+          </div>
+        )
+      }
+
+      if (m.kind === 'fr-verify-banner') {
+        return (
+          <div key={m.id} className={gap}>
+            <div className="flex justify-center">
+              <span
+                className="rounded-full bg-[#f2f2f2] px-3 py-1 text-[12px]"
+                style={{ color: '#999999', lineHeight: 1.1, fontFamily: 'var(--wx-font)' }}
+              >
+                {m.text}
               </span>
             </div>
           </div>
@@ -7145,15 +7428,7 @@ export function ChatRoom({
             }
           />
         )
-        const rowWrapped =
-          !isSelf && m.otherAnimated ? (
-            <ChatMessageEnter isSelf={false}>{rowInner}</ChatMessageEnter>
-          ) : isSelf && m.selfAnimated ? (
-            <ChatMessageEnter isSelf>{rowInner}</ChatMessageEnter>
-          ) : (
-            rowInner
-          )
-        return wrap(rowWrapped, renderDetachedReply(m, isSelf))
+        return wrap(rowInner, renderDetachedReply(m, isSelf))
       }
 
       if (m.transfer) {
@@ -7191,15 +7466,7 @@ export function ChatRoom({
             }
           />
         )
-        const rowWrapped =
-          !isSelf && m.otherAnimated ? (
-            <ChatMessageEnter isSelf={false}>{rowInner}</ChatMessageEnter>
-          ) : isSelf && m.selfAnimated ? (
-            <ChatMessageEnter isSelf>{rowInner}</ChatMessageEnter>
-          ) : (
-            rowInner
-          )
-        return wrap(rowWrapped, renderDetachedReply(m, isSelf))
+        return wrap(rowInner, renderDetachedReply(m, isSelf))
       }
 
       if (m.callStatus) {
@@ -7289,24 +7556,6 @@ export function ChatRoom({
         )
       }
       if (!isSelf) {
-        if (m.otherAnimated) {
-          return wrap(
-            <OtherMessageEnter
-                {...sharedRowProps}
-                messageText={m.text}
-                showAvatarColumn={showAvatarColumnOther}
-                chatOtherSenderNickname={chatOtherSenderNickname}
-                chatOtherAvatarRankBadge={chatOtherAvatarRankBadge}
-                bubbleSelected={actionPanelOpen && actionMessageId === m.id}
-                onBubbleLongPress={
-                  isMultiSelectMode
-                    ? undefined
-                    : (rect) => openActionPanelFor({ id: m.id, isSelf: false, text: messagePlainPreview(m), ts: m.timestamp, anchorRect: rect })
-                }
-              />,
-            renderDetachedReply(m, false),
-          )
-        }
         return wrap(
           <WeChatMessageBubbleRow
               messageText={m.text}
@@ -7336,43 +7585,26 @@ export function ChatRoom({
 
       const st = m.status ?? 'sent'
       return wrap(
-        m.selfAnimated ? (
-          <SelfMessageEnter
-              {...sharedMsgProps}
-              messageText={m.text}
-              showAvatarColumn={showAvatarColumnSelf}
-              chatAccessory={st === 'failed' ? <FailRetryIcon onClick={() => retrySend(m.id, m.text)} /> : undefined}
-              chatBubbleOverlay={st === 'sending' ? <span className="wx-chat-sending-dot" aria-hidden /> : undefined}
-              chatSelfAvatarRankBadge={chatSelfAvatarRankBadge}
-              bubbleSelected={actionPanelOpen && actionMessageId === m.id}
-              onBubbleLongPress={
-                isMultiSelectMode
-                  ? undefined
-                  : (rect) => openActionPanelFor({ id: m.id, isSelf: true, text: messagePlainPreview(m), ts: m.timestamp, anchorRect: rect })
-              }
-            />
-        ) : (
-          <WeChatMessageBubbleRow
-              messageText={m.text}
-              isSelf
-              bubble={bubble}
-              showAvatar={showAvatar}
-              showBubbleTail={showBubbleTail}
-              variant="chat"
-              showAvatarColumn={showAvatarColumnSelf}
-              chatAccessory={st === 'failed' ? <FailRetryIcon onClick={() => retrySend(m.id, m.text)} /> : undefined}
-              chatBubbleOverlay={st === 'sending' ? <span className="wx-chat-sending-dot" aria-hidden /> : undefined}
-              chatSelfAvatarUrl={sharedMsgProps.chatSelfAvatarUrl}
-              chatSelfAvatarRankBadge={chatSelfAvatarRankBadge}
-              groupRankShowBesideNickname={sharedMsgProps.groupRankShowBesideNickname}
-              bubbleSelected={actionPanelOpen && actionMessageId === m.id}
-              onBubbleLongPress={
-                isMultiSelectMode
-                  ? undefined
-                  : (rect) => openActionPanelFor({ id: m.id, isSelf: true, text: messagePlainPreview(m), ts: m.timestamp, anchorRect: rect })
-              }
-            />
-        ),
+        <WeChatMessageBubbleRow
+            messageText={m.text}
+            isSelf
+            bubble={bubble}
+            showAvatar={showAvatar}
+            showBubbleTail={showBubbleTail}
+            variant="chat"
+            showAvatarColumn={showAvatarColumnSelf}
+            chatAccessory={st === 'failed' ? <FailRetryIcon onClick={() => retrySend(m.id, m.text)} /> : undefined}
+            chatBubbleOverlay={st === 'sending' ? <span className="wx-chat-sending-dot" aria-hidden /> : undefined}
+            chatSelfAvatarUrl={sharedMsgProps.chatSelfAvatarUrl}
+            chatSelfAvatarRankBadge={chatSelfAvatarRankBadge}
+            groupRankShowBesideNickname={sharedMsgProps.groupRankShowBesideNickname}
+            bubbleSelected={actionPanelOpen && actionMessageId === m.id}
+            onBubbleLongPress={
+              isMultiSelectMode
+                ? undefined
+                : (rect) => openActionPanelFor({ id: m.id, isSelf: true, text: messagePlainPreview(m), ts: m.timestamp, anchorRect: rect })
+            }
+          />,
         renderDetachedReply(m, true),
       )
     })
@@ -7417,6 +7649,26 @@ export function ChatRoom({
     resolveGroupQuoteSenderLabel,
   ])
 
+  const pendingRevealAvatarUrl = useMemo(() => {
+    const head = pendingQueue[0]
+    if (!head) return peerAvatarResolved?.trim() || ''
+    const sid = head.senderCharacterId?.trim()
+    if (roomType === 'group' && sid && groupLive) {
+      if (sid === WECHAT_GROUP_BOT_CHARACTER_ID) return resolveGroupRobotAvatarDisplayUrl(groupLive)
+      return (groupAvatarByCharId[sid] || peerAvatarResolved)?.trim() || ''
+    }
+    return peerAvatarResolved?.trim() || ''
+  }, [pendingQueue, roomType, groupLive, groupAvatarByCharId, peerAvatarResolved])
+
+  useEffect(() => {
+    if (pendingQueue.length === 0) return
+    const el = scrollRef.current
+    if (!el) return
+    const near = isScrollNearBottom(el)
+    if (!near && userScrolledRef.current) return
+    scrollToBottomSmooth()
+  }, [pendingQueue.length, scrollToBottomSmooth])
+
   const btnPx = chatTheme.inputBar.buttonSize
   const btnColor = chatTheme.inputBar.buttonColor
 
@@ -7424,6 +7676,7 @@ export function ChatRoom({
     return () => {
       if (enterDebounceTimerRef.current != null) window.clearTimeout(enterDebounceTimerRef.current)
       if (voiceHoldTimerRef.current != null) window.clearTimeout(voiceHoldTimerRef.current)
+      if (opponentRevealTimerRef.current != null) window.clearTimeout(opponentRevealTimerRef.current)
       if (voiceRecorderRef.current && voiceRecorderRef.current.state !== 'inactive') {
         voiceRecorderRef.current.stop()
       }
@@ -7455,11 +7708,7 @@ export function ChatRoom({
   return (
     <div className="relative flex h-full min-h-0 flex-1 flex-col" data-wx-chat-motion-scope>
       <style>{`@keyframes wxRecallShake { 0% { transform: translateX(0); opacity: 1; } 25% { transform: translateX(-2px); } 50% { transform: translateX(2px); } 75% { transform: translateX(-1px); } 100% { transform: translateX(0); opacity: 0.75; } }
-@keyframes wxQueueTypingPulse { 0%, 100% { opacity: 0.22; transform: translateY(1px); } 50% { opacity: 0.92; transform: translateY(0); } }
-.wx-queue-typing-dot { display: inline-block; width: 5px; height: 5px; border-radius: 9999px; background: currentColor; animation: wxQueueTypingPulse 1.05s ease-in-out infinite; vertical-align: middle; }
-.wx-queue-typing-dot:nth-child(1) { animation-delay: 0ms; }
-.wx-queue-typing-dot:nth-child(2) { animation-delay: 160ms; }
-.wx-queue-typing-dot:nth-child(3) { animation-delay: 320ms; }`}</style>
+@keyframes wxOpponentTypingDot { 0%, 80%, 100% { transform: translateY(0); opacity: 0.35; } 40% { transform: translateY(-4px); opacity: 1; } }`}</style>
       {showDmOverlay ? (
         <div className="pointer-events-none absolute inset-x-0 top-0 bottom-0 z-[60]">
           <DanmakuOverlay bullets={dmBullets} zoneStyle={dmZoneStyle} />
@@ -7506,36 +7755,54 @@ export function ChatRoom({
         ) : null}
         <div className="relative z-[1] flex w-full max-w-full flex-col">
           {messagesView}
-          {queueTypingPreview ? (
+          {pendingQueue.length > 0 ? (
             <div
-              className={`relative z-[70] mt-2 flex w-full max-w-full shrink-0 items-end justify-start gap-[4px] overflow-x-hidden ${showAvatar ? 'pl-[12px] pr-[12px]' : 'ml-[24px]'}`}
+              className="mt-4 flex w-full max-w-full shrink-0 justify-start overflow-x-hidden pl-[24px] pr-[24px]"
               aria-live="polite"
-              aria-label={`${queueTypingPreview.label}正在输入`}
+              aria-label="对方正在输入"
             >
-              {showAvatar ? (
-                <div className="relative h-9 w-9 shrink-0 overflow-hidden rounded-[6px] bg-[#e5e5e5]">
-                  {queueTypingPreview.avatarUrl ? (
-                    <img src={queueTypingPreview.avatarUrl} alt="" className="h-full w-full object-cover" />
+              <div className="flex max-w-full flex-row items-end gap-3">
+                {showAvatar ? (
+                  pendingRevealAvatarUrl ? (
+                    <img
+                      src={pendingRevealAvatarUrl}
+                      alt=""
+                      width={40}
+                      height={40}
+                      className="h-10 w-10 shrink-0 object-cover"
+                      style={{
+                        borderRadius: `${bubble.avatarRadiusPx}px`,
+                        border: '1px solid color-mix(in oklab, var(--wx-border) 70%, transparent)',
+                      }}
+                      aria-hidden
+                    />
                   ) : (
-                    <div className="flex h-full w-full items-center justify-center text-[11px] text-[#999]">…</div>
-                  )}
-                </div>
-              ) : null}
-              <div className="flex min-w-0 flex-1 flex-col items-start gap-[3px]">
-                {(roomType === 'group' ? showGroupMemberNicknameInChat !== false : true) && queueTypingPreview.label ? (
-                  <span className="max-w-[70vw] truncate pl-[2px] text-[12px] text-[#888]">{queueTypingPreview.label}</span>
+                    <div
+                      className="h-10 w-10 shrink-0"
+                      style={{
+                        borderRadius: `${bubble.avatarRadiusPx}px`,
+                        background: 'rgba(0,0,0,0.06)',
+                        border: '1px solid color-mix(in oklab, var(--wx-border) 70%, transparent)',
+                      }}
+                      aria-hidden
+                    />
+                  )
                 ) : null}
                 <div
-                  className="inline-flex items-center gap-[5px] px-3 py-2"
-                  style={{
-                    background: 'var(--wx-other-bubble-bg)',
-                    color: 'var(--wx-other-bubble-text)',
-                    borderRadius: `${bubble.otherBubbleRadiusPx}px`,
-                  }}
+                  className="inline-flex items-center gap-[3px] rounded-lg bg-[#ededed] px-3 py-2"
+                  style={{ minHeight: 40 }}
+                  aria-hidden
                 >
-                  <span className="wx-queue-typing-dot" />
-                  <span className="wx-queue-typing-dot" />
-                  <span className="wx-queue-typing-dot" />
+                  {[0, 1, 2].map((i) => (
+                    <span
+                      key={i}
+                      className="inline-block h-1.5 w-1.5 rounded-full bg-[#8e8e8e]"
+                      style={{
+                        animation: 'wxOpponentTypingDot 1.05s ease-in-out infinite',
+                        animationDelay: `${i * 0.18}s`,
+                      }}
+                    />
+                  ))}
                 </div>
               </div>
             </div>
@@ -8009,7 +8276,7 @@ export function ChatRoom({
             promptMode === 'persona' && pcid
               ? await loadOfflineDatingPlotsPromptBlock(pcid, character?.name ?? null)
               : ''
-          const transcript = itemsToTranscript(itemsRef.current)
+          const transcript = itemsToTranscript(buildChatItemsForAiTranscript())
           const groupRef = await loadPrivateGroupChatsRecentReference()
           const vMem = await buildPrivateMemoryInjectionForAi(transcript, '')
           const res = await requestWeChatVoiceCallDecision({
@@ -8116,7 +8383,7 @@ export function ChatRoom({
               : ''
 
           const transcript: ChatTranscriptTurn[] = [
-            ...itemsToTranscript(itemsRef.current),
+            ...itemsToTranscript(buildChatItemsForAiTranscript()),
             {
               from: 'self',
               text:

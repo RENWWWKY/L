@@ -10,8 +10,33 @@ import {
   User,
 } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
+import { motion } from 'framer-motion'
 
 const AVATAR_PLACEHOLDER = 'https://via.placeholder.com/120'
+
+function MemoryTraceNeuronGlyph({ className }: { className?: string }) {
+  return (
+    <svg
+      className={className}
+      viewBox="0 0 24 24"
+      fill="none"
+      xmlns="http://www.w3.org/2000/svg"
+      aria-hidden
+    >
+      <circle cx="12" cy="12" r="2.25" stroke="currentColor" strokeWidth="1.35" />
+      <circle cx="6" cy="8" r="1.35" stroke="currentColor" strokeWidth="1.2" />
+      <circle cx="18" cy="8" r="1.35" stroke="currentColor" strokeWidth="1.2" />
+      <circle cx="7" cy="16.5" r="1.35" stroke="currentColor" strokeWidth="1.2" />
+      <circle cx="17" cy="16.5" r="1.35" stroke="currentColor" strokeWidth="1.2" />
+      <path
+        d="M7.35 8.45 10.4 11M16.65 8.45 13.6 11M8.2 15.25 10.35 13.35M15.8 15.25 13.65 13.35"
+        stroke="currentColor"
+        strokeWidth="1.05"
+        strokeLinecap="round"
+      />
+    </svg>
+  )
+}
 
 export type WeChatMeInstagramProfileProps = {
   /** 微信昵称 */
@@ -22,6 +47,8 @@ export type WeChatMeInstagramProfileProps = {
   avatarUrl?: string
   /** 点击顶部个人名片（如打开资料编辑） */
   onOpenProfileCard?: () => void
+  /** 打开「思维溯源」面板 */
+  onOpenMemoryTrace?: () => void
   /** 列表项点击 */
   onMenuItemClick?: (id: MenuRowId) => void
   className?: string
@@ -56,13 +83,14 @@ export function WeChatMeInstagramProfile({
   signature = '个性签名：生活不止眼前的苟且，还有诗和远方。',
   avatarUrl = AVATAR_PLACEHOLDER,
   onOpenProfileCard,
+  onOpenMemoryTrace,
   onMenuItemClick,
   className = '',
 }: WeChatMeInstagramProfileProps) {
   return (
     <div
       className={`h-full min-h-0 overflow-y-auto [scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden ${className}`}
-      style={{ background: 'transparent', color: '#000000' }}
+      style={{ background: 'transparent', color: '#1C1C1E' }}
     >
       <div className="mx-auto flex max-w-[480px] flex-col pb-10">
         {/* 顶部个人名片 */}
@@ -117,6 +145,34 @@ export function WeChatMeInstagramProfile({
             </div>
           )}
         </header>
+
+        {/* 思维溯源入口 */}
+        {onOpenMemoryTrace ? (
+          <section className="mx-4 mt-6" aria-label="思维溯源">
+            <motion.button
+              type="button"
+              onClick={onOpenMemoryTrace}
+              whileTap={{ scale: 0.98 }}
+              transition={{ type: 'spring', stiffness: 520, damping: 28 }}
+              className="flex w-full items-center gap-3 rounded-2xl border bg-white px-4 py-4 text-left shadow-sm outline-none transition-colors hover:bg-neutral-50/90"
+              style={{ borderColor: '#e5e5e5', color: '#1C1C1E' }}
+            >
+              <span
+                className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full border bg-white"
+                style={{ borderColor: '#e5e5e5', color: '#D4AF37' }}
+              >
+                <MemoryTraceNeuronGlyph className="size-[22px]" />
+              </span>
+              <span className="min-w-0 flex-1">
+                <span className="block text-[16px] font-semibold leading-tight">思维溯源</span>
+                <span className="mt-0.5 block text-[10px] font-medium uppercase tracking-[0.22em] text-neutral-400">
+                  AI MEMORY TRACE
+                </span>
+              </span>
+              <ChevronRight className="ml-auto size-4 shrink-0 text-neutral-400" strokeWidth={1.75} aria-hidden />
+            </motion.button>
+          </section>
+        ) : null}
 
         {/* 功能列表卡片 */}
         <section className="mx-4 mt-6 overflow-hidden rounded-[12px] border bg-white" style={{ borderColor: '#e5e5e5', boxShadow: '0 1px 3px rgba(0,0,0,0.05)' }} aria-label="功能列表">

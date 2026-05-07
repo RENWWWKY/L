@@ -1,5 +1,13 @@
 import type { Gender } from './types'
 
+/** 人设性别：注入模型、摘要与 UI 等处统一用中文（存储仍为 male/female/other） */
+export function genderLabelZh(g: Gender | undefined | null): string {
+  if (g === 'male') return '男'
+  if (g === 'female') return '女'
+  if (g === 'other') return '其他'
+  return '未知'
+}
+
 export function uid(prefix: string) {
   return `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
 }

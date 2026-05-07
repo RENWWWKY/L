@@ -18,7 +18,7 @@ export function ContactProfileSettingsScreen({
   onOpenRecommend: () => void
   onOpenComplaint: () => void
   onBlockedAndBack: () => void
-  onDeleteContact: (notifyPeer: boolean) => void | Promise<void>
+  onDeleteContact: (notifyPeer: boolean, chatHistoryMode: 'hard' | 'soft') => void | Promise<void>
 }) {
   const { state, replaceWeChatPersonaContacts } = useCustomization()
   const disableTransitions = state.ui.disablePageTransitions
@@ -28,6 +28,10 @@ export function ContactProfileSettingsScreen({
   const [remarkExitConfirmOpen, setRemarkExitConfirmOpen] = useState(false)
   const [blockConfirmOpen, setBlockConfirmOpen] = useState(false)
   const [deletePanelOpen, setDeletePanelOpen] = useState(false)
+  /** 1 = 先选是否告知对方，2 = 再选聊天记录 / 是否清除 AI 上下文 */
+  const [deletePanelStep, setDeletePanelStep] = useState<1 | 2>(1)
+  /** 第一步选定后带入第二步 */
+  const [pendingNotifyPeer, setPendingNotifyPeer] = useState<boolean | null>(null)
 
   const loadCharacter = useCallback(async () => {
     const next = await personaDb.getCharacter(characterId)
@@ -104,7 +108,14 @@ export function ContactProfileSettingsScreen({
             checked={isStarred}
             onChange={(checked) => void updateContact({ isStarred: checked })}
           />
-          <DangerCardButton label="删除联系人" onClick={() => setDeletePanelOpen(true)} />
+          <DangerCardButton
+            label="删除联系人"
+            onClick={() => {
+              setDeletePanelStep(1)
+              setPendingNotifyPeer(null)
+              setDeletePanelOpen(true)
+            }}
+          />
           <DangerCardButton label="加入黑名单" onClick={() => setBlockConfirmOpen(true)} />
           <DangerCardButton label="投诉" onClick={onOpenComplaint} />
         </div>
@@ -190,51 +201,113 @@ export function ContactProfileSettingsScreen({
 
       <AnimatePresence>
         {deletePanelOpen ? (
-          <ModalMask dark center onClose={() => setDeletePanelOpen(false)}>
+          <ModalMask
+            dark
+            center
+            onClose={() => {
+              setDeletePanelOpen(false)
+              setDeletePanelStep(1)
+              setPendingNotifyPeer(null)
+            }}
+          >
             <motion.div
               initial={disableTransitions ? false : { opacity: 0, scale: 0.96 }}
               animate={{ opacity: 1, scale: 1 }}
               exit={disableTransitions ? { opacity: 1, scale: 1 } : { opacity: 0, scale: 0.96 }}
               transition={disableTransitions ? { duration: 0 } : { duration: 0.18 }}
-              className="overflow-hidden rounded-[14px] bg-white"
+              className="max-h-[min(520px,85vh)] w-[min(100vw-2rem,340px)] overflow-hidden rounded-[14px] bg-white"
             >
-              <div className="px-5 pb-4 pt-5 text-center">
-                <div className="text-[17px] font-medium text-black">删除联系人</div>
-                <p className="mt-2 text-[14px] leading-6 text-[#666]">
-                  删除后可选择是否告知对方。若告知，对方会再次发送好友申请并询问怎么回事。
-                </p>
-              </div>
-              <div className="border-t border-[#e5e5e5] p-3">
-                <div className="grid gap-2">
-                  <Pressable
-                    type="button"
-                    className="h-11 w-full rounded-[12px] bg-[#ff3b30] text-[16px] font-semibold text-white active:opacity-90"
-                    onClick={() => {
-                      void onDeleteContact(false)
-                      setDeletePanelOpen(false)
-                    }}
-                  >
-                    不告知对方，直接删除
-                  </Pressable>
-                  <Pressable
-                    type="button"
-                    className="h-11 w-full rounded-[12px] border border-[#ff3b30]/35 bg-white text-[16px] font-semibold text-[#ff3b30] active:bg-[#fff5f5]"
-                    onClick={() => {
-                      void onDeleteContact(true)
-                      setDeletePanelOpen(false)
-                    }}
-                  >
-                    告知对方（会发来新好友申请）
-                  </Pressable>
-                  <Pressable
-                    type="button"
-                    className="h-11 w-full rounded-[12px] bg-[#f2f2f2] text-[16px] text-black active:bg-[#e9e9e9]"
-                    onClick={() => setDeletePanelOpen(false)}
-                  >
-                    取消
-                  </Pressable>
-                </div>
-              </div>
+              {deletePanelStep === 1 ? (
+                <>
+                  <div className="px-5 pb-4 pt-5 text-center">
+                    <div className="text-[17px] font-medium text-black">删除联系人</div>
+                    <p className="mt-2 text-[14px] leading-6 text-[#666]">
+                      删除联系人前，请选择是否告知对方。若告知，对方会再次发送好友申请并询问怎么回事。下一步将确认本地聊天记录与模型上下文。
+                    </p>
+                  </div>
+                  <div className="border-t border-[#e5e5e5] p-3">
+                    <div className="grid gap-2">
+                      <Pressable
+                        type="button"
+                        className="h-11 w-full rounded-[12px] bg-[#ff3b30] text-[16px] font-semibold text-white active:opacity-90"
+                        onClick={() => {
+                          setPendingNotifyPeer(false)
+                          setDeletePanelStep(2)
+                        }}
+                      >
+                        不告知对方，直接删除
+                      </Pressable>
+                      <Pressable
+                        type="button"
+                        className="h-11 w-full rounded-[12px] border border-[#ff3b30]/35 bg-white text-[16px] font-semibold text-[#ff3b30] active:bg-[#fff5f5]"
+                        onClick={() => {
+                          setPendingNotifyPeer(true)
+                          setDeletePanelStep(2)
+                        }}
+                      >
+                        告知对方（会发来新好友申请）
+                      </Pressable>
+                      <Pressable
+                        type="button"
+                        className="h-11 w-full rounded-[12px] bg-[#f2f2f2] text-[16px] text-black active:bg-[#e9e9e9]"
+                        onClick={() => {
+                          setDeletePanelOpen(false)
+                          setDeletePanelStep(1)
+                          setPendingNotifyPeer(null)
+                        }}
+                      >
+                        取消
+                      </Pressable>
+                    </div>
+                  </div>
+                </>
+              ) : (
+                <>
+                  <div className="px-5 pb-4 pt-5 text-center">
+                    <div className="text-[17px] font-medium text-black">删除联系人 · 聊天记录</div>
+                    <p className="mt-2 text-left text-[14px] leading-6 text-[#666]">
+                      请选择如何处理与该联系人的本地聊天记录及模型上下文参考。本次清空会在手机桌面「回收站」生成条目（限期保留），需要时可前往尝试恢复聊天记录。
+                    </p>
+                  </div>
+                  <div className="border-t border-[#e5e5e5] p-3">
+                    <div className="grid gap-2">
+                      <Pressable
+                        type="button"
+                        className="h-11 w-full rounded-[12px] bg-[#ff3b30] text-[16px] font-semibold text-white active:opacity-90"
+                        onClick={() => {
+                          if (pendingNotifyPeer === null) return
+                          void onDeleteContact(pendingNotifyPeer, 'hard')
+                          setDeletePanelOpen(false)
+                          setDeletePanelStep(1)
+                          setPendingNotifyPeer(null)
+                        }}
+                      >
+                        彻底删除（清除模型上下文参考）
+                      </Pressable>
+                      <Pressable
+                        type="button"
+                        className="h-11 w-full rounded-[12px] border border-[#576b95]/40 bg-white text-[16px] font-semibold text-[#576b95] active:bg-[#f5f7fb]"
+                        onClick={() => {
+                          if (pendingNotifyPeer === null) return
+                          void onDeleteContact(pendingNotifyPeer, 'soft')
+                          setDeletePanelOpen(false)
+                          setDeletePanelStep(1)
+                          setPendingNotifyPeer(null)
+                        }}
+                      >
+                        仅清空聊天界面（保留 AI 参考）
+                      </Pressable>
+                      <Pressable
+                        type="button"
+                        className="h-11 w-full rounded-[12px] bg-[#f2f2f2] text-[16px] text-black active:bg-[#e9e9e9]"
+                        onClick={() => setDeletePanelStep(1)}
+                      >
+                        上一步
+                      </Pressable>
+                    </div>
+                  </div>
+                </>
+              )}
             </motion.div>
           </ModalMask>
         ) : null}

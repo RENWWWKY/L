@@ -582,19 +582,17 @@ export function ChatSettingsScreen({
 
       {clearOpen ? (
         <div className="fixed inset-0 z-[400] flex items-center justify-center bg-black/45 px-6">
-          <div className="w-full max-w-[320px] rounded-[14px] bg-white p-5">
-            <p className="text-[16px] leading-relaxed text-black">确定要清空所有聊天记录吗？清空后无法恢复</p>
-            <div className="mt-5 flex justify-end gap-3">
+          <div className="w-full max-w-[320px] overflow-hidden rounded-[14px] bg-white">
+            <div className="p-5 pb-4">
+              <p className="text-[16px] font-medium text-black">清空聊天记录</p>
+              <p className="mt-2 text-[13px] leading-relaxed text-[#666666]">
+                可选：仅隐藏聊天界面中的历史气泡（本地记录仍在，角色仍会参考）；或彻底删除本地消息（清除模型上下文参考）。两种操作都会在手机桌面「回收站」留下快照（限期保留），如需找回聊天记录可前往尝试恢复。
+              </p>
+            </div>
+            <div className="flex flex-col border-t border-[#e5e5e5]">
               <button
                 type="button"
-                className="rounded-lg px-4 py-2 text-[15px] text-[#8e8e8e]"
-                onClick={() => setClearOpen(false)}
-              >
-                取消
-              </button>
-              <button
-                type="button"
-                className="rounded-lg px-4 py-2 text-[15px] font-medium text-black"
+                className="h-11 w-full text-[16px] font-medium text-[#fa5151] transition-colors active:bg-[#fff1f1]"
                 onClick={() => {
                   void (async () => {
                     await personaDb.deleteAllWeChatMessagesForConversation(conversationKey)
@@ -603,7 +601,29 @@ export function ChatSettingsScreen({
                   })()
                 }}
               >
-                清空
+                彻底删除（清除上下文）
+              </button>
+              <div className="h-px w-full bg-[#e5e5e5]" aria-hidden />
+              <button
+                type="button"
+                className="h-11 w-full text-[16px] text-[#576b95] transition-colors active:bg-[#f2f2f2]"
+                onClick={() => {
+                  void (async () => {
+                    await personaDb.hideWeChatConversationHistoryFromUiKeepAiContext(conversationKey)
+                    setClearOpen(false)
+                    onClose()
+                  })()
+                }}
+              >
+                仅清空界面（保留 AI 参考）
+              </button>
+              <div className="h-px w-full bg-[#e5e5e5]" aria-hidden />
+              <button
+                type="button"
+                className="h-11 w-full text-[16px] text-[#666666] transition-colors active:bg-[#f2f2f2]"
+                onClick={() => setClearOpen(false)}
+              >
+                取消
               </button>
             </div>
           </div>

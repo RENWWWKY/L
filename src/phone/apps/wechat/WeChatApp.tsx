@@ -6,6 +6,7 @@ import {
   useMemo,
   useRef,
   useState,
+  useSyncExternalStore,
   type PointerEvent as ReactPointerEvent,
   type ComponentProps,
   type CSSProperties,
@@ -23,7 +24,7 @@ import {
   wechatBubbleThemesEqual,
 } from '../../types'
 import { ImageCropperModal } from '../../components/ImageCropperModal'
-import { WeChatMeInstagramProfile } from '../../../components/WeChatMeInstagramProfile'
+import { WeChatMeInstagramProfile } from './WeChatProfile'
 import {
   WECHAT_DEFAULT_CONTACTS,
   WECHAT_LUMI_ASSISTANT_CONTACT,
@@ -49,6 +50,8 @@ import { upsertLumiTransfer } from './transfer/lumiTransferStorage'
 import { RedPacketDetailPage } from './redPacket/RedPacketDetailPage'
 import { RedPacketHistoryPage } from './redPacket/RedPacketHistoryPage'
 import { WeChatProfileEditModal } from './WeChatProfileEditModal'
+import { MemoryTraceModal } from './MemoryTraceModal'
+import { getLastMemoryTrace, hydrateMemoryTraceFromIndexedDb, subscribeLastMemoryTrace } from './memoryTraceStore'
 import { ChatThemeProvider, useChatTheme } from './ChatThemeContext'
 import { WeChatConsoleFloatingPanel } from './WeChatConsoleFloatingPanel'
 import { WeChatConsoleProvider, useWeChatConsole } from './WeChatConsoleContext'
@@ -57,6 +60,8 @@ import { emitWeChatStorageChanged, personaDb } from './newFriendsPersona/idb'
 import { stripWechatGroupEventNoticePrefix } from './groupChatEventNotice'
 import {
   WECHAT_LUMI_PEER_CHARACTER_ID,
+  resolvePrivateChatSessionPlayerIdentityId,
+  resolvePrivateWeChatConversationKey,
   wechatConversationKey,
   wechatGroupConversationKey,
   wechatGroupPeerCharacterId,
@@ -71,7 +76,11 @@ import { requestWeChatMemorySummary, requestWeChatPeerReplyBubbles, type ChatTra
 import { buildAutoSummaryMemoryKeywordsBackup } from './memory/memoryTriggerUtils'
 import { uid } from './newFriendsPersona/utils'
 import { formatWorldBackgroundForPrompt } from './newFriendsPersona/worldBackgroundFormat'
-import { loadOfflineDatingPlotsPromptBlock } from './dating/loadOfflineDatingPlotsForWechatPrompt'
+import {
+  buildFriendRequestDeletionOrdinalBias,
+  buildFriendRequestPrivatePromptPack,
+} from './wechatFriendRequestPrivatePromptPack'
+import { getContactDeletionCount, incrementContactDeletionCount } from './wechatContactDeletionCount'
 import { WeChatDanmakuConfigScreen } from './settings/WeChatDanmakuConfigScreen'
 import {
   WeChatGlobalSettingsScreen,
@@ -230,23 +239,6 @@ function friendRequestGapBeforeBubbleMs(currentSegmentLength: number, isFirst: b
   if (isFirst) return 0
   const chars = Math.max(1, currentSegmentLength)
   return Math.min(25000, Math.ceil(chars / 5) * 1000)
-}
-
-function extractMemoryKeywordsFromText(text: string): string[] {
-  const src = String(text || '').toLowerCase()
-  if (!src.trim()) return []
-  const zh = src.match(/[\u4e00-\u9fa5]{2,6}/g) ?? []
-  const en = src.match(/[a-z]{3,}/g) ?? []
-  const merged = [...zh, ...en].filter((w) => w.length >= 2)
-  const seen = new Set<string>()
-  const out: string[] = []
-  for (const w of merged) {
-    if (seen.has(w)) continue
-    seen.add(w)
-    out.push(w)
-    if (out.length >= 24) break
-  }
-  return out
 }
 
 function buildFriendRequestReplyBias(params: { messages: FriendRequest['messages']; extraBias?: string }): string {
@@ -521,6 +513,8 @@ function Header({
   customRight,
   showAppearanceGuide = false,
   onDismissAppearanceGuide,
+  /** 为 true 时在主标题与 typingText 之间循环切换（模型已返回、消息逐条露出时） */
+  titleTypingAlternate = false,
 }: {
   title: string
   /** 第二行：备注/说明（灰色小字），与微信昵称主行搭配 */
@@ -528,6 +522,7 @@ function Header({
   /** 为 true 时中间区域只显示「对方正在输入…」，替换主副标题 */
   showTyping?: boolean
   typingText?: string
+  titleTypingAlternate?: boolean
   onBack: () => void
   onOpenTheme: () => void
   showBack: boolean
@@ -542,10 +537,39 @@ function Header({
   showAppearanceGuide?: boolean
   onDismissAppearanceGuide?: () => void
 }) {
-  const showTitleUnread =
-    typeof titleUnreadCount === 'number' && titleUnreadCount > 0 && !showTyping
+  const [altPhase, setAltPhase] = useState<'title' | 'typing'>('title')
+  const typingAlt = !!titleTypingAlternate && !!(typingText ?? '').trim() && !showTyping
 
-  const trailing = showTyping ? undefined : titleTrailing
+  useEffect(() => {
+    if (!typingAlt) {
+      setAltPhase('title')
+      return
+    }
+    let cancelled = false
+    let step = 0
+    const delays = [3000, 1500, 2000, 1500]
+    let tid: number | null = null
+    const schedule = () => {
+      if (cancelled) return
+      setAltPhase(step % 2 === 0 ? 'title' : 'typing')
+      const ms = delays[step % delays.length] ?? 1500
+      step += 1
+      tid = window.setTimeout(schedule, ms)
+    }
+    schedule()
+    return () => {
+      cancelled = true
+      if (tid != null) window.clearTimeout(tid)
+    }
+  }, [typingAlt, typingText, title, titleSub])
+
+  const showTitleUnread =
+    typeof titleUnreadCount === 'number' &&
+    titleUnreadCount > 0 &&
+    !showTyping &&
+    !(typingAlt && altPhase === 'typing')
+
+  const trailing = showTyping ? undefined : typingAlt && altPhase === 'typing' ? undefined : titleTrailing
 
   const center =
     showTyping && typingText?.trim() ? (
@@ -566,6 +590,95 @@ function Header({
               {typingText}
             </p>
           </motion.div>
+        </AnimatePresence>
+      </div>
+    ) : typingAlt ? (
+      <div className="relative flex min-h-[36px] min-w-0 flex-1 flex-col items-center justify-center px-1">
+        <AnimatePresence mode="wait" initial={false}>
+          {altPhase === 'title' ? (
+            <motion.div
+              key="wx-alt-title"
+              className="flex min-h-[36px] min-w-0 flex-1 flex-col items-center justify-center px-1"
+              initial={{ opacity: 0, y: 3 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -3 }}
+              transition={{ duration: 0.14, ease: 'easeOut' }}
+            >
+              {titleSub ? (
+                <div className="relative inline-flex max-w-full min-w-0 items-center">
+                  <div className="flex min-h-[36px] flex-col items-center justify-center gap-0 leading-tight">
+                    <h1
+                      className="max-w-full truncate text-center text-[17px] font-semibold tracking-[0.2px]"
+                      style={{ color: 'var(--wx-text)' }}
+                    >
+                      {title}
+                    </h1>
+                    <p
+                      className="max-w-full truncate text-center text-[11px] font-normal"
+                      style={{ color: 'var(--wx-text-muted)' }}
+                    >
+                      {titleSub}
+                    </p>
+                  </div>
+                  {trailing ? (
+                    <span
+                      className={`${titleTrailingInteractive ? '' : 'pointer-events-none'} absolute left-full top-1/2 ml-2 flex shrink-0 -translate-y-1/2 items-center transition-opacity duration-200`}
+                      aria-hidden={titleTrailingInteractive ? undefined : true}
+                    >
+                      {trailing}
+                    </span>
+                  ) : null}
+                </div>
+              ) : (
+                <div className="relative inline-flex max-w-full min-w-0 items-center">
+                  <h1
+                    className="flex min-h-[36px] items-center justify-center gap-0.5 truncate text-center text-[17px] font-semibold leading-[36px] tracking-[0.2px]"
+                    style={{ color: 'var(--wx-text)' }}
+                  >
+                    <span className="truncate">{title}</span>
+                    {showTitleUnread ? (
+                      <span
+                        className="shrink-0 text-[15px] font-medium leading-[36px] tracking-normal"
+                        style={{
+                          color: 'var(--wx-text-muted)',
+                          fontFamily: 'var(--wx-num-font)',
+                          fontVariantNumeric: 'tabular-nums lining-nums',
+                          fontFeatureSettings: '"tnum" 1, "lnum" 1',
+                        }}
+                        aria-label={`未读 ${titleUnreadCount}`}
+                      >
+                        （{titleUnreadCount > 99 ? '99+' : titleUnreadCount}）
+                      </span>
+                    ) : null}
+                  </h1>
+                  {trailing ? (
+                    <span
+                      className={`${titleTrailingInteractive ? '' : 'pointer-events-none'} absolute left-full top-1/2 ml-2 flex shrink-0 -translate-y-1/2 items-center transition-opacity duration-200`}
+                      aria-hidden={titleTrailingInteractive ? undefined : true}
+                    >
+                      {trailing}
+                    </span>
+                  ) : null}
+                </div>
+              )}
+            </motion.div>
+          ) : (
+            <motion.div
+              key="wx-alt-typing"
+              className="flex min-h-[36px] min-w-0 flex-1 flex-col items-center justify-center px-1"
+              initial={{ opacity: 0, y: 3 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -3 }}
+              transition={{ duration: 0.14, ease: 'easeOut' }}
+            >
+              <p
+                className="truncate text-center text-[15px] font-normal leading-snug"
+                style={{ color: 'var(--wx-text-muted)' }}
+              >
+                {typingText}
+              </p>
+            </motion.div>
+          )}
         </AnimatePresence>
       </div>
     ) : titleSub ? (
@@ -1290,18 +1403,23 @@ function MessagesTab({
     [playerIdentityId],
   )
 
-  const applyDeleteThread = useCallback(async () => {
-    if (!deleteConfirmThread) return
-    if (deleteConfirmThread.kind === 'group') {
-      const pid = playerIdentityId?.trim()
-      if (pid) await personaDb.leaveGroupChat(deleteConfirmThread.groupId, pid)
-    } else {
-      await personaDb.deleteAllWeChatMessagesForConversation(deleteConfirmThread.conversationKey)
-    }
-    setDeleteConfirmThread(null)
-    setSwipeOpenThreadKey(null)
-    onListDataMutated()
-  }, [deleteConfirmThread, onListDataMutated, playerIdentityId])
+  const applyDeleteThread = useCallback(
+    async (mode: 'hard' | 'soft') => {
+      if (!deleteConfirmThread) return
+      if (deleteConfirmThread.kind === 'group') {
+        const pid = playerIdentityId?.trim()
+        if (pid) await personaDb.leaveGroupChat(deleteConfirmThread.groupId, pid)
+      } else if (mode === 'soft') {
+        await personaDb.hideWeChatConversationHistoryFromUiKeepAiContext(deleteConfirmThread.conversationKey)
+      } else {
+        await personaDb.deleteAllWeChatMessagesForConversation(deleteConfirmThread.conversationKey)
+      }
+      setDeleteConfirmThread(null)
+      setSwipeOpenThreadKey(null)
+      onListDataMutated()
+    },
+    [deleteConfirmThread, onListDataMutated, playerIdentityId],
+  )
 
   return (
     <div className="flex h-full min-h-0 w-full flex-1 flex-col overflow-hidden">
@@ -1457,28 +1575,60 @@ function MessagesTab({
             style={{ borderColor: '#e5e5e5', boxShadow: '0 20px 50px rgba(0,0,0,0.18)' }}
           >
             <div className="px-5 py-4">
-              <h3 className="text-[17px] font-medium text-black">确认删除聊天？</h3>
+              <h3 className="text-[17px] font-medium text-black">
+                {deleteConfirmThread.kind === 'group' ? '确认删除并退出群聊？' : '确认删除聊天？'}
+              </h3>
               <p className="mt-2 text-[13px] leading-6 text-[#666666]">
-                {`将删除与「${deleteConfirmThread.name}」的全部聊天记录，且不可恢复。`}
+                {deleteConfirmThread.kind === 'group'
+                  ? `将退出群聊「${deleteConfirmThread.name}」并清空本会话在本地的全部记录（含回收站归档），此操作不可仅隐藏界面。提示：可在手机桌面「回收站」查看条目并在保留期内尝试恢复聊天记录。`
+                  : `与「${deleteConfirmThread.name}」的会话：可选择只清空聊天界面（本地消息仍保留，角色回复仍会参考完整记录），或彻底删除本地消息并在桌面「回收站」保留至多约 5 日可尝试恢复；后者会清除模型上下文中的历史参考。会话会从信息列表隐藏，直至再次发来消息。若只想在列表里不显示但保留入口，请用左滑「不显示」。提示：两种清空都会在桌面「回收站」生成快照（限期保留），需要时可前往尝试恢复聊天记录。`}
               </p>
             </div>
-            <div className="flex border-t border-[#e5e5e5]">
-              <button
-                type="button"
-                className="h-11 flex-1 text-[16px] text-[#666666] transition-colors active:bg-[#f2f2f2]"
-                onClick={() => setDeleteConfirmThread(null)}
-              >
-                取消
-              </button>
-              <div className="h-11 w-px bg-[#e5e5e5]" aria-hidden />
-              <button
-                type="button"
-                className="h-11 flex-1 text-[16px] font-medium text-[#fa5151] transition-colors active:bg-[#fff1f1]"
-                onClick={() => void applyDeleteThread()}
-              >
-                删除
-              </button>
-            </div>
+            {deleteConfirmThread.kind === 'group' ? (
+              <div className="flex border-t border-[#e5e5e5]">
+                <button
+                  type="button"
+                  className="h-11 flex-1 text-[16px] text-[#666666] transition-colors active:bg-[#f2f2f2]"
+                  onClick={() => setDeleteConfirmThread(null)}
+                >
+                  取消
+                </button>
+                <div className="h-11 w-px bg-[#e5e5e5]" aria-hidden />
+                <button
+                  type="button"
+                  className="h-11 flex-1 text-[16px] font-medium text-[#fa5151] transition-colors active:bg-[#fff1f1]"
+                  onClick={() => void applyDeleteThread('hard')}
+                >
+                  删除并退出
+                </button>
+              </div>
+            ) : (
+              <div className="flex flex-col border-t border-[#e5e5e5]">
+                <button
+                  type="button"
+                  className="h-11 w-full text-[16px] font-medium text-[#fa5151] transition-colors active:bg-[#fff1f1]"
+                  onClick={() => void applyDeleteThread('hard')}
+                >
+                  彻底删除（清除上下文参考）
+                </button>
+                <div className="h-px w-full bg-[#e5e5e5]" aria-hidden />
+                <button
+                  type="button"
+                  className="h-11 w-full text-[16px] text-[#576b95] transition-colors active:bg-[#f2f2f2]"
+                  onClick={() => void applyDeleteThread('soft')}
+                >
+                  仅清空界面（保留 AI 参考）
+                </button>
+                <div className="h-px w-full bg-[#e5e5e5]" aria-hidden />
+                <button
+                  type="button"
+                  className="h-11 w-full text-[16px] text-[#666666] transition-colors active:bg-[#f2f2f2]"
+                  onClick={() => setDeleteConfirmThread(null)}
+                >
+                  取消
+                </button>
+              </div>
+            )}
           </div>
         </div>
       ) : null}
@@ -3391,9 +3541,15 @@ function WeChatAppInner({ onBack }: Props) {
     setThemeOpen(true)
   }, [dismissAppearanceGuide, showAppearanceGuide])
   const [profileEditOpen, setProfileEditOpen] = useState(false)
+  const [memoryTraceOpen, setMemoryTraceOpen] = useState(false)
+  const memoryTraceSnapshot = useSyncExternalStore(subscribeLastMemoryTrace, getLastMemoryTrace, getLastMemoryTrace)
+  useEffect(() => {
+    void hydrateMemoryTraceFromIndexedDb()
+  }, [])
   const [hideDatingChrome, setHideDatingChrome] = useState(false)
   const [discoverMomentsOpen, setDiscoverMomentsOpen] = useState(false)
   const [chatOtherTyping, setChatOtherTyping] = useState(false)
+  const [chatOpponentRevealPending, setChatOpponentRevealPending] = useState(false)
   const newFriendsUnreadCount = useMemo(() => pendingNewFriendRequests.filter((x) => !!x.unread).length, [pendingNewFriendRequests])
 
   const personaContactsForGroupPick = useMemo(
@@ -3600,10 +3756,13 @@ function WeChatAppInner({ onBack }: Props) {
           ch?.name ||
           (r.characterId === WECHAT_LUMI_PEER_CHARACTER_ID ? 'Lumi' : '对方')
         const avatar = ch?.avatarUrl?.trim() || (r.characterId === WECHAT_LUMI_PEER_CHARACTER_ID ? lumiWechatAvatarUrl : '')
-        const convKey = wechatConversationKey(r.characterId, pid)
+        const sessionPid = resolvePrivateChatSessionPlayerIdentityId(ch, playerIdentityId)
+        const convKey = wechatConversationKey(r.characterId, sessionPid)
         const unreadCount = await personaDb.countUnreadWeChatCharacterMessages(convKey)
         const msgs = await personaDb.listWeChatChatMessagesRecent({ conversationKey: convKey, limit: 200 })
+        const verificationEpochMs = r.verificationEpochMs ?? r.createdAt
         const messages: FriendRequest['messages'] = msgs
+          .filter((m) => m.timestamp >= verificationEpochMs)
           .filter((m) => !m.images?.length && !m.redPacket && !m.transfer && !m.callStatus && !m.replyTo)
           .map((m) => ({
             id: m.id,
@@ -4176,7 +4335,10 @@ function WeChatAppInner({ onBack }: Props) {
   }, [route.name, activeTabBgFill, pageStyle?.pageBg, pageStyle?.pageBgImageUrl])
 
   useEffect(() => {
-    if (route.name !== 'chat') setChatOtherTyping(false)
+    if (route.name !== 'chat') {
+      setChatOtherTyping(false)
+      setChatOpponentRevealPending(false)
+    }
   }, [route.name])
 
   useEffect(() => {
@@ -4197,14 +4359,26 @@ function WeChatAppInner({ onBack }: Props) {
     if (!pid) return
     void (async () => {
       const rows = await personaDb.listFriendRequests({ playerIdentityId: pid, pendingOnly: true })
-      await Promise.all(rows.map((r) => personaDb.markWeChatConversationReadToLatest(wechatConversationKey(r.characterId, pid))))
+      await Promise.all(
+        rows.map(async (r) => {
+          const ch = await personaDb.getCharacter(r.characterId)
+          const ck = resolvePrivateWeChatConversationKey(r.characterId, ch, playerIdentityId)
+          return personaDb.markWeChatConversationReadToLatest(ck)
+        }),
+      )
       emitWeChatStorageChanged()
       await refreshPendingNewFriendRequests()
     })()
   }, [playerIdentityId, refreshPendingNewFriendRequests])
 
   const buildFriendRequestAiReply = useCallback(
-    async (params: { characterId: string; messages: FriendRequest['messages']; replyBias?: string }) => {
+    async (params: {
+      characterId: string
+      messages: FriendRequest['messages']
+      replyBias?: string
+      /** 本地累计删除次数（含本轮）；缺省则不注入「第几次删」偏向 */
+      contactDeletionCount?: number
+    }) => {
       const character = await personaDb.getCharacter(params.characterId)
       if (!character) throw new Error('角色不存在')
       const pid = playerIdentityId?.trim() || ''
@@ -4218,40 +4392,31 @@ function WeChatAppInner({ onBack }: Props) {
         const block = formatWorldBackgroundForPrompt(wbg)
         if (block.trim()) worldBackgroundPrompt = block
       }
-      const privMem = (await personaDb.listCharacterMemoriesForCharacter(character.id)).filter(
-        (m) => m.memoryScope !== 'group',
-      )
-      const groupMem = await personaDb.listGroupMemoriesInvolvingCharacter(character.id)
-      const allMemories = [...privMem, ...groupMem].sort((a, b) => a.createdAt - b.createdAt)
-      let longTermMemoryNotes = ''
-      if (allMemories.length <= 10) {
-        longTermMemoryNotes = [...allMemories]
-          .sort((a, b) => a.createdAt - b.createdAt)
-          .map((m, i) => `${i + 1}. ${m.content.trim()}`)
-          .join('\n')
-      } else {
-        const keywords = extractMemoryKeywordsFromText(params.messages.map((m) => m.content).join('\n'))
-        const scored = allMemories
-          .map((m) => {
-            const text = m.content.toLowerCase()
-            let score = 0
-            for (const kw of keywords) if (text.includes(kw)) score += 1
-            return { memory: m, score }
-          })
-          .sort((a, b) => (b.score === a.score ? b.memory.updatedAt - a.memory.updatedAt : b.score - a.score))
-        const selected = scored.filter((x) => x.score > 0).slice(0, 8).map((x) => x.memory)
-        const fallback = scored.slice(0, 3).map((x) => x.memory)
-        const merged = (selected.length ? selected : fallback)
-          .sort((a, b) => a.createdAt - b.createdAt)
-          .map((m) => m.content.trim())
-        longTermMemoryNotes = merged.map((line, i) => `${i + 1}. ${line}`).join('\n')
-      }
       const transcript: ChatTranscriptTurn[] = params.messages.map((m) => ({
         from: m.sender === 'user' ? 'self' : 'other',
         text: m.content,
       }))
-      const offlineDatingPlotsContext = await loadOfflineDatingPlotsPromptBlock(character.id, character.name ?? null)
-      const peerDisplayName = state.profile.displayName?.trim() || '朋友'
+      const convKey = resolvePrivateWeChatConversationKey(character.id, character, playerIdentityId)
+      const sessionPid = resolvePrivateChatSessionPlayerIdentityId(character, playerIdentityId)
+      const ordinalBias =
+        typeof params.contactDeletionCount === 'number' && params.contactDeletionCount > 0
+          ? buildFriendRequestDeletionOrdinalBias(params.contactDeletionCount)
+          : ''
+      const mergedExtra = [params.replyBias, ordinalBias].filter(Boolean).join('\n\n')
+      const replyBiasFull = buildFriendRequestReplyBias({ messages: params.messages, extraBias: mergedExtra })
+      const pack = await buildFriendRequestPrivatePromptPack({
+        characterId: character.id,
+        conversationKey: convKey,
+        sessionPlayerIdentityId: sessionPid,
+        apiConfig,
+        transcript,
+        biasTextForMemoryHaystack: replyBiasFull,
+      })
+      const peerDisplayName =
+        playerIdentity?.wechatNickname?.trim() ||
+        playerIdentity?.name?.trim() ||
+        state.profile.displayName?.trim() ||
+        '朋友'
       const friendReqWbIds = [character.id?.trim()].filter(Boolean) as string[]
       const ai = await requestWeChatPeerReplyBubbles({
         apiConfig,
@@ -4260,10 +4425,14 @@ function WeChatAppInner({ onBack }: Props) {
         playerDisplayName: peerDisplayName,
         transcript,
         promptMode: 'persona',
-        longTermMemoryNotes: longTermMemoryNotes || undefined,
+        longTermMemoryNotes: pack.memory || undefined,
         worldBackgroundPrompt,
-        offlineDatingPlotsContext: offlineDatingPlotsContext || undefined,
-        replyBias: buildFriendRequestReplyBias({ messages: params.messages, extraBias: params.replyBias }),
+        offlineDatingPlotsContext: pack.offlineDatingPlotsContext || undefined,
+        recentGroupChatsReference: pack.recentGroupChatsReference || undefined,
+        unsummarizedPrivateNotes: pack.unsPrivate || undefined,
+        unsummarizedGroupNotes: pack.unsGroup || undefined,
+        replyBias: replyBiasFull,
+        includeThinkingChain: true,
         currentTimeMs: getCurrentTimeMs(),
         chatMemberIds: friendReqWbIds,
         globalWechatPlate: 'private_chat',
@@ -4281,6 +4450,7 @@ function WeChatAppInner({ onBack }: Props) {
     (requestId: string, action: 'accepted' | 'declined') => {
       void (async () => {
         const target = pendingNewFriendRequests.find((x) => x.id === requestId)
+        const frRow = await personaDb.getFriendRequestById(requestId)
         await personaDb.setFriendRequestStatus(requestId, action)
         if (action === 'accepted' && target?.characterId) {
           const ch = await personaDb.getCharacter(target.characterId)
@@ -4294,13 +4464,40 @@ function WeChatAppInner({ onBack }: Props) {
                 isStarred: !!ch.isStarred,
               },
             ])
+            /**
+             * 与 ChatRoom 同一会话键。
+             * 删除联系人（尤其「告知对方」软删）时旧气泡仍在 IndexedDB，仅靠 uiOnlyHiddenBeforeTimestamp 隐藏；
+             * 若此处「清空 UI 隐藏」，会把回收站归档对应的旧记录一并露出。
+             * 因此同意好友后：**保留**隐藏分割线在本轮「验证阶段」起点之前（verificationEpochMs − 1），
+             * 聊天室只默认展示本轮验证以来的消息；更早的记录仍只能从回收站手动恢复（快照 uiClearOnly）。
+             */
+            const convKey = resolvePrivateWeChatConversationKey(target.characterId, ch, playerIdentityId)
+            const sessionPid = resolvePrivateChatSessionPlayerIdentityId(ch, playerIdentityId)
+            const epochMs =
+              frRow?.verificationEpochMs ??
+              frRow?.createdAt ??
+              target.requestTimeMs ??
+              0
+            const keepHideBeforeTimestamp =
+              typeof epochMs === 'number' && Number.isFinite(epochMs) && epochMs > 0 ? Math.max(0, epochMs - 1) : null
+
+            await personaDb.upsertChatConversationSettings({
+              conversationKey: convKey,
+              peerCharacterId: target.characterId,
+              playerIdentityId: sessionPid,
+              ...(keepHideBeforeTimestamp != null
+                ? { uiOnlyHiddenBeforeTimestamp: keepHideBeforeTimestamp }
+                : { clearUiOnlyHiddenBeforeTimestamp: true }),
+              hiddenFromMessageList: false,
+              friendRequestAcceptedAtMs: Date.now(),
+            })
           }
         }
         emitWeChatStorageChanged()
         await refreshPendingNewFriendRequests()
       })()
     },
-    [pendingNewFriendRequests, refreshPendingNewFriendRequests, replaceWeChatPersonaContacts],
+    [pendingNewFriendRequests, playerIdentityId, refreshPendingNewFriendRequests, replaceWeChatPersonaContacts],
   )
 
   const replyingFriendRequestIdsRef = useRef<Set<string>>(new Set())
@@ -4315,14 +4512,16 @@ function WeChatAppInner({ onBack }: Props) {
       if (playerIdentityId === null) return
       const pid = playerIdentityId.trim()
       if (!pid) return
-      const convKey = wechatConversationKey(target.characterId, pid)
+      const ch = await personaDb.getCharacter(target.characterId)
+      const sessionPid = resolvePrivateChatSessionPlayerIdentityId(ch, playerIdentityId)
+      const convKey = resolvePrivateWeChatConversationKey(target.characterId, ch, playerIdentityId)
       const nowMs = Date.now()
       const userText = sanitizeFriendRequestPlainText(replyText)
       if (!userText) return
       await personaDb.appendWeChatChatMessage({
         id: `fr-user-${nowMs}-${Math.random().toString(36).slice(2, 7)}`,
         characterId: target.characterId,
-        playerIdentityId: pid,
+        playerIdentityId: sessionPid,
         type: 'player',
         content: userText,
         timestamp: nowMs,
@@ -4350,8 +4549,9 @@ function WeChatAppInner({ onBack }: Props) {
       void (async () => {
         try {
           let target = pendingNewFriendRequests.find((x) => x.id === requestId) ?? null
+          const frMeta = await personaDb.getFriendRequestById(requestId)
           if (!target) {
-            const row = await personaDb.getFriendRequestById(requestId)
+            const row = frMeta
             if (!row) return
             target = {
               id: row.id,
@@ -4368,9 +4568,13 @@ function WeChatAppInner({ onBack }: Props) {
           if (playerIdentityId === null) return
           const pid = playerIdentityId.trim()
           if (!pid) return
-          const convKey = wechatConversationKey(target.characterId, pid)
+          const chRow = await personaDb.getCharacter(target.characterId)
+          const sessionPid = resolvePrivateChatSessionPlayerIdentityId(chRow, playerIdentityId)
+          const convKey = resolvePrivateWeChatConversationKey(target.characterId, chRow, playerIdentityId)
+          const verificationEpochMs = frMeta ? (frMeta.verificationEpochMs ?? frMeta.createdAt) : target.requestTimeMs
           const recent = await personaDb.listWeChatChatMessagesRecent({ conversationKey: convKey, limit: 200 })
           const messages: FriendRequest['messages'] = recent
+            .filter((m) => m.timestamp >= verificationEpochMs)
             .filter((m) => !m.images?.length && !m.redPacket && !m.transfer && !m.callStatus && !m.replyTo)
             .map((m) => ({
               id: m.id,
@@ -4382,9 +4586,11 @@ function WeChatAppInner({ onBack }: Props) {
             .filter((m) => m.content.length > 0)
           const last = messages[messages.length - 1]
           if (!last || last.sender !== 'user') return
+          const delCount = await getContactDeletionCount(target.characterId, sessionPid)
           const ai = await buildFriendRequestAiReply({
             characterId: target.characterId,
             messages,
+            contactDeletionCount: delCount > 0 ? delCount : undefined,
           })
           const aiTexts = ai.bubbles.map((x) => sanitizeFriendRequestPlainText(x)).filter(Boolean)
           if (!aiTexts.length) return
@@ -4405,7 +4611,7 @@ function WeChatAppInner({ onBack }: Props) {
             await personaDb.appendWeChatChatMessage({
               id: `fr-ai-${baseTs}-${i}-${Math.random().toString(36).slice(2, 7)}`,
               characterId: target.characterId,
-              playerIdentityId: pid,
+              playerIdentityId: sessionPid,
               type: 'character',
               content: seg,
               timestamp: ts,
@@ -4487,8 +4693,9 @@ function WeChatAppInner({ onBack }: Props) {
           title={route.name === 'chat' && chatPeerContact ? chatPeerContact.remarkName : title}
           titleSub={route.name === 'chat' && chatPeerContact?.tag ? chatPeerContact.tag : undefined}
           showTyping={route.name === 'chat' && chatOtherTyping}
+          titleTypingAlternate={route.name === 'chat' && chatOpponentRevealPending}
           typingText={
-            route.name === 'chat' && route.chat.kind === 'group' ? '成员正在回复…' : '对方正在输入…'
+            route.name === 'chat' && route.chat.kind === 'group' ? '成员正在输入…' : '对方正在输入…'
           }
           showBack={route.name !== 'tabs'}
           showHome={route.name === 'tabs'}
@@ -4708,6 +4915,7 @@ function WeChatAppInner({ onBack }: Props) {
                     signature={state.profile.signature}
                     avatarUrl={state.profile.avatarImageUrl || undefined}
                     onOpenProfileCard={() => setProfileEditOpen(true)}
+                    onOpenMemoryTrace={() => setMemoryTraceOpen(true)}
                     onMenuItemClick={(id) => {
                       if (id === 'settings') setWxGlobalNav({ screen: 'root' })
                       if (id === 'identity') setRoute({ name: 'player-identities' })
@@ -4733,6 +4941,7 @@ function WeChatAppInner({ onBack }: Props) {
                 <ChatRoom
                   onBack={exitChatToMessages}
                   onOtherTypingChange={setChatOtherTyping}
+                  onOpponentRevealQueueActive={setChatOpponentRevealPending}
                   skipBusySignal={chatSkipBusySignal}
                   personaCharacterId={chatRoomPersonaCharacterId ?? undefined}
                   playerDisplayName={state.profile.displayName}
@@ -5208,79 +5417,106 @@ function WeChatAppInner({ onBack }: Props) {
                       returnTo: route.returnTo,
                     })
                   }
-                  onDeleteContact={async (notifyPeer) => {
+                  onDeleteContact={async (notifyPeer, chatHistoryMode) => {
                     if (route.target.kind !== 'persona') return
                     const characterId = route.target.characterId
-                    removeWeChatPersonaContactsByCharacterIds([characterId])
-                    if (!notifyPeer) {
-                      await personaDb.deleteCharacterDataKeepNetworkRelationships([characterId])
-                      await personaDb.deletePlayerIdentityRelationshipsTouchingCharacterIds([characterId])
-                    } else {
-                      let nick = route.remarkName?.trim() || '对方'
-                      let avatar = route.avatarUrl || ''
-                      let firstMessage = ''
-                      try {
-                        const ch = await personaDb.getCharacter(characterId)
-                        if (ch) {
-                          nick = ch.remark?.trim() || ch.wechatNickname?.trim() || ch.name || nick
-                          avatar = ch.avatarUrl?.trim() || avatar
+                    const appPid = playerIdentityId?.trim() || ''
+                    const remarkNameSeed = route.remarkName?.trim() || '对方'
+                    const avatarUrlSeed = route.avatarUrl || ''
+                    /** 先于一切 await：否则任一步抛错或耗时过长都会一直停在资料设置/删除向导 */
+                    setRoute({ name: 'tabs', tab: 'contacts' })
+                    try {
+                      const chForConv = await personaDb.getCharacter(characterId)
+                      const sessionPid = resolvePrivateChatSessionPlayerIdentityId(chForConv, playerIdentityId)
+                      const convKey = resolvePrivateWeChatConversationKey(characterId, chForConv, playerIdentityId)
+
+                      removeWeChatPersonaContactsByCharacterIds([characterId])
+                      if (!notifyPeer) {
+                        if (chatHistoryMode === 'soft' && convKey) {
+                          await personaDb.hideWeChatConversationHistoryFromUiKeepAiContext(convKey)
+                          await personaDb.deleteCharacterDataKeepNetworkRelationships([characterId], {
+                            preserveWeChatConversationKeys: [convKey],
+                          })
+                        } else {
+                          await personaDb.deleteCharacterDataKeepNetworkRelationships([characterId])
                         }
-                        const ai = await buildFriendRequestAiReply({
-                          characterId,
-                          messages: [
-                            {
-                              id: `msg-del-seed-${Date.now()}`,
-                              sender: 'user',
-                              content: '我把你从通讯录删除了。',
-                              timestamp: new Date().toLocaleString('zh-CN', { hour12: false }),
-                            },
-                          ],
-                          replyBias:
-                            '这是“重新加好友”的验证申请首条消息。必须只输出一条普通文字（单行、无换行、无emoji、无特殊格式），长度8~28字；语气像真人发验证申请，贴合该角色人设、与对方当前关系状态（刚被删除后尝试重新添加），可带轻微在意/疑问，但不要变成日常闲聊。',
-                        })
-                        if (ai.nickname.trim()) nick = ai.nickname
-                        if (ai.avatar.trim()) avatar = ai.avatar
-                        firstMessage = sanitizeFriendRequestPlainText(ai.bubbles[0] ?? '')
-                      } catch {
-                        // AI 或角色读取失败时走兜底
+                        await personaDb.deletePlayerIdentityRelationshipsTouchingCharacterIds([characterId])
+                        await incrementContactDeletionCount(characterId, sessionPid)
+                      } else {
+                        let nick = remarkNameSeed
+                        let avatar = avatarUrlSeed
+                        let firstMessage = ''
+                        try {
+                          const ch = chForConv
+                          if (ch) {
+                            nick = ch.remark?.trim() || ch.wechatNickname?.trim() || ch.name || nick
+                            avatar = ch.avatarUrl?.trim() || avatar
+                          }
+                          const deletionCount = await incrementContactDeletionCount(characterId, sessionPid)
+                          const seedUserContent =
+                            deletionCount <= 1
+                              ? '我把你从通讯录删除了。'
+                              : `我把你从通讯录删除了。（这是我第${deletionCount}次删你了）`
+                          const ai = await buildFriendRequestAiReply({
+                            characterId,
+                            messages: [
+                              {
+                                id: `msg-del-seed-${Date.now()}`,
+                                sender: 'user',
+                                content: seedUserContent,
+                                timestamp: new Date().toLocaleString('zh-CN', { hour12: false }),
+                              },
+                            ],
+                            replyBias:
+                              '这是“重新加好友”的验证申请首条消息。必须只输出一条普通文字（单行、无换行、无emoji、无特殊格式），长度8~28字；语气像真人发验证申请，贴合该角色人设、与对方当前关系状态（刚被删除后尝试重新添加），可带轻微在意/疑问，但不要变成日常闲聊。',
+                            contactDeletionCount: deletionCount,
+                          })
+                          if (ai.nickname.trim()) nick = ai.nickname
+                          if (ai.avatar.trim()) avatar = ai.avatar
+                          firstMessage = sanitizeFriendRequestPlainText(ai.bubbles[0] ?? '')
+                        } catch {
+                          // AI 或角色读取失败时走兜底
+                        }
+                        if (!firstMessage) firstMessage = '怎么把我删了？'
+                        firstMessage = sanitizeFriendRequestPlainText(firstMessage)
+                        if (appPid) {
+                          const verificationEpochMs = Date.now()
+                          const requestId = `fr-${appPid}-${characterId}`
+                          await personaDb.upsertFriendRequest({
+                            id: requestId,
+                            characterId,
+                            playerIdentityId: appPid,
+                            source: '来自微信号搜索',
+                            status: 'pending',
+                            createdAt: verificationEpochMs,
+                            updatedAt: verificationEpochMs,
+                            verificationEpochMs,
+                          })
+                          if (convKey) {
+                            if (chatHistoryMode === 'hard') {
+                              await personaDb.deleteAllWeChatMessagesForConversation(convKey)
+                            } else {
+                              await personaDb.hideWeChatConversationHistoryFromUiKeepAiContext(convKey)
+                            }
+                          }
+                          await personaDb.appendWeChatChatMessage({
+                            id: `${requestId}-del-${verificationEpochMs}-${Math.random().toString(36).slice(2, 7)}`,
+                            characterId,
+                            playerIdentityId: sessionPid,
+                            type: 'character',
+                            content: firstMessage,
+                            timestamp: verificationEpochMs,
+                            isRead: false,
+                            conversationKey: convKey,
+                            notifyPeerTitle: nick,
+                          })
+                          await personaDb.markWeChatConversationUnread(convKey)
+                          emitWeChatStorageChanged()
+                          await refreshPendingNewFriendRequests()
+                        }
                       }
-                      if (!firstMessage) firstMessage = '怎么把我删了？'
-                      firstMessage = sanitizeFriendRequestPlainText(firstMessage)
-                      const pid = playerIdentityId?.trim() || ''
-                      if (pid) {
-                        const now = Date.now()
-                        const requestId = `fr-${pid}-${characterId}`
-                        await personaDb.upsertFriendRequest({
-                          id: requestId,
-                          characterId,
-                          playerIdentityId: pid,
-                          source: '来自微信号搜索',
-                          status: 'pending',
-                          createdAt: now,
-                          updatedAt: now,
-                        })
-                        const convKey = wechatConversationKey(characterId, pid)
-                        await personaDb.deleteAllWeChatMessagesForConversation(convKey)
-                        await personaDb.appendWeChatChatMessage({
-                          id: `${requestId}-del-${now}-${Math.random().toString(36).slice(2, 7)}`,
-                          characterId,
-                          playerIdentityId: pid,
-                          type: 'character',
-                          content: firstMessage,
-                          timestamp: now,
-                          isRead: false,
-                          conversationKey: convKey,
-                          notifyPeerTitle: nick,
-                        })
-                        await personaDb.markWeChatConversationUnread(convKey)
-                        emitWeChatStorageChanged()
-                        await refreshPendingNewFriendRequests()
-                      }
-                    }
-                    if (route.returnTo.mode === 'tabs-contacts') {
-                      setRoute({ name: 'tabs', tab: 'contacts' })
-                    } else {
-                      setRoute({ name: 'chat', chat: route.returnTo.chat })
+                    } catch {
+                      // 已回到通讯录；避免未捕获 Promise 影响后续操作
                     }
                   }}
                 />
@@ -5577,6 +5813,7 @@ function WeChatAppInner({ onBack }: Props) {
         profile={state.profile}
         onSave={setProfile}
       />
+      <MemoryTraceModal open={memoryTraceOpen} onClose={() => setMemoryTraceOpen(false)} data={memoryTraceSnapshot} />
 
       <AnimatePresence>
         {consoleOpen ? (

@@ -1,4 +1,5 @@
 import type { Character, PlayerIdentity, WorldBook, WorldBookItem } from './types'
+import { genderLabelZh } from './utils'
 import { formatWorldBookItemLineForPrompt, normalizeWorldBookPronounGuide, worldBookPronounGuideAnnotation } from './worldBookPronounGuide'
 import type { ApiConfig } from '../../api/types'
 import { LUMI_SYS_TOKENS_TOTAL_KEY } from '../../dataArchive/constants'
@@ -71,7 +72,7 @@ export function formatLinkedNpcsForWorldBookPrompt(npcs: Character[]): string {
     const parts: string[] = [`${n.name || '未命名'}`]
     if (n.wechatNickname?.trim()) parts.push(`网称「${n.wechatNickname.trim()}」`)
     if (n.identity?.trim()) parts.push(`身份「${n.identity.trim()}」`)
-    parts.push(`性别${n.gender}`)
+    parts.push(`性别${genderLabelZh(n.gender)}`)
     if (n.age != null && Number.isFinite(n.age)) parts.push(`年龄${n.age}`)
     if (n.mbti?.trim()) parts.push(`MBTI ${n.mbti.trim()}`)
     const ii = (n.interests ?? []).filter(Boolean)
@@ -809,7 +810,7 @@ export async function generateCharacterBio(params: {
       role: 'user',
       content:
         `请根据下面的世界书条目内容，写出该角色的人设总结（第三人称，<=200字，信息完整且贴合人设，不矛盾）。若提供世界背景，须与世界背景及世界书同时自洽（冲突时以世界书为准）。\n\n` +
-        `基础信息：姓名=${c.name || '未命名'}；微信昵称=${c.wechatNickname?.trim() || '未填'}；性别=${c.gender}；年龄=${c.age ?? '未知'}；生日=${c.birthdayMD || '未知'}；星座=${c.zodiac || '未知'}；身份=${c.identity}；MBTI=${c.mbti || '未知'}。\n\n` +
+        `基础信息：姓名=${c.name || '未命名'}；微信昵称=${c.wechatNickname?.trim() || '未填'}；性别=${genderLabelZh(c.gender)}；年龄=${c.age ?? '未知'}；生日=${c.birthdayMD || '未知'}；星座=${c.zodiac || '未知'}；身份=${c.identity}；MBTI=${c.mbti || '未知'}。\n\n` +
         `操作者身份参考：姓名=${params.identityContext?.name || '你'}；职业/身份=${params.identityContext?.identity || '未设定'}；MBTI=${params.identityContext?.mbti || '未设定'}。\n\n` +
         (wbg ? `【世界背景】\n${wbg}\n\n` : '') +
         `世界书内容：\n${worldBookText}\n`,
@@ -847,7 +848,7 @@ export async function generateCharacterOpeningLines(params: {
         `3) 行与行要有连贯感，但不要重复同义句。\n` +
         `4) 只输出多行正文，不要任何额外说明。\n\n` +
         (bias ? `本次生成偏向（最高优先级，必须遵守）：${bias}\n` : '') +
-        `角色信息：姓名=${c.name || '未命名'}；性别=${c.gender}；年龄=${c.age ?? '未知'}；身份=${c.identity || '未设定'}；MBTI=${c.mbti || '未知'}；` +
+        `角色信息：姓名=${c.name || '未命名'}；性别=${genderLabelZh(c.gender)}；年龄=${c.age ?? '未知'}；身份=${c.identity || '未设定'}；MBTI=${c.mbti || '未知'}；` +
         `座右铭=${c.motto?.trim() || '未填'}；简介=${c.bio?.trim() || '未填'}。\n` +
         `操作者身份参考：姓名=${params.identityContext?.name || '你'}；职业/身份=${params.identityContext?.identity || '未设定'}；MBTI=${params.identityContext?.mbti || '未设定'}。\n` +
         (wbg ? `世界背景：${wbg.slice(0, 1200)}\n` : ''),
@@ -903,7 +904,7 @@ export async function generateWorldBookItemContent(params: {
         `- 总长度约 ${targetChars} 个汉字（含标点），允许略多略少但不要写成超长散文；与已有条目及基础信息逻辑一致；不要标题、不要分点罗列。`,
         '',
         '基础信息（仅作参考，勿写进正文当复述清单）：',
-        `我对外使用的称呼：${params.character.name || '未填'}；微信/线上昵称：${params.character.wechatNickname?.trim() || '未填'}；性别：${params.character.gender}；年龄：${params.character.age ?? '未知'}；职业/身份：${params.character.identity || '未填'}。`,
+        `我对外使用的称呼：${params.character.name || '未填'}；微信/线上昵称：${params.character.wechatNickname?.trim() || '未填'}；性别：${genderLabelZh(params.character.gender)}；年龄：${params.character.age ?? '未知'}；职业/身份：${params.character.identity || '未填'}。`,
         `生日：${params.character.birthdayMD || '未知'}；星座：${params.character.zodiac || '未知'}；MBTI：${params.character.mbti || '未知'}。`,
         `兴趣：${(params.character.interests ?? []).filter(Boolean).join('、') || '未填'}；雷点：${(params.character.painPoints ?? []).filter(Boolean).join('、') || '未填'}。`,
         params.character.bio?.trim()
@@ -919,7 +920,7 @@ export async function generateWorldBookItemContent(params: {
     : [
         `你在为小说式角色建立世界书条目。请输出约 ${targetChars} 个汉字（含标点）的中文内容，连贯、不冲突、不突兀。`,
         '下列角色基础信息仅供参考，禁止在正文中做「我叫○」「生于○月○日」「○○座」式档案复读；只写本条主题相关且与已有条目不重复、不矛盾的内容。',
-        `角色：${params.character.name || '未填'}，性别：${params.character.gender}，年龄：${params.character.age ?? '未知'}，身份：${params.character.identity || '未填'}。`,
+        `角色：${params.character.name || '未填'}，性别：${genderLabelZh(params.character.gender)}，年龄：${params.character.age ?? '未知'}，身份：${params.character.identity || '未填'}。`,
         `微信昵称（可与实名不同；已填写则文中称呼、人设须与之自洽，勿当词条复读）：${params.character.wechatNickname?.trim() || '未填'}。`,
         `生日：${params.character.birthdayMD || '未知'}，星座：${params.character.zodiac || '未知'}，MBTI：${params.character.mbti || '未知'}。`,
         `兴趣：${(params.character.interests ?? []).filter(Boolean).join('、') || '未填'}；雷点：${(params.character.painPoints ?? []).filter(Boolean).join('、') || '未填'}。`,
@@ -1126,7 +1127,7 @@ export async function generateWechatProfilesForPersonaCharacters(params: {
     return [
       `characterId（必须原样回传）：${c.id}`,
       `姓名：${c.name || '未命名'}`,
-      `性别/年龄：${c.gender} / ${c.age ?? '未知'}`,
+      `性别/年龄：${genderLabelZh(c.gender)} / ${c.age ?? '未知'}`,
       `身高：${(c.height || '').slice(0, 30) || '未填'}`,
       `体重：${(c.weight || '').slice(0, 30) || '未填'}`,
       `身份：${c.identity}`,

@@ -7,15 +7,11 @@ import { personaDb } from './idb'
 import { DEFAULT_WORLD_BACKGROUND_ID } from './worldBackgroundConstants'
 import { formatWorldBackgroundForPrompt } from './worldBackgroundFormat'
 import { generateNpcNetworkWithAi } from './npcNetworkGenerate'
-import { uid } from './utils'
+import { genderLabelZh, uid } from './utils'
 import type { ApiConfig } from '../../api/types'
 import { useCustomization } from '../../../CustomizationContext'
 
 const REL_BIAS_OPTIONS = ['家人', '朋友', '同事', '同学', '恋人', '敌人', '陌生人', '合作伙伴'] as const
-
-function genderLabel(g: Character['gender']) {
-  return g === 'male' ? '男' : g === 'female' ? '女' : '其他'
-}
 
 const GRAPH_W = 880
 const GRAPH_H = Math.round(520 * (2 / 3))
@@ -1845,7 +1841,7 @@ function NpcCard({ npc, onEdit, onDelete }: { npc: Character; onEdit: () => void
               {npc.name}
             </span>
             <span className="text-[12px]" style={{ color: '#8e8e8e' }}>
-              {genderLabel(npc.gender)}
+              {genderLabelZh(npc.gender)}
             </span>
           </div>
           <p className="mt-1 text-[14px]" style={{ color: '#8e8e8e' }}>

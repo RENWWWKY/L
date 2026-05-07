@@ -13,6 +13,8 @@ import { VoiceprintHubApp } from './apps/voiceprint/VoiceprintHubApp'
 import { DataArchiveApp } from './apps/dataArchive/DataArchiveApp'
 import { LUMI_SYS_FIRST_BOOT_KEY } from './apps/dataArchive/constants'
 import { LoreArchiveApp } from './apps/loreArchive/LoreArchiveApp'
+import { RecycleBinApp } from './apps/recycleBin/RecycleBinApp'
+import { personaDb } from './apps/wechat/newFriendsPersona/idb'
 import { WeChatApp } from './apps/wechat/WeChatApp'
 import { WorldbookLoreProvider } from './worldbook/worldbookLoreStore'
 import type { AppSlot } from './types'
@@ -90,6 +92,13 @@ export function PhoneApp() {
   }, [])
 
   useEffect(() => {
+    const run = () => void personaDb.purgeExpiredIndexedTrash()
+    run()
+    const t = window.setInterval(run, 120000)
+    return () => window.clearInterval(t)
+  }, [])
+
+  useEffect(() => {
     const onOpen = (e: Event) => {
       const ce = e as CustomEvent<{ id: AppSlot['id'] }>
       const id = ce.detail?.id
@@ -152,6 +161,8 @@ export function PhoneApp() {
                   <DataArchiveApp onBack={goHome} />
                 ) : route.id === 'loreArchive' ? (
                   <LoreArchiveApp onBack={goHome} />
+                ) : route.id === 'recycleBin' ? (
+                  <RecycleBinApp onBack={goHome} />
                 ) : (
                   <AppPlaceholderScreen appId={route.id} onBack={goHome} />
                 )}

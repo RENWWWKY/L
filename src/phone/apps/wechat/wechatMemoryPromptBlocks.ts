@@ -9,6 +9,9 @@ import {
   wechatGroupConversationKey,
 } from './wechatConversationKey'
 
+/** 未总结聊天摘录单块汉字硬顶（默认入参仍较小；约会等可传入更大 maxChars） */
+const UNSUMMARIZED_BLOCK_CHAR_HARD_MAX = 500_000
+
 /** 合并多段文本供「关键词长期记忆」命中；规范空白并小写拉丁字母。 */
 export function buildMemoryRelevanceHaystack(parts: Array<string | undefined | null>): string {
   return String(
@@ -93,7 +96,7 @@ export async function formatUnsummarizedPrivateChatBlock(params: {
   if (!ck) return ''
   const cursor = await personaDb.getMemorySummaryCursorTimestamp(ck)
   const fromTs = (cursor ?? 0) + 1
-  const lim = Math.max(1, Math.min(200, Math.floor(params.maxMessages ?? 120)))
+  const lim = Math.max(1, Math.min(500, Math.floor(params.maxMessages ?? 120)))
   const rows = await personaDb.listWeChatChatMessagesFromTimestampAsc({
     conversationKey: ck,
     fromTimestampInclusive: fromTs,
@@ -107,7 +110,7 @@ export async function formatUnsummarizedPrivateChatBlock(params: {
   }
   if (!lines.length) return ''
   let body = lines.join('\n')
-  const charCap = Math.max(400, Math.min(8000, Math.floor(params.maxChars ?? 3200)))
+  const charCap = Math.max(400, Math.min(UNSUMMARIZED_BLOCK_CHAR_HARD_MAX, Math.floor(params.maxChars ?? 3200)))
   if (body.length > charCap) {
     const parts = body.split('\n')
     while (parts.join('\n').length > charCap && parts.length > 4) parts.shift()
@@ -133,7 +136,7 @@ export async function formatUnsummarizedCurrentGroupChatBlock(params: {
   const ck = wechatGroupConversationKey(gid, pid)
   const cursor = await personaDb.getMemorySummaryCursorTimestamp(ck)
   const fromTs = (cursor ?? 0) + 1
-  const lim = Math.max(1, Math.min(200, Math.floor(params.maxMessages ?? 120)))
+  const lim = Math.max(1, Math.min(500, Math.floor(params.maxMessages ?? 120)))
   const rows = await personaDb.listWeChatChatMessagesFromTimestampAsc({
     conversationKey: ck,
     fromTimestampInclusive: fromTs,
@@ -147,7 +150,7 @@ export async function formatUnsummarizedCurrentGroupChatBlock(params: {
   }
   if (!lines.length) return ''
   let body = lines.join('\n')
-  const charCap = Math.max(400, Math.min(8000, Math.floor(params.maxChars ?? 3600)))
+  const charCap = Math.max(400, Math.min(UNSUMMARIZED_BLOCK_CHAR_HARD_MAX, Math.floor(params.maxChars ?? 3600)))
   if (body.length > charCap) {
     const parts = body.split('\n')
     while (parts.join('\n').length > charCap && parts.length > 4) parts.shift()
@@ -217,7 +220,7 @@ export async function buildNpcGroupChatsUnsummarizedDigestForPrivatePrompt(param
   if (!lines.length) return ''
 
   let body = lines.join('\n')
-  const charCap = Math.max(800, Math.min(12000, Math.floor(params.charCap ?? 4200)))
+  const charCap = Math.max(800, Math.min(UNSUMMARIZED_BLOCK_CHAR_HARD_MAX, Math.floor(params.charCap ?? 4200)))
   if (body.length > charCap) {
     const parts = body.split('\n')
     while (parts.join('\n').length > charCap && parts.length > 8) parts.shift()
@@ -282,7 +285,7 @@ export async function formatUnsummarizedPrivateDigestForGroupMember(params: {
   if (!lines.length) return ''
 
   let body = lines.join('\n')
-  const charCap = Math.max(400, Math.min(8000, Math.floor(params.charCap ?? 2800)))
+  const charCap = Math.max(400, Math.min(UNSUMMARIZED_BLOCK_CHAR_HARD_MAX, Math.floor(params.charCap ?? 2800)))
   if (body.length > charCap) {
     const parts = body.split('\n')
     while (parts.join('\n').length > charCap && parts.length > 4) parts.shift()

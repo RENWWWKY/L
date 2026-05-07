@@ -105,6 +105,18 @@ export function IconLoreArchive(props: SVGProps<SVGSVGElement>) {
   )
 }
 
+/** 回收站：筒身 + 波纹盖 */
+export function IconRecycleBin(props: SVGProps<SVGSVGElement>) {
+  return (
+    <svg {...base} {...props}>
+      <path d="M9 9.5h6l-.8 9.2a1.2 1.2 0 0 1-1.2 1.1h-2a1.2 1.2 0 0 1-1.2-1.1L9 9.5z" />
+      <path d="M7.5 9.5h9" />
+      <path d="M10 7V6a1 1 0 0 1 1-1h2a1 1 0 0 1 1 1v1" />
+      <path d="M8 12.5h8" opacity="0.35" />
+    </svg>
+  )
+}
+
 const map = {
   wechat: IconWeChat,
   takeout: IconTakeout,
@@ -113,6 +125,7 @@ const map = {
   voiceprint: IconVoiceprint,
   dataArchive: IconDataArchive,
   loreArchive: IconLoreArchive,
+  recycleBin: IconRecycleBin,
   appearance: IconAppearance,
 } as const
 

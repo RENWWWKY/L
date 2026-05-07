@@ -90,6 +90,10 @@ function pickRoundRobin(cacheKey: string, list: VnBgmAsset[]): VnBgmAsset {
   return list[i % list.length]!
 }
 
+/** 最近若干次选曲窗口长度（与 MAX_SAME_IN_WINDOW 配合，抑制单曲刷屏） */
+export const VN_BGM_DIVERSITY_WINDOW = 8
+export const VN_BGM_MAX_SAME_IN_WINDOW = 2
+
 export function buildVnBgmPromptBlock(): string {
   if (!VN_BGM_ASSETS.length) return ''
   const names = VN_BGM_ASSETS.map((x) => x.name)
@@ -101,14 +105,11 @@ export function buildVnBgmPromptBlock(): string {
     `文件名里若用「、」等串联多个情绪/场景词，你只需输出**任意一个词或一小段**即可命中对应曲目；不必写全名，也无需固定写第一个词。` +
     `同一轮可多次切换，且必须从上述列表中选最符合当下情绪和场景的一项；` +
     `若当前音乐已合适则不要重复输出。` +
-    `【去重】客户端对**最近 5 次**成功切换的曲目做统计：**同一首**在这 5 次里**最多出现 3 次**；超出时会在你点的情绪/场景下自动换一首（仍优先高分匹配）。` +
-    `为减少机械重复，情绪相近时请尽量换用列表里**不同文件名**中的关键词（例如同悲伤可多写几种细分词，不必总写同一个词）。`
+    `【去重】客户端对**最近 ${VN_BGM_DIVERSITY_WINDOW} 次**成功切换的曲目做统计：**同一文件**在这窗口内**最多出现 ${VN_BGM_MAX_SAME_IN_WINDOW} 次**；超出时会在仍匹配你写的氛围词的前提下**自动换一首**（多首同分时轮换，并优先选近期少播的）。` +
+    `【动态】场景或情绪稍有变化就应输出新的「【BGM】关键词」；不必写完整文件名，**文件名里以「、」等分隔的任意一个词**只要贴当前氛围即可命中该曲。` +
+    `请主动换用**不同文件**里出现的不同词（例如别整段只写「心动」「日常」），让曲库轮换起来。`
   )
 }
-
-/** 最近若干次选曲窗口长度（与 MAX_SAME_IN_WINDOW 配合：5 次里同一文件最多 3 次） */
-export const VN_BGM_DIVERSITY_WINDOW = 5
-export const VN_BGM_MAX_SAME_IN_WINDOW = 3
 
 export type ResolveVnBgmOptions = {
   /** 最近已成功播放的曲目键（与 vnBgmAssetDiversityKey 一致），旧→新 */
@@ -127,6 +128,29 @@ function countSameInWindowAfterPick(
 ): number {
   const next = [...recentFifo, pickKey].slice(-windowSize)
   return next.filter((k) => k === pickKey).length
+}
+
+function countPlaysInRecent(recentFifo: readonly string[], pickKey: string): number {
+  return recentFifo.filter((k) => k === pickKey).length
+}
+
+type BgmScored = { asset: VnBgmAsset; score: number }
+
+function dedupeAssetsByBestScore(items: BgmScored[]): VnBgmAsset[] {
+  const m = new Map<string, BgmScored>()
+  for (const s of items) {
+    const dk = vnBgmAssetDiversityKey(s.asset)
+    const prev = m.get(dk)
+    if (!prev || s.score > prev.score) m.set(dk, s)
+  }
+  return [...m.values()]
+    .sort((a, b) => b.score - a.score)
+    .map((s) => s.asset)
+}
+
+function scoreForAsset(scored: BgmScored[], a: VnBgmAsset): number {
+  const dk = vnBgmAssetDiversityKey(a)
+  return scored.find((s) => vnBgmAssetDiversityKey(s.asset) === dk)?.score ?? 0
 }
 
 export function resolveVnBgmByName(name: string, options?: ResolveVnBgmOptions): VnBgmAsset | null {
@@ -151,8 +175,7 @@ export function resolveVnBgmByName(name: string, options?: ResolveVnBgmOptions):
   if (!cueTokens.length && key.length >= 2) cueTokens = [key]
   if (!cueTokens.length) return null
 
-  type Scored = { asset: VnBgmAsset; score: number }
-  const scored: Scored[] = []
+  const scored: BgmScored[] = []
 
   for (const x of VN_BGM_ASSETS) {
     const nk = normalizeBgmKey(x.name)
@@ -185,15 +208,42 @@ export function resolveVnBgmByName(name: string, options?: ResolveVnBgmOptions):
     countSameInWindowAfterPick(recent, vnBgmAssetDiversityKey(a), VN_BGM_DIVERSITY_WINDOW) <=
     VN_BGM_MAX_SAME_IN_WINDOW
 
+  const maxScore = Math.max(...scored.map((s) => s.score))
+  /** 与最高分相差在此范围内的曲目一并参与轮换，避免永远只播并列第一的同一首 */
+  const slack = Math.max(18, Math.min(45, Math.floor(maxScore * 0.22)))
+  const bandScored = scored.filter((s) => s.score >= maxScore - slack)
+  const bandAssets = dedupeAssetsByBestScore(bandScored)
+
+  const sortByRecencyThenScore = (list: VnBgmAsset[]): VnBgmAsset[] =>
+    [...list].sort((a, b) => {
+      const ca = countPlaysInRecent(recent, vnBgmAssetDiversityKey(a))
+      const cb = countPlaysInRecent(recent, vnBgmAssetDiversityKey(b))
+      if (ca !== cb) return ca - cb
+      return scoreForAsset(scored, b) - scoreForAsset(scored, a)
+    })
+
+  const eligibleBand = bandAssets.filter(passes)
+  if (eligibleBand.length) {
+    return pickRoundRobin(`${rrKey}::band`, sortByRecencyThenScore(eligibleBand))
+  }
+
+  /** 分数带内都已触碰多样性上限：在仍匹配的曲里选「窗口内播放次数最少」的 */
+  const leastLoaded = sortByRecencyThenScore(bandAssets)
+  if (leastLoaded.length) {
+    const minC = countPlaysInRecent(recent, vnBgmAssetDiversityKey(leastLoaded[0]!))
+    const tie = leastLoaded.filter((a) => countPlaysInRecent(recent, vnBgmAssetDiversityKey(a)) === minC)
+    return pickRoundRobin(`${rrKey}::relax`, tie)
+  }
+
   const scoreLevels = [...new Set(scored.map((s) => s.score))].sort((a, b) => b - a)
   for (const lev of scoreLevels) {
     const tierAssets = scored.filter((s) => s.score === lev).map((s) => s.asset)
     const eligible = tierAssets.filter(passes)
-    if (eligible.length) return pickRoundRobin(`${rrKey}::s${lev}`, eligible)
+    if (eligible.length) return pickRoundRobin(`${rrKey}::s${lev}`, sortByRecencyThenScore(eligible))
   }
-  const maxScore = scoreLevels[0]!
-  const top = scored.filter((s) => s.score === maxScore).map((s) => s.asset)
-  return pickRoundRobin(rrKey, top)
+  const topLev = scoreLevels[0]!
+  const top = dedupeAssetsByBestScore(scored.filter((s) => s.score === topLev))
+  return pickRoundRobin(`${rrKey}::force`, sortByRecencyThenScore(top))
 }
 
 export function extractVnBgmCueName(rawLine: string): string | null {

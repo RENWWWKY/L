@@ -8,6 +8,7 @@ import type {
   ScheduleTable,
   WeChatReplyToMeta,
 } from './newFriendsPersona/types'
+import { genderLabelZh } from './newFriendsPersona/utils'
 import { openAiCompatibleChat, openAiCompatibleChatAny, type OpenAiCompatibleMessage } from './newFriendsPersona/ai'
 import { LUMI_ASSISTANT_SYSTEM_PROMPT } from './lumiAssistantPrompt'
 import {
@@ -305,7 +306,7 @@ export function buildCharacterCard(character: Character | null): string {
   const c = character
   const bits = [
     `姓名/常用称呼：${c.name || '未命名'}`,
-    `性别：${c.gender || '未知'}`,
+    `性别：${genderLabelZh(c.gender)}`,
     typeof c.age === 'number' ? `年龄：${c.age}` : '',
     c.birthdayMD ? `生日：${c.birthdayMD}` : '',
     c.zodiac ? `星座：${c.zodiac}` : '',
@@ -543,6 +544,15 @@ function stripMessageIdMeta(line: string): string {
     .trim()
 }
 
+/** 模型仿历史格式把多条气泡粘在一行：用行内「消息ID」标记拆成多段（与换行拆条叠加）。 */
+function splitByInlineMessageIds(line: string): string[] {
+  const t = String(line ?? '').trim()
+  if (!t) return []
+  const re = /\s*(?:\[消息ID[:：][^\]]+\]|【消息ID[:：][^】]+】)\s*/g
+  const parts = t.split(re).map((s) => s.trim()).filter((s) => s.length > 0)
+  return parts.length ? parts : [t]
+}
+
 function splitSingleLineWechatBubble(line: string): string[] {
   const src = line.trim()
   if (!src) return []
@@ -671,8 +681,8 @@ const WECHAT_CHARACTER_RECALL_GUIDE = `
 `.trim()
 
 /**
- * 微信对方回复：**仅**按模型原文换行拆成多条气泡；不解析 JSON、不按句号/字数强拆。
- * 若模型整段无换行，则只有一条气泡——须靠提示词让模型多行输出。
+ * 微信对方回复：优先按**换行**拆条；若模型把多条粘在一行且用 `[消息ID:…]` / `【消息ID:…】` 仿历史格式分隔，则**再按行内标记**拆成多条。
+ * 仍无换行且无行内 ID 时，才用 `splitSingleLineWechatBubble` 按标点弱拆（短句不拆）。
  */
 export function parseWeChatPeerPlainReply(raw: string): string[] {
   return parseWeChatPeerReplyWithThinking(raw).bubbles
@@ -688,8 +698,13 @@ export function parseWeChatPeerReplyWithThinking(raw: string): WeChatPeerReplyRe
   if (!t) return { bubbles: [], thinking, danmakuLines }
   const lines = t
     .split(/\r?\n/)
-    .map((s) => stripMessageIdMeta(s))
-    .filter((s) => s.length > 0)
+    .flatMap((rawLine) => {
+      const trimmed = rawLine.trim()
+      if (!trimmed) return []
+      return splitByInlineMessageIds(trimmed)
+        .map((seg) => stripMessageIdMeta(seg).trim())
+        .filter((s) => s.length > 0)
+    })
   const expanded = lines.flatMap((line) => expandRecallProtocolLine(line))
   const base = expanded.length ? expanded : lines
   const source = base.flatMap((ln) => splitInlineStickerPayloadsFromPlainText(ln))
@@ -1904,13 +1919,6 @@ const DANMAKU_VARIETY_SHOW_RULES = `
 每条弹幕视角或落点尽量不同；禁止互相雷同、禁止同义反复。
 `.trim()
 
-function danmakuGenderZh(g: Character['gender'] | undefined | null): string {
-  if (g === 'male') return '男'
-  if (g === 'female') return '女'
-  if (g === 'other') return '其他'
-  return '未知'
-}
-
 /** 弹幕专用：中文性别 + 核心人设字段。 */
 function buildDanmakuPersonaBriefLines(c: Character | null, role: 'peer' | 'player'): string {
   if (!c) {
@@ -1920,7 +1928,7 @@ function buildDanmakuPersonaBriefLines(c: Character | null, role: 'peer' | 'play
   }
   const bits = [
     `姓名/常用称呼：${c.name || '未命名'}`,
-    `性别：${danmakuGenderZh(c.gender)}`,
+    `性别：${genderLabelZh(c.gender)}`,
     typeof c.age === 'number' ? `年龄：${c.age}` : '',
     c.birthdayMD ? `生日：${c.birthdayMD}` : '',
     c.zodiac ? `星座：${c.zodiac}` : '',
@@ -2450,9 +2458,13 @@ export function parseWeChatGroupMultiSpeakerModelText(
 
   const lines = normalized
     .split(/\r?\n/)
-    .map((s) => stripMessageIdMeta(s))
-    .map((s) => s.trim())
-    .filter(Boolean)
+    .flatMap((rawLine) => {
+      const trimmed = rawLine.trim()
+      if (!trimmed) return []
+      return splitByInlineMessageIds(trimmed)
+        .map((s) => stripMessageIdMeta(s).trim())
+        .filter(Boolean)
+    })
 
   const orderedItems: WeChatGroupMultiSpeakerOrderedItem[] = []
   const segments: WeChatGroupMultiSpeakerSegment[] = []

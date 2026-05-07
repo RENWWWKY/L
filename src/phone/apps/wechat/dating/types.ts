@@ -6,6 +6,13 @@ export const DATING_AI_LENGTH_TARGET_MAX = 2000
 /** 剧情续写单次 completion 上限（token；仍受所选模型/API 限制） */
 export const DATING_AI_MAX_OUTPUT_TOKENS = 30000
 
+/**
+ * 线下约会「参考资料」按段的汉字软上限：不再使用 2200/2600 等细碎裁剪；
+ * 仅在极端长度下防爆（浏览器与网关）；实际可用上下文以所选模型的 context window 为准。
+ * 约等价：数十万字级输入量级的上限锚点，多数人设/聊天记录远低于此。
+ */
+export const DATING_AI_REFERENCE_SECTION_CHAR_CAP = 180_000
+
 export type NarrativeGenOptions = {
   /** 期望字数（大概值，非硬性） */
   lengthTargetChars?: number
