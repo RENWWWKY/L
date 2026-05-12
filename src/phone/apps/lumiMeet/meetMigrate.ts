@@ -18,9 +18,13 @@ export function normalizeEncounterNpc(raw: unknown): EncounterNPC | null {
   const id = typeof o.id === 'string' ? o.id.trim() : ''
   if (!id) return null
 
-  let status = (typeof o.status === 'string' ? o.status : 'orbiting') as EncounterStatus | 'discovered'
-  if (status === ('discovered' as string)) status = 'orbiting'
-  if (!VALID_STATUS.includes(status as EncounterStatus)) status = 'orbiting'
+  const rawStatus = typeof o.status === 'string' ? o.status : 'orbiting'
+  let status: EncounterStatus =
+    rawStatus === 'discovered'
+      ? 'orbiting'
+      : VALID_STATUS.includes(rawStatus as EncounterStatus)
+        ? (rawStatus as EncounterStatus)
+        : 'orbiting'
 
   const lastRaw = o.lastEncounterTime
   const lastEncounterTime =

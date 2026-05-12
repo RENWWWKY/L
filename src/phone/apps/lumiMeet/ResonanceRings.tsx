@@ -53,7 +53,6 @@ export function ResonanceRings({ scanning, revealBurst, size = 240 }: Props) {
                 : scanning
                   ? {
                       rotate: { repeat: Infinity, ease: 'linear', duration: 38 + i * 14 },
-                      opacity: 1,
                     }
                   : { duration: 0.6, ease: [0.22, 1, 0.36, 1] }
             }

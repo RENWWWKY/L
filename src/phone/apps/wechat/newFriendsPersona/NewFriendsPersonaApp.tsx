@@ -1,6 +1,5 @@
-import { ArrowLeft, ChevronRight, Plus, Save, ChevronDown, Trash2, User, UserPlus, X } from 'lucide-react'
+import { ArrowLeft, Plus, Save, Trash2, User, UserPlus, X } from 'lucide-react'
 import { AnimatePresence, motion } from 'framer-motion'
-import { createPortal } from 'react-dom'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { personaDb } from './idb'
 import type { Character, PlayerIdentity, Relationship } from './types'
@@ -83,80 +82,6 @@ function TopBar({
         </p>
         <div className="min-w-[44px] text-right">{right}</div>
       </div>
-    </div>
-  )
-}
-
-function InlineDropdown({
-  label,
-  valueText,
-  open,
-  onToggle,
-  children,
-  disabled = false,
-}: {
-  label: string
-  valueText: string
-  open: boolean
-  onToggle: () => void
-  children: React.ReactNode
-  disabled?: boolean
-}) {
-  return (
-    <div className="relative min-w-0 flex-1">
-      <button
-        type="button"
-        disabled={disabled}
-        className="relative flex w-full items-center justify-center gap-1 rounded-xl border bg-white px-3 py-3 text-[15px] outline-none transition-all duration-200 ease-out disabled:opacity-60"
-        style={{ borderColor: border, color: text }}
-        onClick={onToggle}
-        aria-label={label}
-      >
-        <span className="pointer-events-none select-none text-center">{valueText}</span>
-        <ChevronDown
-          className={`pointer-events-none absolute right-2 top-1/2 size-4 -translate-y-1/2 transition-transform duration-200 ${
-            open ? 'rotate-180' : 'rotate-0'
-          }`}
-          style={{ color: sub }}
-        />
-      </button>
-      {open && !disabled && typeof document !== 'undefined'
-        ? createPortal(
-            <div
-              className="fixed inset-0 z-[1000] flex items-center justify-center bg-black/35 px-4"
-              onMouseDown={() => onToggle()}
-            >
-              <div
-                className="w-full max-w-[520px] overflow-hidden rounded-2xl border bg-white shadow-[0_10px_30px_rgba(0,0,0,0.22)]"
-                style={{ borderColor: border }}
-                onMouseDown={(e) => e.stopPropagation()}
-              >
-                <div className="flex items-center justify-between gap-3 border-b px-4 py-3" style={{ borderColor: '#f0f0f0' }}>
-                  <div className="min-w-0 flex-1">
-                    <p className="truncate text-[14px] font-semibold" style={{ color: text }}>
-                      {label}
-                    </p>
-                    <p className="mt-0.5 truncate text-[12px]" style={{ color: sub, fontWeight: 300 }}>
-                      {valueText}
-                    </p>
-                  </div>
-                  <button
-                    type="button"
-                    className="rounded-xl px-3 py-1.5 text-[12px] transition-all duration-200 ease-out hover:bg-[#fafafa]"
-                    style={{ color: sub }}
-                    onClick={() => onToggle()}
-                  >
-                    关闭
-                  </button>
-                </div>
-                <div className="max-h-[70vh] overflow-y-auto py-1 [scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden">
-                  {children}
-                </div>
-              </div>
-            </div>,
-            document.body,
-          )
-        : null}
     </div>
   )
 }

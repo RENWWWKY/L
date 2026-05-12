@@ -651,7 +651,6 @@ export function EncounterChatRoom({ npc, onBack }: { npc: EncounterNPC; onBack: 
       >
         {((intimacy >= 100 && swapMeta.wechatSwapStatus === 'available') ||
           swapMeta.wechatSwapStatus === 'char_requested') &&
-        swapMeta.wechatSwapStatus !== 'swapped' &&
         npc.status !== 'wechat_added' ? (
           <div className="mb-3 rounded-full border border-[#D4AF37]/30 bg-white/90 px-3 py-2 shadow-[0_8px_32px_rgba(28,24,18,0.05)]">
             <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">

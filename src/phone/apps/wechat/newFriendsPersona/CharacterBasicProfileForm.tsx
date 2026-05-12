@@ -1,7 +1,7 @@
 import { AnimatePresence, motion } from 'framer-motion'
 import { Dices, ImagePlus, Link2, Plus, Sparkles, User, X } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import type { ApiConfig } from '../../../api/types'
+import type { ApiConfig } from '../../api/types'
 import { PlaceholderAwareTextarea } from './characterFieldPlaceholderPreview'
 import type { Character, Gender } from './types'
 import { generateCharacterBio } from './ai'

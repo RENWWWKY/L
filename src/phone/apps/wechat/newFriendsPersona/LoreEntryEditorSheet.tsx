@@ -20,7 +20,7 @@ export function LoreEntryEditorSheet({
   open,
   onClose,
   character,
-  worldBook,
+  worldBook: _worldBook,
   item,
   wbId,
   itemId,

@@ -1,5 +1,5 @@
 import { AnimatePresence, motion } from 'framer-motion'
-import { BookOpen, ChevronDown, Plus, Trash2 } from 'lucide-react'
+import { BookOpen, ChevronDown, Trash2 } from 'lucide-react'
 import { useEffect, useMemo, useState } from 'react'
 import type { ApiConfig } from '../../api/types'
 import { generateWorldBookItemContent } from './ai'
