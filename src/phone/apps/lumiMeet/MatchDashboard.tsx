@@ -1,5 +1,5 @@
 import { AnimatePresence, motion } from 'framer-motion'
-import { BookMarked, Heart, X } from 'lucide-react'
+import { BookMarked, ChevronRight, Heart, Info, SlidersHorizontal, X } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { useCustomization } from '../../CustomizationContext'
@@ -11,9 +11,14 @@ import {
   expandMeetPersonaPlaintext,
   resolveMeetCharUserNames,
 } from './meetPersonaPreview'
-import { aiGenerateEncounterNpc, aiJudgeMutualSpark, aiMeetPostMatchOpeningLines } from './lumiMeetAi'
+import {
+  aiGenerateEncounterNpc,
+  aiJudgeMutualSpark,
+  aiMeetPostMatchOpeningLines,
+  MeetEncounterGenerationError,
+} from './lumiMeetAi'
 import { getLumiMeetPortalTarget } from './lumiMeetPortal'
-import { meetIntentionsToPurpose } from './meetMatchCriteria'
+import { MEET_ORIENTATION_HELP_ZH, MEET_ORIENTATION_OPTIONS, meetIntentionsToPurpose } from './meetMatchCriteria'
 import { MeetAgeRangeSlider } from './MeetAgeRangeSlider'
 import { MeetWorldbookShelfModal } from './MeetWorldbookShelfModal'
 import type {
@@ -35,11 +40,18 @@ const INTENT_OPTS: { id: MeetMatchIntention; zh: string; en: string }[] = [
   { id: 'casual', zh: '闲聊搭子', en: 'Casual' },
 ]
 
-const ORI_OPTS: { id: MeetOrientationPreference; zh: string; en: string }[] = [
-  { id: 'hetero', zh: '异性恋', en: 'Hetero' },
-  { id: 'homo', zh: '同性恋', en: 'Homo' },
-  { id: 'bi_pan', zh: '双性恋 / 泛性恋', en: 'Bi / Pan' },
-]
+/** 点击心动前在后台预取的判定 + 匹配成功时的开场白 */
+type SparkPrecheckResult = { ok: boolean; openingLines: string[] }
+
+type SparkPrecheckSlot = {
+  key: string
+  npcId: string
+  result: SparkPrecheckResult | null
+  inflight: Promise<SparkPrecheckResult> | null
+}
+
+/** 心动后最短「判定中」展示时间（毫秒），预取已完成时仍保留加载感 */
+const SPARK_BUTTON_MIN_MS = 480
 
 function PlatinumTick() {
   return (
@@ -70,12 +82,27 @@ export function MatchDashboard() {
   } = useLumiMeetStore()
   const filters = state.radarFilters
   const profile = state.meetProfile
+  const profileRef = useRef(profile)
+  profileRef.current = profile
+  const profileSparkKey = useMemo(
+    () => [profile.displayName, profile.intent, profile.orientation, profile.bio].join('\x1e'),
+    [profile.displayName, profile.intent, profile.orientation, profile.bio],
+  )
+
+  const sparkPrecheckRef = useRef<SparkPrecheckSlot>({
+    key: '',
+    npcId: '',
+    result: null,
+    inflight: null,
+  })
 
   const [drawer, setDrawer] = useState(false)
   const [filterDraft, setFilterDraft] = useState<RadarFilters>(filters)
   const [sparkBurst, setSparkBurst] = useState(false)
   const [sparkDenied, setSparkDenied] = useState(false)
   const [worldbookOpen, setWorldbookOpen] = useState(false)
+  const [radarGenMessage, setRadarGenMessage] = useState<string | null>(null)
+  const [orientationHelpOpen, setOrientationHelpOpen] = useState(false)
 
   const card = radarSession.pendingCard
   const scanning = radarSession.searchInProgress
@@ -87,6 +114,10 @@ export function MatchDashboard() {
     if (!drawer) return
     setFilterDraft({ ...filters })
   }, [drawer, filters])
+
+  useEffect(() => {
+    if (!drawer) setOrientationHelpOpen(false)
+  }, [drawer])
 
   useEffect(() => {
     if (!pendingReveal) return
@@ -114,6 +145,74 @@ export function MatchDashboard() {
     setSparkDenied(false)
   }, [card?.id])
 
+  const runSparkPrecheckForNpc = useCallback(async (npc: EncounterNPC): Promise<SparkPrecheckResult> => {
+    const userProfile = profileRef.current
+    let ok: boolean
+    if (typeof npc.mutualSpark === 'boolean') {
+      ok = npc.mutualSpark
+    } else {
+      const digest = buildMeetNpcDigestForModel(
+        npc,
+        resolveMeetCharUserNames(npc.nickname, userProfile),
+      ).slice(0, 2800)
+      ok = await aiJudgeMutualSpark({
+        apiConfig: apiConfigRef.current,
+        npcPersona: digest,
+        npcNickname: npc.nickname,
+        userProfile,
+      })
+    }
+    let openingLines: string[] = []
+    if (ok) {
+      try {
+        openingLines = await aiMeetPostMatchOpeningLines({
+          apiConfig: apiConfigRef.current,
+          npc,
+          userProfile,
+        })
+      } catch {
+        openingLines = []
+      }
+    }
+    return { ok, openingLines }
+  }, [])
+
+  /** 卡片为「连结中」时：有 mutualSpark 则只预取开场白；否则预跑裁判 + 开场白 */
+  useEffect(() => {
+    if (!card || card.status !== 'orbiting') {
+      sparkPrecheckRef.current = { key: '', npcId: '', result: null, inflight: null }
+      return
+    }
+    const id = card.id
+    const precKey = `${id}\x1f${profileSparkKey}`
+    const slot = sparkPrecheckRef.current
+    if (slot.key === precKey && slot.result) return
+    if (slot.key === precKey && slot.inflight) return
+
+    let canceled = false
+    const p = runSparkPrecheckForNpc(card)
+    sparkPrecheckRef.current = { key: precKey, npcId: id, result: null, inflight: p }
+    void p
+      .then((r) => {
+        if (canceled) return
+        if (sparkPrecheckRef.current.key !== precKey) return
+        sparkPrecheckRef.current = { key: precKey, npcId: id, result: r, inflight: null }
+      })
+      .catch(() => {
+        if (canceled) return
+        if (sparkPrecheckRef.current.key !== precKey) return
+        sparkPrecheckRef.current = {
+          key: precKey,
+          npcId: id,
+          result: { ok: false, openingLines: [] },
+          inflight: null,
+        }
+      })
+    return () => {
+      canceled = true
+    }
+  }, [card?.id, card?.status, profileSparkKey, runSparkPrecheckForNpc])
+
   const snippetForNpc = useCallback(
     (n: EncounterNPC | null) => {
       if (!n) return ''
@@ -136,6 +235,7 @@ export function MatchDashboard() {
 
   const runEncounter = useCallback(() => {
     requestRadarSearch(async () => {
+      setRadarGenMessage(null)
       const snap = getPersistedSnapshot()
       const now = Date.now()
       const mp = snap.meetProfile
@@ -146,9 +246,20 @@ export function MatchDashboard() {
         eligible.length > 0 && Math.random() < MEET_REUNION_ROLL_P ? pickRandom(eligible) : null
 
       if (reunionPick) {
-        const refreshed: EncounterNPC = { ...reunionPick, lastEncounterTime: now }
+        const refreshed: EncounterNPC = {
+          ...reunionPick,
+          lastEncounterTime: now,
+          mutualSpark:
+            typeof reunionPick.mutualSpark === 'boolean' ? reunionPick.mutualSpark : Math.random() > 0.35,
+        }
         upsertNpc(refreshed)
         return { npc: refreshed, isReunionEcho: true }
+      }
+
+      const cfg = apiConfigRef.current
+      if (!cfg?.apiUrl?.trim() || !cfg?.apiKey?.trim()) {
+        setRadarGenMessage(new MeetEncounterGenerationError('api_required').message)
+        return null
       }
 
       const wechatChars = await personaDb.listCharacters()
@@ -158,13 +269,22 @@ export function MatchDashboard() {
         ...snap.npcs.map((n) => ({ avatarUrl: n.avatarUrl })),
       ])
 
-      const gen = await aiGenerateEncounterNpc({
-        apiConfig: apiConfigRef.current,
-        filters: snap.radarFilters,
-        profileHint: hint,
-        meetProfile: mp,
-        avatarExclusion,
-      })
+      let gen: Awaited<ReturnType<typeof aiGenerateEncounterNpc>>
+      try {
+        gen = await aiGenerateEncounterNpc({
+          apiConfig: cfg,
+          filters: snap.radarFilters,
+          profileHint: hint,
+          meetProfile: mp,
+          avatarExclusion,
+        })
+      } catch (e) {
+        const msg =
+          e instanceof MeetEncounterGenerationError ? e.message : new MeetEncounterGenerationError('api_failed').message
+        setRadarGenMessage(msg)
+        return null
+      }
+
       const id = `meet_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 7)}`
       const npc: EncounterNPC = {
         id,
@@ -174,12 +294,18 @@ export function MatchDashboard() {
         ageYears: gen.ageYears,
         birthdayMD: gen.birthdayMD,
         weightKg: gen.weightKg,
+        heightCm: gen.heightCm,
+        occupation: gen.occupation,
+        motto: gen.motto,
+        mbti: gen.mbti,
         zodiac: gen.zodiac,
         gender: gen.gender,
         orientation: gen.orientation,
         persona: gen.persona,
         comprehensivePersona: gen.comprehensivePersona,
         wechatId: gen.wechatId,
+        mutualSpark: gen.mutualSpark,
+        generationSource: gen.generationSource,
         status: 'orbiting',
         lastEncounterTime: now,
       }
@@ -201,17 +327,25 @@ export function MatchDashboard() {
     if (!card) return
     setRadarSparkInProgress(true)
     setSparkDenied(false)
+    const tClick = Date.now()
+    const precKey = `${card.id}\x1f${profileSparkKey}`
     try {
-      const ok = await aiJudgeMutualSpark({
-        apiConfig,
-        npcPersona: buildMeetNpcDigestForModel(card, resolveMeetCharUserNames(card.nickname, profile)).slice(
-          0,
-          2800,
-        ),
-        npcNickname: card.nickname,
-        userProfile: profile,
-      })
-      if (ok) {
+      const slot = sparkPrecheckRef.current
+      let r: SparkPrecheckResult
+      if (slot.key === precKey && slot.result) {
+        r = slot.result
+      } else if (slot.key === precKey && slot.inflight) {
+        r = await slot.inflight
+      } else {
+        r = await runSparkPrecheckForNpc(card)
+        if (sparkPrecheckRef.current.key === precKey) {
+          sparkPrecheckRef.current = { key: precKey, npcId: card.id, result: r, inflight: null }
+        }
+      }
+
+      await sleep(Math.max(0, SPARK_BUTTON_MIN_MS - (Date.now() - tClick)))
+
+      if (r.ok) {
         const matched: EncounterNPC = {
           ...card,
           status: 'matched',
@@ -221,11 +355,7 @@ export function MatchDashboard() {
         setRadarPendingCard(matched, false)
         setSparkBurst(true)
         bumpIntimacy(card.id, 24)
-        const openingLines = await aiMeetPostMatchOpeningLines({
-          apiConfig,
-          npc: matched,
-          userProfile: profile,
-        })
+        const openingLines = r.openingLines
         for (let i = 0; i < openingLines.length; i++) {
           const line = openingLines[i]!
           if (i > 0) await sleep(computeMeetNpcStaggerDelayMs(openingLines[i - 1]!))
@@ -242,7 +372,16 @@ export function MatchDashboard() {
     } finally {
       setRadarSparkInProgress(false)
     }
-  }, [apiConfig, bumpIntimacy, card, profile, pushChatMessage, setRadarPendingCard, setRadarSparkInProgress, upsertNpc])
+  }, [
+    bumpIntimacy,
+    card,
+    profileSparkKey,
+    pushChatMessage,
+    runSparkPrecheckForNpc,
+    setRadarPendingCard,
+    setRadarSparkInProgress,
+    upsertNpc,
+  ])
 
   const commitFilters = useCallback(() => {
     const intents =
@@ -300,9 +439,21 @@ export function MatchDashboard() {
           type="button"
           layout
           onClick={() => setDrawer(true)}
-          className="meet-platinum-pill mt-10 px-5 py-2.5 font-mono text-[10px] uppercase tracking-[0.22em] text-[#5c5953]"
+          className="group mt-10 flex max-w-full items-center gap-2.5 rounded-2xl border border-transparent bg-transparent px-3 py-2.5 transition-colors duration-200 hover:border-black/[0.06] hover:bg-white/70 active:scale-[0.99]"
+          aria-label="打开筛选偏好"
         >
-          筛选偏好 <span className="mx-1.5 opacity-35">|</span> Preferences
+          <span className="flex size-9 shrink-0 items-center justify-center rounded-xl border border-black/[0.06] bg-white/80 text-[#b8973a] shadow-[0_4px_14px_rgba(35,30,24,0.04)] transition-[border-color,box-shadow] duration-200 group-hover:border-[#D4AF37]/35 group-hover:shadow-[0_6px_20px_rgba(212,175,55,0.12)]">
+            <SlidersHorizontal className="size-4" strokeWidth={1.5} aria-hidden />
+          </span>
+          <span className="min-w-0 flex flex-1 flex-col items-start text-left sm:flex-row sm:items-baseline sm:gap-2">
+            <span className="font-elegant-serif text-[12px] font-light tracking-[0.06em] text-[#3d3a34]">筛选偏好</span>
+            <span className="meet-caption-en text-[10px] text-[#a39e96]">Preferences</span>
+          </span>
+          <ChevronRight
+            className="size-4 shrink-0 text-[#c9c4bc] transition-transform duration-200 group-hover:translate-x-0.5 group-hover:text-[#b8973a]"
+            strokeWidth={1.5}
+            aria-hidden
+          />
         </motion.button>
 
         <motion.button
@@ -310,10 +461,35 @@ export function MatchDashboard() {
           layout
           disabled={!canStartNewSearch}
           onClick={runEncounter}
-          className="meet-btn-primary mt-6 w-[min(300px,100%)] py-3.5 font-mono text-[11px] uppercase tracking-[0.28em] disabled:opacity-45"
+          className="meet-btn-primary mt-6 flex w-[min(300px,100%)] items-center justify-center gap-2 py-3.5 disabled:opacity-45"
         >
-          {scanning ? 'Tuning… 调校中' : '开启寻觅 · Initiate Search'}
+          {scanning ? (
+            <>
+              <span className="meet-caption-en text-[10px] text-[#7a736b]">Tuning…</span>
+              <span className="font-elegant-serif text-[13px] font-light tracking-[0.06em]">调校中</span>
+            </>
+          ) : (
+            <>
+              <span className="font-elegant-serif text-[13px] font-light tracking-[0.06em]">开启寻觅</span>
+              <span className="meet-caption-en text-[10px] text-[#8a8680]">Initiate Search</span>
+            </>
+          )}
         </motion.button>
+
+        {!apiConfig?.apiUrl?.trim() || !apiConfig?.apiKey?.trim() ? (
+          <p className="meet-caption-en mt-3 max-w-[min(300px,100%)] text-center text-[9px] leading-relaxed tracking-[0.1em] text-[#b0aaa4]">
+            新人设仅由模型生成：请先在「API」中填写请求地址与密钥。未命中「重逢」时，未配置将无法邂逅新角色。
+          </p>
+        ) : null}
+
+        {radarGenMessage ? (
+          <p
+            role="alert"
+            className="meet-caption-en mt-3 max-w-[min(300px,100%)] text-center text-[10px] leading-relaxed tracking-[0.06em] text-[#b85c4a]"
+          >
+            {radarGenMessage}
+          </p>
+        ) : null}
 
         {!canStartNewSearch && !scanning && card?.status === 'orbiting' ? (
           <p
@@ -373,6 +549,9 @@ export function MatchDashboard() {
                 />
                 <div className="min-w-0">
                   <p className="font-elegant-serif text-[19px] text-[#2c2a26]">{pendingReveal.npc.nickname}</p>
+                  {pendingReveal.npc.generationSource === 'offline' ? (
+                    <p className="meet-caption-en mt-0.5 text-[9px] tracking-[0.08em] text-[#c9a96e]">本地示例 · 非模型</p>
+                  ) : null}
                   <p className="meet-caption-en mt-1 text-[10px] text-[#b8b5ad]">
                     {pendingReveal.npc.gender} · {pendingReveal.npc.orientation}
                   </p>
@@ -443,6 +622,9 @@ export function MatchDashboard() {
                         <p id="meet-match-card-title" className="font-elegant-serif text-[20px] text-[#2c2a26]">
                           {card.nickname}
                         </p>
+                        {card.generationSource === 'offline' ? (
+                          <p className="meet-caption-en mt-0.5 text-[9px] tracking-[0.08em] text-[#c9a96e]">本地示例 · 非模型</p>
+                        ) : null}
                         <p className="meet-caption-en mt-1 text-[10px] text-[#b8b5ad]">
                           {card.gender} · {card.orientation}
                         </p>
@@ -570,7 +752,7 @@ export function MatchDashboard() {
                     initial={{ y: '100%' }}
                     animate={{ y: 0 }}
                     exit={{ y: '104%' }}
-                    className="pointer-events-auto flex max-h-[min(78vh,720px)] w-full max-w-md flex-col rounded-t-[22px] border border-[#e5e0d8] bg-[#faf8f5] shadow-[0_-24px_90px_rgba(22,18,14,0.18)]"
+                    className="pointer-events-auto relative flex max-h-[min(78vh,720px)] w-full max-w-md flex-col rounded-t-[22px] border border-[#e5e0d8] bg-[#faf8f5] shadow-[0_-24px_90px_rgba(22,18,14,0.18)]"
                     style={{
                       paddingBottom: 'max(16px, env(safe-area-inset-bottom, 0px))',
                     }}
@@ -622,14 +804,29 @@ export function MatchDashboard() {
                     </section>
 
                     <section className="border-b border-[#e8e4dc] py-5">
-                      <p className="font-mono text-[10px] uppercase tracking-[0.18em] text-[#9a9590]">
-                        Orientation Match · 性取向偏好
-                      </p>
+                      <div className="flex items-start justify-between gap-2">
+                        <p className="min-w-0 flex-1 font-mono text-[10px] uppercase tracking-[0.18em] text-[#9a9590]">
+                          Orientation Match · 性取向偏好
+                        </p>
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation()
+                            setOrientationHelpOpen(true)
+                          }}
+                          aria-expanded={orientationHelpOpen}
+                          aria-controls="meet-orientation-help-panel"
+                          className="meet-caption-en -mt-0.5 flex shrink-0 items-center gap-1 rounded-full border border-[#e5e0d8] bg-[#fffcf9] px-2.5 py-1 text-[9px] tracking-[0.14em] text-[#6a6560] transition-[border-color,background-color,color] hover:border-[#d4c8b8] hover:text-[#3d3a34] active:scale-[0.98]"
+                        >
+                          <Info className="size-3.5 text-[#b8973a]" strokeWidth={1.75} aria-hidden />
+                          说明
+                        </button>
+                      </div>
                       <p className="meet-resonance-quote mt-1 text-[10px] italic leading-snug text-[#b5aea4]">
                         筛选与你取向偏好相容的角色设定；可多选；不选即不限。
                       </p>
                       <div className="mt-3 flex flex-wrap gap-2">
-                        {ORI_OPTS.map((o) => {
+                        {MEET_ORIENTATION_OPTIONS.map((o) => {
                           const on = filterDraft.orientationPreferences.includes(o.id)
                           return (
                             <button
@@ -637,7 +834,7 @@ export function MatchDashboard() {
                               type="button"
                               aria-pressed={on}
                               onClick={() => toggleOrientation(o.id)}
-                              className={`meet-filter-pill-dark px-3 py-2 text-[11px] ${on ? 'meet-filter-pill-dark--on' : ''}`}
+                              className={`meet-filter-pill-dark max-w-[11.5rem] px-2.5 py-2 text-[10px] leading-snug ${on ? 'meet-filter-pill-dark--on' : ''}`}
                             >
                               {o.zh}{' '}
                               <span className={on ? 'text-[#D4AF37]' : 'opacity-45'}>({o.en})</span>
@@ -723,6 +920,67 @@ export function MatchDashboard() {
                       />
                     </section>
                   </div>
+
+                  {orientationHelpOpen ? (
+                    <div
+                      id="meet-orientation-help-panel"
+                      role="dialog"
+                      aria-modal="true"
+                      aria-labelledby="meet-orientation-help-title"
+                      className="absolute inset-0 z-[25] flex min-h-0 flex-col rounded-t-[22px] bg-[#faf8f5]"
+                      onClick={(e) => e.stopPropagation()}
+                    >
+                      <div className="shrink-0 border-b border-[#e8e4dc] bg-[#faf8f5] px-5 pb-3 pt-4">
+                        <div className="flex items-start justify-between gap-3">
+                          <div className="min-w-0">
+                            <p className="font-mono text-[10px] uppercase tracking-[0.2em] text-[#9a9590]">Glossary</p>
+                            <p
+                              id="meet-orientation-help-title"
+                              className="meet-caption-en mt-0.5 text-[13px] tracking-[0.08em] text-[#2c2a26]"
+                            >
+                              性取向标签说明
+                            </p>
+                          </div>
+                          <button
+                            type="button"
+                            onClick={() => setOrientationHelpOpen(false)}
+                            className="flex size-9 shrink-0 items-center justify-center rounded-full border border-[#e5e0d8] bg-white/90 text-[#7a736b] transition-colors hover:border-[#d4c8b8]"
+                            aria-label="关闭说明"
+                          >
+                            <X className="size-4" strokeWidth={1.5} aria-hidden />
+                          </button>
+                        </div>
+                        <p className="meet-caption-en mt-2 text-[9px] leading-relaxed tracking-[0.06em] text-[#a39e96]">
+                          以下为通俗释义，仅供筛选参考；个体自我认同与用语因人而异。
+                        </p>
+                      </div>
+                      <div className="meet-scrollbar min-h-0 flex-1 overflow-y-auto px-5 py-4">
+                        <ul className="space-y-3">
+                          {MEET_ORIENTATION_OPTIONS.map((o) => (
+                            <li
+                              key={o.id}
+                              className="rounded-[14px] border border-[#ebe7e0] bg-[#fffcf9] px-3.5 py-3 shadow-[0_2px_12px_rgba(35,30,24,0.04)]"
+                            >
+                              <p className="text-[12px] font-medium text-[#2c2a26]">
+                                {o.zh}
+                                <span className="meet-caption-en ml-2 font-normal text-[10px] text-[#9a9590]">({o.en})</span>
+                              </p>
+                              <p className="mt-2 text-[11px] leading-relaxed text-[#5c574f]">{MEET_ORIENTATION_HELP_ZH[o.id]}</p>
+                            </li>
+                          ))}
+                        </ul>
+                      </div>
+                      <div className="shrink-0 border-t border-[#e8e4dc] bg-[#faf8f5] px-5 pb-[max(12px,env(safe-area-inset-bottom,0px))] pt-3">
+                        <button
+                          type="button"
+                          className="meet-btn-primary w-full py-3 text-[13px]"
+                          onClick={() => setOrientationHelpOpen(false)}
+                        >
+                          知道了
+                        </button>
+                      </div>
+                    </div>
+                  ) : null}
                   </motion.div>
                 </motion.div>
               ) : null}

@@ -18,7 +18,7 @@ import {
   isMbtiPersonalityWorldBookName,
   normalizeMbti,
 } from '../mbtiPersonalityWorldBook'
-import { isLargeMbtiAvatar, MBTI_SUMMARY_4, resolveMbtiImageUrl } from '../newFriendsPersona/mbtiProfileUi'
+import { isLargeMbtiAvatar, resolveMbtiImageUrl } from '../newFriendsPersona/mbtiProfileUi'
 
 const COLORS = {
   bg: '#f5f5f5',
@@ -1054,12 +1054,7 @@ function IdentityEditPage({
                                   }}
                                 />
                               </div>
-                              <div className="min-w-0">
-                                <p className="text-[13px] font-semibold">{m}</p>
-                                <p className="mt-1 text-[12px] leading-relaxed" style={{ color: active ? 'rgba(255,255,255,0.78)' : '#666666' }}>
-                                  {MBTI_SUMMARY_4[m] ?? '人格概括'}
-                                </p>
-                              </div>
+                              <p className="min-w-0 font-mono text-[13px] font-semibold tracking-wide">{m}</p>
                             </button>
                           )
                         })}

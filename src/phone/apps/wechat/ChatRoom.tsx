@@ -108,9 +108,15 @@ import {
   WECHAT_GROUP_BOT_CHARACTER_ID,
   WECHAT_GROUP_USER_CHAR_ID,
   WECHAT_LUMI_PEER_CHARACTER_ID,
+  isWechatGroupConversationKey,
+  parseGroupIdFromGroupPeerCharacterId,
   wechatConversationKey,
   wechatGroupConversationKey,
 } from './wechatConversationKey'
+import {
+  peekGroupChatPrivatePeerAnchorFromDockStaging,
+  peekPrivateChatGroupAnchorFromDockStaging,
+} from './wechatPrivateGroupAnchorStaging'
 import type { GroupChatRow, GroupMember } from './newFriendsPersona/types'
 import {
   buildGroupStrangerPairDisplayLines,
@@ -1701,7 +1707,10 @@ export function ChatRoom({
   const voiceAsrEnabled = useIsSubApiEnabled('voiceAsr')
 
   const conversationKey = useMemo(() => {
-    if (roomType === 'group' && groupId?.trim()) return wechatGroupConversationKey(groupId.trim(), playerIdentityId)
+    if (roomType === 'group') {
+      const gid = groupId?.trim() || parseGroupIdFromGroupPeerCharacterId(conversationCharacterId) || ''
+      if (gid) return wechatGroupConversationKey(gid, playerIdentityId)
+    }
     return wechatConversationKey(conversationCharacterId, playerIdentityId)
   }, [roomType, groupId, conversationCharacterId, playerIdentityId])
   /** 与 UI 当前会话一致；异步 hydrate 结束前若已切会话则丢弃结果，避免错写/空窗 */
@@ -1886,11 +1895,15 @@ export function ChatRoom({
     if (!pc || pc === WECHAT_LUMI_PEER_CHARACTER_ID) return ''
     try {
       const ch = await personaDb.getCharacter(pc)
+      const pid = playerIdentityId.trim()
+      const anchorGroupId =
+        peekPrivateChatGroupAnchorFromDockStaging(pc) ?? (await personaDb.getPrivateChatAnchorGroupId(pc, pid))
       return (
         await buildNpcGroupChatsRecentDigestForPrivatePrompt({
           npcCharacterId: pc,
-          sessionPlayerIdentityId: playerIdentityId.trim(),
+          sessionPlayerIdentityId: pid,
           boundPlayerIdentityId: ch?.playerIdentityId,
+          anchorGroupId,
           messageCap: 50,
           charCap: 4500,
         })
@@ -1910,30 +1923,48 @@ export function ChatRoom({
       if (!pc || pc === WECHAT_LUMI_PEER_CHARACTER_ID) {
         return { memory: '', unsPrivate: '', unsGroup: '' }
       }
-      const hay = buildMemoryRelevanceHaystack([...transcript.slice(-32).map((t) => t.text), biasText])
-      const [memory, chRow] = await Promise.all([
-        personaDb.formatCharacterMemoriesForPromptByRelevance(pc, hay, {
-          apiConfig: apiConfig?.apiUrl?.trim() && apiConfig?.apiKey?.trim() ? apiConfig : null,
-        }),
-        personaDb.getCharacter(pc),
-      ])
-      const unsPrivate = (
-        await formatUnsummarizedPrivateChatBlock({
+      const pid = playerIdentityId.trim()
+      const chRow = await personaDb.getCharacter(pc)
+      const anchorGroupId =
+        peekPrivateChatGroupAnchorFromDockStaging(pc) ?? (await personaDb.getPrivateChatAnchorGroupId(pc, pid))
+      const offlineHay = (
+        await loadOfflineDatingPlotsPromptBlock(pc, chRow?.name ?? chRow?.wechatNickname ?? null)
+      ).trim()
+
+      const [unsPrivate, unsGroup] = await Promise.all([
+        formatUnsummarizedPrivateChatBlock({
           conversationKey,
           maxMessages: 100,
           maxChars: 3200,
-        })
-      ).trim()
-      const unsGroup = (
-        await buildNpcGroupChatsUnsummarizedDigestForPrivatePrompt({
+        }).then((s) => s.trim()),
+        buildNpcGroupChatsUnsummarizedDigestForPrivatePrompt({
           npcCharacterId: pc,
-          sessionPlayerIdentityId: playerIdentityId.trim(),
+          sessionPlayerIdentityId: pid,
           boundPlayerIdentityId: chRow?.playerIdentityId,
+          anchorGroupId,
           maxMessagesPerGroup: 50,
           charCap: 4200,
-        })
-      ).trim()
-      return { memory: memory.trim(), unsPrivate, unsGroup }
+        }).then((s) => s.trim()),
+      ])
+
+      const hay = buildMemoryRelevanceHaystack([
+        ...transcript.slice(-32).map((t) => t.text),
+        biasText,
+        offlineHay.slice(0, 3600),
+        unsPrivate.slice(0, 2400),
+        unsGroup.slice(0, 2400),
+      ])
+      let memory = ''
+      try {
+        memory = (
+          await personaDb.formatCharacterMemoriesForPromptByRelevance(pc, hay, {
+            apiConfig: apiConfig?.apiUrl?.trim() && apiConfig?.apiKey?.trim() ? apiConfig : null,
+          })
+        ).trim()
+      } catch {
+        memory = ''
+      }
+      return { memory, unsPrivate, unsGroup }
     },
     [apiConfig, conversationKey, roomType, useLumiProjectAssistantPrompt, personaCharacterId, playerIdentityId],
   )
@@ -2470,6 +2501,24 @@ export function ChatRoom({
       })
       if (!stillThisRun()) return
 
+      /** 人设私聊：过滤误入的群聊占位玩家气泡与其它 NPC 气泡（与 repairMisfiledWeChatMessagesAfterThreadMixup 一致，避免串台观感） */
+      if (
+        roomType === 'private' &&
+        !useLumiProjectAssistantPrompt &&
+        !isWechatGroupConversationKey(hydrateForKey)
+      ) {
+        const peerSan = (personaCharacterId?.trim() || conversationCharacterId.trim() || '').trim()
+        if (peerSan && peerSan !== WECHAT_LUMI_PEER_CHARACTER_ID) {
+          msgs = msgs.filter((m) => {
+            if (m.type === 'player') return parseGroupIdFromGroupPeerCharacterId(m.characterId) == null
+            if (m.type === 'character') {
+              return m.characterId === peerSan || m.characterId === WECHAT_GROUP_BOT_CHARACTER_ID
+            }
+            return true
+          })
+        }
+      }
+
       // Lumi 小助手：首次进入且无历史时，写入默认开场白（只写一次，避免每次进入都刷屏）。
       const isLumiAssistantSession =
         useLumiProjectAssistantPrompt && conversationCharacterId === WECHAT_LUMI_PEER_CHARACTER_ID
@@ -2720,6 +2769,12 @@ export function ChatRoom({
     ignoreUiOnlyHiddenInListRef.current = false
     setUiOnlyHiddenCutForView(null)
     setFriendRequestAcceptedDividerAtMs(null)
+    /**
+     * 切换会话必须先清空内存列表：hydrate 会把 itemsRef 里「DB 尚无 id」的气泡与本轮 DB 结果合并（同会话乐观更新）。
+     * 若不置空，从群聊切到私聊时上一屏群消息仍留在 ref 中，会被误并进私聊列表（串会话）。
+     */
+    setItems([])
+    itemsRef.current = []
     void hydrateMessagesRef.current(true)
   }, [conversationKey])
 
@@ -4082,13 +4137,46 @@ export function ChatRoom({
           return gr ? findGroupMember(gr, sid)?.groupNickname : undefined
         },
       })
-      const memPack = await buildPrivateMemoryInjectionForAi(tx, '')
+      const sessionPidForPsyche = piid && piid !== '__none__' ? piid : '__none__'
+      const txHayForPsyche = buildMemoryRelevanceHaystack(tx.slice(-28).map((t) => t.text))
+      const memPieces: string[] = []
+      const unsPrivPieces: string[] = []
+      const offlinePieces: string[] = []
       const roster = await Promise.all(
         npcs.map(async (m) => {
           const ch = await personaDb.getCharacter(m.charId)
           const name = (m.groupNickname || '').trim() || ch?.name?.trim() || m.charId
           const avatarUrl = (ch?.avatarUrl || '').trim()
           const npcPronoun = ch?.gender === 'female' ? ('她' as const) : ('他' as const)
+          const plotFull = (await loadOfflineDatingPlotsPromptBlock(m.charId, ch?.name ?? null)).trim()
+          if (plotFull) offlinePieces.push(`【${(m.groupNickname || '').trim() || name}】\n${plotFull}`)
+          const hay = buildMemoryRelevanceHaystack([txHayForPsyche, plotFull.slice(0, 2800)])
+          try {
+            const mem = (
+              await personaDb.formatCharacterMemoriesForPromptByRelevance(m.charId, hay, {
+                apiConfig: apiConfig?.apiUrl?.trim() && apiConfig?.apiKey?.trim() ? apiConfig : null,
+              })
+            ).trim()
+            if (mem) memPieces.push(`### 角色ID ${m.charId}\n${mem}`)
+          } catch {
+            /* ignore */
+          }
+          if (sessionPidForPsyche !== '__none__') {
+            try {
+              const uns = (
+                await formatUnsummarizedPrivateDigestForGroupMember({
+                  npcCharacterId: m.charId,
+                  sessionPlayerIdentityId: sessionPidForPsyche,
+                  boundPlayerIdentityId: ch?.playerIdentityId,
+                  maxMessagesPerKey: 40,
+                  charCap: 1600,
+                })
+              ).trim()
+              if (uns) unsPrivPieces.push(`### ${m.charId}\n${uns}`)
+            } catch {
+              /* ignore */
+            }
+          }
           return { charId: m.charId, name, avatarUrl, npcPronoun }
         }),
       )
@@ -4100,6 +4188,16 @@ export function ChatRoom({
         ),
       ]
       const wbGroupPsycheIds = [...new Set(roster.map((r) => r.charId.trim()))]
+      const groupUnsForPsyche = (
+        await formatUnsummarizedCurrentGroupChatBlock({
+          groupId: g.id.trim(),
+          playerIdentityId: piid || '__none__',
+          group: g,
+          maxMessages: 80,
+          maxChars: 3200,
+        })
+      ).trim()
+
       const archive = await requestWeChatGroupPsyche({
         apiConfig,
         playerIdentity,
@@ -4108,11 +4206,11 @@ export function ChatRoom({
         roster,
         userAliasesToStrip,
         nowMs: getCurrentTimeMs(),
-        longTermMemoryNotes: memPack.memory || undefined,
-        offlineDatingPlotsContext: undefined,
+        longTermMemoryNotes: memPieces.join('\n\n').trim().slice(0, 14000) || undefined,
+        offlineDatingPlotsContext: offlinePieces.join('\n\n').trim().slice(0, 12000) || undefined,
         recentGroupChatsReference: groupRef || undefined,
-        unsummarizedPrivateNotes: memPack.unsPrivate || undefined,
-        unsummarizedGroupNotes: memPack.unsGroup || undefined,
+        unsummarizedPrivateNotes: unsPrivPieces.join('\n\n').trim().slice(0, 12000) || undefined,
+        unsummarizedGroupNotes: groupUnsForPsyche || undefined,
         chatMemberIds: wbGroupPsycheIds,
       })
       await personaDb.putGroupPsyche(conversationCharacterId, archive)
@@ -4126,7 +4224,6 @@ export function ChatRoom({
     }
   }, [
     apiConfig,
-    buildPrivateMemoryInjectionForAi,
     conversationCharacterId,
     getCurrentTimeMs,
     groupLive,
@@ -4636,6 +4733,17 @@ export function ChatRoom({
                   sessionRelationshipsBulk = []
                 }
               }
+              let anchorPrivatePeerId: string | null = null
+              const gidForPvAnchor = groupId?.trim() ?? ''
+              if (gidForPvAnchor && sessionPidForGroup && sessionPidForGroup !== '__none__') {
+                try {
+                  anchorPrivatePeerId =
+                    peekGroupChatPrivatePeerAnchorFromDockStaging(gidForPvAnchor) ??
+                    (await personaDb.getGroupChatAnchorPrivatePeerCharacterId(gidForPvAnchor, sessionPidForGroup))
+                } catch {
+                  anchorPrivatePeerId = null
+                }
+              }
               const boundRelationshipsCache = new Map<string, Relationship[]>()
               const memberPromptRows: WeChatGroupMultiSpeakerMemberPrompt[] = []
               const identityBindingSnapshot: GroupNpcIdentityBindingRow[] = []
@@ -4654,6 +4762,19 @@ export function ChatRoom({
                 })
                 if (ch?.wechatNickname?.trim()) nickToId.set(ch.wechatNickname.trim(), m.charId)
                 if (ch?.name?.trim()) nickToId.set(ch.name.trim(), m.charId)
+                const anchorBoost =
+                  !!anchorPrivatePeerId && m.charId.trim() === anchorPrivatePeerId.trim()
+                const continuityBias = anchorBoost
+                  ? '【会话锚点】用户刚结束与你在微信私聊并进入本群；须与私聊与长期记忆连贯承接，禁止装作私聊未发生；群发言仍守分寸，勿当众宣读不宜公开的细节。'
+                  : ''
+                let offlinePlotForMember = ''
+                try {
+                  offlinePlotForMember = (
+                    await loadOfflineDatingPlotsPromptBlock(m.charId, ch?.name ?? ch?.wechatNickname ?? null)
+                  ).trim()
+                } catch {
+                  offlinePlotForMember = ''
+                }
                 let privateDigest = ''
                 try {
                   privateDigest = (
@@ -4661,17 +4782,36 @@ export function ChatRoom({
                       npcCharacterId: m.charId,
                       sessionPlayerIdentityId: playerIdentityId.trim(),
                       boundPlayerIdentityId: ch?.playerIdentityId,
-                      messageCap: 42,
-                      charCap: 3800,
+                      anchorPrivateBoost: anchorBoost,
+                      messageCap: anchorBoost ? 56 : 42,
+                      charCap: anchorBoost ? 5200 : 3800,
                     })
                   ).trim()
                 } catch {
                   privateDigest = ''
                 }
+                let unsPrivMember = ''
+                try {
+                  unsPrivMember = (
+                    await formatUnsummarizedPrivateDigestForGroupMember({
+                      npcCharacterId: m.charId,
+                      sessionPlayerIdentityId: sessionPidForGroup,
+                      boundPlayerIdentityId: ch?.playerIdentityId,
+                      anchorPrivateBoost: anchorBoost,
+                      maxMessagesPerKey: anchorBoost ? 76 : 56,
+                      charCap: anchorBoost ? 3600 : 2600,
+                    })
+                  ).trim()
+                } catch {
+                  unsPrivMember = ''
+                }
                 const memberHay = buildMemoryRelevanceHaystack([
+                  continuityBias,
                   ...transcript.slice(-36).map((t) => `${t.speakerLabel ?? ''} ${t.text}`),
                   traceReplyBias,
-                  privateDigest.slice(0, 1400),
+                  offlinePlotForMember.slice(0, 2400),
+                  privateDigest.slice(0, anchorBoost ? 2200 : 1400),
+                  unsPrivMember.slice(0, 1800),
                 ])
                 let memNotes = ''
                 try {
@@ -4682,20 +4822,6 @@ export function ChatRoom({
                   ).trim()
                 } catch {
                   memNotes = ''
-                }
-                let unsPrivMember = ''
-                try {
-                  unsPrivMember = (
-                    await formatUnsummarizedPrivateDigestForGroupMember({
-                      npcCharacterId: m.charId,
-                      sessionPlayerIdentityId: sessionPidForGroup,
-                      boundPlayerIdentityId: ch?.playerIdentityId,
-                      maxMessagesPerKey: 56,
-                      charCap: 2600,
-                    })
-                  ).trim()
-                } catch {
-                  unsPrivMember = ''
                 }
                 const boundPid = ch?.playerIdentityId?.trim()
                 let boundRels: Relationship[] | undefined
@@ -4761,8 +4887,10 @@ export function ChatRoom({
                   privateChatDigest: privateDigest || undefined,
                   unsummarizedPrivateNotes: unsPrivMember || undefined,
                 })
-                const plot = await loadOfflineDatingPlotsPromptBlock(m.charId, ch?.name ?? null)
-                if (plot.trim()) offlineCombined += `\n【${m.groupNickname}】\n${plot.trim()}\n`
+                if (offlinePlotForMember) {
+                  const gn = (m.groupNickname || '').trim() || ch?.name?.trim() || m.charId
+                  offlineCombined += `\n【${gn}】\n${offlinePlotForMember}\n`
+                }
               }
               let multiIdentityCoPresenceBlock = ''
               try {

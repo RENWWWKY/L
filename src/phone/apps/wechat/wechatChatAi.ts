@@ -471,6 +471,10 @@ export function buildSystemContent(params: {
       : `对方发来的内容里出现的「我」「我的」，默认指${player}本人正在自述——不要把那些事当成角色自己的遭遇来接续叙述。\n`
   const peerLine = `\n\n---\n【会话对方】对方的微信资料名或备注可能显示为：${player}。请用自然称呼，不要机械重复全名除非语境需要。\n${attributionLine}【技术席位说明】在本请求的消息列表里：role 为 user 的条目即该真人已发送内容；role 为 assistant 的条目即你（对方角色）已发送过的历史。你本轮只生成新的 assistant 侧回复。禁止身份倒错、禁止替该真人续写其下一句台词。\n`
   const mem = buildLongTermMemorySection(params.longTermMemoryNotes)
+  const memScopeFence =
+    params.character && params.promptMode === 'persona'
+      ? `\n\n---\n【长期记忆适用边界】下方【长期记忆】条目**仅**锚定当前会话对象人设 id；**禁止**把其中事实套用到未在场的其他联系人，**禁止**引用与本会话对象无关的他人记忆（防串台）。\n`
+      : ''
   const unsPriv = buildUnsummarizedPrivateSection(params.unsummarizedPrivateNotes)
   const unsGrp = buildUnsummarizedGroupSection(params.unsummarizedGroupNotes)
   const offlinePlots = params.offlineDatingPlotsContext?.trim()
@@ -498,7 +502,7 @@ export function buildSystemContent(params: {
 
   if (isLumiAssistant) {
     // 助手模式：不注入「虚构沙盒」免责声明，避免诱导沉浸式扮演。
-    const raw = `${LUMI_ASSISTANT_SYSTEM_PROMPT}${loreBlock}${mem}${unsPriv}${unsGrp}${offlinePlots}${groupChatsRecent}${replyBias}${currentTime}${schedule}${pi}${peerLine}`
+    const raw = `${LUMI_ASSISTANT_SYSTEM_PROMPT}${loreBlock}${mem}${memScopeFence}${unsPriv}${unsGrp}${offlinePlots}${groupChatsRecent}${replyBias}${currentTime}${schedule}${pi}${peerLine}`
     return linkedExpand(raw)
   }
 
@@ -522,7 +526,7 @@ export function buildSystemContent(params: {
     extra += `\n\n---\n【当前状态】未绑定完整人设档案（无世界书）。请以友善、有分寸的微信好友身份交谈，仍须遵守上述通用铁则，且绝不暴露非人类身份。\n`
   }
 
-  const rawMain = `${WECHAT_ROLEPLAY_SYSTEM_PROMPT}${loreBlock}${mem}${unsPriv}${unsGrp}${offlinePlots}${groupChatsRecent}${replyBias}${currentTime}${schedule}${pi}${fictionCot}${extra}${peerLine}`
+  const rawMain = `${WECHAT_ROLEPLAY_SYSTEM_PROMPT}${loreBlock}${mem}${memScopeFence}${unsPriv}${unsGrp}${offlinePlots}${groupChatsRecent}${replyBias}${currentTime}${schedule}${pi}${fictionCot}${extra}${peerLine}`
   return linkedExpand(rawMain)
 }
 
@@ -2660,7 +2664,7 @@ export function buildWeChatGroupMultiSpeakerSystem(params: {
   const cards = params.members
     .map((m) => {
       const wb = (m.worldBook || '').trim().slice(0, 4500)
-      const mem = (m.memoryNotes || '').trim().slice(0, 2200)
+      const mem = (m.memoryNotes || '').trim().slice(0, 2800)
       const wbg = (m.worldBackground || '').trim().slice(0, 900)
       const relRom = (m.relationshipRomanceProfile || '').trim().slice(0, 4200)
       const digest = (m.privateChatDigest || '').trim().slice(0, 4500)
@@ -2690,7 +2694,9 @@ export function buildWeChatGroupMultiSpeakerSystem(params: {
   const multiIdBlock = params.multiIdentityCoPresenceBlock?.trim()
     ? `\n\n---\n${params.multiIdentityCoPresenceBlock.trim()}\n`
     : ''
-  const core = `【当前微信群】名称：${params.groupName}\n群会话 ID：${params.groupId}${auditBlock}${shieldAnnexBlock}\n\n【群成员 ID 列表（SPEAKER 只能从这些 ID 里选）】\n${list}\n\n${WECHAT_GROUP_MULTI_SPEAKER_LUMI_RULES}${multiIdBlock}${strangerBlock}\n\n---\n【各成员人设与记忆摘录】\n${cards}\n`
+  const memoryIsolation =
+    '【记忆与摘录隔离（硬性）】以下各 ### 小节标题中的「角色 ID」与子内容一一绑定；该小节内的【长期记忆摘录】【私聊近况】【尚未总结】**仅**能给行首 `<<SPEAKER:该角色ID>>` 的台词作依据。**禁止**把 A 小节内的记忆或私聊事实写进 B 角色的气泡（B≠A）；**禁止**张冠李戴、串用他人记忆。\n\n'
+  const core = `【当前微信群】名称：${params.groupName}\n群会话 ID：${params.groupId}${auditBlock}${shieldAnnexBlock}\n\n【群成员 ID 列表（SPEAKER 只能从这些 ID 里选）】\n${list}\n\n${WECHAT_GROUP_MULTI_SPEAKER_LUMI_RULES}${multiIdBlock}${strangerBlock}\n\n---\n【各成员人设与记忆摘录】\n${memoryIsolation}${cards}\n`
   const groupUnsum = params.groupUnsummarizedNotes?.trim()
     ? `\n\n---\n【本群尚未写入长期记忆的群聊片段（本地游标之后）】\n${params.groupUnsummarizedNotes.trim().slice(0, 8000)}\n`
     : ''

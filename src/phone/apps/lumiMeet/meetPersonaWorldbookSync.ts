@@ -1,8 +1,34 @@
 import { upsertLoreEntry } from '../../worldbook/worldbookLoreStore'
 import type { ComprehensivePersona } from './comprehensivePersona'
+import { isMeetProfilePlaceholder } from './comprehensivePersona'
 import { formatComprehensivePersonaMarkdown } from './formatComprehensivePersonaWorldbook'
+import { rewriteMeetWorldbookNamesToPlaceholders } from './meetWorldbookPlaceholders'
 
 const LORE_TITLE = '核心人设档案'
+
+/** 档案法则条目标题 + 正文（与人设 vol10 结业稿共用一套占位符规则） */
+export function buildMeetEpilogueLoreTitle(playerDisplayName?: string | null): string {
+  const dn = playerDisplayName?.trim()
+  const hasUser = !!(dn && !isMeetProfilePlaceholder(dn))
+  return hasUser ? `对 {{user}} 的初印象 (Lumi Meet)` : '初遇印象 (Lumi Meet)'
+}
+
+export function formatMeetEpilogueImpressionForStorage(params: {
+  rawContent: string
+  charNickname: string
+  charRealName?: string | null
+  playerDisplayName?: string
+}): { title: string; body: string } {
+  const dn = params.playerDisplayName?.trim()
+  const hasUser = !!(dn && !isMeetProfilePlaceholder(dn))
+  const title = buildMeetEpilogueLoreTitle(params.playerDisplayName)
+  const body = rewriteMeetWorldbookNamesToPlaceholders(params.rawContent.trim(), {
+    nickname: params.charNickname,
+    realName: params.charRealName,
+    userDisplayName: hasUser ? dn : undefined,
+  })
+  return { title, body }
+}
 
 export function getMeetNineDossierEntryId(characterId: string): string {
   return `meet-nine-dossier-${characterId.trim()}`
@@ -29,7 +55,7 @@ export function syncMeetDossierToWorldbookLore(
   upsertLoreEntry({
     id,
     title: LORE_TITLE,
-    content: formatComprehensivePersonaMarkdown(nickname, dossier),
+    content: formatComprehensivePersonaMarkdown(nickname, dossier, characterId),
     enabled: true,
     plateScope: { mode: 'all' },
     characterScope: { mode: 'characters', ids: [characterId] },
@@ -47,13 +73,19 @@ export function syncMeetEpilogueImpressionToWorldbookLore(params: {
   characterId: string
   playerDisplayName?: string
   content: string
+  charNickname: string
+  charRealName?: string | null
 }): void {
-  const dn = params.playerDisplayName?.trim()
-  const title = dn ? `对 ${dn} 的初印象 (Lumi Meet)` : '初遇印象 (Lumi Meet)'
+  const { title, body } = formatMeetEpilogueImpressionForStorage({
+    rawContent: params.content,
+    charNickname: params.charNickname,
+    charRealName: params.charRealName,
+    playerDisplayName: params.playerDisplayName,
+  })
   upsertLoreEntry({
     id: getMeetEpilogueImpressionEntryId(params.characterId),
     title,
-    content: params.content.trim(),
+    content: body,
     enabled: true,
     plateScope: { mode: 'all' },
     characterScope: { mode: 'characters', ids: [params.characterId] },

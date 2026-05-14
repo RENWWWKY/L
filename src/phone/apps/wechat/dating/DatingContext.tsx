@@ -1,6 +1,7 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { personaDb, pullPhoneKvWithLocalStorageLegacy } from '../newFriendsPersona/idb'
-import { wechatConversationKey } from '../wechatConversationKey'
+import { resolvePrivateChatSessionPlayerIdentityId, resolvePrivateWeChatConversationKey } from '../wechatConversationKey'
+import { peekPrivateChatGroupAnchorFromDockStaging } from '../wechatPrivateGroupAnchorStaging'
 import {
   gatherUnifiedMemoryInputsForDatingTurn,
   lastAiDatingPlotIdInSnapshot,
@@ -1377,12 +1378,12 @@ export function DatingProvider({ children }: { children: ReactNode }) {
     }> => {
       const cid = characterId.trim()
       const chRow = await personaDb.getCharacter(cid).catch(() => null)
-      const pid = chRow?.playerIdentityId?.trim() || '__none__'
+      const appPid = await personaDb.getCurrentIdentityId()
+      const convKey = resolvePrivateWeChatConversationKey(cid, chRow, appPid)
 
       let unsummarizedPrivateBlock = ''
       let unsummarizedGroupBlock = ''
-      if (pid && pid !== '__none__') {
-        const convKey = wechatConversationKey(cid, pid)
+      if (convKey && !convKey.startsWith('wxgrp:')) {
         try {
           unsummarizedPrivateBlock = await formatUnsummarizedPrivateChatBlock({
             conversationKey: convKey,
@@ -1393,10 +1394,15 @@ export function DatingProvider({ children }: { children: ReactNode }) {
           unsummarizedPrivateBlock = ''
         }
         try {
+          const sessionPid = resolvePrivateChatSessionPlayerIdentityId(chRow, appPid)
+          const anchorGroupId =
+            peekPrivateChatGroupAnchorFromDockStaging(cid) ??
+            (await personaDb.getPrivateChatAnchorGroupId(cid, sessionPid))
           unsummarizedGroupBlock = await buildNpcGroupChatsUnsummarizedDigestForPrivatePrompt({
             npcCharacterId: cid,
-            sessionPlayerIdentityId: pid,
+            sessionPlayerIdentityId: appPid?.trim() || '__none__',
             boundPlayerIdentityId: chRow?.playerIdentityId,
+            anchorGroupId,
             maxMessagesPerGroup: 120,
             charCap: DATING_AI_REFERENCE_SECTION_CHAR_CAP,
           })
@@ -1411,16 +1417,6 @@ export function DatingProvider({ children }: { children: ReactNode }) {
         .map((m) => `${m.type === 'player' ? '我' : 'TA'}：${String(m.content || '').trim()}`)
         .filter((s) => s.length > 3)
         .join('\n')
-      const hay = buildMemoryRelevanceHaystack([
-        relevance?.userText,
-        relevance?.plotTail,
-        unsummarizedPrivateBlock,
-        unsummarizedGroupBlock,
-        recentHaystack,
-      ])
-      const longTermMemory = await personaDb.formatCharacterMemoriesForPromptByRelevance(cid, hay, {
-        apiConfig: apiConfig?.apiUrl?.trim() && apiConfig?.apiKey?.trim() ? apiConfig : null,
-      })
 
       let unsummarizedOfflineBlock = ''
       const offlineSnap = relevance?.offlineUnsummarizedPlotSnapshot
@@ -1439,6 +1435,28 @@ export function DatingProvider({ children }: { children: ReactNode }) {
           unsummarizedOfflineBlock = ''
         }
       }
+
+      let offlinePlotsHay = ''
+      try {
+        offlinePlotsHay = (
+          await loadOfflineDatingPlotsPromptBlock(cid, chRow?.name?.trim() || chRow?.wechatNickname?.trim() || null)
+        ).trim()
+      } catch {
+        offlinePlotsHay = ''
+      }
+
+      const hay = buildMemoryRelevanceHaystack([
+        relevance?.userText,
+        relevance?.plotTail,
+        unsummarizedPrivateBlock,
+        unsummarizedGroupBlock,
+        unsummarizedOfflineBlock.slice(0, 4000),
+        offlinePlotsHay.slice(0, 3600),
+        recentHaystack,
+      ])
+      const longTermMemory = await personaDb.formatCharacterMemoriesForPromptByRelevance(cid, hay, {
+        apiConfig: apiConfig?.apiUrl?.trim() && apiConfig?.apiKey?.trim() ? apiConfig : null,
+      })
 
       return {
         recentMessages: '',

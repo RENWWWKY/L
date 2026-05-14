@@ -4,7 +4,15 @@
 
 import { expandCharUserPlaceholders, type CharUserNames } from '../wechat/charUserPlaceholders'
 import type { ComprehensivePersona } from './comprehensivePersona'
-import { isMeetProfilePlaceholder, sanitizeLoveBlocksForStaticLore } from './comprehensivePersona'
+import {
+  deriveMeetMottoFromPersona,
+  deriveMeetOccupationLabel,
+  ensureMeetHeightCmValue,
+  ensureMeetWeightKgValue,
+  formatMeetMbtiLettersForUi,
+  isMeetProfilePlaceholder,
+  sanitizeLoveBlocksForStaticLore,
+} from './comprehensivePersona'
 import type { EncounterNPC, MeetPublicProfile } from './meetTypes'
 
 export function resolveMeetCharUserNames(charNickname: string, profile: MeetPublicProfile): CharUserNames {
@@ -31,7 +39,9 @@ export function expandComprehensivePersonaPlaceholders(
       realName: ex(p0.base.realName),
       birthdayMD: ex(p0.base.birthdayMD),
       weightKg: ex(p0.base.weightKg),
+      heightCm: ex(p0.base.heightCm),
       zodiac: ex(p0.base.zodiac),
+      wechatSignature: ex(p0.base.wechatSignature),
     },
     core: {
       mbti: ex(p0.core.mbti),
@@ -83,11 +93,7 @@ export function expandComprehensivePersonaPlaceholders(
 
 /** 供匹配裁判 / 聊天模型使用；不传 expandNames 时保留 {{char}}/{{user}}（写入人设库 / 微信侧再解析） */
 export function buildMeetNpcDigestForModel(
-  npc: {
-    nickname: string
-    persona: string
-    comprehensivePersona?: ComprehensivePersona | null
-  },
+  npc: EncounterNPC,
   expandNames?: CharUserNames | null,
 ): string {
   if (!npc.comprehensivePersona) {
@@ -96,8 +102,14 @@ export function buildMeetNpcDigestForModel(
     return body.slice(0, 2000)
   }
   const c = expandComprehensivePersonaPlaceholders(npc.comprehensivePersona, expandNames ?? null)
+  const seedV = `${npc.id}\x1evitals`
+  const hCm = ensureMeetHeightCmValue(c.base.heightCm, seedV)
+  const wKg = ensureMeetWeightKgValue(c.base.weightKg, seedV)
+  const occ = npc.occupation?.trim() || deriveMeetOccupationLabel(c.abilities.skills)
+  const mot = npc.motto?.trim() || deriveMeetMottoFromPersona(c)
+  const mbtiLetters = npc.mbti?.trim() || formatMeetMbtiLettersForUi(c.core.mbti)
   const parts = [
-    `【基础档案】真实姓名 ${c.base.realName}｜生日 ${c.base.birthdayMD}｜${c.base.weightKg} kg｜${c.base.zodiac}`,
+    `【基础档案】姓名 ${c.base.realName}｜身高 ${hCm} cm｜体重 ${wKg} kg｜生日 ${c.base.birthdayMD}｜星座 ${c.base.zodiac}｜MBTI ${mbtiLetters}｜职业 ${occ}｜座右铭 ${mot}｜个签 ${c.base.wechatSignature}`,
     `【基础】${c.base.info}`,
     `【外显/内核】${c.core.surface} / ${c.core.trueSelf}`,
     `【雷点缺陷】${c.core.flaws}`,
@@ -122,7 +134,7 @@ export function formatMeetBirthdayDisplayZh(md: string | undefined): string | nu
   return `${m} 月 ${d} 日`
 }
 
-/** 卡片副标题：年龄 · 星座 · 生日 · 体重（不含真实姓名） */
+/** 卡片副标题：年龄 · 星座 · 生日 · 身高 · 体重（不含真实姓名） */
 export function buildMeetNpcVitalsSubtitle(npc: EncounterNPC): string | null {
   const b = npc.comprehensivePersona?.base
   const age = npc.ageYears
@@ -134,6 +146,12 @@ export function buildMeetNpcVitalsSubtitle(npc: EncounterNPC): string | null {
   if (zod && !isMeetProfilePlaceholder(zod)) parts.push(zod)
   const bd = md && !isMeetProfilePlaceholder(md) ? formatMeetBirthdayDisplayZh(md) : null
   if (bd) parts.push(bd)
+  if (b) {
+    const hDisp = ensureMeetHeightCmValue(String(npc.heightCm ?? b.heightCm ?? ''), npc.id)
+    parts.push(`${hDisp} cm`)
+  } else if (npc.heightCm && !isMeetProfilePlaceholder(npc.heightCm)) {
+    parts.push(`${npc.heightCm} cm`)
+  }
   if (w && !isMeetProfilePlaceholder(w)) parts.push(`${w} kg`)
   return parts.length ? parts.join(' · ') : null
 }

@@ -15,7 +15,7 @@ import {
   zodiacZhFromStoredMD,
   normalizeBirthdayMD,
 } from './characterProfilePhysioUtils'
-import { isLargeMbtiAvatar, MBTI_SUMMARY_4, resolveMbtiImageUrl } from './mbtiProfileUi'
+import { isLargeMbtiAvatar, resolveMbtiImageUrl } from './mbtiProfileUi'
 import { DEFAULT_WORLD_BACKGROUND_ID } from './worldBackgroundConstants'
 import { formatWorldBackgroundForPrompt } from './worldBackgroundFormat'
 import { IDENTITY_POOL, daysInMonth, formatMD, randomChineseName } from './utils'
@@ -687,18 +687,17 @@ export function CharacterBasicProfileForm({
             >
               <div className="mx-auto mb-6 h-1 w-9 rounded-full bg-neutral-300" aria-hidden />
               <p className="text-[15px] font-semibold text-neutral-950">MBTI · 人格类型</p>
-              <p className="mt-1 text-[11px] text-neutral-500">十六型人格 · 形象与约二十字人格速写（点击下方卡片选择）</p>
+              <p className="mt-1 text-[11px] text-neutral-500">十六型 · 点击下方卡片选择</p>
               <div className="mt-5 grid grid-cols-1 gap-3 pb-4 sm:grid-cols-2">
                 {MBTI_LIST.map((m) => {
                   const active = form.mbti === m
                   const src = resolveMbtiImageUrl(m)
-                  const summary = MBTI_SUMMARY_4[m] ?? ''
                   const big = isLargeMbtiAvatar(m)
                   return (
                     <button
                       key={m}
                       type="button"
-                      className={`flex items-start gap-3 rounded-xl border px-3 py-3.5 text-left transition-colors active:opacity-95 ${
+                      className={`flex items-center gap-3 rounded-xl border px-3 py-3 text-left transition-colors active:opacity-95 ${
                         active ? 'border-neutral-950 bg-neutral-950 text-white' : 'border-neutral-200 bg-white text-neutral-800'
                       }`}
                       onClick={() => {
@@ -722,10 +721,9 @@ export function CharacterBasicProfileForm({
                           <span className="font-mono text-[10px] text-neutral-400">{m}</span>
                         )}
                       </div>
-                      <div className="min-w-0 flex-1">
-                        <p className={`font-mono text-[13px] font-semibold tracking-wide ${active ? 'text-white' : 'text-neutral-950'}`}>{m}</p>
-                        <p className={`mt-1 text-[12px] leading-relaxed ${active ? 'text-white/80' : 'text-neutral-600'}`}>{summary}</p>
-                      </div>
+                      <p className={`min-w-0 font-mono text-[14px] font-semibold tracking-wide ${active ? 'text-white' : 'text-neutral-950'}`}>
+                        {m}
+                      </p>
                     </button>
                   )
                 })}

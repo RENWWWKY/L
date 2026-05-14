@@ -69,8 +69,11 @@ import {
   WECHAT_GROUP_BOT_CHARACTER_ID,
   WECHAT_GROUP_USER_CHAR_ID,
   WECHAT_LUMI_PEER_CHARACTER_ID,
+  groupMemoryBucketCharacterId,
   isWechatGroupConversationKey,
   parseGroupIdFromConversationKey,
+  parseGroupIdFromGroupPeerCharacterId,
+  parsePrivateWeChatConversationCharacterAndSession,
   wechatConversationKey,
   wechatGroupConversationKey,
   wechatGroupPeerCharacterId,
@@ -93,6 +96,11 @@ const DB_VERSION = 25
 /** 复合索引：按会话 + 时间戳范围查询（日历、按日跳转） */
 const CHAT_MSG_INDEX_CONV_TS = 'conversationKey_timestamp'
 const PHONE_KV_STORE = 'phoneKv'
+/** 从群聊切到某成员私聊时，短暂记住「来源群」，私聊 AI 摘录优先承接该群（TTL 内有效） */
+const WX_PRIVATE_ANCHOR_GROUP_KV_PREFIX = 'wx-pv-anchor-grp:v1:'
+const WX_PRIVATE_ANCHOR_GROUP_TTL_MS = 45 * 60 * 1000
+/** 从某 NPC 私聊切回本群时，群 AI 优先承接该成员私聊语境（TTL 与私聊锚群一致） */
+const WX_GROUP_ANCHOR_PRIVATE_PEER_KV_PREFIX = 'wx-grp-anchor-pv:v1:'
 const STORE = 'characters'
 const WORLD_BG_STORE = 'worldBackgrounds'
 const CHAT_MSG_STORE = 'chatMessages'
@@ -1962,7 +1970,17 @@ export class PersonaDb {
         for (const raw of all) {
           const m = normalizeWeChatChatMessage(raw)
           if (!m || m.playerIdentityId !== fromPid) continue
-          const nextCk = wechatConversationKey(m.characterId, toPid)
+          /** 群聊 NPC 气泡的 characterId 是真实角色 id，会话键须沿用原 wxgrp 键，禁止误用 wechatConversationKey(角色, …) 变成私聊键 */
+          const oldCk = m.conversationKey.trim()
+          const nextCk = (() => {
+            if (isWechatGroupConversationKey(oldCk)) {
+              const gid = parseGroupIdFromConversationKey(oldCk)
+              return gid ? wechatGroupConversationKey(gid, toPid) : wechatConversationKey(m.characterId, toPid)
+            }
+            const parsed = parsePrivateWeChatConversationCharacterAndSession(oldCk)
+            const peer = (parsed?.characterId ?? m.characterId).trim() || m.characterId
+            return wechatConversationKey(peer, toPid)
+          })()
           const merged = normalizeWeChatChatMessage({ ...m, playerIdentityId: toPid, conversationKey: nextCk })
           if (!merged) continue
           store.put(merged)
@@ -2010,6 +2028,77 @@ export class PersonaDb {
     }
 
     if (touched) emitWeChatStorageChanged()
+  }
+
+  /**
+   * 修复群聊消息被错误挂在「某角色私聊」conversationKey 下的数据（历史迁移 bug 等）。
+   * - 玩家气泡：`characterId` 为群占位 `wxgrp:群id` 者应落在群键。
+   * - 对方气泡：私聊键下不应出现与会话对方 id 不一致的 NPC（视为误入的群成员气泡），改写到同时包含该 NPC 与私聊对方的群。
+   */
+  async repairMisfiledWeChatMessagesAfterThreadMixup(playerIdentityId: string): Promise<number> {
+    const pid = playerIdentityId.trim()
+    if (!pid || pid === '__none__') return 0
+    let fixed = 0
+    let groups: GroupChatRow[] = []
+    try {
+      groups = await this.listGroupChatsForPlayerIdentity(pid)
+    } catch {
+      return 0
+    }
+    const db = await openDb()
+    try {
+      if (!db.objectStoreNames.contains(CHAT_MSG_STORE)) return 0
+      const tx = db.transaction(CHAT_MSG_STORE, 'readwrite')
+      const store = tx.objectStore(CHAT_MSG_STORE)
+      const all = await new Promise<unknown[]>((resolve, reject) => {
+        const r = store.getAll()
+        r.onsuccess = () => resolve((r.result as unknown[]) ?? [])
+        r.onerror = () => reject(r.error ?? new Error('repairMisfiledWeChatMessagesAfterThreadMixup'))
+      })
+      for (const raw of all) {
+        const m = normalizeWeChatChatMessage(raw)
+        if (!m || m.playerIdentityId.trim() !== pid) continue
+        const ck = m.conversationKey.trim()
+        if (isWechatGroupConversationKey(ck)) continue
+        const parsed = parsePrivateWeChatConversationCharacterAndSession(ck)
+        if (!parsed) continue
+        const peer = parsed.characterId.trim()
+        if (!peer || peer === WECHAT_LUMI_PEER_CHARACTER_ID) continue
+        let newKey: string | null = null
+        if (m.type === 'player') {
+          const gid = parseGroupIdFromGroupPeerCharacterId(m.characterId)
+          if (gid) newKey = wechatGroupConversationKey(gid, pid)
+        } else if (m.type === 'character') {
+          const npcId = m.characterId.trim()
+          if (!npcId || npcId === WECHAT_GROUP_BOT_CHARACTER_ID || npcId === peer) continue
+          let candidates = groups.filter(
+            (g) =>
+              (g.members ?? []).some((mm) => mm.charId === peer) &&
+              (g.members ?? []).some((mm) => mm.charId === npcId),
+          )
+          /** 导入/成员表与私聊 peer 不完全同步时：仍尝试把误入私聊键的 NPC 气泡迁回「含该 NPC」的群（取最近活跃） */
+          if (candidates.length === 0) {
+            candidates = groups.filter((g) => (g.members ?? []).some((mm) => mm.charId === npcId))
+          }
+          if (candidates.length === 0) continue
+          const pick =
+            candidates.length === 1
+              ? candidates[0]!
+              : [...candidates].sort((a, b) => (b.updatedAt ?? 0) - (a.updatedAt ?? 0))[0]!
+          newKey = wechatGroupConversationKey(pick.id.trim(), pid)
+        }
+        if (!newKey || newKey === ck) continue
+        const moved = normalizeWeChatChatMessage({ ...m, conversationKey: newKey })
+        if (!moved) continue
+        store.put(moved)
+        fixed += 1
+      }
+      await txDone(tx)
+    } finally {
+      db.close()
+    }
+    if (fixed) emitWeChatStorageChanged()
+    return fixed
   }
 
   async getCurrentIdentity(): Promise<PlayerIdentity | null> {
@@ -2084,6 +2173,127 @@ export class PersonaDb {
     return next
   }
 
+  /** 清除某会话在 memorySettings 中的自动总结轮数 / 游标（私聊键或群键 `wxgrp:…`） */
+  async clearMemoryTracksForWeChatConversationKey(conversationKey: string): Promise<void> {
+    const k = conversationKey.trim()
+    if (!k) return
+    try {
+      const settings = await this.getMemorySettings()
+      const aiMap = { ...(settings.aiRoundCountByConversation ?? {}) }
+      const sumMap = { ...(settings.summaryCursorTimestampByConversation ?? {}) }
+      let changed = false
+      if (k in aiMap) {
+        delete aiMap[k]
+        changed = true
+      }
+      if (k in sumMap) {
+        delete sumMap[k]
+        changed = true
+      }
+      if (changed) {
+        await this.putMemorySettings(
+          {
+            aiRoundCountByConversation: Object.keys(aiMap).length ? aiMap : undefined,
+            summaryCursorTimestampByConversation: Object.keys(sumMap).length ? sumMap : undefined,
+          },
+          { emit: false },
+        )
+      }
+    } catch {
+      /* ignore */
+    }
+  }
+
+  /** 删除群心语存档（key 为群占位 `wxgrp:群id`） */
+  async deleteGroupPsycheByPeerCharacterId(peerCharacterId: string): Promise<void> {
+    const cid = peerCharacterId.trim()
+    if (!cid) return
+    const db = await openDb()
+    if (!db.objectStoreNames.contains(GROUP_PSYCHE_STORE)) {
+      db.close()
+      return
+    }
+    const tx = db.transaction(GROUP_PSYCHE_STORE, 'readwrite')
+    tx.objectStore(GROUP_PSYCHE_STORE).delete(cid)
+    await txDone(tx)
+    db.close()
+  }
+
+  /** 仅删除某会话下、发言者 id 落在集合内的消息（用于从混合群中剥离已删角色） */
+  async deleteWeChatMessagesInConversationFromCharacterIds(
+    conversationKey: string,
+    characterIds: Set<string>,
+  ): Promise<void> {
+    const k = conversationKey.trim()
+    if (!k || !characterIds.size) return
+    const msgs = await this.listWeChatChatMessagesByConversationKey(k)
+    const toDelete = msgs.filter((m) => characterIds.has(m.characterId.trim())).map((m) => m.id.trim()).filter(Boolean)
+    if (!toDelete.length) return
+    const db = await openDb()
+    if (!db.objectStoreNames.contains(CHAT_MSG_STORE)) {
+      db.close()
+      return
+    }
+    const tx = db.transaction(CHAT_MSG_STORE, 'readwrite')
+    const store = tx.objectStore(CHAT_MSG_STORE)
+    for (const id of toDelete) store.delete(id)
+    await txDone(tx)
+    db.close()
+  }
+
+  /**
+   * 删除人设/NPC 时：清理其参与的群聊——仅 NPC 均为被删 id 的群整表删除；
+   * 否则从成员表与消息里剥离这些 id（无剩余 NPC 时仍解散群）。
+   */
+  async purgeGroupChatsTouchingDeletedCharacterIds(idsToRemove: Set<string>): Promise<void> {
+    if (!idsToRemove.size) return
+    const groups = await this.listGroupChats()
+    for (const g of groups) {
+      const gid = g.id?.trim()
+      const pid = (g.playerIdentityId || '').trim()
+      if (!gid || !pid) continue
+      const members = g.members ?? []
+      const npcMembers = members.filter(
+        (m) =>
+          m.charId.trim() &&
+          m.charId !== WECHAT_GROUP_USER_CHAR_ID &&
+          m.charId !== WECHAT_GROUP_BOT_CHARACTER_ID,
+      )
+      const touches = npcMembers.some((m) => idsToRemove.has(m.charId.trim()))
+      if (!touches) continue
+
+      const convKey = wechatGroupConversationKey(gid, pid)
+      const allNpcRemoved =
+        npcMembers.length > 0 && npcMembers.every((m) => idsToRemove.has(m.charId.trim()))
+
+      if (allNpcRemoved) {
+        await this.deleteGroupChat(gid, pid)
+        continue
+      }
+
+      const nextMembers = members.filter((m) => !idsToRemove.has(m.charId.trim()))
+      const nextNpc = nextMembers.filter(
+        (m) =>
+          m.charId.trim() &&
+          m.charId !== WECHAT_GROUP_USER_CHAR_ID &&
+          m.charId !== WECHAT_GROUP_BOT_CHARACTER_ID,
+      )
+      if (nextNpc.length === 0) {
+        await this.deleteGroupChat(gid, pid)
+        continue
+      }
+
+      await this.deleteWeChatMessagesInConversationFromCharacterIds(convKey, idsToRemove)
+      const nextRow: GroupChatRow = {
+        ...g,
+        members: nextMembers,
+        memberIds: nextMembers.map((m) => m.charId).filter(Boolean),
+        updatedAt: Date.now(),
+      }
+      await this.putGroupChat(nextRow)
+    }
+  }
+
   async deleteCharacter(id: string): Promise<void> {
     if (!this.isIndexedTrashSuspended()) {
       const snap = await buildCharacterFullTrashArchive(this as unknown as PersonaDbTrashSource, id)
@@ -2091,6 +2301,7 @@ export class PersonaDb {
     }
     const npcs = await this.listNpcsFor(id)
     const idsToRemove = new Set<string>([id, ...npcs.map((n) => n.id)])
+    await this.purgeGroupChatsTouchingDeletedCharacterIds(idsToRemove)
     const db = await openDb()
     const stores: string[] = [STORE, REL_STORE]
     if (db.objectStoreNames.contains(GRAPH_VIEW_STORE)) stores.push(GRAPH_VIEW_STORE)
@@ -2327,7 +2538,19 @@ export class PersonaDb {
     opts?: { preserveWeChatConversationKeys?: string[] },
   ): Promise<void> {
     if (!characterIds.length) return
-    const idsToRemove = new Set(characterIds.map((x) => x.trim()).filter(Boolean))
+    const idsToRemove = new Set<string>()
+    for (const raw of characterIds.map((x) => x.trim()).filter(Boolean)) {
+      idsToRemove.add(raw)
+      try {
+        const npcs = await this.listNpcsFor(raw)
+        for (const n of npcs) {
+          const nid = n.id?.trim()
+          if (nid) idsToRemove.add(nid)
+        }
+      } catch {
+        /* ignore */
+      }
+    }
     if (!idsToRemove.size) return
 
     const idsArr = [...idsToRemove]
@@ -2625,6 +2848,7 @@ export class PersonaDb {
         payload: { npcId: nid, rootCharacterId: rootId, character: existing, graphView, playerLinksRow: linksBefore },
       })
     }
+    await this.purgeGroupChatsTouchingDeletedCharacterIds(new Set([nid]))
     const db = await openDb()
     const stores: string[] = [STORE, REL_STORE]
     if (db.objectStoreNames.contains(GRAPH_VIEW_STORE)) stores.push(GRAPH_VIEW_STORE)
@@ -4030,12 +4254,14 @@ export class PersonaDb {
     if (!ids.length) return
     const idSet = new Set(ids)
     const normalizedRows = rows
-      .map((x) =>
-        normalizeWeChatChatMessage({
+      .map((x) => {
+        const trimmed = typeof x.conversationKey === 'string' ? x.conversationKey.trim() : ''
+        const conversationKey = trimmed || wechatConversationKey(x.characterId, x.playerIdentityId)
+        return normalizeWeChatChatMessage({
           ...x,
-          conversationKey: wechatConversationKey(x.characterId, x.playerIdentityId),
-        }),
-      )
+          conversationKey,
+        })
+      })
       .filter((x): x is WeChatChatMessage => !!x && idSet.has(x.characterId))
     const db = await openDb()
     if (!db.objectStoreNames.contains(CHAT_MSG_STORE)) {
@@ -4957,6 +5183,121 @@ export class PersonaDb {
     db.close()
   }
 
+  /**
+   * 记录「刚从哪一群切到该 NPC 私聊」，供私聊 prompt 优先注入该群近期/未总结摘录（{@link getPrivateChatAnchorGroupId}）。
+   * 键按「人设 id + 私聊会话所用玩家身份段」区分，与 {@link resolvePrivateChatSessionPlayerIdentityId} 一致。
+   */
+  async setPrivateChatAnchorGroupId(
+    characterId: string,
+    sessionPlayerIdentityId: string,
+    groupId: string,
+  ): Promise<void> {
+    const cid = characterId.trim()
+    const pid = sessionPlayerIdentityId.trim()
+    const gid = groupId.trim()
+    if (!cid || !pid || pid === '__none__' || !gid) return
+    let g: GroupChatRow | null = null
+    try {
+      g = await this.getGroupChat(gid)
+    } catch {
+      return
+    }
+    if (!g || !(g.members ?? []).some((m) => m.charId.trim() === cid)) return
+    await this.setPhoneKv(`${WX_PRIVATE_ANCHOR_GROUP_KV_PREFIX}${cid}::${pid}`, {
+      groupId: gid,
+      setAtMs: Date.now(),
+    })
+  }
+
+  /** 读取并校验 TTL、群内是否仍有该 NPC；无效则删键并返回 null */
+  async getPrivateChatAnchorGroupId(characterId: string, sessionPlayerIdentityId: string): Promise<string | null> {
+    const cid = characterId.trim()
+    const pid = sessionPlayerIdentityId.trim()
+    if (!cid || !pid || pid === '__none__') return null
+    const key = `${WX_PRIVATE_ANCHOR_GROUP_KV_PREFIX}${cid}::${pid}`
+    const raw = await this.getPhoneKv(key)
+    if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {
+      return null
+    }
+    const o = raw as { groupId?: unknown; setAtMs?: unknown }
+    const gid = typeof o.groupId === 'string' ? o.groupId.trim() : ''
+    const ts = typeof o.setAtMs === 'number' && Number.isFinite(o.setAtMs) ? o.setAtMs : 0
+    if (!gid || Date.now() - ts > WX_PRIVATE_ANCHOR_GROUP_TTL_MS) {
+      await this.deletePhoneKv(key)
+      return null
+    }
+    try {
+      const g = await this.getGroupChat(gid)
+      if (!g || !(g.members ?? []).some((m) => m.charId.trim() === cid)) {
+        await this.deletePhoneKv(key)
+        return null
+      }
+    } catch {
+      await this.deletePhoneKv(key)
+      return null
+    }
+    return gid
+  }
+
+  /**
+   * 记录「刚从与该 NPC 的私聊进入本群」，供群聊系统提示优先注入该成员私聊近期/未总结摘录（{@link getGroupChatAnchorPrivatePeerCharacterId}）。
+   * 键为「群 id + 本群会话所用玩家身份段」（与群消息 `conversationKey` 所用 identity 一致）。
+   */
+  async setGroupChatAnchorPrivatePeerCharacterId(
+    groupId: string,
+    playerIdentityIdForGroupKey: string,
+    peerCharacterId: string,
+  ): Promise<void> {
+    const gid = groupId.trim()
+    const pid = playerIdentityIdForGroupKey.trim()
+    const cid = peerCharacterId.trim()
+    if (!gid || !pid || pid === '__none__' || !cid || cid === WECHAT_LUMI_PEER_CHARACTER_ID) return
+    let g: GroupChatRow | null = null
+    try {
+      g = await this.getGroupChat(gid)
+    } catch {
+      return
+    }
+    if (!g || !(g.members ?? []).some((m) => m.charId.trim() === cid)) return
+    await this.setPhoneKv(`${WX_GROUP_ANCHOR_PRIVATE_PEER_KV_PREFIX}${gid}::${pid}`, {
+      peerCharacterId: cid,
+      setAtMs: Date.now(),
+    })
+  }
+
+  /** 读取并校验 TTL、该成员是否仍在群内；无效则删键并返回 null */
+  async getGroupChatAnchorPrivatePeerCharacterId(
+    groupId: string,
+    playerIdentityIdForGroupKey: string,
+  ): Promise<string | null> {
+    const gid = groupId.trim()
+    const pid = playerIdentityIdForGroupKey.trim()
+    if (!gid || !pid || pid === '__none__') return null
+    const key = `${WX_GROUP_ANCHOR_PRIVATE_PEER_KV_PREFIX}${gid}::${pid}`
+    const raw = await this.getPhoneKv(key)
+    if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {
+      return null
+    }
+    const o = raw as { peerCharacterId?: unknown; setAtMs?: unknown }
+    const cid = typeof o.peerCharacterId === 'string' ? o.peerCharacterId.trim() : ''
+    const ts = typeof o.setAtMs === 'number' && Number.isFinite(o.setAtMs) ? o.setAtMs : 0
+    if (!cid || Date.now() - ts > WX_PRIVATE_ANCHOR_GROUP_TTL_MS) {
+      await this.deletePhoneKv(key)
+      return null
+    }
+    try {
+      const g = await this.getGroupChat(gid)
+      if (!g || !(g.members ?? []).some((m) => m.charId.trim() === cid)) {
+        await this.deletePhoneKv(key)
+        return null
+      }
+    } catch {
+      await this.deletePhoneKv(key)
+      return null
+    }
+    return cid
+  }
+
   // -------- 微信全局设置（弹幕、主题偏好等） --------
 
   async getGlobalSettings(): Promise<WeChatGlobalSettingsRow> {
@@ -5789,6 +6130,27 @@ export class PersonaDb {
       db.close()
       emitWeChatStorageChanged()
     })
+    const peerId = wechatGroupPeerCharacterId(gid)
+    await this.clearMemoryTracksForWeChatConversationKey(convKey)
+    await this.deleteGroupPsycheByPeerCharacterId(peerId)
+    try {
+      const bucketId = groupMemoryBucketCharacterId(gid)
+      const mems = await this.listCharacterMemoriesForCharacter(bucketId)
+      for (const m of mems) await this.deleteCharacterMemory(m.id)
+    } catch {
+      /* ignore */
+    }
+    try {
+      await this.deletePhoneKv(`busy-conv:${convKey}`)
+    } catch {
+      /* ignore */
+    }
+    try {
+      await this.deletePhoneKv(`wechat-dm-bullets-v1:${convKey}`)
+    } catch {
+      /* ignore */
+    }
+    emitWeChatStorageChanged()
   }
 
   /** 仅移除当前用户并清空会话（仍保留群与他人数据可供扩展；此处等同删除会话记录） */

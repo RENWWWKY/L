@@ -4,6 +4,11 @@ import type { Character, Gender, PlayerIdentity, PlayerNetworkLink, Relationship
 import { formatWorldBookItemLineForPrompt, worldBookPronounGuideAnnotation } from './worldBookPronounGuide'
 import { daysInMonth, formatMD, genderLabelZh, uid, zodiacFromMD } from './utils'
 import { DEFAULT_WORLD_BACKGROUND_ID } from './worldBackgroundConstants'
+import {
+  NPC_AI_HEIGHT_WEIGHT_MOTTO_RULES_CORE,
+  NPC_NETWORK_AI_AGE_AND_BIRTHDAY_RULES,
+  npcNetworkAiMottoStyleTail,
+} from './npcBasicProfileAiRules'
 
 type ChatMessage = { role: 'system' | 'user' | 'assistant'; content: string }
 
@@ -376,11 +381,7 @@ export async function generateNpcNetworkWithAi(
 JSON 顶层结构：{"npcs":[...],"relationships":[...],"playerLinks":[...]}。
 npcs 长度必须等于用户要求的数量。
 
-年龄与生日规则（须严格遵守，且与主角信息联动）：
-- 必须阅读用户给出的主角「年龄」「生日 MM-DD」作为叙事时间线参考：为每个 NPC 设定合理的 age（整数）与 birthdayMD（字符串，格式严格为 "MM-DD"，月日各两位零填充，如 "08-03"）。
-- 同一故事时间线下，age 与 birthdayMD 应自洽（可按虚构「当前年」推算年份，不必写出年份）。
-- 一般应根据关系类型推导年龄差（如父母长于子女、学长略长于学弟、同事多为相近年龄段等）。
-- 允许例外：若用户「补充说明」或关系设定需要「忘年交、隔代亲友、老智者与年轻学生、社区里爱聊天的忘年朋友」等，NPC 可与主角年龄差距很大；此时必须在 bio 或 basicSettingEntries 中写清相识缘由与为何关系成立，避免凭空无铺垫。
+${NPC_NETWORK_AI_AGE_AND_BIRTHDAY_RULES}
 
 每个 npc 对象字段（缺一不可）：
 - name, gender（male/female/other 或 男/女）, age（数字）, height（身高字符串）, weight（体重字符串）, motto（座右铭，<=15字）, birthdayMD（"MM-DD"）, occupation（职业）,
@@ -404,11 +405,8 @@ NPC 人设异质性（最高优先级，与姓名铁律并列）：
 - 若需要表达称呼，可写在 relation / 设定文案里，但 name 字段本身必须是可独立使用的真实姓名。
 - 若输出中出现任何不合规姓名，必须先自我修正再输出最终 JSON。
 
-身高体重与座右铭要求（强约束）：
-- height：写成易读格式，优先用 cm（例："170cm"），允许 "1.70m" / "170厘米"；不要写区间；不要写过长解释。
-- weight：优先用 kg（例："55kg"），允许 "55公斤"；不要写区间；不要写过长解释。
-- motto：一句短准的人设准则，<=15 个汉字，避免空洞大词；禁止「玩家」。尽量不写具体姓名；若须指本人可用「{{char}}」但总长仍须 <=15 汉字（占位符按字面计字需谨慎，优先不用占位符的抽象句）。
-- 内容应概括当下关系体感，可含与「${mainRootPh}」无关、仅与「{{user}}」相处状态有关的描述；自由发挥，不限定句式。可参考风格（禁止照搬）：第一次见面后就没怎么交流，感觉有点陌生；最近和 {{user}} 在冷战，感觉交流非常尴尬。
+${NPC_AI_HEIGHT_WEIGHT_MOTTO_RULES_CORE}
+${npcNetworkAiMottoStyleTail(mainRootPh)}
 
 你与主角区分（强约束，禁止混写）：
 - 绑定档案主角在世界书/bio/motto 的正文中一律用「${mainRootPh}」，不得写汉字姓名「${main.name}」。操作者/玩家在正文里一律写作「{{user}}」，不得写「玩家」。

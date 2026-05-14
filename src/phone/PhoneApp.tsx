@@ -16,7 +16,6 @@ import { LoreArchiveApp } from './apps/loreArchive/LoreArchiveApp'
 import { RecycleBinApp } from './apps/recycleBin/RecycleBinApp'
 import { personaDb } from './apps/wechat/newFriendsPersona/idb'
 import { WeChatApp } from './apps/wechat/WeChatApp'
-import { LUMI_MEET_APP_UNDER_DEVELOPMENT } from './apps/lumiMeet/constants'
 import { LumiMeetApp } from './apps/lumiMeet/LumiMeetApp'
 import { WorldbookLoreProvider } from './worldbook/worldbookLoreStore'
 import type { AppSlot } from './types'
@@ -156,16 +155,7 @@ export function PhoneApp() {
                 {route.id === 'wechat' ? (
                   <WeChatApp onBack={goHome} />
                 ) : route.id === 'lumiMeet' ? (
-                  LUMI_MEET_APP_UNDER_DEVELOPMENT ? (
-                    <AppPlaceholderScreen
-                      appId="lumiMeet"
-                      onBack={goHome}
-                      message="遇见功能正在开发中，暂未向用户开放。"
-                      hint="完整体验将在后续版本中上线，敬请期待。"
-                    />
-                  ) : (
-                    <LumiMeetApp onBack={goHome} />
-                  )
+                  <LumiMeetApp onBack={goHome} />
                 ) : route.id === 'api' ? (
                   <ApiSettingsApp onBack={goHome} />
                 ) : route.id === 'voiceprint' ? (

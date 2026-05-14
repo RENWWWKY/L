@@ -17,8 +17,16 @@ export type EncounterNPC = {
   /** 年龄（岁），与 comprehensive.base.info 首句年龄一致 */
   ageYears?: number
   birthdayMD?: string
+  /** 身高（厘米），数字字符串；同步至微信人设 height */
+  heightCm?: string
   weightKg?: string
   zodiac?: string
+  /** 职业/身份短标签；同步至微信人设 identity */
+  occupation?: string
+  /** 座右铭；同步 Character.motto（与个性签名 wechatSignature 区分） */
+  motto?: string
+  /** 四字母 MBTI；缺省从九维 core.mbti 解析 */
+  mbti?: string
   gender: string
   orientation: string
   /** 列表/会话摘要（与九维 comprehensive 一致时的短陈述） */
@@ -30,6 +38,16 @@ export type EncounterNPC = {
   lastEncounterTime: number
   /** AI 预生成或交换时锁定的微信号（字母数字下划线） */
   wechatId?: string
+  /**
+   * 生成邂逅时由同一次人设请求一并产出：用户点「心动」时 NPC 是否会双向接住。
+   * 有值则客户端不再单独调用匹配裁判模型；旧存档 / 重逢无此字段时退回本地或单次裁判。
+   */
+  mutualSpark?: boolean
+  /**
+   * 邂逅生成来源：`api` = 模型 JSON；`offline` = 本地兜底（未配置 API 或请求/解析失败）。
+   * 重逢捞出旧卡时通常无此字段。
+   */
+  generationSource?: 'offline' | 'api'
 }
 
 export type SquarePostStyle =
@@ -87,7 +105,15 @@ export type MeetPublicProfile = {
 }
 
 /** 择偶时对「对方性取向」标签的偏好（多选；空数组表示不限） */
-export type MeetOrientationPreference = 'hetero' | 'homo' | 'bi_pan'
+export type MeetOrientationPreference =
+  | 'hetero'
+  | 'homo'
+  | 'bi_pan'
+  | 'ace'
+  | 'aro'
+  | 'demi'
+  | 'queer_fluid'
+  | 'poly_open'
 
 /** 交友意向（多选）；与 legacy `purpose` 同步维护供旧逻辑兼容 */
 export type MeetMatchIntention = 'romance' | 'platonic' | 'soulmate' | 'casual'

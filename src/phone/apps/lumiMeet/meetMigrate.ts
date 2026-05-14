@@ -8,7 +8,7 @@ import type {
   RadarFilters,
 } from './meetTypes'
 import { DEFAULT_MEET_STATE, DEFAULT_RADAR_FILTERS } from './constants'
-import { legacyPurposeToMeetIntentions } from './meetMatchCriteria'
+import { legacyPurposeToMeetIntentions, MEET_ORIENTATION_PREFERENCE_IDS } from './meetMatchCriteria'
 
 const VALID_STATUS: EncounterStatus[] = ['orbiting', 'missed', 'matched', 'wechat_added']
 
@@ -48,6 +48,10 @@ export function normalizeEncounterNpc(raw: unknown): EncounterNPC | null {
     ageYears,
     birthdayMD: typeof o.birthdayMD === 'string' ? o.birthdayMD : undefined,
     weightKg: typeof o.weightKg === 'string' ? o.weightKg : undefined,
+    heightCm: typeof o.heightCm === 'string' ? o.heightCm : undefined,
+    occupation: typeof o.occupation === 'string' ? o.occupation : undefined,
+    motto: typeof o.motto === 'string' ? o.motto : undefined,
+    mbti: typeof o.mbti === 'string' ? o.mbti : undefined,
     zodiac: typeof o.zodiac === 'string' ? o.zodiac : undefined,
     gender: typeof o.gender === 'string' ? o.gender : '',
     orientation: typeof o.orientation === 'string' ? o.orientation : '',
@@ -56,6 +60,10 @@ export function normalizeEncounterNpc(raw: unknown): EncounterNPC | null {
     status,
     lastEncounterTime,
     wechatId: typeof o.wechatId === 'string' ? o.wechatId : undefined,
+    ...(typeof o.mutualSpark === 'boolean' ? { mutualSpark: o.mutualSpark } : {}),
+    ...(o.generationSource === 'offline' || o.generationSource === 'api'
+      ? { generationSource: o.generationSource }
+      : {}),
   }
 }
 
@@ -71,9 +79,8 @@ function normalizeRadarFilters(raw: unknown): RadarFilters {
 
   let orientationPreferences: MeetOrientationPreference[] = base.orientationPreferences
   if (Array.isArray(o.orientationPreferences)) {
-    const allowed: MeetOrientationPreference[] = ['hetero', 'homo', 'bi_pan']
     orientationPreferences = o.orientationPreferences.filter((x): x is MeetOrientationPreference =>
-      allowed.includes(x as MeetOrientationPreference),
+      MEET_ORIENTATION_PREFERENCE_IDS.includes(x as MeetOrientationPreference),
     )
   }
 

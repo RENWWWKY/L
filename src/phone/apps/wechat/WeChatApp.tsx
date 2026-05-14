@@ -88,6 +88,11 @@ import {
   buildFriendRequestPrivatePromptPack,
 } from './wechatFriendRequestPrivatePromptPack'
 import { getContactDeletionCount, incrementContactDeletionCount } from './wechatContactDeletionCount'
+import {
+  clearGroupChatPrivatePeerAnchorDockStagingIfMatches,
+  setGroupChatPrivatePeerAnchorFromDockTransition,
+  setPrivateChatGroupAnchorFromDockTransition,
+} from './wechatPrivateGroupAnchorStaging'
 import { WeChatDanmakuConfigScreen } from './settings/WeChatDanmakuConfigScreen'
 import {
   WeChatGlobalSettingsScreen,
@@ -3751,12 +3756,15 @@ function WeChatAppInner({ onBack }: Props) {
     }
   }, [route.name])
 
-  /** 把仍落在「未选身份」(__none__) 下的会话迁到当前身份，避免聊天记录实际在 IndexedDB 但列表为空（会话键 characterId::playerIdentityId 不一致）。 */
+  /** 把仍落在「未选身份」(__none__) 下的会话迁到当前身份；随后修复曾误入私聊键的群消息，避免与群会话双份并存。 */
   useEffect(() => {
     if (playerIdentityId === null) return
     const pid = playerIdentityId.trim()
     if (!pid || pid === '__none__') return
-    void personaDb.migrateWeChatDataFromNonePlayerIdentity(pid)
+    void (async () => {
+      await personaDb.migrateWeChatDataFromNonePlayerIdentity(pid)
+      await personaDb.repairMisfiledWeChatMessagesAfterThreadMixup(pid)
+    })()
   }, [playerIdentityId])
 
   useEffect(() => {
@@ -3797,6 +3805,46 @@ function WeChatAppInner({ onBack }: Props) {
     }
   }, [wxDockChat, playerIdentityId])
 
+  /** 群↔私 dock 切换：写锚点 KV + 同步 staging（layout 阶段，早于子组件首轮读） */
+  const prevWxDockChatForAnchorRef = useRef<WxActiveChat | null>(null)
+  useLayoutEffect(() => {
+    const prev = prevWxDockChatForAnchorRef.current
+    prevWxDockChatForAnchorRef.current = wxDockChat
+
+    if (playerIdentityId === null) return
+    const appPid = playerIdentityId.trim()
+    if (!appPid || appPid === '__none__') return
+
+    if (wxDockChat?.kind === 'persona' && prev?.kind === 'group') {
+      const gid = prev.groupId.trim()
+      const cid = wxDockChat.characterId.trim()
+      if (gid && cid && cid !== WECHAT_LUMI_PEER_CHARACTER_ID) {
+        setPrivateChatGroupAnchorFromDockTransition(cid, gid)
+        void (async () => {
+          const ch = await personaDb.getCharacter(cid)
+          const sessionPid = resolvePrivateChatSessionPlayerIdentityId(ch, playerIdentityId)
+          await personaDb.setPrivateChatAnchorGroupId(cid, sessionPid, gid)
+        })()
+      }
+    }
+
+    if (wxDockChat?.kind === 'group' && prev?.kind === 'persona') {
+      const gid = wxDockChat.groupId.trim()
+      const cid = prev.characterId.trim()
+      if (gid && cid && cid !== WECHAT_LUMI_PEER_CHARACTER_ID) {
+        setGroupChatPrivatePeerAnchorFromDockTransition(gid, cid)
+        void (async () => {
+          const g = await personaDb.getGroupChat(gid)
+          if (!g || !(g.members ?? []).some((m) => m.charId.trim() === cid)) {
+            clearGroupChatPrivatePeerAnchorDockStagingIfMatches(gid, cid)
+            return
+          }
+          await personaDb.setGroupChatAnchorPrivatePeerCharacterId(gid, appPid, cid)
+        })()
+      }
+    }
+  }, [wxDockChat, playerIdentityId])
+
   const refreshPendingNewFriendRequests = useCallback(async () => {
     if (playerIdentityId === null) return
     const pid = playerIdentityId.trim()
@@ -3813,7 +3861,7 @@ function WeChatAppInner({ onBack }: Props) {
           (r.characterId === WECHAT_LUMI_PEER_CHARACTER_ID ? 'Lumi' : '对方')
         const avatar = ch?.avatarUrl?.trim() || (r.characterId === WECHAT_LUMI_PEER_CHARACTER_ID ? lumiWechatAvatarUrl : '')
         const sessionPid = resolvePrivateChatSessionPlayerIdentityId(ch, playerIdentityId)
-        const convKey = wechatConversationKey(r.characterId, sessionPid)
+        const convKey = resolvePrivateWeChatConversationKey(r.characterId, ch, playerIdentityId)
         const unreadCount = await personaDb.countUnreadWeChatCharacterMessages(convKey)
         const msgs = await personaDb.listWeChatChatMessagesRecent({ conversationKey: convKey, limit: 200 })
         const verificationEpochMs = r.verificationEpochMs ?? r.createdAt
@@ -3927,7 +3975,8 @@ function WeChatAppInner({ onBack }: Props) {
 
     const personaRowsData = await Promise.all(
       state.wechatPersonaContacts.map(async (c) => {
-        const k = wechatConversationKey(c.characterId, pid)
+        const ch = await personaDb.getCharacter(c.characterId)
+        const k = resolvePrivateWeChatConversationKey(c.characterId, ch, pid)
         const row = await buildOne(k, 'persona', c.remarkName, c.avatarUrl, c.characterId)
         return row
       }),

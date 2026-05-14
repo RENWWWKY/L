@@ -4,6 +4,7 @@ import { loadOfflineDatingPlotsPromptBlock } from './dating/loadOfflineDatingPlo
 import { buildNpcGroupChatsRecentDigestForPrivatePrompt } from './groupChatPrivateDigest'
 import { personaDb } from './newFriendsPersona/idb'
 import { WECHAT_LUMI_PEER_CHARACTER_ID } from './wechatConversationKey'
+import { peekPrivateChatGroupAnchorFromDockStaging } from './wechatPrivateGroupAnchorStaging'
 import {
   buildMemoryRelevanceHaystack,
   buildNpcGroupChatsUnsummarizedDigestForPrivatePrompt,
@@ -42,16 +43,12 @@ export async function buildFriendRequestPrivatePromptPack(params: {
     }
   }
 
-  const hay = buildMemoryRelevanceHaystack([
-    ...params.transcript.slice(-32).map((t) => t.text),
-    params.biasTextForMemoryHaystack,
-  ])
-
   const chRow = await personaDb.getCharacter(cid)
+  const anchorGroupId =
+    peekPrivateChatGroupAnchorFromDockStaging(cid) ?? (await personaDb.getPrivateChatAnchorGroupId(cid, sid))
   const apiOk = params.apiConfig?.apiUrl?.trim() && params.apiConfig?.apiKey?.trim() ? params.apiConfig : null
 
-  const [memory, offlineDatingPlotsContext, unsPrivate, unsGroup, recentGroupChatsReference] = await Promise.all([
-    personaDb.formatCharacterMemoriesForPromptByRelevance(cid, hay, { apiConfig: apiOk }),
+  const [offlineDatingPlotsContext, unsPrivate, unsGroup, recentGroupChatsReference] = await Promise.all([
     loadOfflineDatingPlotsPromptBlock(cid, chRow?.name ?? null),
     formatUnsummarizedPrivateChatBlock({
       conversationKey: ck,
@@ -62,6 +59,7 @@ export async function buildFriendRequestPrivatePromptPack(params: {
       npcCharacterId: cid,
       sessionPlayerIdentityId: sid,
       boundPlayerIdentityId: chRow?.playerIdentityId,
+      anchorGroupId,
       maxMessagesPerGroup: 50,
       charCap: 4200,
     }),
@@ -69,10 +67,20 @@ export async function buildFriendRequestPrivatePromptPack(params: {
       npcCharacterId: cid,
       sessionPlayerIdentityId: sid,
       boundPlayerIdentityId: chRow?.playerIdentityId,
+      anchorGroupId,
       messageCap: 50,
       charCap: 4500,
     }),
   ])
+
+  const hayFull = buildMemoryRelevanceHaystack([
+    ...params.transcript.slice(-32).map((t) => t.text),
+    params.biasTextForMemoryHaystack,
+    String(offlineDatingPlotsContext ?? '').trim().slice(0, 3600),
+    unsPrivate.trim().slice(0, 2400),
+    unsGroup.trim().slice(0, 2400),
+  ])
+  const memory = await personaDb.formatCharacterMemoriesForPromptByRelevance(cid, hayFull, { apiConfig: apiOk })
 
   return {
     memory: memory.trim(),

@@ -4,11 +4,8 @@ export { pickMeetAvatar, buildMeetAvatarExclusion, type MeetAvatarExclusion } fr
 
 export const LUMI_MEET_KV_KEY = 'lumi-meet-persist-v1'
 
-/**
- * 遇见 App 是否显示「开发中」占位（不挂载完整功能）。
- * 后续开放给用户时改为 `false` 即可。
- */
-export const LUMI_MEET_APP_UNDER_DEVELOPMENT = true
+/** 雷达「调校中」最短展示时间（毫秒），避免离线/秒回时像没点在生成） */
+export const MEET_RADAR_SEARCH_MIN_UI_MS = 1600
 
 /** 重逢：missed 角色距上次相遇满此时长后才可再次被雷达抽到（毫秒） */
 export const MEET_REUNION_COOLDOWN_MS = 24 * 60 * 60 * 1000

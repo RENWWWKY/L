@@ -1,14 +1,34 @@
 import { AnimatePresence, motion } from 'framer-motion'
 import { useCallback, useMemo, useState, type ReactNode } from 'react'
 import {
+  deriveMeetWechatSignatureFromPersona,
+  ensureMeetHeightCmValue,
+  ensureMeetWeightKgValue,
+  formatMeetMbtiLettersForUi,
   isMeetProfilePlaceholder,
-  sanitizeMeetCoreMbtiTone,
   type ComprehensivePersona,
 } from './comprehensivePersona'
 
 const PLATINUM = '#D4AF37'
 
-type FieldRowProps = { labelEn: string; labelZh: string; body: string }
+/**
+ * 写入人设库时各分册的 `WorldBook.name`（vol01–vol10），须与遇见「世界书预览」及 `NineDimensionAccordion` 标题一致（图2：`01 BASE | 基础核心设定`）。
+ */
+export const MEET_SYNC_WORLD_BOOK_VOLUME_TITLES: readonly { volKey: `vol${string}`; bookTitle: string }[] = [
+  { volKey: 'vol01', bookTitle: '01 BASE | 基础核心设定' },
+  { volKey: 'vol02', bookTitle: '02 CORE | 人格内核' },
+  { volKey: 'vol03', bookTitle: '03 PSYCHE | 心理与情感' },
+  { volKey: 'vol04', bookTitle: '04 ABILITIES | 能力与偏好' },
+  { volKey: 'vol05', bookTitle: '05 DESIRE | 欲念与底线' },
+  { volKey: 'vol06', bookTitle: '06 SOCIAL | 人际法则' },
+  { volKey: 'vol07', bookTitle: '07 CONTRAST | 恋爱镜像反差' },
+  { volKey: 'vol08', bookTitle: '08 DETAILS | 日常侧写' },
+  { volKey: 'vol09', bookTitle: '09 ARC | 隐藏弧光' },
+  /** 人设库内独立分册：条目 priority=after，与微信「人设 · 世界书」尾声延展分栏同源 */
+  { volKey: 'vol10', bookTitle: '10 ATTITUDE | 尾声延展 · 对用户的当前态度' },
+] as const
+
+type FieldRowProps = { labelEn: string; labelZh: string; body: ReactNode }
 
 export function NineDimensionFieldRow({ labelEn, labelZh, body }: FieldRowProps) {
   return (
@@ -16,7 +36,7 @@ export function NineDimensionFieldRow({ labelEn, labelZh, body }: FieldRowProps)
       <p className="meet-caption-en text-[9px] uppercase tracking-[0.22em] text-[#a8a4a0]">
         {labelEn} <span className="font-normal tracking-normal text-[#8c8883]">{labelZh}</span>
       </p>
-      <p className="font-dossier-serif mt-1.5 text-[14px] leading-loose text-[#2c2a26]">{body}</p>
+      <div className="font-dossier-serif mt-1.5 text-[14px] leading-loose text-[#2c2a26]">{body}</div>
     </div>
   )
 }
@@ -39,12 +59,40 @@ export function buildNineDimensionSections(dossier: ComprehensivePersona): Secti
       content: (
         <>
           <NineDimensionFieldRow labelEn="REAL NAME" labelZh="真实姓名" body={dossier.base.realName} />
+          <NineDimensionFieldRow
+            labelEn="WECHAT SIGNATURE"
+            labelZh="微信个性签名"
+            body={
+              isMeetProfilePlaceholder(dossier.base.wechatSignature)
+                ? deriveMeetWechatSignatureFromPersona(dossier)
+                : dossier.base.wechatSignature
+            }
+          />
           <NineDimensionFieldRow labelEn="BIRTHDAY" labelZh="生日" body={dossier.base.birthdayMD} />
           <NineDimensionFieldRow labelEn="ZODIAC" labelZh="星座" body={dossier.base.zodiac} />
           <NineDimensionFieldRow
+            labelEn="HEIGHT"
+            labelZh="身高"
+            body={
+              isMeetProfilePlaceholder(dossier.base.heightCm)
+                ? `${ensureMeetHeightCmValue(
+                    dossier.base.heightCm,
+                    `${dossier.base.realName}\x1e${dossier.base.birthdayMD}`,
+                  )} cm`
+                : `${dossier.base.heightCm} cm`
+            }
+          />
+          <NineDimensionFieldRow
             labelEn="WEIGHT"
             labelZh="体重"
-            body={isMeetProfilePlaceholder(dossier.base.weightKg) ? dossier.base.weightKg : `${dossier.base.weightKg} kg`}
+            body={
+              isMeetProfilePlaceholder(dossier.base.weightKg)
+                ? `${ensureMeetWeightKgValue(
+                    dossier.base.weightKg,
+                    `${dossier.base.realName}\x1e${dossier.base.birthdayMD}`,
+                  )} kg`
+                : `${dossier.base.weightKg} kg`
+            }
           />
           <NineDimensionFieldRow labelEn="PROFILE" labelZh="身份与气质" body={dossier.base.info} />
           <NineDimensionFieldRow labelEn="PHYSIOLOGY" labelZh="体征与动作" body={dossier.base.physiology} />
@@ -58,7 +106,11 @@ export function buildNineDimensionSections(dossier: ComprehensivePersona): Secti
       titleZh: '人格内核',
       content: (
         <>
-          <NineDimensionFieldRow labelEn="MBTI" labelZh="倾向" body={sanitizeMeetCoreMbtiTone(dossier.core.mbti)} />
+          <NineDimensionFieldRow
+            labelEn="MBTI"
+            labelZh="类型"
+            body={<span className="font-mono text-[15px] font-medium tracking-[0.14em]">{formatMeetMbtiLettersForUi(dossier.core.mbti)}</span>}
+          />
           <NineDimensionFieldRow labelEn="SURFACE" labelZh="外显" body={dossier.core.surface} />
           <NineDimensionFieldRow labelEn="TRUE SELF" labelZh="内核" body={dossier.core.trueSelf} />
           <NineDimensionFieldRow labelEn="VALUES" labelZh="三观与底线" body={dossier.core.values} />

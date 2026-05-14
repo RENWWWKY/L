@@ -78,6 +78,14 @@ export function wechatGroupPeerCharacterId(groupId: string): string {
   return `${GROUP_CONV_PREFIX}${groupId.trim()}`
 }
 
+/** 从群占位 `characterId`（`wxgrp:群id`）还原群 id；非占位则返回 null */
+export function parseGroupIdFromGroupPeerCharacterId(peerCharacterId: string): string | null {
+  const c = peerCharacterId.trim()
+  if (!c.startsWith(GROUP_CONV_PREFIX)) return null
+  const gid = c.slice(GROUP_CONV_PREFIX.length).trim()
+  return gid || null
+}
+
 export function wechatGroupConversationKey(groupId: string, playerIdentityId: string): string {
   const gid = groupId.trim()
   const pid = playerIdentityId.trim() || '__none__'

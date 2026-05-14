@@ -179,6 +179,8 @@ export async function buildNpcGroupChatsUnsummarizedDigestForPrivatePrompt(param
   npcCharacterId: string
   sessionPlayerIdentityId: string
   boundPlayerIdentityId?: string | null | undefined
+  /** 与 {@link buildNpcGroupChatsRecentDigestForPrivatePrompt} 同源：优先铺该群未总结片段 */
+  anchorGroupId?: string | null | undefined
   maxMessagesPerGroup?: number
   charCap?: number
 }): Promise<string> {
@@ -203,6 +205,93 @@ export async function buildNpcGroupChatsUnsummarizedDigestForPrivatePrompt(param
 
   const groupById = new Map(relevant.map((g) => [g.id.trim(), g]))
   const perLim = Math.max(8, Math.min(120, Math.floor(params.maxMessagesPerGroup ?? 60)))
+  const charCapTotal = Math.max(800, Math.min(UNSUMMARIZED_BLOCK_CHAR_HARD_MAX, Math.floor(params.charCap ?? 4200)))
+
+  const anchorGid = params.anchorGroupId?.trim()
+  if (anchorGid) {
+    const anchorRow = relevant.find((g) => g.id.trim() === anchorGid)
+    if (anchorRow && (anchorRow.members ?? []).some((m) => m.charId.trim() === npcId)) {
+      const anchorCk = wechatGroupConversationKey(anchorGid, pid)
+      let anchorBatch: WeChatChatMessage[] = []
+      try {
+        const cursor = await personaDb.getMemorySummaryCursorTimestamp(anchorCk)
+        const fromTs = (cursor ?? 0) + 1
+        anchorBatch = await personaDb.listWeChatChatMessagesFromTimestampAsc({
+          conversationKey: anchorCk,
+          fromTimestampInclusive: fromTs,
+          limit: perLim,
+        })
+      } catch {
+        anchorBatch = []
+      }
+      const anchorLines: string[] = []
+      for (const m of anchorBatch.sort((a, b) => a.timestamp - b.timestamp)) {
+        const line = formatGroupLineUnsummarized(m, anchorRow, npcId)
+        if (line) anchorLines.push(line)
+      }
+      const merged: WeChatChatMessage[] = []
+      for (const g of relevant) {
+        if (g.id.trim() === anchorGid) continue
+        const ck = wechatGroupConversationKey(g.id, pid)
+        try {
+          const cursor = await personaDb.getMemorySummaryCursorTimestamp(ck)
+          const fromTs = (cursor ?? 0) + 1
+          const batch = await personaDb.listWeChatChatMessagesFromTimestampAsc({
+            conversationKey: ck,
+            fromTimestampInclusive: fromTs,
+            limit: perLim,
+          })
+          merged.push(...batch)
+        } catch {
+          /* ignore */
+        }
+      }
+      const otherLines: string[] = []
+      for (const m of merged.sort((a, b) => a.timestamp - b.timestamp)) {
+        const gkey = parseGroupIdFromConversationKey(m.conversationKey)
+        const g = gkey ? groupById.get(gkey) ?? null : null
+        const line = formatGroupLineUnsummarized(m, g, npcId)
+        if (line) otherLines.push(line)
+      }
+
+      const anchorBudget = Math.floor(charCapTotal * 0.72)
+      let anchorBody = anchorLines.join('\n')
+      if (anchorBody.length > anchorBudget) {
+        const parts = anchorBody.split('\n')
+        while (parts.join('\n').length > anchorBudget && parts.length > 4) parts.shift()
+        anchorBody = parts.join('\n')
+        if (anchorBody.length > anchorBudget) anchorBody = `${anchorBody.slice(-anchorBudget)}\n…（该群未总结片段已截断）`
+      }
+      let rest = otherLines.join('\n')
+      const restBudget = charCapTotal - anchorBody.length - 80
+      if (rest.length > restBudget && restBudget > 200) {
+        const parts = rest.split('\n')
+        while (parts.join('\n').length > restBudget && parts.length > 4) parts.shift()
+        rest = parts.join('\n')
+        if (rest.length > restBudget) rest = `${rest.slice(-restBudget)}\n…（其它群未总结已截断）`
+      } else if (restBudget <= 200) {
+        rest = ''
+      }
+
+      const gname = (anchorRow.remark || anchorRow.name || '').trim() || '该群'
+      const chunks: string[] = []
+      if (anchorBody.trim()) {
+        chunks.push(
+          `【优先：群「${gname}」内、自动总结游标之后尚未落库的长期记忆材料】\n${anchorBody.trim()}`,
+        )
+      }
+      if (rest.trim()) {
+        chunks.push(`【其它共同群·未总结节选】\n${rest.trim()}`)
+      }
+      if (!chunks.length) return ''
+      let body = chunks.join('\n\n')
+      if (body.length > charCapTotal) {
+        body = `${body.slice(0, charCapTotal)}\n…（总长已截断）`
+      }
+      return `${body}\n（↑ 含你们离开群聊前该群的未总结片段；私聊回复时请承接群内语境。）\n【说话人｜勿混淆】前缀「用户」仅指真人玩家本人；「对方角色·某某」表示**当前私聊对象（会话对方角色）**在该群的发言，**不是**用户。**禁止**把对方角色在群里的原话误当成用户说的。其他群成员仅用群内昵称标注。\n`
+    }
+  }
+
   const merged: WeChatChatMessage[] = []
   for (const g of relevant) {
     const ck = wechatGroupConversationKey(g.id, pid)
@@ -249,6 +338,8 @@ export async function formatUnsummarizedPrivateDigestForGroupMember(params: {
   npcCharacterId: string
   sessionPlayerIdentityId: string
   boundPlayerIdentityId?: string | null | undefined
+  /** 与 {@link buildNpcPrivateChatDigestForGroupPrompt} 的 anchorPrivateBoost 同源 */
+  anchorPrivateBoost?: boolean
   maxMessagesPerKey?: number
   charCap?: number
 }): Promise<string> {
@@ -270,7 +361,9 @@ export async function formatUnsummarizedPrivateDigestForGroupMember(params: {
 
   if (!keys.size) return ''
 
-  const perLim = Math.max(4, Math.min(120, Math.floor(params.maxMessagesPerKey ?? 48)))
+  const boost = params.anchorPrivateBoost === true
+  const baseLim = Math.max(4, Math.min(120, Math.floor(params.maxMessagesPerKey ?? 48)))
+  const perLim = boost ? Math.min(120, Math.floor(baseLim * 1.35)) : baseLim
   const merged = new Map<string, WeChatChatMessage>()
   for (const ck of keys) {
     try {
@@ -297,7 +390,8 @@ export async function formatUnsummarizedPrivateDigestForGroupMember(params: {
   if (!lines.length) return ''
 
   let body = lines.join('\n')
-  const charCap = Math.max(400, Math.min(UNSUMMARIZED_BLOCK_CHAR_HARD_MAX, Math.floor(params.charCap ?? 2800)))
+  const baseCap = Math.max(400, Math.min(UNSUMMARIZED_BLOCK_CHAR_HARD_MAX, Math.floor(params.charCap ?? 2800)))
+  const charCap = boost ? Math.min(UNSUMMARIZED_BLOCK_CHAR_HARD_MAX, Math.floor(baseCap * 1.45)) : baseCap
   if (body.length > charCap) {
     const parts = body.split('\n')
     while (parts.join('\n').length > charCap && parts.length > 4) parts.shift()

@@ -1,9 +1,14 @@
 import type { ApiConfig } from '../api/types'
 import { openAiCompatibleChat } from '../wechat/newFriendsPersona/ai'
 import {
-  buildOfflineComprehensivePersona,
   buildPersonaSummaryFromComprehensive,
+  deriveMeetWechatSignatureFromPersona,
+  ensureMeetWeightKgValue,
   isMeetProfilePlaceholder,
+  deriveMeetMottoFromPersona,
+  deriveMeetOccupationLabel,
+  ensureMeetHeightCmValue,
+  formatMeetMbtiLettersForUi,
   normalizeComprehensivePersona,
   parseMeetAgeYearsFromInfo,
   rewriteLoveBlocksUserPlaceholder,
@@ -15,7 +20,6 @@ import {
   buildEncounterAiCriteriaBlock,
   legacyPurposeToMeetIntentions,
   meetIntentionsToPurpose,
-  pickOfflineAgeYears,
 } from './meetMatchCriteria'
 import { pickMeetAvatar, resolveMeetAvatarNpcGenderLabel, type MeetAvatarExclusion } from './meetAvatarPool'
 import {
@@ -109,6 +113,22 @@ function randomWxId(seed: string): string {
   return s
 }
 
+/** 邂逅新人设未配置 API 或模型请求/解析失败时抛出；不再使用本地随机人设兜底。 */
+export class MeetEncounterGenerationError extends Error {
+  readonly code: 'api_required' | 'api_failed'
+
+  constructor(code: 'api_required' | 'api_failed', message?: string) {
+    const fallback =
+      code === 'api_required'
+        ? '须先在 API 设置中填写请求地址与密钥后再寻觅新人。'
+        : '邂逅人设生成失败，请检查网络、密钥与模型是否支持 JSON 输出后重试。'
+    super(message?.trim() ? message : fallback)
+    this.name = 'MeetEncounterGenerationError'
+    this.code = code
+    Object.setPrototypeOf(this, new.target.prototype)
+  }
+}
+
 /** AI：批量生成广场帖（失败则本地占位） */
 export async function aiGenerateSquarePosts(params: {
   apiConfig: ApiConfig | null
@@ -161,6 +181,12 @@ export async function aiGenerateSquarePosts(params: {
   return aiGenerateSquarePosts({ apiConfig: null, style, count })
 }
 
+/** AI：邂逅生成 NPC（同一次响应内须含 mutualSpark，与九维人设一并产出） */
+export type AiGeneratedEncounterBody = Omit<EncounterNPC, 'id' | 'status' | 'lastEncounterTime'> & {
+  mutualSpark: boolean
+  generationSource: 'api'
+}
+
 /** AI：邂逅生成 NPC */
 export async function aiGenerateEncounterNpc(params: {
   apiConfig: ApiConfig | null
@@ -169,7 +195,7 @@ export async function aiGenerateEncounterNpc(params: {
   meetProfile: MeetPublicProfile
   /** 避开镜像微信已有角色（及遇见列表）正在使用的头像 */
   avatarExclusion?: MeetAvatarExclusion
-}): Promise<Omit<EncounterNPC, 'id' | 'status' | 'lastEncounterTime'>> {
+}): Promise<AiGeneratedEncounterBody> {
   const cfg = params.apiConfig
   const genderPref =
     params.filters.gender === 'male' ? '男' : params.filters.gender === 'female' ? '女' : '性别不限'
@@ -183,53 +209,8 @@ export async function aiGenerateEncounterNpc(params: {
   const kw = params.filters.keywords.trim()
   const criteriaBlock = buildEncounterAiCriteriaBlock(params.filters)
 
-  const offlineOrientation = (() => {
-    const p = params.filters.orientationPreferences
-    if (p.length === 1) {
-      if (p[0] === 'hetero') return '异性恋'
-      if (p[0] === 'homo') return '同性恋'
-      return '双性恋'
-    }
-    return '双'
-  })()
-
   if (!cfg?.apiUrl?.trim() || !cfg?.apiKey?.trim()) {
-    const sid = `offline_${Date.now()}`
-    const age = pickOfflineAgeYears(sid, params.filters.ageMin, params.filters.ageMax)
-    let comprehensivePersona = buildOfflineComprehensivePersona(
-      sid,
-      rollMeetMbtiAnchoredByKeywords(params.filters.keywords.trim()),
-      offlineOrientation,
-      genderPref === '男' ? '男' : genderPref === '女' ? '女' : '男',
-    )
-    comprehensivePersona = {
-      ...comprehensivePersona,
-      base: {
-        ...comprehensivePersona.base,
-        info: `${age} 岁。${comprehensivePersona.base.info}`,
-      },
-    }
-    const offlineGender = genderPref === '男' ? '男' : genderPref === '女' ? '女' : '男'
-    const b0 = comprehensivePersona.base
-    return {
-      avatarUrl: pickMeetAvatar(sid, {
-        filters: params.filters,
-        exclusion: params.avatarExclusion,
-        npcGender: offlineGender,
-        ageYears: age,
-      }),
-      nickname: purpose === '恋爱' ? '叙白' : '七昼',
-      realName: isMeetProfilePlaceholder(b0.realName) ? undefined : b0.realName,
-      ageYears: age,
-      birthdayMD: b0.birthdayMD,
-      weightKg: isMeetProfilePlaceholder(b0.weightKg) ? undefined : b0.weightKg,
-      zodiac: b0.zodiac,
-      gender: offlineGender,
-      orientation: offlineOrientation,
-      persona: buildPersonaSummaryFromComprehensive(comprehensivePersona),
-      comprehensivePersona,
-      wechatId: randomWxId(sid),
-    }
+    throw new MeetEncounterGenerationError('api_required')
   }
 
   const sys = `你是交友 App 遇见的九维立体人格生成引擎。写的是当代都市里**可信、三观正、行为合法**的人物：职业从 system SCHEMA 中的**八大谱系**（霸总精英、白领精英、文艺、娱乐圈、体制内、小众酷感、市井创业、合法反差）与**日常接地气工种**里择一写清，忌二游式夸张；**MBTI 与职业无任何对应关系**，禁止按类型 "配职业"，MBTI 只体现在 core 与 "工作场合习惯" 描写里。
@@ -243,10 +224,12 @@ export async function aiGenerateEncounterNpc(params: {
     criteriaBlock,
     `当前滑动用户展示昵称（仅供你理解语境，勿写入 comprehensive/persona 正文替代占位符）：${userNick}`,
     `用户公开资料摘要：${params.profileHint.slice(0, 520)}`,
-    `口语化、具体、少抽象词；人设健康合常识。职业可从 SCHEMA 八大谱系或日常工种里选，须写具体业务细节。占位与对方规则以 system 内 SCHEMA 为准（fetish/contrast 恋爱向客观陈述勿写 {{user}}）。`,
+    `【姓名与网名】comprehensive 内第三人称档案（尤其 base.info、base.physiology）叙述本人时只用 realName 与 base.realName 的汉字全称，禁止用 nickname 作主语或当代称。`,
+    `口语化、具体、少抽象词；人设健康合常识。职业可从 SCHEMA 八大谱系或日常工种里选，须写具体业务细节。占位与对方规则以 system 内 SCHEMA 为准（fetish/contrast 恋爱向客观陈述勿写 {{user}}）；年龄/生日/身高体重/座右铭的硬约束以 SCHEMA 末段「与人脉 AI 基础信息对齐」小节为准。`,
     `【本轮硬性】comprehensive.core.mbti 必须以四字母 "${mbtiRoll}" 为唯一类型标签（可紧接中文逗号+一句大白话；禁止再写另一组四字母类型；禁止把 ISTJ/INTJ 当默认值偷换）。`,
     `【气质-MBTI 对齐】性格关键词：${kw || '（未填）'}。本轮锚定类型为 ${mbtiRoll}：core.mbti 的一句话侧写、surface、trueSelf、daily.speech 必须与 "${mbtiRoll}" 及关键词气质一致；禁止写成外向热情却套用冷淡表述，反之亦然。`,
     `【取向叙事】comprehensive.psyche.orientationOrigin 须单独成段，写清取向认同的由来（可与顶层 orientation 简短标签呼应）；允许生来稳定、亦允许经历过错位再澄清；禁止与 orientation 矛盾。`,
+    `【匹配裁判】顶层必须输出布尔字段 mutualSpark（true/false，不要引号字符串）：在已写好人设的前提下，若用户凭上述资料向你生成的 NPC 表达心动，NPC 是否愿意正向接住、形成双向心动的起手。须与人设一致；缺该字段或类型错误视为生成失败。`,
   ].join('\n')
 
   try {
@@ -257,7 +240,7 @@ export async function aiGenerateEncounterNpc(params: {
     const j = JSON.parse(stripCodeFence(raw)) as Record<string, unknown>
     const nickname = typeof j.nickname === 'string' ? j.nickname.trim().slice(0, 8) : '未命名'
     const genderRaw = typeof j.gender === 'string' ? j.gender.trim() : '其他'
-    const orientation = typeof j.orientation === 'string' ? j.orientation.trim().slice(0, 12) : '保密'
+    const orientation = typeof j.orientation === 'string' ? j.orientation.trim().slice(0, 28) : '保密'
     let persona = typeof j.persona === 'string' ? j.persona.trim().slice(0, 360) : ''
     const wechatId =
       typeof j.wechatId === 'string' && /^Lm_[A-Za-z0-9_]{4,16}$/.test(j.wechatId.trim())
@@ -287,8 +270,42 @@ export async function aiGenerateEncounterNpc(params: {
         mbti: sanitizeMeetCoreMbtiTone(coerceCoreMbtiToRoll(comprehensivePersona.core.mbti, mbtiRoll)),
       },
     }
+    {
+      const wFix = ensureMeetWeightKgValue(comprehensivePersona.base.weightKg, id)
+      const hFix = ensureMeetHeightCmValue(comprehensivePersona.base.heightCm, id)
+      const withVitals = {
+        ...comprehensivePersona,
+        base: { ...comprehensivePersona.base, weightKg: wFix, heightCm: hFix },
+      }
+      const sigFix = isMeetProfilePlaceholder(comprehensivePersona.base.wechatSignature)
+        ? deriveMeetWechatSignatureFromPersona(withVitals)
+        : comprehensivePersona.base.wechatSignature
+      comprehensivePersona = {
+        ...withVitals,
+        base: { ...withVitals.base, wechatSignature: sigFix },
+      }
+    }
+    const occupationRaw = typeof j.occupation === 'string' ? j.occupation.trim().slice(0, 32) : ''
+    const mottoRaw = typeof j.motto === 'string' ? j.motto.trim().slice(0, 48) : ''
+    const sk = comprehensivePersona.abilities.skills.trim()
+    const occupationFinal = (
+      occupationRaw ||
+      deriveMeetOccupationLabel(comprehensivePersona.abilities.skills) ||
+      (!isMeetProfilePlaceholder(sk) ? sk.slice(0, 16) : '') ||
+      '市民'
+    )
+      .trim()
+      .slice(0, 32)
+    const mottoFinal = (mottoRaw || deriveMeetMottoFromPersona(comprehensivePersona)).trim().slice(0, 48)
+    const mbtiLetters = formatMeetMbtiLettersForUi(comprehensivePersona.core.mbti)
     if (!persona) persona = buildPersonaSummaryFromComprehensive(comprehensivePersona)
     persona = rewriteLoveBlocksUserPlaceholder(persona || '低调克制，重视边界；聊天不喜油腻套路。')
+    const mutualSpark =
+      j.mutualSpark === true || j.mutualSpark === false
+        ? j.mutualSpark
+        : j.spark === true || j.spark === false
+          ? j.spark
+          : Math.random() > 0.35
     let ageYears =
       typeof j.age === 'number' && Number.isFinite(j.age) ? Math.max(16, Math.min(99, Math.floor(j.age))) : undefined
     if (ageYears == null) ageYears = parseMeetAgeYearsFromInfo(comprehensivePersona.base.info)
@@ -307,8 +324,12 @@ export async function aiGenerateEncounterNpc(params: {
       realName: isMeetProfilePlaceholder(bv.realName) ? topReal || undefined : bv.realName,
       ageYears,
       birthdayMD: bv.birthdayMD,
-      weightKg: isMeetProfilePlaceholder(bv.weightKg) ? undefined : bv.weightKg,
+      heightCm: comprehensivePersona.base.heightCm,
+      weightKg: comprehensivePersona.base.weightKg,
       zodiac: bv.zodiac,
+      occupation: occupationFinal,
+      motto: mottoFinal,
+      mbti: mbtiLetters !== '—' ? mbtiLetters : undefined,
       gender: genderNorm || '其他',
       orientation,
       persona: persona || '低调克制，重视边界；聊天不喜油腻套路。',
@@ -322,15 +343,12 @@ export async function aiGenerateEncounterNpc(params: {
         prosePhysiology: bv.physiology,
       }),
       wechatId,
+      mutualSpark,
+      generationSource: 'api',
     }
-  } catch {
-    return aiGenerateEncounterNpc({
-      apiConfig: null,
-      filters: params.filters,
-      profileHint: params.profileHint,
-      meetProfile: params.meetProfile,
-      avatarExclusion: params.avatarExclusion,
-    })
+  } catch (e) {
+    if (e instanceof MeetEncounterGenerationError) throw e
+    throw new MeetEncounterGenerationError('api_failed')
   }
 }
 
@@ -399,7 +417,7 @@ export async function aiJudgeMutualSpark(params: {
 }): Promise<boolean> {
   const cfg = params.apiConfig
   if (!cfg?.apiUrl?.trim() || !cfg?.apiKey?.trim()) {
-    return Math.random() > 0.35
+    return false
   }
   const sys = `你是交友匹配裁判。根据 NPC 人设与用户公开资料，判断 NPC 是否也会对用户产生好感（心动）。只输出 JSON：{"spark":true} 或 {"spark":false}，不要解释。`
   const user = `NPC ${params.npcNickname} 人设：${params.npcPersona.slice(0, 600)}
@@ -415,7 +433,7 @@ export async function aiJudgeMutualSpark(params: {
     const j = JSON.parse(stripCodeFence(raw)) as Record<string, unknown>
     return j.spark === true
   } catch {
-    return Math.random() > 0.4
+    return false
   }
 }
 
@@ -426,6 +444,8 @@ export async function aiMeetChatReply(params: {
   userProfile: MeetPublicProfile
   transcript: Array<{ role: 'user' | 'npc'; content: string }>
   encounterSwapStatus?: string
+  /** 0–100 临时会话情感共鸣；影响语气松紧与距离的提示，须仍服从人设 */
+  resonanceScore?: number
 }): Promise<{ replies: string[]; evaluation: MeetReplyEvaluation | null }> {
   const cfg = params.apiConfig
   const lastUser = [...params.transcript].reverse().find((m) => m.role === 'user')
@@ -434,6 +454,8 @@ export async function aiMeetChatReply(params: {
     params.encounterSwapStatus && params.encounterSwapStatus !== 'none'
       ? `\n当前联络互换状态（仅供你理解语境）：${params.encounterSwapStatus}。若状态为 user_requested，请在口语回复中自然收尾并可将 swap_confirm 设为 true；若为 swapped 则勿再重复索要微信号。`
       : ''
+  const resonance = Math.max(0, Math.min(100, Math.round(Number(params.resonanceScore ?? 18))))
+  const resonanceLine = `【当前情感共鸣刻度】${resonance}/100：数值偏低时保持礼貌与适度距离；中等时自然有来有往；偏高时可略松弛亲近，但必须符合人设、尊重边界，禁止油腻、操控或越界臆断。`
 
   if (!cfg?.apiUrl?.trim() || !cfg?.apiKey?.trim()) {
     return {
@@ -459,6 +481,7 @@ ${MEET_EVALUATION_APPENDIX}
 
 补充：若关系升温到可交换微信，在自然语境里写出微信号（可用：${params.npc.wechatId || '（暂无）'}），不要每句都撩。`
   const user = `用户资料：${params.userProfile.displayName}｜${params.userProfile.intent}｜${params.userProfile.bio.slice(0, 200)}
+${resonanceLine}
 最近对话：
 ${promptCtx.join('\n')}
 请按协议输出：先 <evaluation>，再 <thinking>，再多条气泡正文（每行一条）。${swapHint}`
@@ -477,7 +500,7 @@ ${promptCtx.join('\n')}
   }
 }
 
-/** 互换联络完成后：生成初印象 / 尾声延展内向档案（单段正文，不含 XML） */
+/** 写入通讯录后：尾声延展条目——须基于临时会话由模型总结，并写明对用户的当前态度（单段正文，不含 XML） */
 export async function aiMeetEncounterEpilogueLore(params: {
   apiConfig: ApiConfig | null
   npc: EncounterNPC
@@ -489,18 +512,30 @@ export async function aiMeetEncounterEpilogueLore(params: {
     .filter((m) => m.content.trim())
     .map((m) => `${m.role === 'user' ? '用户' : params.npc.nickname}：${m.content.trim()}`)
   const transcriptText = lines.join('\n').slice(-12000)
+  const hasTranscript = transcriptText.trim().length > 0
 
   if (!cfg?.apiUrl?.trim() || !cfg?.apiKey?.trim()) {
-    return `${params.npc.nickname}仍记得这段临时会话里你说过的话：语气克制，节奏偏慢；愿意在微信里继续把话说清楚，但不急于定义关系。`
+    if (!hasTranscript) {
+      return `${params.npc.nickname}与用户尚未在临时会话里深聊；当前态度：礼貌、保留观察，愿意在通讯录里接上后再慢慢了解对方，不急于下判断。`
+    }
+    return `${params.npc.nickname}仍记得这段临时会话里对方的大致节奏与措辞。会话小结：交流偏短或信息有限，印象尚在成形。对用户的当前态度：保持礼貌与适度距离，愿意在微信里把话说清楚，但不急于定义关系；具体观感待私聊里再印证。`
   }
 
-  const sys = `你是角色 ${params.npc.nickname}。你与用户在交友软件遇见的临时会话已结束，双方已互换联络方式。
-请用第一人称写一段 120–240 字的内向自述：此刻对对方的真实看法、态度与边界感；文学感克制，禁止 Markdown，禁止 XML/HTML 标签，禁止列表符号，禁止输出标题。`
-  const user = `用户展示资料：${params.userProfile.displayName || '未填'}｜${params.userProfile.intent}｜${params.userProfile.orientation}
+  const sys = `你是角色「${params.npc.nickname}」本人，正在为档案法则撰写一条「尾声延展」内向独白（写入世界书、绑定你这个人设 id）。
+用户已将你加入镜像微信通讯录，你们在 App「遇见」里的临时会话已告一段落（可能已在会话中互换过微信号，也可能仅由用户手动同步联络方式）。
+
+【写作任务】你必须先基于下方「临时会话摘录」做忠实于语境的把握，再输出一段连贯的第一人称正文（约 220–420 字），整段须自然融合以下两块内容，禁止用小标题、禁止列表符号、禁止 Markdown/XML：
+1）会话小结：用你自己的口吻概括这场临时会话里实际发生过什么、气氛与节奏如何（须扣住摘录中的具体说法或话题，禁止泛泛编造未出现的情节；若摘录极短则如实写「聊得还浅、印象仍在拼凑」）。
+2）对用户的当前态度与看法：明确写出此刻你对 TA 的信任远近、好感或疏离、是否愿意继续接触、有无顾虑或边界（须与人设及上文小结一致，禁止 OOC 成无条件倒贴或无端敌意）。
+
+文风：当代都市口语感、具体、克制；三观正、尊重边界；禁止输出任何标签行或标题。`
+  const user = `【用户侧公开资料】展示昵称：${params.userProfile.displayName || '未填'}；意向：${params.userProfile.intent}；取向：${params.userProfile.orientation}
 简介摘抄：${params.userProfile.bio.slice(0, 360)}
 
-临时会话全文摘录（由旧到新，可略读细节抓语气）：
-${transcriptText}`
+【临时会话摘录】由旧到新；你必须据此写「小结 + 对 TA 的当前态度」，无摘录或几乎为空时须在正文里如实说明「会话尚浅」并给出与之匹配的谨慎态度。
+${hasTranscript ? transcriptText : '（无有效对话摘录。）'}
+
+【硬性自检】输出前自问：①小结是否贴摘录？②态度句是否直接回答「我现在怎么看 TA、愿不愿意往下聊」？若任一为否，重写后再输出正文。`
 
   try {
     const raw = await openAiCompatibleChat(
@@ -509,7 +544,7 @@ ${transcriptText}`
         { role: 'system', content: sys },
         { role: 'user', content: user },
       ],
-      { temperature: 0.68, max_tokens: 520 },
+      { temperature: 0.68, max_tokens: 900 },
     )
     const t = String(raw ?? '')
       .replace(/<[^>]{1,20}>/g, ' ')

@@ -40,6 +40,8 @@ export async function buildNpcPrivateChatDigestForGroupPrompt(params: {
   npcCharacterId: string
   sessionPlayerIdentityId: string
   boundPlayerIdentityId?: string | null | undefined
+  /** 用户刚从与该 NPC 的私聊进入本群：加大摘录量，减少「转群就失忆」 */
+  anchorPrivateBoost?: boolean
   messageCap?: number
   charCap?: number
 }): Promise<string> {
@@ -62,7 +64,8 @@ export async function buildNpcPrivateChatDigestForGroupPrompt(params: {
 
   if (!keys.size) return ''
 
-  const perKeyLimit = 80
+  const boost = params.anchorPrivateBoost === true
+  const perKeyLimit = boost ? 120 : 80
   const merged = new Map<string, WeChatChatMessage>()
   for (const ck of keys) {
     try {
@@ -78,7 +81,9 @@ export async function buildNpcPrivateChatDigestForGroupPrompt(params: {
   if (!merged.size) return ''
 
   const sorted = [...merged.values()].sort((a, b) => a.timestamp - b.timestamp)
-  const cap = Math.max(8, Math.min(80, Math.floor(params.messageCap ?? 42)))
+  const cap = boost
+    ? Math.max(12, Math.min(96, Math.floor(params.messageCap ?? 56)))
+    : Math.max(8, Math.min(80, Math.floor(params.messageCap ?? 42)))
   const tail = sorted.slice(-cap)
 
   const lines: string[] = []
@@ -89,7 +94,9 @@ export async function buildNpcPrivateChatDigestForGroupPrompt(params: {
   if (!lines.length) return ''
 
   let body = lines.join('\n')
-  const charCap = Math.max(800, Math.min(12000, Math.floor(params.charCap ?? 3800)))
+  const charCap = boost
+    ? Math.max(1200, Math.min(14000, Math.floor(params.charCap ?? 5200)))
+    : Math.max(800, Math.min(12000, Math.floor(params.charCap ?? 3800)))
   if (body.length > charCap) {
     const parts = body.split('\n')
     while (parts.join('\n').length > charCap && parts.length > 6) parts.shift()
@@ -97,7 +104,11 @@ export async function buildNpcPrivateChatDigestForGroupPrompt(params: {
     if (body.length > charCap) body = `${body.slice(-charCap)}\n…（更早私聊已截断）`
   }
 
-  return `${body}\n（↑ 时间顺序由旧到新；编群聊时须承接其中约定与情绪，勿当成从未私聊过。）`
+  const tailHint = boost
+    ? '（↑ 含用户刚离开私聊前的近期私聊；**本角色在群内须承接**，勿装作私聊未发生；仍勿当众宣读不宜公开的细节。）'
+    : '（↑ 时间顺序由旧到新；编群聊时须承接其中约定与情绪，勿当成从未私聊过。）'
+
+  return `${body}\n${tailHint}`
 }
 
 function formatGroupMsgLineForPrivateDigest(
@@ -134,6 +145,8 @@ export async function buildNpcGroupChatsRecentDigestForPrivatePrompt(params: {
   npcCharacterId: string
   sessionPlayerIdentityId: string
   boundPlayerIdentityId?: string | null | undefined
+  /** 若刚从该群切到私聊，优先只摘录此群近期消息，避免被其它更活跃群「顶掉」 */
+  anchorGroupId?: string | null | undefined
   messageCap?: number
   charCap?: number
 }): Promise<string> {
@@ -155,6 +168,43 @@ export async function buildNpcGroupChatsRecentDigestForPrivatePrompt(params: {
   }
   const relevant = groups.filter((g) => (g.members ?? []).some((m) => m.charId === npcId))
   if (!relevant.length) return ''
+
+  const anchorGid = params.anchorGroupId?.trim()
+  if (anchorGid) {
+    const anchorRow = relevant.find((g) => g.id.trim() === anchorGid)
+    if (anchorRow && (anchorRow.members ?? []).some((m) => m.charId.trim() === npcId)) {
+      const ck = wechatGroupConversationKey(anchorGid, pid)
+      let batch: WeChatChatMessage[] = []
+      try {
+        batch = await personaDb.listWeChatChatMessagesRecent({
+          conversationKey: ck,
+          limit: 100,
+        })
+      } catch {
+        batch = []
+      }
+      const cap = Math.max(20, Math.min(120, Math.floor(params.messageCap ?? 50)))
+      const sorted = [...batch].sort((a, b) => a.timestamp - b.timestamp)
+      const tail = sorted.slice(-cap)
+      const lines: string[] = []
+      for (const m of tail) {
+        const line = formatGroupMsgLineForPrivateDigest(m, anchorRow, npcId)
+        if (line) lines.push(line)
+      }
+      if (lines.length) {
+        let body = lines.join('\n')
+        const charCap = Math.max(900, Math.min(12000, Math.floor(params.charCap ?? 4500)))
+        if (body.length > charCap) {
+          const parts = body.split('\n')
+          while (parts.join('\n').length > charCap && parts.length > 8) parts.shift()
+          body = parts.join('\n')
+          if (body.length > charCap) body = `${body.slice(-charCap)}\n…（更早群聊已截断）`
+        }
+        const gname = (anchorRow.remark || anchorRow.name || '').trim() || '该群'
+        return `${body}\n（↑ 为你们离开群聊前，在群「${gname}」内的近期摘录，时间由旧到新；私聊请**优先**承接该群语境，勿假装群内未聊过。）\n【说话人｜勿混淆】前缀「用户」仅指真人玩家；「对方角色·某某」为当前私聊对象在该群的发言。**禁止**把对方角色在群里的台词误当成用户说的。\n`
+      }
+    }
+  }
 
   const groupById = new Map(relevant.map((g) => [g.id.trim(), g]))
   const perKeyLimit = 50

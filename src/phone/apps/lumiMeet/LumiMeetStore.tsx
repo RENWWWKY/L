@@ -21,7 +21,7 @@ import type {
   SquarePost,
 } from './meetTypes'
 import { migrateLumiMeetPersisted } from './meetMigrate'
-import { DEFAULT_MEET_STATE, LUMI_MEET_KV_KEY } from './constants'
+import { DEFAULT_MEET_STATE, LUMI_MEET_KV_KEY, MEET_RADAR_SEARCH_MIN_UI_MS } from './constants'
 
 /** 匹配 UI：存于 Provider 内存；搜寻结束后先入队 `pendingReveal`，星轨揭幕后再写入 `pendingCard` */
 export type LumiMeetRadarSession = {
@@ -50,9 +50,13 @@ type Ctx = {
       swapCard?: MeetChatMessage['swapCard']
     },
   ) => void
+  /** 从临时会话移除一条消息（如长按撤回己方气泡） */
+  removeChatMessage: (npcId: string, messageId: string) => void
   bumpIntimacy: (npcId: string, delta: number) => void
   /** 临时会话：按模型判定增减好感（0–100），并在首次达到 100 时解锁互换申请 */
   applyAffectionDelta: (npcId: string, delta: number) => void
+  /** 开发者 / 调试：直接设定好感 0–100；跨 100 时与 `applyAffectionDelta` 一致地解锁或收回 `available` */
+  setEncounterIntimacy: (npcId: string, value: number) => void
   patchEncounterSwap: (npcId: string, partial: Partial<EncounterSwapMeta>) => void
   markNpcWechatAdded: (npcId: string) => void
   /** 擦肩而过回溯：missed → matched，消耗 1 次机会；成功返回 true */
@@ -248,6 +252,24 @@ export function LumiMeetProvider({
     [patch],
   )
 
+  const removeChatMessage = useCallback(
+    (npcId: string, messageId: string) => {
+      patch((s) => {
+        const prev = s.chatThreads[npcId] ?? []
+        const next = prev.filter((m) => m.id !== messageId)
+        if (next.length === prev.length) return s
+        return {
+          ...s,
+          chatThreads: {
+            ...s.chatThreads,
+            [npcId]: next,
+          },
+        }
+      })
+    },
+    [patch],
+  )
+
   const bumpIntimacy = useCallback(
     (npcId: string, delta: number) => {
       patch((s) => {
@@ -272,6 +294,28 @@ export function LumiMeetProvider({
         return {
           ...s,
           intimacyByNpcId: { ...s.intimacyByNpcId, [npcId]: next },
+          encounterSwapByNpcId: { ...s.encounterSwapByNpcId, [npcId]: swapNext },
+        }
+      })
+    },
+    [patch],
+  )
+
+  const setEncounterIntimacy = useCallback(
+    (npcId: string, value: number) => {
+      const clamped = Math.max(0, Math.min(100, Math.round(Number(value))))
+      patch((s) => {
+        const prev = s.intimacyByNpcId[npcId] ?? 18
+        const swapPrev = s.encounterSwapByNpcId[npcId] ?? { wechatSwapStatus: 'none' as const, userWechatId: '' }
+        let swapNext: EncounterSwapMeta = { ...swapPrev }
+        if (clamped >= 100 && prev < 100 && swapNext.wechatSwapStatus === 'none') {
+          swapNext = { ...swapNext, wechatSwapStatus: 'available' }
+        } else if (clamped < 100 && swapNext.wechatSwapStatus === 'available') {
+          swapNext = { ...swapNext, wechatSwapStatus: 'none' }
+        }
+        return {
+          ...s,
+          intimacyByNpcId: { ...s.intimacyByNpcId, [npcId]: clamped },
           encounterSwapByNpcId: { ...s.encounterSwapByNpcId, [npcId]: swapNext },
         }
       })
@@ -326,13 +370,17 @@ export function LumiMeetProvider({
 
       void (async () => {
         try {
+          const started = Date.now()
           const out = await executor()
+          const waitMore = MEET_RADAR_SEARCH_MIN_UI_MS - (Date.now() - started)
+          if (waitMore > 0 && providerMountedRef.current) {
+            await new Promise<void>((r) => window.setTimeout(r, waitMore))
+          }
           if (!providerMountedRef.current) return
           if (out) {
             setRadarSession((prev) => ({
               ...prev,
               pendingReveal: { npc: out.npc, isReunionEcho: out.isReunionEcho },
-              // isReunionEcho 在 flush 时再与 pendingCard 对齐
             }))
           }
         } finally {
@@ -412,8 +460,10 @@ export function LumiMeetProvider({
         setRadarFilters,
         appendSquarePosts,
         pushChatMessage,
+        removeChatMessage,
         bumpIntimacy,
         applyAffectionDelta,
+        setEncounterIntimacy,
         patchEncounterSwap,
         markNpcWechatAdded,
         rewindMissedToMatched,
@@ -434,8 +484,10 @@ export function LumiMeetProvider({
       setRadarFilters,
       appendSquarePosts,
       pushChatMessage,
+      removeChatMessage,
       bumpIntimacy,
       applyAffectionDelta,
+      setEncounterIntimacy,
       patchEncounterSwap,
       markNpcWechatAdded,
       rewindMissedToMatched,

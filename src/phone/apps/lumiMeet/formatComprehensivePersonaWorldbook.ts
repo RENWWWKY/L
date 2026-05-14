@@ -1,31 +1,46 @@
 import {
+  deriveMeetWechatSignatureFromPersona,
+  ensureMeetHeightCmValue,
+  ensureMeetWeightKgValue,
   isMeetProfilePlaceholder,
   sanitizeLoveBlocksForStaticLore,
   sanitizeMeetCoreMbtiTone,
   type ComprehensivePersona,
 } from './comprehensivePersona'
+import { rewriteMeetWorldbookNamesToPlaceholders } from './meetWorldbookPlaceholders'
 
-/** 写入档案法则 / 世界书的 Markdown 正文（结构清晰、无 Emoji） */
-export function formatComprehensivePersonaMarkdown(displayName: string, p: ComprehensivePersona): string {
+/**
+ * 写入档案法则 / 世界书的 Markdown 正文（结构清晰、无 Emoji）。
+ * 正文内角色实名与网名统一为 `{{char}}`；体重缺省时按 `loreSeedCharacterId` 稳定补全；个性签名缺省时从人设摘句。
+ */
+export function formatComprehensivePersonaMarkdown(
+  displayName: string,
+  p: ComprehensivePersona,
+  loreSeedCharacterId: string,
+): string {
   p = sanitizeLoveBlocksForStaticLore(p)
+  const wKg = ensureMeetWeightKgValue(p.base.weightKg, loreSeedCharacterId)
+  const hCm = ensureMeetHeightCmValue(p.base.heightCm, loreSeedCharacterId)
+  const sigBody = isMeetProfilePlaceholder(p.base.wechatSignature)
+    ? deriveMeetWechatSignatureFromPersona(p)
+    : p.base.wechatSignature.trim()
+
   const h = (n: string, t: string) => `\n## ${n} ${t}\n`
   const f = (labelEn: string, labelZh: string, body: string) =>
     `**${labelEn}** ${labelZh}\n${body.trim()}\n`
 
-  return [
-    `# 核心人设档案 · ${displayName}`,
+  const md = [
+    `# 核心人设档案 · {{char}}`,
     '',
     '> 来源：遇见 Lumi Meet · 九维立体人格矩阵',
     '',
     h('01', 'BASE · 基础核心设定'),
-    f('REAL NAME', '真实姓名', p.base.realName),
+    f('REAL NAME', '真实姓名', '{{char}}'),
+    f('WECHAT SIGNATURE', '微信个性签名', sigBody),
     f('BIRTHDAY', '生日', p.base.birthdayMD),
     f('ZODIAC', '星座', p.base.zodiac),
-    f(
-      'WEIGHT',
-      '体重',
-      isMeetProfilePlaceholder(p.base.weightKg) ? p.base.weightKg : `${p.base.weightKg} kg`,
-    ),
+    f('HEIGHT', '身高', `${hCm} cm`),
+    f('WEIGHT', '体重', `${wKg} kg`),
     f('PHYSICAL & STYLE', '体征与风格', `${p.base.info}\n\n${p.base.physiology}`),
     h('02', 'CORE · 人格内核'),
     f('MBTI TENDENCY', '倾向', sanitizeMeetCoreMbtiTone(p.core.mbti)),
@@ -63,4 +78,9 @@ export function formatComprehensivePersonaMarkdown(displayName: string, p: Compr
     f('GOAL', '动机与恐惧', p.arc.goal),
     f('CONTRAST MOE', '反差萌', p.arc.contrastMoe),
   ].join('\n')
+
+  return rewriteMeetWorldbookNamesToPlaceholders(md, {
+    nickname: displayName,
+    realName: p.base.realName,
+  })
 }

@@ -2,7 +2,11 @@ import { AnimatePresence, motion } from 'framer-motion'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { DESKTOP_LAYOUT_SLOT_COUNT, type AppSlot } from '../types'
 import { personaDb } from '../apps/wechat/newFriendsPersona/idb'
-import { WECHAT_LUMI_PEER_CHARACTER_ID, wechatConversationKey } from '../apps/wechat/wechatConversationKey'
+import {
+  WECHAT_LUMI_PEER_CHARACTER_ID,
+  resolvePrivateWeChatConversationKey,
+  wechatConversationKey,
+} from '../apps/wechat/wechatConversationKey'
 import { DesktopAppTile } from './DesktopAppTile'
 import { Dock } from './Dock'
 import { MusicWidget } from './MusicWidget'
@@ -29,15 +33,17 @@ function useWeChatHomeUnreadBadge(): number {
     if (playerIdentityId === null) return
     const pid = playerIdentityId
     const list = state.wechatPersonaContacts ?? []
-    const keySet = new Set<string>()
-    keySet.add(wechatConversationKey(WECHAT_LUMI_PEER_CHARACTER_ID, pid))
-    for (const c of list) {
-      keySet.add(wechatConversationKey(c.characterId, pid))
-    }
-    const keys = Array.from(keySet)
-    void Promise.all(keys.map((k) => personaDb.countUnreadWeChatCharacterMessages(k))).then((counts) =>
-      setCount(counts.reduce((a, b) => a + b, 0)),
-    )
+    void (async () => {
+      const keySet = new Set<string>()
+      keySet.add(wechatConversationKey(WECHAT_LUMI_PEER_CHARACTER_ID, pid))
+      for (const c of list) {
+        const ch = await personaDb.getCharacter(c.characterId)
+        keySet.add(resolvePrivateWeChatConversationKey(c.characterId, ch, pid))
+      }
+      const keys = Array.from(keySet)
+      const counts = await Promise.all(keys.map((k) => personaDb.countUnreadWeChatCharacterMessages(k)))
+      setCount(counts.reduce((a, b) => a + b, 0))
+    })()
   }, [state.wechatPersonaContacts, playerIdentityId])
 
   useEffect(() => {

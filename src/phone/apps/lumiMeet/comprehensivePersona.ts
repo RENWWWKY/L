@@ -19,8 +19,12 @@ export interface ComprehensivePersona {
     birthdayMD: string
     /** 体重（千克），字符串与微信基础信息一致 */
     weightKg: string
+    /** 身高（厘米），纯数字字符串；与微信资料 height 一致 */
+    heightCm: string
     /** 中文星座，可与生日互推 */
     zodiac: string
+    /** 微信「个性签名」式极短文案（写入世界书分册与同步人设） */
+    wechatSignature: string
   }
   core: { mbti: string; surface: string; trueSelf: string; values: string; flaws: string }
   psyche: {
@@ -88,6 +92,55 @@ function pickOfflineWeightKgFromSeed(seed: string): string {
   return String(45 + (h % 34))
 }
 
+/** 体重缺省或占位时，用稳定 seed 生成千克数字字符串（与离线邂逅一致） */
+export function ensureMeetWeightKgValue(weightKg: string, seed: string): string {
+  const t = String(weightKg ?? '').trim()
+  if (!isMeetProfilePlaceholder(t)) return t
+  return pickOfflineWeightKgFromSeed(seed)
+}
+
+function pickOfflineHeightCmFromSeed(seed: string): string {
+  const h = hashSeedString(`${seed}:cm`)
+  return String(158 + (h % 28))
+}
+
+/** 身高缺省或非法时，用稳定 seed 生成厘米数字串 */
+export function ensureMeetHeightCmValue(heightCm: string, seed: string): string {
+  const raw = String(heightCm ?? '').trim()
+  if (!raw || isMeetProfilePlaceholder(raw)) return pickOfflineHeightCmFromSeed(seed)
+  const digits = raw.replace(/\D/g, '')
+  if (!digits) return pickOfflineHeightCmFromSeed(seed)
+  const n = parseInt(digits, 10)
+  if (!Number.isFinite(n) || n < 120 || n > 230) return pickOfflineHeightCmFromSeed(seed)
+  return String(n)
+}
+
+/** 从九维 skills 摘一句作职业/身份展示 */
+export function deriveMeetOccupationLabel(skills: string): string {
+  const t = String(skills ?? '').trim()
+  if (!t || t === PLACEHOLDER) return ''
+  const line = (t.split(/[。；;\n]/)[0] ?? t).trim()
+  return line.slice(0, 32)
+}
+
+/** 座右铭缺省：动机/三观短句 */
+export function deriveMeetMottoFromPersona(p: ComprehensivePersona): string {
+  const g = p.arc.goal?.trim()
+  if (g && g !== PLACEHOLDER) return g.length > 44 ? `${g.slice(0, 44)}…` : g
+  const v = p.core.values?.trim()
+  if (v && v !== PLACEHOLDER) return v.length > 40 ? `${v.slice(0, 40)}…` : v
+  return '走慢一点，也认真一点。'
+}
+
+/** 个性签名缺省：从外显/体征摘一句，避免世界书与微信签名为空 */
+export function deriveMeetWechatSignatureFromPersona(p: ComprehensivePersona): string {
+  const fromSurface = p.core.surface?.trim().slice(0, 44)
+  if (fromSurface) return `${fromSurface}…`
+  const fromInfo = p.base.info?.trim().slice(0, 44)
+  if (fromInfo) return `${fromInfo}…`
+  return '随缘回；忙完会看消息。'
+}
+
 function mapMeetGenderLabelToCharacterGender(g: string): Gender {
   if (g.includes('女')) return 'female'
   if (g.includes('男')) return 'male'
@@ -109,6 +162,15 @@ export function sanitizeMeetCoreMbtiTone(s: string): string {
   t = t.replace(/（\s*闹着玩\s*）/g, '')
   t = t.replace(/闹着玩/g, '')
   return t.replace(/\s{2,}/g, ' ').replace(/。{2,}/g, '。').trim()
+}
+
+/** 界面展示：只显示十六型四字母（从模型长句或离线模板中解析）；无法识别时显示「—」 */
+export function formatMeetMbtiLettersForUi(raw: string): string {
+  const t = sanitizeMeetCoreMbtiTone(String(raw ?? ''))
+  if (!t || t === PLACEHOLDER) return '—'
+  const re = new RegExp(`\\b(${MEET_MBTI_SIXTEEN.join('|')})\\b`, 'i')
+  const m = t.match(re)
+  return m ? m[1]!.toUpperCase() : '—'
 }
 
 /** 世界书 / 档案法则：恋爱向客观条目统一去掉 {{user}}，旧数据经此读时也会修正 */
@@ -148,7 +210,9 @@ export function normalizeComprehensivePersona(raw: unknown): ComprehensivePerson
       realName: pickStr(g(['base', 'realName']), 24, PLACEHOLDER),
       birthdayMD,
       weightKg: pickStr(g(['base', 'weightKg']), 12, PLACEHOLDER),
+      heightCm: pickStr(g(['base', 'heightCm']), 8, PLACEHOLDER),
       zodiac,
+      wechatSignature: pickStr(g(['base', 'wechatSignature']), 120, PLACEHOLDER),
     },
     core: {
       mbti: sanitizeMeetCoreMbtiTone(pickStr(g(['core', 'mbti']), 80, PLACEHOLDER)),
@@ -223,9 +287,39 @@ function pickOfflineOrientationOrigin(seed: string, orientationTag: string): str
     '谈过两段反差很大的关系之后，{{char}}才停止逼自己在标签之间二选一：有些人天生就更在意 "是谁"，而不是 "哪一类"。{{char}}把这种暧昧说得坦白——不喜欢被质问 "你到底站哪边"，因为{{char}}要的不是阵营，是合拍。',
     '{{char}}年轻时以为必须尽快 "定型"，后来在一次次笨拙的尝试里发现，吸引自己的从来不是抽象的类型，而是具体的体温与脾气。于是对外只说 "双" 或干脆不提——取向的由来，就是一路走来允许自己不必一口气写完结论。',
   ]
+  const aceSpectrum = [
+    '{{char}}对「性吸引」这件事一直淡淡的：不是道德清高，就是身体和情绪都对不上那种热播剧里的一见钟情。也更愿意把精力花在具体的生活上——工作、朋友、自己的睡眠。若要把取向说清楚，{{char}}更认同无性恋谱系：可以亲密，但不该被误解成 "装" 或 "没试过"。',
+    '别人聊初恋脸红，{{char}}常常只能礼貌地点头。不是冷漠，而是{{char}}的感官开关本来就不按大众脚本亮灯。慢慢学着用灰色无性、性吸引弱这些词描述自己，反而松了口气——终于不用再硬演心动。',
+    '{{char}}承认自己对肉体刺激反应很钝：接吻会紧张多于兴奋，但友情、信任、被理解的满足感反而很强烈。对{{char}}来说，取向不是 "有没有爱"，而是身体这本字典里，哪些页本来就空白。',
+  ]
+  const aroSpectrum = [
+    '{{char}}很早就分清：想要陪伴、想要被懂，和「按社会时钟谈恋爱」不是一回事。对浪漫仪式的腻味、对暧昧推拉的不耐烦，慢慢让{{char}}靠近无浪漫倾向这一侧——朋友以上的羁绊{{char}}很珍惜，但不一定要套上恋人的名分。',
+    '{{char}}不是不会喜欢一个人，而是那种喜欢很少长成玫瑰蜡烛的模样，更像长时间并排走路。{{char}}对自己无浪漫谱系的认同是慢慢来的一件事：先允许自己不必为了合群去演心跳。',
+    '有过几次暧昧试探，{{char}}都在对方要升级关系时下意识喊停——不是挑剔，而是{{char}}的舒适区压根不在约会脚本里。后来才知道这叫无浪漫谱系：{{char}}更愿意用合伙、知己、同行者来形容重要的人。',
+  ]
+  const demiSpectrum = [
+    '{{char}}的吸引像慢炖：先要聊得来、信得过，身体的线才会一点点搭起来。半性恋/半浪漫对{{char}}不是矫情，而是诚实——宁可错过快餐式暧昧，也不想对不起自己的身体节奏。',
+    '别人一见钟情，{{char}}常常要到第四次第五次见面才突然意识到「咦，我好像有点在意 TA」。这种滞后把{{char}}吓跑过几次；慢慢接受这是自己的默认值就好了。',
+    '{{char}}认同「情感连结先于性/浪漫吸引」：先成为同类，再谈更进一步。职场和社交里{{char}}反而放松，因为边界清楚；真正让{{char}}紧张的，反而是还没混熟就被推上暧昧牌桌。',
+  ]
+  const queerFluid = [
+    '{{char}}厌恶被钉死在某个字母缩写里：今年更向往稳定，明年又可能对另一种关系想象蠢蠢欲动。酷儿/流动对{{char}}而言是给自己留白——身份不欠任何人一张一次性答案。',
+    '有过直过弯过双过的自我叙述反复，{{char}}不再急着落款。与其说「探索中」是摇摆，不如说{{char}}把诚实排在体面前面：承认欲望与情感路线图会改写，并不等于放荡或不负责。',
+    '{{char}}对外常用泛称应付表格与亲戚，心里却更认同酷儿社群那句「标签是贴纸不是棺材钉」。流动不是抓不准，而是允许人生有不同季节的引力。',
+  ]
+  const polyOpen = [
+    '{{char}}不把「一对一至死」当成唯一道德模板：更在意知情同意、时间管理与说不的权利。开放关系/多边在{{char}}字典里不是乱，而是把账算在桌面上，把嫉妒摊开来谈的那种成年人的难但值得。',
+    '经历过传统关系的窒息感之后，{{char}}开始读 ENM（道德非一夫一妻）的材料，不是为了猎奇，而是想弄清自己到底需要多少占有才安心。{{char}}认同：爱可以扩容，但欺骗不行。',
+    '{{char}}对多边保持审慎乐观：喜欢清晰的规则、定期的复盘、以及兜底的好友圈。{{char}}相信「更多连接」不该等于「更少尊重」——合意前，宁可慢一点。',
+  ]
   const t = orientationTag.trim()
   let pool: readonly string[]
-  if (t.includes('同性') || t === '同性恋') pool = homo
+  if (t.includes('无性') || /ace/i.test(t)) pool = aceSpectrum
+  else if (t.includes('无浪漫') || t.includes('无恋') || /aro/i.test(t)) pool = aroSpectrum
+  else if (t.includes('半性') || t.includes('半浪漫') || /demi/i.test(t)) pool = demiSpectrum
+  else if (t.includes('酷儿') || t.includes('流动') || t.includes('探索')) pool = queerFluid
+  else if (t.includes('多边') || t.includes('开放关系') || t.includes('合意') || /poly|enm/i.test(t)) pool = polyOpen
+  else if (t.includes('同性') || t.includes('同性恋') || t.includes('女同') || t.includes('男同')) pool = homo
   else if (t.includes('双') || t.includes('泛') || t === 'bi') pool = biPan
   else pool = hetero
   return pool[h % pool.length]!
@@ -414,7 +508,17 @@ export function buildOfflineComprehensivePersona(
       realName: vitalsName,
       birthdayMD: vitalsBirth,
       weightKg: vitalsWeight,
+      heightCm: pickOfflineHeightCmFromSeed(seed),
       zodiac: vitalsZodiac,
+      wechatSignature: (() => {
+        const sigs = [
+          '回消息看心情，急事请直说。',
+          '周末更常在；工作日随缘。',
+          '看见就回，没回就是在忙。',
+          '慢热，熟了会好聊很多。',
+        ]
+        return sigs[h % sigs.length]!
+      })(),
     },
     core: {
       mbti: mbtiLine,
