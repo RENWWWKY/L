@@ -92,7 +92,8 @@ export function StoryBlock({
     const stored = plot.logicPass?.trim()
     const sp = splitDatingAssistantOutput(plot.content)
     const thinkingText = (stored || sp.logicPass || plot.planSummary?.trim() || sp.planSummary || '').trim()
-    const displayBody = stripVnVoiceParamsPayload(stored ? plot.content : sp.content)
+    // 始终走 split 后的正文：即使 logicPass 已单独存盘，plot.content 里仍可能残留思维链标签或需剥离的壳层
+    const displayBody = stripVnVoiceParamsPayload(sp.content.trim() ? sp.content : plot.content)
     return { thinkingText, displayBody }
   }, [plot])
 
