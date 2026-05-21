@@ -10,12 +10,16 @@ import {
   type ComprehensivePersona,
 } from './comprehensivePersona'
 import { MEET_SYNC_WORLD_BOOK_VOLUME_TITLES } from './nineDimensionAccordion'
+import { isMeetTruthMirrorWorldBookId } from './meetTruthMirrorWorldbook'
+
+export { isMeetTruthMirrorWorldBookId }
 import { rewriteMeetWorldbookNamesToPlaceholders } from './meetWorldbookPlaceholders'
 
-/** 判断是否为「遇见同步」写入的人设世界书分册 id（含旧版单册 meet-wb-{id} 与新版 meet-wb-{id}-vol01 … vol10） */
+/** 判断是否为「遇见同步」写入的人设世界书分册 id（含旧版单册 meet-wb-{id} 与新版 meet-wb-{id}-vol01 … vol11） */
 export function isMeetSyncedWorldBookId(characterId: string, worldBookId: string): boolean {
   const p = `meet-wb-${characterId.trim()}`
   if (worldBookId === p) return true
+  if (isMeetTruthMirrorWorldBookId(characterId, worldBookId)) return false
   return worldBookId.startsWith(`${p}-vol`)
 }
 
@@ -63,6 +67,26 @@ function mkBook(npcId: string, volKey: string, volLabel: string, items: WorldBoo
 /** 结业后写入人设 vol10 的正文；与 `extractMeetVol10EpiloguePayload` 成对使用 */
 export type MeetVol10EpiloguePayload = { itemName: string; content: string }
 
+/** vol10 占位条目固定 id 后缀：与结业后 `item01` 真稿区分，避免 `extractMeetVol10EpiloguePayload` 把占位当已生成尾声 */
+const MEET_VOL10_STUB_ITEM_INDEX = 0
+
+/** 匹配时写入的占位正文特征（含 {{char}}/{{user}} 或已展开真名） */
+export function isMeetVol10StubPlaceholderContent(content: string): boolean {
+  const t = String(content ?? '').trim()
+  if (!t) return true
+  return (
+    (t.includes('结业同步后') && t.includes('初识阶段')) ||
+    t.includes('未完成结业前本条目关闭注入')
+  )
+}
+
+/** 是否已有 AI 结业初印象（非占位稿） */
+export function hasMeetVol10GraduatedEpilogue(characterId: string, worldBooks: WorldBook[]): boolean {
+  const ep = extractMeetVol10EpiloguePayload(characterId, worldBooks)
+  if (!ep?.content?.trim()) return false
+  return !isMeetVol10StubPlaceholderContent(ep.content)
+}
+
 function buildVol10Items(
   npcId: string,
   nickname: string,
@@ -82,13 +106,13 @@ function buildVol10Items(
     mkItem(
       npcId,
       'vol10',
-      1,
-      '对用户的当前态度（待定）',
-      '本条为人设世界书中的「尾声延展」位：凡在「遇见」完成临时会话收束并同步至微信通讯录后，将在此写入对 {{user}} 的态度快照。未完成结业前本条目关闭注入，请勿当作既定关系事实。',
+      MEET_VOL10_STUB_ITEM_INDEX,
+      '对 {{user}} 的当前态度',
+      `{{char}}与{{user}}在「遇见」临时会话中的互动尚处初识阶段：交流以礼貌与试探为主，信任与亲近度未定型。结业同步后，本条将据会话纪要更新为与档案法则一致的收束摘要（仍为第三人称，含 {{char}} / {{user}}）。`,
       nickname,
       realName,
       now,
-      { priority: 'after', enabled: false },
+      { priority: 'after', enabled: true },
     ),
   ]
 }
@@ -102,18 +126,59 @@ export function buildMeetVol10WorldBook(
   epilogue: MeetVol10EpiloguePayload | null,
 ): WorldBook {
   const meta = MEET_SYNC_WORLD_BOOK_VOLUME_TITLES.find((m) => m.volKey === 'vol10')
-  const bookTitle = meta?.bookTitle ?? '10 ATTITUDE | 尾声延展 · 对用户的当前态度'
+  const bookTitle = meta?.bookTitle ?? '10 ATTITUDE | 尾声延展'
   return mkBook(npcId, 'vol10', bookTitle, buildVol10Items(npcId, nickname, realName, now, epilogue))
+}
+
+export function getMeetVol10WorldBookId(characterId: string): string {
+  return `meet-wb-${characterId.trim()}-vol10`
+}
+
+export type MeetVol10Preview = {
+  content: string
+  itemName: string
+  /** 已结业并写入 AI 初印象真稿（非匹配时的占位条目） */
+  isGraduatedEpilogue: boolean
+}
+
+/** 遇见世界书预览：读取 vol10 正文（占位或结业初印象） */
+export function readMeetVol10PreviewFromCharacterWorldBooks(
+  worldBooks: WorldBook[] | undefined,
+  characterId: string,
+): MeetVol10Preview {
+  const books = worldBooks ?? []
+  const epilogue = extractMeetVol10EpiloguePayload(characterId, books)
+  if (epilogue && hasMeetVol10GraduatedEpilogue(characterId, books)) {
+    return {
+      content: epilogue.content.trim(),
+      itemName: epilogue.itemName,
+      isGraduatedEpilogue: true,
+    }
+  }
+  const wb = books.find((w) => w.id === getMeetVol10WorldBookId(characterId))
+  const stubItem =
+    wb?.items?.find((i) => i.id.endsWith(`-item${String(MEET_VOL10_STUB_ITEM_INDEX).padStart(2, '0')}`)) ??
+    wb?.items?.[0]
+  return {
+    content: String(stubItem?.content ?? '').trim(),
+    itemName: String(stubItem?.name ?? '').trim() || '对 {{user}} 的当前态度',
+    isGraduatedEpilogue: false,
+  }
 }
 
 /** 从现有人设 worldBooks 取出已启用的结业态度稿，供重新同步九维时合并，避免覆盖尾声延展 */
 export function extractMeetVol10EpiloguePayload(characterId: string, worldBooks: WorldBook[]): MeetVol10EpiloguePayload | null {
-  const id = `meet-wb-${characterId.trim()}-vol10`
-  const wb = worldBooks.find((w) => w.id === id)
+  const wb = worldBooks.find((w) => w.id === getMeetVol10WorldBookId(characterId))
   if (!wb?.items?.length) return null
-  const it = wb.items.find((i) => i.priority === 'after' && i.enabled && String(i.content ?? '').trim())
+  const it = wb.items.find((i) => {
+    if (i.priority !== 'after' || !i.enabled || !String(i.content ?? '').trim()) return false
+    if (i.id.endsWith(`-item${String(MEET_VOL10_STUB_ITEM_INDEX).padStart(2, '0')}`)) return false
+    const raw = String(i.content).trim()
+    if (isMeetVol10StubPlaceholderContent(raw)) return false
+    return true
+  })
   if (!it) return null
-  const itemName = String(it.name || '').trim() || '对用户的当前态度'
+  const itemName = String(it.name || '').trim() || '对 {{user}} 的当前态度'
   return { itemName, content: String(it.content) }
 }
 
@@ -229,9 +294,10 @@ export function buildMeetNineDimensionWorldBooks(
     vol10: vol10,
   }
 
-  return MEET_SYNC_WORLD_BOOK_VOLUME_TITLES.map((meta) =>
-    mkBook(npcId, meta.volKey, meta.bookTitle, byVol[meta.volKey] ?? []),
-  )
+  /** vol11/vol12 由遇见专用逻辑单独写入；此处若生成空壳会与真稿重复 id，导致编辑页双份且条目无法点开 */
+  return MEET_SYNC_WORLD_BOOK_VOLUME_TITLES.filter(
+    (meta) => meta.volKey !== 'vol11' && meta.volKey !== 'vol12',
+  ).map((meta) => mkBook(npcId, meta.volKey, meta.bookTitle, byVol[meta.volKey] ?? []))
 }
 
 /** 无九维时：单册单条，避免 worldBooks 为空 */

@@ -9,7 +9,14 @@ import { extractVnVoiceParamsBlock } from './dating/vnVoiceParamsStrip'
 import { findGroupMember } from './groupChatUtils'
 import { buildNpcLinkedOfflineExcerptUserBlock } from './memory/linkedOfflineExcerptsForAutoSummary'
 import { personaDb, pullPhoneKvWithLocalStorageLegacy } from './newFriendsPersona/idb'
-import type { Character, GroupChatRow, GroupMember, WeChatChatMessage } from './newFriendsPersona/types'
+import type {
+  Character,
+  GroupChatRow,
+  GroupMember,
+  WeChatChatMessage,
+  WorldBookUserPlaceholderBinding,
+} from './newFriendsPersona/types'
+import { dispatchMeetMemorySummarySuccess } from '../lumiMeet/meetMemorySummarySuccessEvents'
 import {
   parseUnifiedMemorySummaryWithLinkedModelOutput,
   requestGroupChatMemorySummary,
@@ -19,17 +26,24 @@ import {
 } from './wechatChatAi'
 import {
   groupMemoryBucketCharacterId,
+  parseWechatAccountGroupConversationKey,
+  parseWechatAccountPrivateConversationKey,
   resolvePrivateChatSessionPlayerIdentityId,
+  resolvePrivateWeChatStorageConversationKey,
   wechatConversationKey,
   WECHAT_GROUP_BOT_CHARACTER_ID,
   WECHAT_GROUP_USER_CHAR_ID,
 } from './wechatConversationKey'
+import { resolveMemoryUserInsertContextFromSource } from './memoryUserPlaceholderBindings'
 import { buildAutoSummaryMemoryKeywordsBackup } from './memory/memoryTriggerUtils'
 import {
   sanitizeGroupMemorySummaryBody,
   sanitizeUnifiedLinkedMemoryBody,
   sanitizeUnifiedPrimaryMemoryBody,
 } from './memory/autoSummaryPlaceholderSanitize'
+import { loadMeetPersisted } from '../lumiMeet/meetPersistLoad'
+import { meetMessagesToAiTranscript } from '../lumiMeet/meetEncounterTranscript'
+import type { MeetChatMessage } from '../lumiMeet/meetTypes'
 
 const DATING_ARCHIVES_KV = 'wechat-dating-archives-v1'
 
@@ -94,7 +108,10 @@ export type UnifiedMemoryGatherResult = {
   characterRealName: string
   hadOnline: boolean
   hadOfflinePrior: boolean
+  hadMeet: boolean
   onlineTranscript: ChatTranscriptTurn[]
+  meetTranscript: ChatTranscriptTurn[]
+  meetMessagesPrior: MeetChatMessage[]
   offlinePlotsPrior: DatingPlotSnapshotItem[]
   offlineBlock: string
   npcLinked: { linkedArchiveOwnerId: string; allowedNpcIds: Set<string>; block: string }
@@ -111,6 +128,9 @@ export async function gatherUnifiedMemoryInputsForDatingTurn(params: {
    * 未传时回退为全局当前身份（IndexedDB），再否则 `__none__`。
    */
   sessionPlayerIdentityId?: string | null
+  /** 与私聊存储键一致（优先）；未传则按 wechatAccountId + 会话身份拼键 */
+  conversationKey?: string | null
+  wechatAccountId?: string | null
 }): Promise<UnifiedMemoryGatherResult | null> {
   const cid = params.characterId.trim()
   if (!cid) return null
@@ -119,7 +139,9 @@ export async function gatherUnifiedMemoryInputsForDatingTurn(params: {
   const fromGlobal = (await personaDb.getCurrentIdentityId()).trim()
   const appHint = explicit || fromGlobal || null
   const pidForConv = resolvePrivateChatSessionPlayerIdentityId(row, appHint)
-  const conversationKey = wechatConversationKey(cid, pidForConv)
+  const conversationKey =
+    params.conversationKey?.trim() ||
+    resolvePrivateWeChatStorageConversationKey(cid, params.wechatAccountId, pidForConv)
 
   const cursorTs = await personaDb.getMemorySummaryCursorTimestamp(conversationKey)
   const fromTs = (cursorTs ?? 0) + 1
@@ -177,6 +199,28 @@ export async function gatherUnifiedMemoryInputsForDatingTurn(params: {
   const hadOnline = onlineTranscript.length > 0
   const hadOfflinePrior = offlineBlock.trim().length > 0
 
+  const meetCursor = await personaDb.getMeetSummaryCursorTimestamp(cid)
+  const meetFromTs = (meetCursor ?? 0) + 1
+  let meetMessagesPrior: MeetChatMessage[] = []
+  const meetPersist = await loadMeetPersisted()
+  const meetThread = meetPersist?.chatThreads[cid] ?? []
+  if (meetThread.length) {
+    meetMessagesPrior = meetThread
+      .filter((m) => {
+        const ts = typeof m.ts === 'number' && Number.isFinite(m.ts) && m.ts > 0 ? m.ts : 1
+        return ts > meetFromTs
+      })
+      .sort((a, b) => a.ts - b.ts)
+  }
+  const meetTranscript: ChatTranscriptTurn[] = meetMessagesToAiTranscript(meetMessagesPrior).flatMap(
+    (row) => {
+      const text = String(row.content || '').trim()
+      if (!text || text.length <= 2) return []
+      return [{ from: row.role === 'user' ? 'self' : 'other', text } satisfies ChatTranscriptTurn]
+    },
+  )
+  const hadMeet = meetTranscript.length > 0
+
   const npcLinked = await buildNpcLinkedOfflineExcerptUserBlock({
     archiveCharacterId: plotsArchiveId,
     perspectiveCharacterId: cid,
@@ -189,7 +233,10 @@ export async function gatherUnifiedMemoryInputsForDatingTurn(params: {
     characterRealName: peer,
     hadOnline,
     hadOfflinePrior,
+    hadMeet,
     onlineTranscript,
+    meetTranscript,
+    meetMessagesPrior,
     offlinePlotsPrior,
     offlineBlock,
     npcLinked: {
@@ -236,10 +283,24 @@ export async function applyUnifiedMemoryFromParsedSummary(
   const linkedOwnerId = gather.npcLinked.linkedArchiveOwnerId.trim() || gather.plotsArchiveId
   const archiveForSanitize = gather.plotsArchiveId.trim() || linkedOwnerId
 
+  const memSource = parseWechatAccountPrivateConversationKey(ck)
+  const userBindCtx = await resolveMemoryUserInsertContextFromSource(
+    memSource?.wechatAccountId,
+    memSource?.sessionPlayerId,
+  )
+
   let primaryBody = summary.primary.content.trim().slice(0, 2000)
+  let primaryUserBindings: WorldBookUserPlaceholderBinding[] = []
   if (primaryBody) {
     try {
-      primaryBody = (await sanitizeUnifiedPrimaryMemoryBody(primaryBody, cid, archiveForSanitize)).slice(0, 2000)
+      const sanitized = await sanitizeUnifiedPrimaryMemoryBody(
+        primaryBody,
+        cid,
+        archiveForSanitize,
+        userBindCtx,
+      )
+      primaryBody = sanitized.content.slice(0, 2000)
+      primaryUserBindings = sanitized.userPlaceholderBindings
     } catch {
       /* 保持原文，避免总结整体失败 */
     }
@@ -325,8 +386,10 @@ export async function applyUnifiedMemoryFromParsedSummary(
 
   if (!defer && primaryBody) {
     const tagPrefix =
-      `${gather.hadOnline ? '[私聊]' : ''}${hadOfflineTag ? '[线下]' : ''}${gather.hadOnline || hadOfflineTag ? ' ' : ''}`
+      `${gather.hadMeet ? '[遇见]' : ''}${gather.hadOnline ? '[私聊]' : ''}${hadOfflineTag ? '[线下]' : ''}${gather.hadMeet || gather.hadOnline || hadOfflineTag ? ' ' : ''}`
     const trimmed = tagPrefix + primaryBody
+    const meetOnlyScope =
+      gather.hadMeet && !gather.hadOnline && !hadOfflineTag ? ('meet' as const) : undefined
     const kwBackup = buildAutoSummaryMemoryKeywordsBackup({
       memoryTriggerCategory: summary.primary.memoryTriggerCategory,
       memoryTriggerPrecise: summary.primary.memoryTriggerPrecise,
@@ -340,6 +403,14 @@ export async function applyUnifiedMemoryFromParsedSummary(
       createdAt: now,
       updatedAt: now,
       isAutoGenerated: true,
+      ...(meetOnlyScope ? { memoryScope: meetOnlyScope } : {}),
+      ...(memSource
+        ? {
+            sourceWechatAccountId: memSource.wechatAccountId,
+            sourceSessionPlayerIdentityId: memSource.sessionPlayerId,
+          }
+        : {}),
+      ...(primaryUserBindings.length ? { userPlaceholderBindings: primaryUserBindings } : {}),
       memoryTriggerMode: triggerMode,
       memoryTriggerCategory: summary.primary.memoryTriggerCategory,
       memoryTriggerPrecise: summary.primary.memoryTriggerPrecise,
@@ -351,10 +422,17 @@ export async function applyUnifiedMemoryFromParsedSummary(
   for (const entry of linkedWritesToPersist) {
     let lb = entry.content.trim().slice(0, 2000)
     if (!lb) continue
+    let linkedBindings: import('./newFriendsPersona/types').WorldBookUserPlaceholderBinding[] = []
     try {
-      lb = (
-        await sanitizeUnifiedLinkedMemoryBody(lb, entry.characterId.trim(), linkedOwnerId, cid)
-      ).slice(0, 2000)
+      const sanitized = await sanitizeUnifiedLinkedMemoryBody(
+        lb,
+        entry.characterId.trim(),
+        linkedOwnerId,
+        cid,
+        userBindCtx,
+      )
+      lb = sanitized.content.slice(0, 2000)
+      linkedBindings = sanitized.userPlaceholderBindings
     } catch {
       /* 保持原文 */
     }
@@ -380,6 +458,13 @@ export async function applyUnifiedMemoryFromParsedSummary(
       memoryScope: 'linked',
       linkedFromCharacterId: linkedOwnerId,
       ...(datingRound ? { datingLinkedSourcePlotId: datingRound } : {}),
+      ...(memSource
+        ? {
+            sourceWechatAccountId: memSource.wechatAccountId,
+            sourceSessionPlayerIdentityId: memSource.sessionPlayerId,
+          }
+        : {}),
+      ...(linkedBindings.length ? { userPlaceholderBindings: linkedBindings } : {}),
       memoryTriggerMode: triggerMode,
       memoryTriggerCategory: entry.memoryTriggerCategory,
       memoryTriggerPrecise: entry.memoryTriggerPrecise,
@@ -392,6 +477,17 @@ export async function applyUnifiedMemoryFromParsedSummary(
     const latestTs = gather.chunkMessages[gather.chunkMessages.length - 1]!.timestamp
     if (typeof latestTs === 'number' && Number.isFinite(latestTs)) {
       await personaDb.setMemorySummaryCursorTimestamp(ck, latestTs)
+    }
+  }
+
+  if (!defer && gather.hadMeet && gather.meetMessagesPrior.length) {
+    const maxMeetTs = Math.max(
+      ...gather.meetMessagesPrior.map((m) =>
+        typeof m.ts === 'number' && Number.isFinite(m.ts) && m.ts > 0 ? m.ts : 1,
+      ),
+    )
+    if (maxMeetTs > 0) {
+      await personaDb.setMeetSummaryCursorTimestamp(cid, maxMeetTs)
     }
   }
 
@@ -413,6 +509,10 @@ export async function applyUnifiedMemoryFromParsedSummary(
 
   if (skipBump) {
     await personaDb.resetMemoryAiRoundCountForConversation(ck)
+  }
+
+  if (!defer && gather.hadMeet) {
+    dispatchMeetMemorySummarySuccess({ characterName: gather.characterRealName })
   }
 
   return wroteAny
@@ -461,6 +561,8 @@ export async function runUnifiedAutoMemorySummaryAfterThreshold(params: {
   datingPlotsSnapshot?: DatingPlotSnapshotItem[] | null
   /** 与 ChatRoom 传入的 `playerIdentityId`（chatRoute 会话身份）对齐，避免未绑身份时错用 `__none__` 键 */
   sessionPlayerIdentityId?: string | null
+  /** 遇见联络绑定微信马甲 accountId，与私聊存储键一致 */
+  wechatAccountId?: string | null
   /**
    * 约会页在每段剧情生成后触发：不消耗「私聊 N 轮一条总结」计数，失败时也不回滚该计数；
    * 成功后清零该会话计数，避免与已合并进总结的私聊气泡错位。
@@ -478,11 +580,13 @@ export async function runUnifiedAutoMemorySummaryAfterThreshold(params: {
     characterRealName: params.characterRealName,
     datingPlotsSnapshot: params.datingPlotsSnapshot ?? null,
     sessionPlayerIdentityId: params.sessionPlayerIdentityId ?? null,
+    conversationKey: params.conversationKey ?? null,
+    wechatAccountId: params.wechatAccountId ?? null,
   })
   if (!gather) return
   const ck = gather.conversationKey
 
-  if (!gather.hadOnline && !gather.hadOfflinePrior) {
+  if (!gather.hadOnline && !gather.hadOfflinePrior && !gather.hadMeet) {
     if (!skipBump) await personaDb.rollbackMemoryAiRoundCountForRetry(ck)
     return
   }
@@ -490,8 +594,11 @@ export async function runUnifiedAutoMemorySummaryAfterThreshold(params: {
   const summary = await requestUnifiedMemorySummaryWithLinked({
     apiConfig: params.apiConfig,
     onlineTranscript: gather.onlineTranscript,
+    meetTranscript: gather.hadMeet ? gather.meetTranscript : [],
     offlineTextBlock: gather.hadOfflinePrior ? gather.offlineBlock : '',
     npcLinkedExcerptsBlock: gather.npcLinked.block,
+    peerFallback: gather.characterRealName,
+    peerCharacterId: gather.characterId,
   })
 
   const ok = await applyUnifiedMemoryFromParsedSummary(summary, gather, {
@@ -622,9 +729,18 @@ export async function runGroupChatMemorySummaryAfterThreshold(params: {
     group,
   })
 
+  const grpSource = parseWechatAccountGroupConversationKey(ck)
+  const groupUserBindCtx = await resolveMemoryUserInsertContextFromSource(
+    grpSource?.wechatAccountId,
+    pid,
+  )
+
   let body = summary.content.trim().slice(0, 2000)
+  let groupUserBindings: WorldBookUserPlaceholderBinding[] = []
   try {
-    body = (await sanitizeGroupMemorySummaryBody(body, group, pid)).slice(0, 2000)
+    const sanitized = await sanitizeGroupMemorySummaryBody(body, group, pid, groupUserBindCtx)
+    body = sanitized.content.slice(0, 2000)
+    groupUserBindings = sanitized.userPlaceholderBindings
   } catch {
     /* 保持原文 */
   }
@@ -666,6 +782,13 @@ export async function runGroupChatMemorySummaryAfterThreshold(params: {
       memoryScope: 'group',
       groupId: gid,
       involvedCharIds: [...memoryTargets],
+      ...(grpSource
+        ? {
+            sourceWechatAccountId: grpSource.wechatAccountId,
+            sourceSessionPlayerIdentityId: pid,
+          }
+        : {}),
+      ...(groupUserBindings.length ? { userPlaceholderBindings: groupUserBindings } : {}),
       memoryTriggerMode: triggerMode,
       memoryTriggerCategory: summary.memoryTriggerCategory,
       memoryTriggerPrecise: summary.memoryTriggerPrecise,

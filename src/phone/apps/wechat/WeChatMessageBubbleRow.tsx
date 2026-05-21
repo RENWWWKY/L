@@ -12,9 +12,62 @@ const CHAT_BUBBLE_MAX = 'max-w-[calc(100vw-24px-24px-80px)]'
 /** 主题抽屉等窄容器内预览：不超过父宽，公式与聊天一致 */
 const PREVIEW_BUBBLE_MAX = 'max-w-[min(100%,calc(100vw-24px-24px-80px))]'
 
+/** 气泡内嵌引用预览（与微信一致：宽度随气泡，不超出） */
+export type WeChatBubbleReplyPreview = {
+  senderName: string
+  content: string
+  onClick?: () => void
+}
+
+function ChatBubbleReplyPreview({
+  preview,
+  isSelf,
+  insetStyle,
+}: {
+  preview: WeChatBubbleReplyPreview
+  isSelf: boolean
+  insetStyle?: CSSProperties
+}) {
+  const muted = isSelf ? 'rgba(0,0,0,0.45)' : '#8e8e8e'
+  const inner = (
+    <span className="flex min-w-0 items-start gap-1.5">
+      <span className="mt-[2px] h-[calc(100%-4px)] min-h-[1.25rem] w-px shrink-0 bg-[#d4d4d4]" aria-hidden />
+      <span className="min-w-0 flex-1">
+        <span className="block truncate text-[12px] leading-snug" style={{ color: muted }}>
+          {preview.senderName}：
+        </span>
+        <span className="line-clamp-2 block text-[13px] leading-[1.35]" style={{ color: muted }}>
+          {preview.content || '…'}
+        </span>
+      </span>
+    </span>
+  )
+  const shellCls =
+    'mb-1.5 block w-full max-w-full rounded-[4px] px-2 py-1 text-left'
+  const shellStyle: CSSProperties = insetStyle ?? {
+    background: isSelf ? 'rgba(0,0,0,0.08)' : 'rgba(0,0,0,0.06)',
+  }
+  if (preview.onClick) {
+    return (
+      <button type="button" onClick={preview.onClick} className={shellCls} style={shellStyle}>
+        {inner}
+      </button>
+    )
+  }
+  return (
+    <div className={shellCls} style={shellStyle}>
+      {inner}
+    </div>
+  )
+}
+
 export type WeChatMessageBubbleRowProps = {
   messageText: string
   messagePrefixIcon?: ReactNode
+  /** 气泡顶部引用条（宽度与气泡一致） */
+  replyPreview?: WeChatBubbleReplyPreview
+  /** 引用条内嵌区域样式（遇见浅金气泡等） */
+  replyPreviewInsetStyle?: CSSProperties
   /** 群助手：黑底白字极简高冷 */
   luxuryDarkAdminBubble?: boolean
   isSelf: boolean
@@ -27,6 +80,8 @@ export type WeChatMessageBubbleRowProps = {
   rowClassName?: string
   /** 气泡内容块附加 class */
   bubbleContentClassName?: string
+  /** 合并进气泡内容块 style（如遇见水滴渐变/阴影；有 `background` 时不使用 theme 纯色底） */
+  chatBubbleSurfaceStyle?: CSSProperties
   /** 聊天页头像点击缩放反馈 */
   avatarTapMotion?: boolean
   /**
@@ -166,6 +221,7 @@ export function WeChatMessageBubbleRow({
   variant,
   rowClassName = '',
   bubbleContentClassName = '',
+  chatBubbleSurfaceStyle,
   avatarTapMotion = false,
   showAvatarColumn = true,
   chatAccessory,
@@ -182,6 +238,8 @@ export function WeChatMessageBubbleRow({
   onOtherAvatarClick,
   onBubbleLongPress,
   bubbleSelected = false,
+  replyPreview,
+  replyPreviewInsetStyle,
 }: WeChatMessageBubbleRowProps) {
   const contentRef = useRef<HTMLDivElement>(null)
   const singleLine = useMessageBubbleSingleLine(contentRef, messageText)
@@ -209,6 +267,7 @@ export function WeChatMessageBubbleRow({
   }
 
   const textCls = variant === 'chat' ? 'text-[15px]' : 'text-[14px]'
+  const messageBodyVisible = messageText.replace(/\u200b/g, '').trim().length > 0
 
   const avatarMotionCls =
     avatarTapMotion && variant === 'chat'
@@ -251,7 +310,11 @@ export function WeChatMessageBubbleRow({
         ref={contentRef}
         className={`relative z-[1] inline-block max-w-full px-3 py-2 leading-[1.5] select-none transition-[transform,opacity,background-color] duration-150 ease-out ${textCls} ${bubbleContentClassName}`}
         style={{
-          backgroundColor: variant === 'chat' ? bubbleBgChatResolved : bubbleBgPreview,
+          ...(chatBubbleSurfaceStyle?.background
+            ? {}
+            : {
+                backgroundColor: variant === 'chat' ? bubbleBgChatResolved : bubbleBgPreview,
+              }),
           color: variant === 'chat' ? bubbleTextResolved : bubbleTextPreview,
           borderRadius: bubbleRadius,
           userSelect: variant === 'chat' ? 'none' : undefined,
@@ -263,20 +326,30 @@ export function WeChatMessageBubbleRow({
           transformOrigin: variant === 'chat' ? (isSelf ? 'right bottom' : 'left bottom') : undefined,
           ...(variant === 'chat' && luxuryDark
             ? { border: '1px solid rgba(255,255,255,0.12)' }
-            : variant === 'chat' && chatBubbleShowBorder
+            : variant === 'chat' && chatBubbleShowBorder && !chatBubbleSurfaceStyle
               ? { border: `1px solid ${chatBubbleBorderColor}` }
               : {}),
+          ...chatBubbleSurfaceStyle,
         }}
         {...(variant === 'chat' ? bind : {})}
       >
-        {messagePrefixIcon ? (
-          <span className="inline-flex items-center gap-1.5 align-middle">
-            <span className="inline-flex shrink-0">{messagePrefixIcon}</span>
-            <span>{messageText}</span>
-          </span>
-        ) : (
-          messageText
-        )}
+        {replyPreview ? (
+          <ChatBubbleReplyPreview
+            preview={replyPreview}
+            isSelf={isSelf}
+            insetStyle={replyPreviewInsetStyle}
+          />
+        ) : null}
+        {messageBodyVisible ? (
+          messagePrefixIcon ? (
+            <span className="inline-flex items-center gap-1.5 align-middle">
+              <span className="inline-flex shrink-0">{messagePrefixIcon}</span>
+              <span>{messageText}</span>
+            </span>
+          ) : (
+            messageText
+          )
+        ) : null}
         {variant === 'chat' && bubbleSelected ? (
           <span
             className="pointer-events-none absolute inset-0"

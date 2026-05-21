@@ -9,51 +9,18 @@ import {
   type TextareaHTMLAttributes,
 } from 'react'
 import { flushSync } from 'react-dom'
+import { tryDeleteWholePlaceholderExpressionAtCaret } from '../placeholderExpressionDelete'
 import { personaDb } from './idb'
+import type { WorldBookUserPlaceholderBinding } from './types'
 
 const WB_SHELL_BORDER = '#e5e5e5'
 const WB_SHELL_SUBTEXT = '#666666'
-
-/** 与 `expandLinkedMemoryPlaceholders` 用到的写法一致：`{{xxx}}`，中间不出现 `}` */
-const PLACEHOLDER_SPAN_RE = /\{\{[^}]+\}\}/g
-
-function placeholderSpans(text: string): { start: number; end: number }[] {
-  const out: { start: number; end: number }[] = []
-  PLACEHOLDER_SPAN_RE.lastIndex = 0
-  let m: RegExpExecArray | null
-  while ((m = PLACEHOLDER_SPAN_RE.exec(text)) !== null) {
-    out.push({ start: m.index, end: m.index + m[0].length })
-  }
-  return out
-}
-
-/**
- * Backspace：下一次会删到占位符里任意一字时 → 删掉整段 `{{…}}`。
- * Delete：下一次正向删会碰到占位符里任意一字时 → 删掉整段。
- */
-function tryDeleteWholePlaceholderAtCaret(
-  text: string,
-  caretStart: number,
-  caretEnd: number,
-  key: 'Backspace' | 'Delete',
-): { next: string; caret: number } | null {
-  if (caretStart !== caretEnd) return null
-  const caret = caretStart
-  const spans = placeholderSpans(text)
-  if (key === 'Backspace') {
-    const hit = spans.find(({ start: s, end: e }) => caret > s && caret <= e)
-    if (!hit) return null
-    return { next: text.slice(0, hit.start) + text.slice(hit.end), caret: hit.start }
-  }
-  const hit = spans.find(({ start: s, end: e }) => caret >= s && caret < e)
-  if (!hit) return null
-  return { next: text.slice(0, hit.start) + text.slice(hit.end), caret: hit.start }
-}
 
 /** 与记忆管理页一致：存库为占位符；失焦时在输入框内展示展开名，聚焦后编辑原文。 */
 export function useCharacterFieldPlaceholderPreview(opts: {
   draft: string
   characterId: string | null | undefined
+  worldBookUserPlaceholderBindings?: WorldBookUserPlaceholderBinding[] | null
   debounceMs?: number
   enabled?: boolean
 }): { expanded: string; loading: boolean } {
@@ -80,7 +47,9 @@ export function useCharacterFieldPlaceholderPreview(opts: {
       void (async () => {
         setLoading(true)
         try {
-          const out = await personaDb.expandCharacterFieldPlaceholderPreview(raw, cid)
+          const out = await personaDb.expandCharacterFieldPlaceholderPreview(raw, cid, {
+            worldBookUserPlaceholderBindings: opts.worldBookUserPlaceholderBindings ?? undefined,
+          })
           if (!cancelled) setExpanded(out)
         } catch {
           if (!cancelled) setExpanded('')
@@ -93,7 +62,7 @@ export function useCharacterFieldPlaceholderPreview(opts: {
       cancelled = true
       window.clearTimeout(t)
     }
-  }, [enabled, cid, opts.draft, opts.debounceMs])
+  }, [enabled, cid, opts.draft, opts.debounceMs, opts.worldBookUserPlaceholderBindings])
 
   return { expanded, loading }
 }
@@ -122,6 +91,8 @@ export type PlaceholderAwareTextareaProps = Omit<
    * 默认折叠正文；展开后双击正文进入编辑。
    */
   previewShellWorldBook?: boolean
+  /** 世界书条目：按序展开正文中的 `{{user}}` */
+  worldBookUserPlaceholderBindings?: WorldBookUserPlaceholderBinding[] | null
 }
 
 /** ref：替代原生 textarea ref；占位符插入等需取 DOM 时用 {@link PlaceholderAwareTextareaHandle.getTextareaElement} */
@@ -143,6 +114,7 @@ export const PlaceholderAwareTextarea = forwardRef<PlaceholderAwareTextareaHandl
       placeholderPreview = true,
       previewEditRequiresDoubleClick = false,
       previewShellWorldBook = false,
+      worldBookUserPlaceholderBindings,
       onCaretInRawText,
       className,
       maxLength,
@@ -181,6 +153,7 @@ export const PlaceholderAwareTextarea = forwardRef<PlaceholderAwareTextareaHandl
     const { expanded } = useCharacterFieldPlaceholderPreview({
       draft: raw,
       characterId: cid,
+      worldBookUserPlaceholderBindings,
       enabled: usePreview,
     })
 
@@ -421,7 +394,7 @@ export const PlaceholderAwareTextarea = forwardRef<PlaceholderAwareTextareaHandl
             if (el && el.value === rawStr) {
               const start = el.selectionStart ?? 0
               const end = el.selectionEnd ?? start
-              const chunk = tryDeleteWholePlaceholderAtCaret(
+              const chunk = tryDeleteWholePlaceholderExpressionAtCaret(
                 rawStr,
                 start,
                 end,

@@ -19,6 +19,13 @@ import {
   normalizeMbti,
 } from '../mbtiPersonalityWorldBook'
 import { isLargeMbtiAvatar, resolveMbtiImageUrl } from '../newFriendsPersona/mbtiProfileUi'
+import { useWechatStore } from '../useWechatStore'
+import { resolveCanonicalCharacterId } from '../wechatGlobalCharacterRegistry'
+import {
+  characterBelongsToWechatAccount,
+  identityBelongsToWechatAccount,
+  stampWechatAccountOwner,
+} from '../wechatAccountScope'
 
 const COLORS = {
   bg: '#f5f5f5',
@@ -260,6 +267,7 @@ export function PlayerIdentityApp({
 }) {
   void _onOpenCharacter
   const apiConfig = useCurrentApiConfig()
+  const { currentAccountId, setActivePlayerIdentityForCurrentAccount } = useWechatStore()
   const [page, setPage] = useState<
     | { name: 'list' }
     | { name: 'edit'; id: string; isNew: boolean; draft?: PlayerIdentity }
@@ -271,7 +279,7 @@ export function PlayerIdentityApp({
 
   const refresh = async () => {
     setLoading(true)
-    const ids = await personaDb.listPlayerIdentities()
+    const ids = await personaDb.listPlayerIdentities(currentAccountId ?? undefined)
     setList(ids)
     setLoading(false)
   }
@@ -288,11 +296,11 @@ export function PlayerIdentityApp({
         identityId={page.id}
         isNew={page.isNew}
         initialDraft={page.draft}
+        wechatAccountId={currentAccountId}
         onBack={() => setPage({ name: 'list' })}
         onSaved={async (id) => {
           await refresh()
-          const cur = await personaDb.getCurrentIdentityId()
-          if (!cur) await personaDb.setCurrentIdentityId(id)
+          await setActivePlayerIdentityForCurrentAccount(id)
           setPage({ name: 'list' })
         }}
       />
@@ -329,12 +337,25 @@ export function PlayerIdentityApp({
                         const text = await f.text()
                         const raw = JSON.parse(text) as any
                         const candidate = raw?.identity ?? raw
-                        const normalized = normalizeImportedIdentity(candidate)
+                        let normalized = normalizeImportedIdentity(candidate)
                         if (!normalized) {
                           window.alert('导入失败：文件内容不符合身份格式')
                           return
                         }
-                        await personaDb.upsertPlayerIdentity(normalized)
+                        if (!currentAccountId) {
+                          window.alert('请先登录微信账号后再导入身份')
+                          return
+                        }
+                        const existing = await personaDb.getPlayerIdentity(normalized.id)
+                        if (
+                          existing &&
+                          !identityBelongsToWechatAccount(existing, currentAccountId)
+                        ) {
+                          normalized = { ...normalized, id: uid() }
+                        }
+                        await personaDb.upsertPlayerIdentity(
+                          stampWechatAccountOwner(normalized, currentAccountId),
+                        )
                         await refresh()
                         window.alert('导入成功（已加入身份列表；是否「正在使用」请在新建角色时或设置里自行选择）')
                       } catch (e) {
@@ -519,6 +540,7 @@ function IdentityEditPage({
   identityId,
   isNew,
   initialDraft,
+  wechatAccountId,
   onBack,
   onSaved,
 }: {
@@ -526,6 +548,7 @@ function IdentityEditPage({
   identityId: string
   isNew: boolean
   initialDraft?: PlayerIdentity
+  wechatAccountId: string | null
   onBack: () => void
   onSaved: (id: string) => void
 }) {
@@ -581,10 +604,17 @@ function IdentityEditPage({
         return
       }
       const existing = await personaDb.getPlayerIdentity(identityId)
-      if (existing) setData(existing)
+      if (existing) {
+        if (!identityBelongsToWechatAccount(existing, wechatAccountId)) {
+          window.alert('该身份不属于当前微信账号，无法编辑')
+          onBack()
+          return
+        }
+        setData(existing)
+      }
       setLoaded(true)
     })()
-  }, [identityId, initialDraft])
+  }, [identityId, initialDraft, onBack, wechatAccountId])
 
   useEffect(() => {
     void personaDb.getWorldBackground(data.worldBackgroundId ?? DEFAULT_WORLD_BACKGROUND_ID).then((w) => {
@@ -615,7 +645,9 @@ function IdentityEditPage({
       const otherIds = new Set<string>(primaryRelByOther.keys())
       const allChars = await personaDb.listCharacters()
       for (const c of allChars) {
-        if (c.playerIdentityId === identityId) otherIds.add(c.id)
+        if (c.playerIdentityId !== identityId) continue
+        const canon = await resolveCanonicalCharacterId(c.id)
+        if (canon) otherIds.add(canon)
       }
 
       let didCleanup = false
@@ -736,7 +768,11 @@ function IdentityEditPage({
       interests: (data.interests ?? []).filter(Boolean),
       painPoints: (data.painPoints ?? []).filter(Boolean),
     }
-    await personaDb.upsertPlayerIdentity(next)
+    if (!wechatAccountId?.trim()) {
+      window.alert('请先登录微信账号后再保存身份')
+      return
+    }
+    await personaDb.upsertPlayerIdentity(stampWechatAccountOwner(next, wechatAccountId))
     setDirty(false)
     onSaved(identityId)
   }

@@ -1,14 +1,44 @@
 import { useCallback, useMemo, useState } from 'react'
 import { createPortal } from 'react-dom'
-import { Sparkles } from 'lucide-react'
+import { Construction, LayoutGrid, Sparkles } from 'lucide-react'
 import { useCurrentApiConfig } from '../api/ApiSettingsContext'
-import { SQUARE_STYLE_LABELS } from './constants'
+import { MEET_SQUARE_UNDER_DEV, SQUARE_STYLE_LABELS } from './constants'
 import { aiGenerateSquarePosts } from './lumiMeetAi'
 import { useLumiMeetStore } from './LumiMeetStore'
 import { getLumiMeetPortalTarget } from './lumiMeetPortal'
 import type { SquarePostStyle } from './meetTypes'
 
+function DiscoverFeedUnderDev() {
+  return (
+    <div
+      data-meet-app-coach="discover-feed"
+      className="flex min-h-0 flex-1 flex-col items-center justify-center px-6 pb-28 pt-6"
+    >
+      <div className="meet-card flex w-full max-w-[320px] flex-col items-center rounded-[22px] border border-black/[0.04] bg-white px-6 py-10 text-center shadow-[0_12px_40px_rgba(40,36,30,0.06)]">
+        <div className="flex h-14 w-14 items-center justify-center rounded-full border border-[#ebe7e0] bg-[#faf8f5] text-[#b8973a]">
+          <Construction className="size-7" strokeWidth={1.25} aria-hidden />
+        </div>
+        <h2 className="font-elegant-serif mt-5 text-[1.25rem] font-medium tracking-[0.06em] text-[#2c2a26]">
+          广场开发中
+        </h2>
+        <p className="meet-caption-en mt-1 text-[10px] uppercase tracking-[0.32em] text-[#b8b5ad]">
+          Discover · Coming soon
+        </p>
+        <p className="mt-4 font-dossier-serif text-[13px] leading-[1.75] tracking-[0.03em] text-[#6e6b63]">
+          AI 碎片动态与偏向设定正在打磨，暂时无法浏览与生成帖子。可先使用「寻觅」「消息」继续邂逅。
+        </p>
+        <div className="mt-6 flex items-center gap-2 text-[#c4c0b8]">
+          <LayoutGrid className="size-4 opacity-60" strokeWidth={1.25} aria-hidden />
+          <span className="text-[11px] tracking-[0.12em]">敬请期待</span>
+        </div>
+      </div>
+    </div>
+  )
+}
+
 export function DiscoverFeed() {
+  if (MEET_SQUARE_UNDER_DEV) return <DiscoverFeedUnderDev />
+
   const apiConfig = useCurrentApiConfig('chatCard')
   const { state, appendSquarePosts } = useLumiMeetStore()
   const meetPortalEl = getLumiMeetPortalTarget()
@@ -30,7 +60,10 @@ export function DiscoverFeed() {
   }, [apiConfig, appendSquarePosts, pick])
 
   return (
-    <div className="meet-scrollbar flex min-h-0 flex-1 flex-col overflow-y-auto px-3 pb-28 pt-2">
+    <div
+      data-meet-app-coach="discover-feed"
+      className="meet-scrollbar flex min-h-0 flex-1 flex-col overflow-y-auto px-3 pb-28 pt-2"
+    >
       <header className="mb-3 flex items-start justify-between gap-2">
         <div>
           <h2 className="font-elegant-serif text-[1.35rem] font-medium tracking-[0.08em] text-[#2c2a26]">

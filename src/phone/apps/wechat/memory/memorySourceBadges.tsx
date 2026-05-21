@@ -6,16 +6,23 @@ export type ParsedMemoryWithSources = {
   hasOfflineTag: boolean
   /** 来自绑定主角线下剧情、挂在人脉 NPC 上的关联记忆 */
   hasLinkedOfflineTag: boolean
+  /** 来自遇见 App 临时邂逅会话的总结 */
+  hasMeetTag: boolean
   body: string
 }
 
-/** 解析入库前缀：`[私聊]`（新）或 `[线上]`（旧）表示私聊来源，随后可为 `[群聊]` `[线下]` `[关联线下]`（顺序须一致） */
+/** 解析入库前缀：`[遇见]` 可单独或置于 `[私聊]` 等之后；`[私聊]`/`[线上]` `[群聊]` `[线下]` `[关联线下]` 顺序须一致 */
 export function parseMemorySourcePrefix(raw: string): ParsedMemoryWithSources {
   let s = String(raw ?? '')
   let hasOnlineTag = false
   let hasGroupChatTag = false
   let hasOfflineTag = false
   let hasLinkedOfflineTag = false
+  let hasMeetTag = false
+  if (s.startsWith('[遇见]')) {
+    hasMeetTag = true
+    s = s.slice('[遇见]'.length)
+  }
   if (s.startsWith('[私聊]')) {
     hasOnlineTag = true
     s = s.slice('[私聊]'.length)
@@ -36,18 +43,19 @@ export function parseMemorySourcePrefix(raw: string): ParsedMemoryWithSources {
     s = s.slice('[关联线下]'.length)
   }
   const body = s.replace(/^\s+/, '')
-  return { hasOnlineTag, hasGroupChatTag, hasOfflineTag, hasLinkedOfflineTag, body }
+  return { hasOnlineTag, hasGroupChatTag, hasOfflineTag, hasLinkedOfflineTag, hasMeetTag, body }
 }
 
 /** 按与 `parseMemorySourcePrefix` 相同顺序拼接前缀与正文（用于编辑后写回） */
 export function composeMemoryWithSourcePrefix(
   flags: Pick<
     ParsedMemoryWithSources,
-    'hasOnlineTag' | 'hasGroupChatTag' | 'hasOfflineTag' | 'hasLinkedOfflineTag'
+    'hasOnlineTag' | 'hasGroupChatTag' | 'hasOfflineTag' | 'hasLinkedOfflineTag' | 'hasMeetTag'
   >,
   body: string,
 ): string {
   let s = ''
+  if (flags.hasMeetTag) s += '[遇见]'
   if (flags.hasOnlineTag) s += '[私聊]'
   if (flags.hasGroupChatTag) s += '[群聊]'
   if (flags.hasOfflineTag) s += '[线下]'
@@ -76,6 +84,11 @@ const BADGE_LINKED_OFFLINE: CSSProperties = {
   color: '#ffffff',
 }
 
+const BADGE_MEET: CSSProperties = {
+  background: '#1C1C1E',
+  color: '#ffffff',
+}
+
 /** 记忆档案馆页：说明卡片上的来源标签含义 */
 export function MemorySourceLegendStrip({ className }: { className?: string }) {
   const chip = 'inline-block shrink-0 rounded-[6px] px-[6px] py-[2px] text-[10px] font-semibold leading-tight text-white shadow-sm'
@@ -95,6 +108,9 @@ export function MemorySourceLegendStrip({ className }: { className?: string }) {
       </span>
       <span className={chip} style={BADGE_LINKED_OFFLINE}>
         关联线下
+      </span>
+      <span className={chip} style={BADGE_MEET}>
+        遇见
       </span>
     </div>
   )
@@ -116,7 +132,7 @@ export function MemoryContentWithSourceBadges({
   /** 正文去标签后为空时的占位（不传则保持空字符串） */
   emptyBodyFallback?: string
 }) {
-  const { hasOnlineTag, hasGroupChatTag, hasOfflineTag, hasLinkedOfflineTag, body } =
+  const { hasOnlineTag, hasGroupChatTag, hasOfflineTag, hasLinkedOfflineTag, hasMeetTag, body } =
     parseMemorySourcePrefix(content)
   const sc = size === 'md' ? 'px-2 py-0.5 text-[12px] rounded-md' : 'px-[6px] py-[2px] text-[11px] rounded-[6px]'
 
@@ -162,6 +178,17 @@ export function MemoryContentWithSourceBadges({
         style={BADGE_LINKED_OFFLINE}
       >
         关联线下
+      </span>,
+    )
+  }
+  if (hasMeetTag) {
+    badges.push(
+      <span
+        key="meet"
+        className={`mr-1 inline-block shrink-0 align-middle font-semibold leading-tight shadow-sm ${sc}`}
+        style={BADGE_MEET}
+      >
+        遇见
       </span>,
     )
   }

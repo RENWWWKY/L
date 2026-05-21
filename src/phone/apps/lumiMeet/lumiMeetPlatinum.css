@@ -25,6 +25,15 @@
   scrollbar-color: rgba(180, 170, 155, 0.45) transparent;
 }
 
+.meet-scrollbar-hide {
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+
+.meet-scrollbar-hide::-webkit-scrollbar {
+  display: none;
+}
+
 .meet-platinum-pill {
   border-radius: 999px;
   border: 1px solid rgba(0, 0, 0, 0.06);

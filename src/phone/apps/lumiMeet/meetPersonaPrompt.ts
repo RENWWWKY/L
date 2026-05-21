@@ -15,12 +15,12 @@ const MEET_NINE_DIMENSION_JSON_SCHEMA_BODY = `
 - age：整数年龄（须落在用户筛选年龄区间内；若筛选为不限则取 20–38 之间合理值）
 - gender：男 / 女 / 其他
 - orientation：简短取向或态度标签（须与下文 psyche.orientationOrigin 叙事一致；可写如：异性恋、同性恋、双性/泛性、无性恋谱系、无浪漫谱系、半性恋/半浪漫、酷儿/流动/探索中、开放关系或多边（诚实合意）等；拒绝对任一群体污名或猎奇化）。
-- wechatId：虚构微信号，英数字下划线，8–16 位，必须以 Lm_ 开头
+- wechatId：虚构**微信号**（与「人设 · 人脉」里围绕主角生成 NPC 的微信资料规则一致）：6～20 个字符，仅**小写** a-z、数字 0-9、下划线 _；禁止纯数字、禁止 11 位手机号形态、禁止固定前缀模板；禁止 iloveyou、520、1314 等烂大街示爱数字梗；须像 2026 年会有人随手注册的网感 id（可揉职业/癖好缩写/地名碎片等），与 nickname、realName **勿雷同**。
 - mutualSpark：**布尔，必填**。在你已经写完整套人设与 comprehensive 之后，由你兼任**匹配裁判**：若本次「滑动用户」凭 user 里给出的公开资料向你生成的 NPC 表达心动、想认真认识，该 NPC 是否也会在情理与人设上**愿意接住、形成双向心动的起手**（不是婚约，只是「这一轮愿意正向回应」）。须与 persona、comprehensive 中对亲密关系与边界的态度**一致**，禁止无理由全员 true 或全员 false；禁止与 core/恋爱相关段落明显矛盾。
-- persona：80–200 字第三人称电梯陈述，供列表预览（必须与 comprehensive 一致，不矛盾）
+- persona：80–200 字，与九维世界书条目一致的**第三人称档案体**电梯摘要（供列表 / 匹配卡片）；**须至少出现 2 次**字面量 **{{char}}** 指本角色本人（语义须等同 **realName**，**禁止**用 nickname 当该段主语）；若指「遇见里当前滑动用户」且非 fetish/contrast 类「泛指恋爱对象」语境，须用字面量 **{{user}}**，**禁止**写用户真实昵称汉字。须与 comprehensive 气质与事实一致、不自相矛盾；**禁止**通篇第一人称「我」独白。
 - occupation：6–28 字**职业/岗位对外称呼**（用于同步微信「职业/身份」字段），须与 comprehensive.abilities.skills 中的具体岗位一致，忌空壳头衔
 - motto：8–40 字**座右铭**（偏人生态度或行事原则；**禁止**与 comprehensive.base.wechatSignature 个性签名雷同或互相复制）
-- comprehensive：九维立体人格对象，结构如下（**每一叶子字段均为中文 prose，拒绝标签堆砌；写的是都市里能碰得着的正常人：有小毛病、会吃醋、会冷战，但三观正、行为合法、尊重他人边界**）：
+- comprehensive：九维立体人格对象，结构如下（**每一叶子字段均为中文 prose，拒绝标签堆砌；写的是都市里能碰得着的正常人：有小毛病、会吃醋、会冷战，但三观正、行为合法、尊重他人边界**）。**遇见临时会话演出**：初识阶段须克制，即使角色渴望真爱也禁止写成一见就土味情话、强行定关系或明显「为处对象而处对象」的推销话术——亲近感应可随剧情生长。
 
 {
   "base": {
@@ -43,7 +43,7 @@ const MEET_NINE_DIMENSION_JSON_SCHEMA_BODY = `
   "arc": { "secrets": "", "goal": "", "contrastMoe": "" }
 }
 
-**命名刚性（须全局遵守）**：顶层 **nickname** 是对外网名（卡片/列表标题用）；**realName** 是生活用真实姓名（须与 comprehensive.base.realName 一致）。除 **daily.speech** 可作第一人称口语（可顺带提网名）、**persona** 电梯句可用一句区分「网名 vs 实名」外，**comprehensive 内凡第三人称档案叙述**（含 **base.info**、**base.physiology**、psyche、abilities 叙事、relations、contrast、arc、fetish 等）在指「本角色本人」时**一律使用真实姓名汉字**，**禁止**用 nickname 当叙事主语或当档案里的正式称呼（错误示例：「叙白在市局……」；正确：用 realName 写「戚某某在市局……」）。同事喊「小某」、患者喊「某医生」等可保留，但旁白主语仍为实名。
+**命名刚性（须全局遵守）**：顶层 **nickname** 是对外网名（卡片/列表标题用）；**realName** 是生活用真实姓名（须与 comprehensive.base.realName 一致）。除 **daily.speech** 可作第一人称口语（可顺带提网名）外，**comprehensive 内凡第三人称档案叙述**（含 **base.info**、**base.physiology**、psyche、abilities 叙事、relations、contrast、arc、fetish 等）在指「本角色本人」时**一律使用真实姓名汉字**，**禁止**用 nickname 当叙事主语或当档案里的正式称呼（错误示例：「叙白在市局……」；正确：用 realName 写「戚某某在市局……」）。**persona** 为列表短摘，须单独遵守下节「占位符」中对 **persona** 的 {{char}} 字面量规则，不得与 comprehensive 事实矛盾。同事喊「小某」、患者喊「某医生」等可保留，但旁白主语仍为实名。
 
 维度说明（生成时须落实，禁止空壳）：
 一 base：**info** 写外貌体征、穿搭气质、小动作、癖好（开头用一句年龄自述 "×× 岁。"，数字须与顶层 age 完全一致；**不要**在这里用 MBTI 解释职业）。**info 与 physiology 须遵守上文「命名刚性」：第三人称指本人只用真实姓名。** **realName** 与顶层 realName 一致（真实姓名）。**birthdayMD** 为公历月日 \`MM-DD\`（须与 age、学生/职场身份常识一致）。**heightCm** 为厘米纯数字字符串（如 "172"），须与 info 里身高/身形描写一致、忌夸张；**禁止**留空。**weightKg** 为千克数字字符串（如 "52"），与身形描写匹配、忌夸张；**禁止**留空或写占位。**wechatSignature** 为 12–40 字的微信「个性签名」式短句：态度、轻微自嘲或生活切片均可，须与人设语气一致；**禁止**网址、引流、无意义符号堆叠。**zodiac** 写中文星座名（可与生日一致）。**physiology** 写体态动作习惯。
@@ -75,10 +75,11 @@ const MEET_NINE_DIMENSION_JSON_SCHEMA_BODY = `
 - 叙事克制：少用华丽比喻与玄学大词；缺陷写具体事（如 "压力大时说话冲"），不要写成漫画反派。
 
 占位符与称谓（与微信人设世界书对齐，但恋爱向客观条目单独约定）：
-- 除下条外，comprehensive 各 prose 及 persona：指本人可写 {{char}}；**凡第三人称档案叙述**（尤其 base.info、physiology）{{char}} 的语义须等同 **realName 实名**，**禁止**把 {{char}} 理解成 nickname 网名来写。指 "当前滑动用户 / 匹配对象" 且属于**可变、随会话延展**的语境时可用 {{user}}（勿写真实昵称汉字）。
+- **persona（列表电梯摘要）**：与九维分册收束稿同款——第三人称；**至少 2 次**字面量 **{{char}}**；指遇见当前滑动用户且非下条「泛指恋爱对象」时用 **{{user}}**；**禁止** nickname 当该段主语、**禁止**写用户真名汉字、**禁止**通篇「我」。
+- 除下条与上条 persona 专规外，comprehensive 各 prose：指本人可写 {{char}}；**凡第三人称档案叙述**（尤其 base.info、physiology）{{char}} 的语义须等同 **realName 实名**，**禁止**把 {{char}} 理解成 nickname 网名来写。指 "当前滑动用户 / 匹配对象" 且属于**可变、随会话延展**的语境时可用 {{user}}（勿写真实昵称汉字）。
 - **恋爱关系客观设定**（世界书固定陈述，不是尾声可变条目）：comprehensive 的 **fetish 四个字段**与 **contrast 三个字段** 中，凡指恋爱/亲密关系里的另一方，**一律直接写汉字对方**（不要用 {{user}}），以免模型误以为角色开局就对当前滑动用户抱有 "已经锁定要处对象" 的指向性。
 - persona 电梯陈述里若出现 "对恋爱对象 / 暧昧对象" 的泛化描述，同样写对方而非 {{user}}。
-- **nickname 与实名**：顶层 nickname 仅为对外网名。comprehensive 与 persona 中凡**第三人称档案叙事**指「本角色」时，须与 **realName**、**comprehensive.base.realName** 使用同一真实姓名称呼；**禁止**在 base.info、physiology 等段用 nickname 作主语（错误：「叙白在鉴定所……」）。**daily.speech** 可作第一人称、可顺带提网名；协议里写 {{char}} 指本人时，语义上仍须等同该 **真实姓名**，不得用网名顶替。
+- **nickname 与实名**：顶层 nickname 仅为对外网名。**comprehensive** 内 **base.info**、**base.physiology** 等长档案第三人称叙事指本人时，须与 **realName**、**comprehensive.base.realName** 使用同一真实姓名称呼；**禁止**用 nickname 作主语（错误：「叙白在鉴定所……」）。**daily.speech** 可作第一人称、可顺带提网名；凡文中写 {{char}} 指本人时，语义须等同该 **真实姓名**，不得把 {{char}} 当成 nickname 来写。
 - 自然口语自称 "我" 可以保留。
 
 文风硬性：

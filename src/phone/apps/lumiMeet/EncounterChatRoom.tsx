@@ -1,38 +1,109 @@
 import { AnimatePresence, motion } from 'framer-motion'
-import { BookMarked, Code2, X } from 'lucide-react'
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent } from 'react'
+import { BookOpen, ImagePlus, X } from 'lucide-react'
+import {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+  type CSSProperties,
+  type KeyboardEvent,
+} from 'react'
+import { useWeChatCurrentTime } from '../wechat/time/useWeChatCurrentTime'
 import { useCurrentApiConfig } from '../api/ApiSettingsContext'
 import { useCustomization } from '../../CustomizationContext'
 import { Pressable } from '../../components/Pressable'
+import { copyTextToClipboard } from '../../utils/copyToClipboard'
+import { WeChatChatCameraScreen } from '../wechat/WeChatChatCameraScreen'
+import { WeChatChatImageBubbleRow } from '../wechat/WeChatChatImageBubbleRow'
 import { WeChatMessageBubbleRow } from '../wechat/WeChatMessageBubbleRow'
+import type { MeetImageMime } from './meetTypes'
+import { resolveMeetImagePayloadFromUrl } from './meetImageVision'
 import {
   WeChatMessageActionPanel,
   type PanelAnchor,
   type WeChatMessageActionId,
 } from '../wechat/WeChatMessageActionPanel'
-import { aiMeetChatReply } from './lumiMeetAi'
-import { MeetWorldbookShelfModal } from './MeetWorldbookShelfModal'
+import {
+  aiMeetChatReply,
+  aiMeetContractCovenantReply,
+  MeetEncounterGenerationError,
+  scrubMeetNpcWechatLeaks,
+} from './lumiMeetAi'
+import { ConnectCovenantModalPortal } from './ConnectCovenantModal'
+import { MeetChatTutorialModalPortal } from './MeetChatTutorialModal'
+import { MeetEncounterChatCoachPortal } from './MeetEncounterChatCoach'
+import { MeetLinkedWechatRevealModalPortal } from './MeetLinkedWechatRevealModal'
+import { pickWechatFromNpcPlainText, stripMeetContractResponseBlock } from './meetContractResponseParse'
+import { meetApplyCharAddUserCovenant } from './meetContractCharFriendRequest'
+import { inferCharFriendRequestFromTurn, isMeetEncounterWeChatLinked } from './meetInferCharFriendRequest'
+import {
+  isMeetContactWechatIdPlausible,
+  resolveMeetUserContactWechatId,
+} from './meetContactSettings'
+import { resolveMeetWeChatPlayerIdentityId } from './meetResolveWeChatPlayerIdentityId'
+import { ensureMeetNpcWechatSearchable, resolveCharWechatIdForCovenant } from './meetCovenantFinalize'
+import { hasUnresolvedMeetCharContractRequest } from './meetCovenantResonance'
+import {
+  findUnresolvedMeetTruthMirrorCharRequest,
+  hasUnresolvedMeetTruthMirrorCharRequest,
+} from './meetTruthMirrorResonance'
+import { prepareMeetNpcReplyForParsing, type MeetReplyEvaluation } from './meetEvaluationParse'
+import {
+  MEET_ENCOUNTER_BUBBLE_TEXT,
+  MEET_ENCOUNTER_BUBBLE_THEME,
+  resolveMeetEncounterChatBackgroundUrl,
+} from './constants'
 import { syncMeetEpilogueAfterContactsAdded } from './meetEpilogueAfterContactsSync'
-import { syncMeetDossierToWorldbookLore } from './meetPersonaWorldbookSync'
+import { appendMeetTruthMirrorToCharacterWorldbook } from './meetTruthMirrorWorldbook'
+import { resolveMeetDualPersonaDirective } from './meetMaskTruthPrompt'
+import { resolveMeetPublicDisplayName, resolveMeetSelfAvatarUrl } from './meetPublicProfileDisplay'
 import { upsertMeetNpcAsCharacter } from './syncMeetNpcToWechat'
-import type { EncounterNPC, MeetChatMessage, WechatSwapStatus } from './meetTypes'
+import { resolveMeetNpcCharRealNameForLore, resolveMeetNpcPeerRealName, type EncounterNPC, type MeetChatMessage } from './meetTypes'
 import { useLumiMeetStore } from './LumiMeetStore'
-import { computeMeetNpcStaggerDelayMs, sleep, yieldToPaint } from './lumiMeetChatReveal'
+import { computeMeetNpcStaggerDelayMs, computeMeetRichFollowUpDelayMs, sleep, yieldToPaint } from './lumiMeetChatReveal'
+import { parseMeetNpcReplyBubbles } from './lumiMeetReplyParse'
 import { AffectionMeter } from './AffectionMeter'
 import { EncounterWeChatSwapCard } from './EncounterWeChatSwapCard'
-import type { MeetReplyEvaluation } from './meetEvaluationParse'
+import { EncounterActionBar } from './EncounterActionBar'
+import { MeetWorldbookShelfModal } from './MeetWorldbookShelfModal'
+import { TruthMirrorCeremonyPortal } from './TruthMirrorCeremony'
+import { TruthMirrorCharInvitePortal } from './TruthMirrorCharInvitePortal'
+import { meetMessagesToAiTranscript } from './meetEncounterTranscript'
+import { applyMeetTruthMirrorTurnPolicy } from './meetTruthMirrorTurnPolicy'
+import { finalizeMeetCharacterMemoryRoundAfterAiReply } from './meetMemoryRoundFinalize'
+import {
+  MeetEchoRevealCards,
+  MeetMusicShareCard,
+  MeetSystemCenterLine,
+  MeetTruthMirrorCharRequestCard,
+  MeetTruthMirrorRecordCard,
+  MeetTruthMirrorUserResponseCard,
+} from './MeetEncounterRichMessages'
+import {
+  buildMeetQuoteParticipantLabels,
+  buildMeetReplyToMetaFromQuoteTarget,
+  isMeetQuoteOnlyBubbleMessage,
+  meetOutboundBubbleDisplayText,
+  resolveMeetMessageDisplay,
+} from './meetMessageQuote'
+import { personaDb } from '../wechat/newFriendsPersona/idb'
+import { planMeetNpcOutboundBubbles } from './meetNpcQuoteParse'
+import {
+  MeetContractCharRequestCard,
+  MeetContractNpcResponseCard,
+  MeetContractUserRequestCard,
+  MeetContractUserResponseCard,
+} from './MeetCovenantCards'
+import { useMeetKeyboardInset } from './useMeetKeyboardInset'
+import { buildMeetChatTimelineRows } from './meetChatTimeline'
+import { meetEncounterBubbleSurfaceStyle, meetEncounterQuoteInsetStyle } from './meetEncounterBubbleSurface'
+import { MeetChatTimestampRow } from './MeetChatTimestampRow'
 
 /** 与微信私聊输入栏一致：短窗口内第二次回车 = 带对方回复；超时单次回车 = 仅发己方气泡 */
 const ENTER_DOUBLE_TAP_MS = 220
 const ENTER_SINGLE_COMMIT_DELAY_MS = 80
-
-const SWAP_DEV_OPTIONS: { value: WechatSwapStatus; zh: string }[] = [
-  { value: 'none', zh: '无（未解锁互换）' },
-  { value: 'available', zh: '可发起申请（好感达阈）' },
-  { value: 'char_requested', zh: '对方已提议交换' },
-  { value: 'user_requested', zh: '用户已发起（催更可跑结业）' },
-  { value: 'swapped', zh: '已互换（仅状态，不触发同步）' },
-]
 
 function SendPlaneIcon({ color }: { color: string }) {
   return (
@@ -53,12 +124,6 @@ function SendPlaneIcon({ color }: { color: string }) {
   )
 }
 
-function extractWechatId(text: string): string | null {
-  const m = /(?:微信号|微信|加我)[：:\s]*([A-Za-z][A-Za-z0-9_]{3,19})/.exec(text)
-  const id = (m?.[1] ?? '').trim()
-  return /^[A-Za-z0-9_]{4,20}$/.test(id) ? id : null
-}
-
 export function EncounterChatRoom({ npc, onBack }: { npc: EncounterNPC; onBack: () => void }) {
   const apiConfig = useCurrentApiConfig('chatCard')
   const {
@@ -67,8 +132,29 @@ export function EncounterChatRoom({ npc, onBack }: { npc: EncounterNPC; onBack: 
     wechatThemeStyle,
     state: phoneUi,
   } = useCustomization()
-  const bubbleTheme = phoneUi.wechatTheme.bubbleGlobal
-  const playerAvatarUrl = phoneUi.profile.avatarImageUrl?.trim() ?? ''
+  const globalBubble = phoneUi.wechatTheme.bubbleGlobal
+  const bubbleTheme = useMemo(
+    (): typeof MEET_ENCOUNTER_BUBBLE_THEME => ({
+      ...MEET_ENCOUNTER_BUBBLE_THEME,
+      showAvatar: globalBubble.showAvatar,
+      showBubbleTail: globalBubble.showBubbleTail,
+      mergeConsecutiveAvatarGroup: globalBubble.mergeConsecutiveAvatarGroup,
+      avatarRadiusPx: globalBubble.avatarRadiusPx,
+    }),
+    [globalBubble],
+  )
+  const meetChatThemeStyle = useMemo((): CSSProperties => {
+    const base = { ...wechatThemeStyle } as Record<string, string>
+    base['--wx-self-bubble-bg'] = bubbleTheme.selfBubbleBg
+    base['--wx-other-bubble-bg'] = bubbleTheme.otherBubbleBg
+    base['--wx-self-bubble-text'] = MEET_ENCOUNTER_BUBBLE_TEXT.self
+    base['--wx-other-bubble-text'] = MEET_ENCOUNTER_BUBBLE_TEXT.other
+    base['--wx-self-bubble-radius'] = `${bubbleTheme.selfBubbleRadiusPx}px`
+    base['--wx-other-bubble-radius'] = `${bubbleTheme.otherBubbleRadiusPx}px`
+    return base as CSSProperties
+  }, [bubbleTheme, wechatThemeStyle])
+  const showMeetTimestamp = phoneUi.wechatTheme.timestampStyle !== 'hidden'
+  const { currentTimeMs } = useWeChatCurrentTime({ characterId: npc.id })
 
   const {
     state: meetPersist,
@@ -78,21 +164,56 @@ export function EncounterChatRoom({ npc, onBack }: { npc: EncounterNPC; onBack: 
     upsertNpc,
     markNpcWechatAdded,
     getPersistedSnapshot,
-    setEncounterIntimacy,
     removeChatMessage,
+    markMeetInboxThreadRead,
+    resolveMeetContractCharRequest,
+    resolveMeetTruthMirrorCharRequest,
+    markEncounterChatCoachCompleted,
+    hydrated,
   } = useLumiMeetStore()
   const profile = meetPersist.meetProfile
+  const meetDisplayName = resolveMeetPublicDisplayName(profile)
   const messages = useMemo(
     () => meetPersist.chatThreads[npc.id] ?? [],
     [npc.id, meetPersist.chatThreads],
   )
+  const timelineRows = useMemo(
+    () => buildMeetChatTimelineRows(messages, currentTimeMs),
+    [messages, currentTimeMs],
+  )
+
+  /** 会话内人设可能被契约流程写入微信号等字段，列表须读存档避免头像/微信号仍是入口快照 */
+  const liveNpc = useMemo(() => meetPersist.npcs.find((x) => x.id === npc.id) ?? npc, [meetPersist.npcs, npc])
+  const quoteLabels = useMemo(
+    () => buildMeetQuoteParticipantLabels(profile, liveNpc),
+    [meetDisplayName, liveNpc.nickname, profile],
+  )
+
+  const resolvedNpcWechatId = useMemo(() => {
+    const fromNpc = liveNpc.wechatId?.trim()
+    if (fromNpc) return fromNpc
+    for (let i = messages.length - 1; i >= 0; i--) {
+      const row = messages[i]
+      if (!row) continue
+      if (row.kind === 'meet_contract_npc_status' && row.meetContractStatus?.charWechatId?.trim()) {
+        return row.meetContractStatus.charWechatId.trim()
+      }
+      if (row.kind === 'wechat_swap_card' && row.swapCard?.charWechatId?.trim()) {
+        return row.swapCard.charWechatId.trim()
+      }
+    }
+    return ''
+  }, [liveNpc.wechatId, messages])
+
+  useEffect(() => {
+    markMeetInboxThreadRead(npc.id)
+  }, [npc.id, messages, markMeetInboxThreadRead])
   const intimacy = meetPersist.intimacyByNpcId[npc.id] ?? 18
   const swapMeta = meetPersist.encounterSwapByNpcId[npc.id] ?? {
     wechatSwapStatus: 'none' as const,
     userWechatId: '',
   }
 
-  const [userWxDraft, setUserWxDraft] = useState(swapMeta.userWechatId)
   const [resonanceFlashKey, setResonanceFlashKey] = useState(0)
 
   const [draft, setDraft] = useState('')
@@ -101,8 +222,7 @@ export function EncounterChatRoom({ npc, onBack }: { npc: EncounterNPC; onBack: 
   const [loading, setLoading] = useState(false)
   const [syncError, setSyncError] = useState<string | null>(null)
   const [worldbookOpen, setWorldbookOpen] = useState(false)
-  const [devPanelOpen, setDevPanelOpen] = useState(false)
-  const [devIntDraft, setDevIntDraft] = useState(18)
+  const [worldbookRefreshKey, setWorldbookRefreshKey] = useState(0)
   const [meetActionPanelOpen, setMeetActionPanelOpen] = useState(false)
   const [meetActionAnchor, setMeetActionAnchor] = useState<PanelAnchor | null>(null)
   const [meetActionTarget, setMeetActionTarget] = useState<{
@@ -113,23 +233,65 @@ export function EncounterChatRoom({ npc, onBack }: { npc: EncounterNPC; onBack: 
   const [meetActionCanRecall, setMeetActionCanRecall] = useState(false)
   const [epilogueContactsNoticeOpen, setEpilogueContactsNoticeOpen] = useState(false)
   const [contactSyncOverlay, setContactSyncOverlay] = useState<null | { phase: 'epilogue' | 'contacts' }>(null)
-  const [quoteTarget, setQuoteTarget] = useState<{ role: 'user' | 'npc'; text: string } | null>(null)
+  const [quoteTarget, setQuoteTarget] = useState<{
+    role: 'user' | 'npc'
+    text: string
+    messageId: string
+  } | null>(null)
+  const [dualDirective, setDualDirective] = useState('')
   const [loreToast, setLoreToast] = useState<string | null>(null)
   const loreToastTimerRef = useRef<number | null>(null)
+
+  const [truthMirrorOpen, setTruthMirrorOpen] = useState(false)
+  const [truthMirrorAutoPick, setTruthMirrorAutoPick] = useState(false)
+  const [truthMirrorInviteOpen, setTruthMirrorInviteOpen] = useState(false)
+  const [truthMirrorInviteMinimized, setTruthMirrorInviteMinimized] = useState(false)
+  const truthMirrorOpenRef = useRef(false)
+  const truthMirrorInviteMessageIdRef = useRef<string | null>(null)
+
+  useEffect(() => {
+    truthMirrorOpenRef.current = truthMirrorOpen
+  }, [truthMirrorOpen])
+  const [covenantModalOpen, setCovenantModalOpen] = useState(false)
+  const [tutorialOpen, setTutorialOpen] = useState(false)
+  const [cameraOpen, setCameraOpen] = useState(false)
+  const imageFileInputRef = useRef<HTMLInputElement>(null)
+  const [coachOpen, setCoachOpen] = useState(false)
+  const [coachStepIndex, setCoachStepIndex] = useState(0)
+  const [linkedWechatPeekOpen, setLinkedWechatPeekOpen] = useState(false)
 
   const enterDebounceTimerRef = useRef<number | null>(null)
   const lastEnterDownRef = useRef(0)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
   const scrollRef = useRef<HTMLDivElement>(null)
 
-  useEffect(() => {
-    if (!devPanelOpen) return
-    setDevIntDraft(intimacy)
-  }, [devPanelOpen, intimacy])
+  const keyboardInsetPx = useMeetKeyboardInset()
+  const composerInsetPx = Math.max(0, keyboardInsetPx)
 
   useEffect(() => {
-    setUserWxDraft(swapMeta.userWechatId)
-  }, [swapMeta.userWechatId])
+    const profileWx = profile.contactWechatId?.trim()
+    if (!profileWx || swapMeta.userWechatId?.trim()) return
+    patchEncounterSwap(npc.id, { userWechatId: profileWx })
+  }, [npc.id, patchEncounterSwap, profile.contactWechatId, swapMeta.userWechatId])
+
+  useEffect(() => {
+    let alive = true
+    void resolveMeetDualPersonaDirective(profile).then((d) => {
+      if (alive) setDualDirective(d)
+    })
+    return () => {
+      alive = false
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- 仅随假面/锚定字段刷新，避免 profile 引用抖动
+  }, [
+    profile.baseWeChatIdentityId,
+    profile.contactWechatId,
+    profile.bio,
+    profile.displayName,
+    profile.intent,
+    profile.meetIntentionsPublic,
+    profile.orientation,
+  ])
 
   useEffect(() => {
     return () => {
@@ -155,6 +317,19 @@ export function EncounterChatRoom({ npc, onBack }: { npc: EncounterNPC; onBack: 
 
   const openMeetActionPanelFor = useCallback(
     (m: MeetChatMessage, anchorRect: DOMRect) => {
+      if (
+        m.kind === 'meet_echo_reveal' ||
+        m.kind === 'meet_truth_mirror_record' ||
+        m.kind === 'meet_truth_mirror_char_request' ||
+        m.kind === 'meet_truth_mirror_user_response' ||
+        m.kind === 'meet_contract_user_request' ||
+        m.kind === 'meet_contract_npc_status' ||
+        m.kind === 'meet_contract_char_request' ||
+        m.kind === 'meet_contract_user_response' ||
+        m.kind === 'meet_music_share' ||
+        m.kind === 'meet_system'
+      )
+        return
       const raw = m.content.replace(/\u200b/g, '').trim()
       if (!raw) return
       const isSelf = m.role === 'user'
@@ -183,19 +358,26 @@ export function EncounterChatRoom({ npc, onBack }: { npc: EncounterNPC; onBack: 
       }
       if (id === 'copy') {
         void (async () => {
-          try {
-            await navigator.clipboard.writeText(t.text)
-            showLoreToast('已复制')
-          } catch {
-            showLoreToast('复制失败')
-          } finally {
-            closeMeetActionPanel()
-          }
+          const src = messages.find((m) => m.id === t.id)
+          const copyText = src?.images?.[0]?.base64?.trim()
+            ? '[图片]'
+            : src
+              ? resolveMeetMessageDisplay(src).text
+              : t.text
+          const ok = await copyTextToClipboard(copyText)
+          showLoreToast(ok ? '已复制' : '复制失败')
+          closeMeetActionPanel()
         })()
         return
       }
       if (id === 'quote') {
-        setQuoteTarget({ role: t.isSelf ? 'user' : 'npc', text: t.text })
+        const src = messages.find((m) => m.id === t.id)
+        const excerpt = src ? resolveMeetMessageDisplay(src).text : t.text
+        setQuoteTarget({
+          role: t.isSelf ? 'user' : 'npc',
+          text: excerpt,
+          messageId: t.id,
+        })
         closeMeetActionPanel()
         return
       }
@@ -209,7 +391,7 @@ export function EncounterChatRoom({ npc, onBack }: { npc: EncounterNPC; onBack: 
       }
       closeMeetActionPanel()
     },
-    [closeMeetActionPanel, meetActionCanRecall, meetActionTarget, npc.id, removeChatMessage, showLoreToast],
+    [closeMeetActionPanel, meetActionCanRecall, meetActionTarget, messages, npc.id, removeChatMessage, showLoreToast],
   )
 
   const refocusComposer = useCallback(() => {
@@ -230,7 +412,7 @@ export function EncounterChatRoom({ npc, onBack }: { npc: EncounterNPC; onBack: 
     for (let i = messages.length - 1; i >= 0; i--) {
       const m = messages[i]
       if (m?.role !== 'npc') continue
-      const id = extractWechatId(m.content)
+      const id = pickWechatFromNpcPlainText(m.content)
       if (id) return id
     }
     return null
@@ -238,20 +420,189 @@ export function EncounterChatRoom({ npc, onBack }: { npc: EncounterNPC; onBack: 
 
   const resolvedWx = npc.wechatId || wxFromChat
 
-  const mergeEvaluationIntoSwap = useCallback(
+  /** 评估里仅即时生效的元数据（好感、附言）；富交互卡须等口语气泡逐条露出后再入队 */
+  const applyEvaluationImmediate = useCallback(
     (evaluation: MeetReplyEvaluation | null) => {
       if (!evaluation) return
+      applyAffectionDelta(npc.id, evaluation.affectionChange)
+      if (evaluation.affectionChange !== 0) setResonanceFlashKey((k) => k + 1)
       if (evaluation.swapInstruction?.trim()) {
         patchEncounterSwap(npc.id, { pendingSwapNote: evaluation.swapInstruction.trim() })
       }
+    },
+    [applyAffectionDelta, npc.id, patchEncounterSwap],
+  )
+
+  const enqueueDeferredProactiveRichMessages = useCallback(
+    async (evaluation: MeetReplyEvaluation, lastBubbleText: string | undefined) => {
+      await sleep(computeMeetRichFollowUpDelayMs(lastBubbleText))
+      await yieldToPaint()
+
       if (evaluation.proactiveSwap) {
-        const cur = getPersistedSnapshot().encounterSwapByNpcId[npc.id]?.wechatSwapStatus ?? 'none'
-        if (cur !== 'swapped' && cur !== 'user_requested') {
-          patchEncounterSwap(npc.id, { wechatSwapStatus: 'char_requested' })
+        const snap = getPersistedSnapshot()
+        const cur = snap.encounterSwapByNpcId[npc.id]?.wechatSwapStatus ?? 'none'
+        if (!snap.encounterSwapByNpcId[npc.id]?.covenantAgreed && cur !== 'swapped' && cur !== 'user_requested') {
+          const thread = snap.chatThreads[npc.id] ?? []
+          if (!hasUnresolvedMeetCharContractRequest(thread)) {
+            if (cur !== 'char_requested') {
+              patchEncounterSwap(npc.id, { wechatSwapStatus: 'char_requested' })
+            }
+            pushChatMessage(npc.id, {
+              role: 'npc',
+              content: '\u200b',
+              kind: 'meet_contract_char_request',
+              meetContractCharRequest: { resolved: false },
+            })
+            await yieldToPaint()
+          }
+        }
+      }
+
+      if (evaluation.proactiveTruthMirror) {
+        if (evaluation.proactiveSwap) {
+          await sleep(computeMeetNpcStaggerDelayMs('好。'))
+        }
+        const thread = getPersistedSnapshot().chatThreads[npc.id] ?? []
+        if (!hasUnresolvedMeetTruthMirrorCharRequest(thread) && !truthMirrorOpenRef.current) {
+          const messageId = pushChatMessage(npc.id, {
+            role: 'npc',
+            content: '\u200b',
+            kind: 'meet_truth_mirror_char_request',
+            meetTruthMirrorCharRequest: { resolved: false },
+          })
+          truthMirrorInviteMessageIdRef.current = messageId
+          setTruthMirrorInviteMinimized(false)
+          setCoachOpen(false)
+          await yieldToPaint()
+          setTruthMirrorInviteOpen(true)
         }
       }
     },
-    [getPersistedSnapshot, npc.id, patchEncounterSwap],
+    [getPersistedSnapshot, npc.id, patchEncounterSwap, pushChatMessage],
+  )
+
+  const tryApplyCharFriendRequestAfterTurn = useCallback(
+    async (params: {
+      evaluationFlag: boolean
+      lastUserContent: string
+      outbound: { text: string }[]
+    }) => {
+      const snap = getPersistedSnapshot()
+      const swap = snap.encounterSwapByNpcId[npc.id]
+      if (!isMeetEncounterWeChatLinked(swap)) return
+
+      const outboundTexts = params.outbound.map((p) => p.text)
+      if (
+        !inferCharFriendRequestFromTurn({
+          evaluationFlag: params.evaluationFlag,
+          lastUserContent: params.lastUserContent,
+          outboundTexts,
+        })
+      ) {
+        return
+      }
+
+      try {
+        const resolvedPid = await resolveMeetWeChatPlayerIdentityId(profile.baseWeChatIdentityId)
+        if (!resolvedPid) {
+          showLoreToast('请先在「我的」→ 03 CONTACT 选择添加好友用的微信身份')
+          return
+        }
+        const pending = await personaDb.listFriendRequests({
+          playerIdentityId: resolvedPid,
+          pendingOnly: true,
+        })
+        if (pending.some((r) => r.characterId === npc.id && r.status === 'pending')) {
+          showLoreToast('「新的朋友」里已有对方待验证，请去微信查看')
+          return
+        }
+        const snapNpc = snap.npcs.find((x) => x.id === npc.id) ?? npc
+        await meetApplyCharAddUserCovenant({
+          apiConfig,
+          npc: snapNpc,
+          userProfile: profile,
+          playerIdentityId: profile.baseWeChatIdentityId,
+          deps: { upsertNpc },
+        })
+        showLoreToast('对方已在微信「新的朋友」发来验证')
+      } catch {
+        showLoreToast('好友验证写入失败，可稍后到微信搜索对方微信号')
+      }
+    },
+    [apiConfig, getPersistedSnapshot, npc, profile, showLoreToast, upsertNpc],
+  )
+
+  const covenantFinalizeDeps = useMemo(
+    () => ({
+      getPersistedSnapshot,
+      upsertNpc,
+      upsertMeetNpcAsCharacter: async (snap: EncounterNPC, wxId: string) => {
+        await upsertMeetNpcAsCharacter(snap, wxId, {
+          bindPlayerIdentityId: profile.baseWeChatIdentityId,
+        })
+      },
+    }),
+    [getPersistedSnapshot, profile.baseWeChatIdentityId, upsertNpc],
+  )
+
+  const applyCovenantAccepted = useCallback(
+    async (params: {
+      explicitWechatId?: string
+      bodyForBubbles?: string
+      scrubbedLines?: string[]
+      actionType: 'char_add_user' | 'user_add_char' | 'none'
+    }) => {
+      const charWechatId = await resolveCharWechatIdForCovenant({
+        npc,
+        explicitWechatId: params.explicitWechatId,
+        bodyForBubbles: params.bodyForBubbles ?? '',
+        scrubbedLines: params.scrubbedLines ?? [],
+        actionType: params.actionType,
+        deps: covenantFinalizeDeps,
+      })
+      pushChatMessage(npc.id, {
+        role: 'npc',
+        content: '\u200b',
+        kind: 'meet_contract_npc_status',
+        meetContractStatus: {
+          outcome: 'accepted',
+          actionType: params.actionType,
+          charWechatId,
+        },
+      })
+      patchEncounterSwap(npc.id, { covenantAgreed: true, wechatSwapStatus: 'none' })
+
+      if (params.actionType === 'char_add_user') {
+        const snapNpc =
+          getPersistedSnapshot().npcs.find((x) => x.id === npc.id) ?? { ...npc, wechatId: charWechatId }
+        try {
+          await meetApplyCharAddUserCovenant({
+            apiConfig,
+            npc: { ...snapNpc, wechatId: charWechatId ?? snapNpc.wechatId },
+            userProfile: profile,
+            playerIdentityId: profile.baseWeChatIdentityId,
+            deps: { upsertNpc },
+          })
+          showLoreToast('对方已在微信「新的朋友」发来验证')
+        } catch {
+          showLoreToast('微信号已互换；好友验证写入失败，可稍后复制微信号自行添加')
+        }
+      }
+
+      return charWechatId
+    },
+    [
+      covenantFinalizeDeps,
+      getPersistedSnapshot,
+      npc,
+      patchEncounterSwap,
+      apiConfig,
+      profile,
+      profile.baseWeChatIdentityId,
+      pushChatMessage,
+      showLoreToast,
+      upsertNpc,
+    ],
   )
 
   const finalizeSwapCeremony = useCallback(
@@ -260,8 +611,14 @@ export function EncounterChatRoom({ npc, onBack }: { npc: EncounterNPC; onBack: 
       if (snap0.encounterSwapByNpcId[npc.id]?.wechatSwapStatus === 'swapped') return
 
       const wxChar = (npc.wechatId || resolvedWx || '').trim()
-      const wxUser = snap0.encounterSwapByNpcId[npc.id]?.userWechatId?.trim() ?? ''
+      const wxUser = resolveMeetUserContactWechatId(
+        profile,
+        snap0.encounterSwapByNpcId[npc.id],
+      )
       if (!wxChar || !wxUser || npc.status === 'wechat_added') return
+      if (!snap0.encounterSwapByNpcId[npc.id]?.userWechatId?.trim()) {
+        patchEncounterSwap(npc.id, { userWechatId: wxUser })
+      }
 
       const swapNote =
         snap0.encounterSwapByNpcId[npc.id]?.pendingSwapNote?.trim() ||
@@ -281,21 +638,13 @@ export function EncounterChatRoom({ npc, onBack }: { npc: EncounterNPC; onBack: 
 
       patchEncounterSwap(npc.id, { wechatSwapStatus: 'swapped' })
 
-      const transcriptForLore = (getPersistedSnapshot().chatThreads[npc.id] ?? [])
-        .filter((m) => m.kind !== 'wechat_swap_card')
-        .map((m) => ({ role: m.role, content: m.content }))
+      const transcriptForLore = meetMessagesToAiTranscript(
+        (getPersistedSnapshot().chatThreads[npc.id] ?? []).filter((m) => m.kind !== 'wechat_swap_card'),
+      )
 
       setSyncError(null)
-      setContactSyncOverlay({ phase: 'epilogue' })
+      setContactSyncOverlay({ phase: 'contacts' })
       try {
-        await syncMeetEpilogueAfterContactsAdded({
-          apiConfig,
-          npc: { ...npc, wechatId: wxChar },
-          userProfile: profile,
-          transcript: transcriptForLore,
-        })
-
-        setContactSyncOverlay({ phase: 'contacts' })
         await upsertMeetNpcAsCharacter({ ...npc, wechatId: wxChar }, wxChar)
         replaceWeChatPersonaContacts([npc.id], [
           {
@@ -308,15 +657,21 @@ export function EncounterChatRoom({ npc, onBack }: { npc: EncounterNPC; onBack: 
         markNpcWechatAdded(npc.id)
         upsertNpc({ ...npc, status: 'wechat_added', wechatId: wxChar })
 
-        if (npc.comprehensivePersona) {
-          syncMeetDossierToWorldbookLore(npc.id, npc.nickname, npc.comprehensivePersona)
-        }
+        setContactSyncOverlay({ phase: 'epilogue' })
+        await syncMeetEpilogueAfterContactsAdded({
+          apiConfig,
+          npc: { ...npc, wechatId: wxChar },
+          userProfile: profile,
+          transcript: transcriptForLore,
+          meetThread: getPersistedSnapshot().chatThreads[npc.id] ?? [],
+          playerIdentityId: profile.baseWeChatIdentityId,
+          verificationEpochMs: Date.now(),
+          suppressVol10Notice: true,
+        })
 
         setContactSyncOverlay(null)
         setEpilogueContactsNoticeOpen(true)
-        if (npc.comprehensivePersona) {
-          showLoreToast('核心人设档案已同步。')
-        }
+        showLoreToast('已同步至微信人设与通讯录。')
       } catch (e) {
         setContactSyncOverlay(null)
         setSyncError(e instanceof Error ? e.message : '同步失败')
@@ -333,115 +688,144 @@ export function EncounterChatRoom({ npc, onBack }: { npc: EncounterNPC; onBack: 
       replaceWeChatPersonaContacts,
       resolvedWx,
       showLoreToast,
+      upsertMeetNpcAsCharacter,
       upsertNpc,
     ],
   )
 
   const dispatchNpcTurn = useCallback(
     async (
-      transcript: Array<{ role: 'user' | 'npc'; content: string }>,
+      thread: MeetChatMessage[],
       swapStatusBefore: string,
+      transcriptVirtualUserLine?: string,
     ) => {
       const encounterSwapStatus =
         getPersistedSnapshot().encounterSwapByNpcId[npc.id]?.wechatSwapStatus ?? 'none'
       const resonanceScore = getPersistedSnapshot().intimacyByNpcId[npc.id] ?? 18
-      const { replies, evaluation } = await aiMeetChatReply({
-        apiConfig,
-        npc,
-        userProfile: profile,
-        transcript,
-        encounterSwapStatus,
-        resonanceScore,
-      })
+      const transcript = meetMessagesToAiTranscript(thread)
+      const lastUserMsg = [...thread].reverse().find((m) => m.role === 'user')
+      const lastUserContent = lastUserMsg?.content ?? ''
+      const pendingUserImage = lastUserMsg?.images?.[0]?.base64?.trim()
+        ? { base64: lastUserMsg.images[0].base64, type: lastUserMsg.images[0].type }
+        : null
 
-      if (evaluation != null) {
-        applyAffectionDelta(npc.id, evaluation.affectionChange)
-        if (evaluation.affectionChange !== 0) setResonanceFlashKey((k) => k + 1)
-        mergeEvaluationIntoSwap(evaluation)
+      const selfAvatarUrl = resolveMeetSelfAvatarUrl(profile)
+      const swapSnap = getPersistedSnapshot().encounterSwapByNpcId[npc.id]
+      const injectAvatar =
+        !!selfAvatarUrl && (swapSnap?.userAvatarVisionSeenUrl?.trim() ?? '') !== selfAvatarUrl.trim()
+      const avatarPayload =
+        injectAvatar && selfAvatarUrl ? await resolveMeetImagePayloadFromUrl(selfAvatarUrl) : null
+
+      let rawReplies: string[]
+      let rawEvaluation: MeetReplyEvaluation | null
+      try {
+        const aiOut = await aiMeetChatReply({
+          apiConfig,
+          npc,
+          userProfile: profile,
+          transcript,
+          encounterSwapStatus,
+          resonanceScore,
+          dualPersonaDirective: dualDirective,
+          transcriptVirtualUserLine,
+          recentThread: thread,
+          truthMirrorCeremonyOpen: truthMirrorOpenRef.current,
+          pendingUserImage,
+          injectUserProfileAvatarVision: injectAvatar && !!avatarPayload,
+          userProfileAvatarImage: avatarPayload,
+        })
+        rawReplies = aiOut.replies
+        rawEvaluation = aiOut.evaluation
+        if (injectAvatar && avatarPayload && aiOut.replies.length) {
+          patchEncounterSwap(npc.id, { userAvatarVisionSeenUrl: selfAvatarUrl.trim() })
+        }
+      } catch (e) {
+        const msg =
+          e instanceof MeetEncounterGenerationError
+            ? e.message
+            : e instanceof Error
+              ? e.message
+              : '回复失败，请重试'
+        showLoreToast(msg)
+        return
       }
 
-      for (let i = 0; i < replies.length; i++) {
-        if (i > 0) await sleep(computeMeetNpcStaggerDelayMs(replies[i - 1]!))
-        else if (replies.length > 1) await sleep(260)
-        pushChatMessage(npc.id, { role: 'npc', content: replies[i]! })
+      const { replies, evaluation } = applyMeetTruthMirrorTurnPolicy(rawEvaluation, rawReplies)
+      if (!replies.length) {
+        showLoreToast('模型未返回有效回复，请重试')
+        return
+      }
+
+      const scrubbedReplies = scrubMeetNpcWechatLeaks(replies, encounterSwapStatus, npc.wechatId)
+      const outbound = planMeetNpcOutboundBubbles(scrubbedReplies, thread, quoteLabels)
+
+      if (evaluation != null) {
+        applyEvaluationImmediate(evaluation)
+      }
+
+      for (let i = 0; i < outbound.length; i++) {
+        const plan = outbound[i]!
+        if (i > 0) await sleep(computeMeetNpcStaggerDelayMs(outbound[i - 1]!.text))
+        else if (outbound.length > 1) await sleep(260)
+        pushChatMessage(npc.id, {
+          role: 'npc',
+          content: plan.text,
+          ...(plan.replyTo ? { replyTo: plan.replyTo } : {}),
+        })
         await yieldToPaint()
       }
 
-      if (swapStatusBefore === 'user_requested' && replies.length > 0) {
-        await finalizeSwapCeremony(replies)
+      if (evaluation != null && outbound.length > 0) {
+        if (evaluation.proactiveSwap || evaluation.proactiveTruthMirror) {
+          await enqueueDeferredProactiveRichMessages(evaluation, outbound[outbound.length - 1]?.text)
+        }
+      }
+
+      const shouldCharFriendRequest = inferCharFriendRequestFromTurn({
+        evaluationFlag: evaluation?.charFriendRequest ?? false,
+        lastUserContent,
+        outboundTexts: outbound.map((p) => p.text),
+      })
+      if (shouldCharFriendRequest && outbound.length > 0) {
+        await sleep(computeMeetRichFollowUpDelayMs(outbound[outbound.length - 1]?.text))
+        await tryApplyCharFriendRequestAfterTurn({
+          evaluationFlag: evaluation?.charFriendRequest ?? false,
+          lastUserContent,
+          outbound,
+        })
+      }
+
+      if (swapStatusBefore === 'user_requested' && outbound.length > 0) {
+        await finalizeSwapCeremony(outbound.map((p) => p.text))
+      }
+
+      if (outbound.length > 0) {
+        void finalizeMeetCharacterMemoryRoundAfterAiReply({
+          apiConfig,
+          characterId: npc.id,
+          characterRealName: resolveMeetNpcPeerRealName(liveNpc),
+          sessionPlayerIdentityId: profile.baseWeChatIdentityId,
+          meetContactWechatId: profile.contactWechatId,
+        })
       }
     },
     [
       apiConfig,
-      applyAffectionDelta,
+      applyEvaluationImmediate,
+      dualDirective,
+      enqueueDeferredProactiveRichMessages,
+      tryApplyCharFriendRequestAfterTurn,
       finalizeSwapCeremony,
       getPersistedSnapshot,
-      mergeEvaluationIntoSwap,
+      liveNpc,
       npc.id,
+      patchEncounterSwap,
       profile,
       pushChatMessage,
+      quoteLabels,
+      showLoreToast,
     ],
   )
-
-  const injectWechat = useCallback(async () => {
-    const wx = resolvedWx?.trim()
-    if (!wx || npc.status === 'wechat_added') return
-    setSyncError(null)
-    const transcriptForLore = (getPersistedSnapshot().chatThreads[npc.id] ?? [])
-      .filter((m) => m.kind !== 'wechat_swap_card')
-      .map((m) => ({ role: m.role, content: m.content }))
-
-    setContactSyncOverlay({ phase: 'epilogue' })
-    try {
-      await syncMeetEpilogueAfterContactsAdded({
-        apiConfig,
-        npc: { ...npc, wechatId: wx },
-        userProfile: profile,
-        transcript: transcriptForLore,
-      })
-
-      setContactSyncOverlay({ phase: 'contacts' })
-      await upsertMeetNpcAsCharacter({ ...npc, wechatId: wx }, wx)
-      replaceWeChatPersonaContacts([npc.id], [
-        {
-          id: `persona-${npc.id}`,
-          characterId: npc.id,
-          remarkName: npc.nickname,
-          avatarUrl: npc.avatarUrl,
-        },
-      ])
-      markNpcWechatAdded(npc.id)
-      upsertNpc({ ...npc, status: 'wechat_added', wechatId: wx })
-      if (npc.comprehensivePersona) {
-        syncMeetDossierToWorldbookLore(npc.id, npc.nickname, npc.comprehensivePersona)
-      }
-
-      setContactSyncOverlay(null)
-      setEpilogueContactsNoticeOpen(true)
-      if (npc.comprehensivePersona) {
-        showLoreToast('核心人设档案已写入世界书法则。')
-      }
-    } catch (e) {
-      setContactSyncOverlay(null)
-      setSyncError(e instanceof Error ? e.message : '同步失败')
-    }
-  }, [
-    apiConfig,
-    getPersistedSnapshot,
-    markNpcWechatAdded,
-    npc,
-    profile,
-    replaceWeChatPersonaContacts,
-    resolvedWx,
-    showLoreToast,
-    upsertNpc,
-  ])
-
-  const canTrySync =
-    npc.status !== 'wechat_added' &&
-    !!resolvedWx &&
-    (intimacy >= 48 || !!wxFromChat) &&
-    swapMeta.wechatSwapStatus !== 'swapped'
 
   /** 仅根据当前会话拉取 NPC 回复，不追加新的用户气泡（用于已发过话、草稿为空时点纸飞机 / 回车催更） */
   const requestNpcReplyOnly = useCallback(async () => {
@@ -449,7 +833,13 @@ export function EncounterChatRoom({ npc, onBack }: { npc: EncounterNPC; onBack: 
     const swapStatusBefore = getPersistedSnapshot().encounterSwapByNpcId[npc.id]?.wechatSwapStatus ?? 'none'
     const last = messages[messages.length - 1]
     if (!last) return
-    if (last.role !== 'user' && swapStatusBefore !== 'user_requested') return
+    if (
+      last.role !== 'user' &&
+      !last.images?.[0]?.base64?.trim() &&
+      swapStatusBefore !== 'user_requested'
+    ) {
+      return
+    }
 
     if (enterDebounceTimerRef.current != null) {
       window.clearTimeout(enterDebounceTimerRef.current)
@@ -459,8 +849,7 @@ export function EncounterChatRoom({ npc, onBack }: { npc: EncounterNPC; onBack: 
 
     setLoading(true)
     try {
-      const transcript = messages.map((m) => ({ role: m.role, content: m.content }))
-      await dispatchNpcTurn(transcript, swapStatusBefore)
+      await dispatchNpcTurn(messages, swapStatusBefore)
     } finally {
       setLoading(false)
       refocusComposer()
@@ -474,24 +863,78 @@ export function EncounterChatRoom({ npc, onBack }: { npc: EncounterNPC; onBack: 
     refocusComposer,
   ])
 
-  const onSwapCeremonyRequest = useCallback(() => {
-    const wx = userWxDraft.trim()
-    if (wx.length < 4) {
-      setSyncError('请先填写有效微信号')
-      return
-    }
-    setSyncError(null)
-    patchEncounterSwap(npc.id, { userWechatId: wx, wechatSwapStatus: 'user_requested' })
-    window.setTimeout(() => {
-      void requestNpcReplyOnly()
-    }, 0)
-  }, [npc.id, patchEncounterSwap, requestNpcReplyOnly, userWxDraft])
-
   const canRequestReplyWithoutDraft =
     !loading &&
     messages.length > 0 &&
     (messages[messages.length - 1]?.role === 'user' ||
+      !!messages[messages.length - 1]?.images?.[0]?.base64?.trim() ||
       swapMeta.wechatSwapStatus === 'user_requested')
+
+  const commitSendImage = useCallback(
+    async (base64: string, triggerAi: boolean, mime: MeetImageMime = 'image/jpeg', caption = '') => {
+      let clipped = base64.trim().replace(/^data:image\/(?:jpeg|png|gif|webp);base64,/i, '').trim()
+      if (!clipped || clipped.length < 64) {
+        showLoreToast('图片处理失败，请重试')
+        return
+      }
+      if (loading) return
+
+      if (enterDebounceTimerRef.current != null) {
+        window.clearTimeout(enterDebounceTimerRef.current)
+        enterDebounceTimerRef.current = null
+      }
+      lastEnterDownRef.current = 0
+
+      const swapStatusBefore =
+        getPersistedSnapshot().encounterSwapByNpcId[npc.id]?.wechatSwapStatus ?? 'none'
+      const replyTo = quoteTarget ? buildMeetReplyToMetaFromQuoteTarget(quoteTarget, quoteLabels) : undefined
+      if (quoteTarget) setQuoteTarget(null)
+
+      setDraft('')
+      const newMsgId = pushChatMessage(npc.id, {
+        role: 'user',
+        content: caption.trim(),
+        images: [{ base64: clipped, type: mime }],
+        ...(replyTo ? { replyTo } : {}),
+      })
+
+      if (!triggerAi) {
+        refocusComposer()
+        return
+      }
+
+      setLoading(true)
+      try {
+        const threadForAi: MeetChatMessage[] = [
+          ...messages,
+          {
+            id: newMsgId,
+            role: 'user',
+            content: caption.trim(),
+            ts: Date.now(),
+            images: [{ base64: clipped, type: mime }],
+            ...(replyTo ? { replyTo } : {}),
+          },
+        ]
+        await dispatchNpcTurn(threadForAi, swapStatusBefore)
+      } finally {
+        setLoading(false)
+        refocusComposer()
+      }
+    },
+    [
+      dispatchNpcTurn,
+      getPersistedSnapshot,
+      loading,
+      messages,
+      npc.id,
+      pushChatMessage,
+      quoteLabels,
+      quoteTarget,
+      refocusComposer,
+      showLoreToast,
+    ],
+  )
 
   const commitSend = useCallback(
     async (raw: string, triggerAi: boolean) => {
@@ -507,17 +950,15 @@ export function EncounterChatRoom({ npc, onBack }: { npc: EncounterNPC; onBack: 
       const swapStatusBefore =
         getPersistedSnapshot().encounterSwapByNpcId[npc.id]?.wechatSwapStatus ?? 'none'
 
-      let body = text
-      if (quoteTarget) {
-        const flat = quoteTarget.text.replace(/\s+/g, ' ').trim()
-        const excerpt = flat.slice(0, 300)
-        const ell = flat.length > 300 ? '…' : ''
-        body = `【引用${quoteTarget.role === 'npc' ? '对方' : '自己'}】${excerpt}${ell}\n\n${text}`
-        setQuoteTarget(null)
-      }
+      const replyTo = quoteTarget ? buildMeetReplyToMetaFromQuoteTarget(quoteTarget, quoteLabels) : undefined
+      if (quoteTarget) setQuoteTarget(null)
 
       setDraft('')
-      pushChatMessage(npc.id, { role: 'user', content: body })
+      const newMsgId = pushChatMessage(npc.id, {
+        role: 'user',
+        content: text,
+        ...(replyTo ? { replyTo } : {}),
+      })
 
       if (!triggerAi) {
         refocusComposer()
@@ -526,9 +967,17 @@ export function EncounterChatRoom({ npc, onBack }: { npc: EncounterNPC; onBack: 
 
       setLoading(true)
       try {
-        const base = messages.map((m) => ({ role: m.role, content: m.content }))
-        const nextTranscript = [...base, { role: 'user' as const, content: body }]
-        await dispatchNpcTurn(nextTranscript, swapStatusBefore)
+        const threadForAi: MeetChatMessage[] = [
+          ...messages,
+          {
+            id: newMsgId,
+            role: 'user',
+            content: text,
+            ts: Date.now(),
+            ...(replyTo ? { replyTo } : {}),
+          },
+        ]
+        await dispatchNpcTurn(threadForAi, swapStatusBefore)
       } finally {
         setLoading(false)
         refocusComposer()
@@ -541,6 +990,7 @@ export function EncounterChatRoom({ npc, onBack }: { npc: EncounterNPC; onBack: 
       messages,
       npc.id,
       pushChatMessage,
+      quoteLabels,
       quoteTarget,
       refocusComposer,
     ],
@@ -596,7 +1046,7 @@ export function EncounterChatRoom({ npc, onBack }: { npc: EncounterNPC; onBack: 
     const el = scrollRef.current
     if (!el) return
     el.scrollTop = el.scrollHeight
-  }, [messages, loading])
+  }, [messages, loading, composerInsetPx])
 
   const onSendButtonClick = useCallback(() => {
     if (loading) return
@@ -617,12 +1067,320 @@ export function EncounterChatRoom({ npc, onBack }: { npc: EncounterNPC; onBack: 
 
   const planeEnabled = !loading && (!!draft.trim() || canRequestReplyWithoutDraft)
   const planeColor = planeEnabled ? 'var(--wx-primary)' : 'var(--wx-text-muted)'
+  const meetBg = resolveMeetEncounterChatBackgroundUrl(profile.chatBackground)
+  const meetSelfAvatar = resolveMeetSelfAvatarUrl(profile)
+
+  const onToolbarProfile = useCallback(() => {
+    if (!npc.comprehensivePersona) {
+      showLoreToast('未配置九维档案')
+      return
+    }
+    setWorldbookOpen(true)
+  }, [npc.comprehensivePersona, showLoreToast])
+
+  const connectToolbarDisabled = loading
+  const connectToolbarLinked = swapMeta.wechatSwapStatus === 'swapped' || !!swapMeta.covenantAgreed
+  const connectPendingWechatSync =
+    !!swapMeta.covenantAgreed &&
+    liveNpc.status !== 'wechat_added' &&
+    swapMeta.wechatSwapStatus !== 'swapped'
+
+  const registerWechatForSearch = useCallback(
+    async (wx: string) => {
+      const id = wx.trim()
+      if (!id) return
+      try {
+        await ensureMeetNpcWechatSearchable({ npc: liveNpc, wechatId: id, deps: covenantFinalizeDeps })
+      } catch {
+        /* 复制/查看仍可用，搜索失败时再提示 */
+      }
+    },
+    [covenantFinalizeDeps, liveNpc],
+  )
+
+  const copyNpcWechatId = useCallback(
+    (wx: string) => {
+      const id = wx.trim()
+      if (!id) {
+        showLoreToast('暂无可复制的微信号')
+        return
+      }
+      // 须在用户手势内立即复制；先 await 人设同步会导致 clipboard 权限被拒
+      void copyTextToClipboard(id).then((ok) => {
+        showLoreToast(ok ? '已复制，可在微信「添加朋友」中搜索' : '复制失败，请长按手动复制')
+      })
+      void registerWechatForSearch(id)
+    },
+    [registerWechatForSearch, showLoreToast],
+  )
+
+  const ensureMeetContactBindingReady = useCallback(async (): Promise<boolean> => {
+    const userWx = profile.contactWechatId?.trim() ?? ''
+    if (!userWx || !isMeetContactWechatIdPlausible(userWx)) {
+      showLoreToast('请先在「我的」→ 03 CONTACT 填写你的微信号')
+      return false
+    }
+    const pid = profile.baseWeChatIdentityId?.trim()
+    if (!pid || pid === '__none__') {
+      showLoreToast('请先在「我的」→ 03 CONTACT 选择要绑定的微信身份')
+      return false
+    }
+    patchEncounterSwap(npc.id, { userWechatId: userWx })
+    return true
+  }, [npc.id, patchEncounterSwap, profile.baseWeChatIdentityId, profile.contactWechatId, showLoreToast])
+
+  const onToolbarConnect = useCallback(() => {
+    if (loading) return
+    if (connectToolbarLinked) {
+      const id = resolvedNpcWechatId.trim()
+      if (!id) {
+        showLoreToast('暂未留存对方微信号')
+        return
+      }
+      void registerWechatForSearch(id)
+      setLinkedWechatPeekOpen(true)
+      return
+    }
+    void ensureMeetContactBindingReady().then((ok) => {
+      if (ok) setCovenantModalOpen(true)
+    })
+  }, [connectToolbarLinked, ensureMeetContactBindingReady, loading, registerWechatForSearch, resolvedNpcWechatId, showLoreToast])
+
+  const onCovenantConfirmSend = useCallback(async () => {
+    if (loading) return
+    if (!(await ensureMeetContactBindingReady())) return
+    setCovenantModalOpen(false)
+    pushChatMessage(npc.id, { role: 'user', content: '\u200b', kind: 'meet_contract_user_request' })
+    setLoading(true)
+    try {
+      const transcript = meetMessagesToAiTranscript(getPersistedSnapshot().chatThreads[npc.id] ?? [])
+      const rawModel = await aiMeetContractCovenantReply({
+        apiConfig,
+        npc,
+        userProfile: profile,
+        transcript,
+        resonanceScore: getPersistedSnapshot().intimacyByNpcId[npc.id] ?? 18,
+        dualPersonaDirective: dualDirective,
+      })
+      const { parsed, bodyForBubbles } = stripMeetContractResponseBlock(rawModel)
+      const prep = prepareMeetNpcReplyForParsing(bodyForBubbles)
+      const rawBubbles = parseMeetNpcReplyBubbles(prep.bodyForBubbles)
+      const encounterSwapStatus = getPersistedSnapshot().encounterSwapByNpcId[npc.id]?.wechatSwapStatus ?? 'none'
+      const scrubbed = rawBubbles
+        .map((line) => scrubMeetNpcWechatLeaks([line], encounterSwapStatus, npc.wechatId)[0] ?? line)
+        .map((s) => s.trim())
+        .filter(Boolean)
+
+      const decision = parsed?.decision === 'agree' ? 'agree' : 'reject'
+      const actionType: 'char_add_user' | 'user_add_char' | 'none' =
+        decision === 'agree' && (parsed?.actionType === 'char_add_user' || parsed?.actionType === 'user_add_char')
+          ? parsed.actionType
+          : 'none'
+      const outcome: 'accepted' | 'rejected' = decision === 'agree' ? 'accepted' : 'rejected'
+
+      if (outcome === 'accepted') {
+        await applyCovenantAccepted({
+          explicitWechatId: parsed?.explicitWechatId,
+          bodyForBubbles,
+          scrubbedLines: scrubbed,
+          actionType,
+        })
+      } else {
+        pushChatMessage(npc.id, {
+          role: 'npc',
+          content: '\u200b',
+          kind: 'meet_contract_npc_status',
+          meetContractStatus: { outcome: 'rejected', actionType: 'none' },
+        })
+      }
+
+      const covenantThread = getPersistedSnapshot().chatThreads[npc.id] ?? []
+      const covenantOutbound = planMeetNpcOutboundBubbles(scrubbed, covenantThread, quoteLabels)
+      for (let i = 0; i < covenantOutbound.length; i++) {
+        const plan = covenantOutbound[i]!
+        if (i > 0) await sleep(computeMeetNpcStaggerDelayMs(covenantOutbound[i - 1]!.text))
+        else if (covenantOutbound.length > 1) await sleep(260)
+        pushChatMessage(npc.id, {
+          role: 'npc',
+          content: plan.text,
+          ...(plan.replyTo ? { replyTo: plan.replyTo } : {}),
+        })
+        await yieldToPaint()
+      }
+
+      if (covenantOutbound.length > 0) {
+        void finalizeMeetCharacterMemoryRoundAfterAiReply({
+          apiConfig,
+          characterId: npc.id,
+          characterRealName: resolveMeetNpcPeerRealName(liveNpc),
+          sessionPlayerIdentityId: profile.baseWeChatIdentityId,
+          meetContactWechatId: profile.contactWechatId,
+        })
+      }
+    } catch {
+      showLoreToast('契约响应失败')
+    } finally {
+      setLoading(false)
+      refocusComposer()
+    }
+  }, [
+    apiConfig,
+    applyCovenantAccepted,
+    dualDirective,
+    getPersistedSnapshot,
+    liveNpc,
+    loading,
+    npc,
+    profile,
+    pushChatMessage,
+    quoteLabels,
+    refocusComposer,
+    ensureMeetContactBindingReady,
+    showLoreToast,
+  ])
+
+  const onCharContractAccept = useCallback(
+    async (messageId: string) => {
+      if (loading) return
+      setLoading(true)
+      try {
+        resolveMeetContractCharRequest(npc.id, messageId)
+        pushChatMessage(npc.id, {
+          role: 'user',
+          content: '\u200b',
+          kind: 'meet_contract_user_response',
+          meetContractStatus: { outcome: 'accepted', actionType: 'none' },
+        })
+        await applyCovenantAccepted({ actionType: 'user_add_char' })
+      } catch {
+        showLoreToast('缔结失败')
+      } finally {
+        setLoading(false)
+        refocusComposer()
+      }
+    },
+    [
+      applyCovenantAccepted,
+      loading,
+      npc.id,
+      pushChatMessage,
+      refocusComposer,
+      resolveMeetContractCharRequest,
+      showLoreToast,
+    ],
+  )
+
+  const startLiveCoach = useCallback(() => {
+    setCoachStepIndex(0)
+    setCoachOpen(true)
+  }, [])
+
+  const finishCoach = useCallback(
+    (opts?: { openTutorial?: boolean }) => {
+      markEncounterChatCoachCompleted()
+      setCoachOpen(false)
+      setCoachStepIndex(0)
+      if (opts?.openTutorial) setTutorialOpen(true)
+    },
+    [markEncounterChatCoachCompleted],
+  )
+
+  useEffect(() => {
+    if (!hydrated) return
+    if (meetPersist.encounterChatCoachCompleted) return
+    const id = window.setTimeout(() => startLiveCoach(), 560)
+    return () => window.clearTimeout(id)
+  }, [hydrated, meetPersist.encounterChatCoachCompleted, startLiveCoach])
+
+  const onCharContractDecline = useCallback(
+    (messageId: string) => {
+      if (loading) return
+      resolveMeetContractCharRequest(npc.id, messageId)
+      pushChatMessage(npc.id, {
+        role: 'user',
+        content: '\u200b',
+        kind: 'meet_contract_user_response',
+        meetContractStatus: { outcome: 'rejected', actionType: 'none' },
+      })
+      /** 用户婉拒不封锁角色日后再次发起 */
+      patchEncounterSwap(npc.id, { wechatSwapStatus: 'none' })
+    },
+    [loading, npc.id, patchEncounterSwap, pushChatMessage, resolveMeetContractCharRequest],
+  )
+
+  const onTruthMirrorCharAccept = useCallback(
+    (messageId: string) => {
+      if (truthMirrorOpen) return
+      resolveMeetTruthMirrorCharRequest(npc.id, messageId)
+      pushChatMessage(npc.id, {
+        role: 'user',
+        content: '\u200b',
+        kind: 'meet_truth_mirror_user_response',
+        meetTruthMirrorUserResponse: { outcome: 'accepted' },
+      })
+      truthMirrorInviteMessageIdRef.current = null
+      setTruthMirrorInviteOpen(false)
+      setTruthMirrorInviteMinimized(false)
+      setTruthMirrorAutoPick(true)
+      setTruthMirrorOpen(true)
+    },
+    [npc.id, pushChatMessage, resolveMeetTruthMirrorCharRequest, truthMirrorOpen],
+  )
+
+  const onTruthMirrorCharDecline = useCallback(
+    (messageId: string) => {
+      if (loading) return
+      resolveMeetTruthMirrorCharRequest(npc.id, messageId)
+      pushChatMessage(npc.id, {
+        role: 'user',
+        content: '\u200b',
+        kind: 'meet_truth_mirror_user_response',
+        meetTruthMirrorUserResponse: { outcome: 'declined' },
+      })
+      truthMirrorInviteMessageIdRef.current = null
+      setTruthMirrorInviteOpen(false)
+      setTruthMirrorInviteMinimized(false)
+    },
+    [loading, npc.id, pushChatMessage, resolveMeetTruthMirrorCharRequest],
+  )
+
+  const resolveTruthMirrorInviteMessageId = useCallback(() => {
+    const pinned = truthMirrorInviteMessageIdRef.current
+    if (pinned) {
+      const thread = getPersistedSnapshot().chatThreads[npc.id] ?? messages
+      const hit = thread.find((m) => m.id === pinned)
+      if (hit?.kind === 'meet_truth_mirror_char_request' && !hit.meetTruthMirrorCharRequest?.resolved) {
+        return pinned
+      }
+    }
+    return findUnresolvedMeetTruthMirrorCharRequest(getPersistedSnapshot().chatThreads[npc.id] ?? messages)?.id
+  }, [getPersistedSnapshot, messages, npc.id])
+
+  const onTruthMirrorInviteAccept = useCallback(() => {
+    const messageId = resolveTruthMirrorInviteMessageId()
+    if (!messageId) {
+      setTruthMirrorInviteOpen(false)
+      setTruthMirrorInviteMinimized(false)
+      return
+    }
+    onTruthMirrorCharAccept(messageId)
+  }, [onTruthMirrorCharAccept, resolveTruthMirrorInviteMessageId])
+
+  const onTruthMirrorInviteDecline = useCallback(() => {
+    const messageId = resolveTruthMirrorInviteMessageId()
+    if (!messageId) {
+      setTruthMirrorInviteOpen(false)
+      setTruthMirrorInviteMinimized(false)
+      return
+    }
+    onTruthMirrorCharDecline(messageId)
+  }, [onTruthMirrorCharDecline, resolveTruthMirrorInviteMessageId])
 
   return (
     <div
       className="flex h-full min-h-0 flex-col"
       style={{
-        ...wechatThemeStyle,
+        ...meetChatThemeStyle,
         ...themeStyle,
         fontFamily: 'var(--phone-font)',
         fontSize: 'var(--wx-font-size)',
@@ -665,18 +1423,18 @@ export function EncounterChatRoom({ npc, onBack }: { npc: EncounterNPC; onBack: 
             className="truncate text-center text-[16px] font-medium leading-tight"
             style={{ color: 'var(--wx-text)' }}
           >
-            {npc.nickname}
+            {liveNpc.nickname}
           </h1>
         </div>
-        <div className="flex w-10 shrink-0 items-center justify-end">
+        <div className="flex w-10 shrink-0 items-center justify-end" data-meet-coach="tutorial">
           <Pressable
-            onClick={() => setDevPanelOpen(true)}
+            onClick={() => setTutorialOpen(true)}
             className="flex h-9 w-9 items-center justify-center rounded-full"
             style={{ color: 'var(--wx-text-muted)' }}
-            aria-label="开发者调试"
-            title="开发者"
+            aria-label="聊天说明"
+            title="聊天说明"
           >
-            <Code2 className="size-[18px]" strokeWidth={1.75} aria-hidden />
+            <BookOpen className="size-[17px] text-[#b8973a]" strokeWidth={1.5} aria-hidden />
           </Pressable>
         </div>
       </header>
@@ -684,65 +1442,209 @@ export function EncounterChatRoom({ npc, onBack }: { npc: EncounterNPC; onBack: 
       <div
         className="shrink-0 border-b px-3 py-2"
         style={{ borderColor: 'var(--wx-border)', background: 'var(--wx-surface)' }}
+        data-meet-coach="affection"
       >
         <AffectionMeter value={intimacy} flashKey={resonanceFlashKey} />
-        <p className="mt-2 text-[10px] leading-snug text-gray-500">
-          临时会话：模型会参考当前<span className="text-gray-600">情感共鸣刻度（0–100）</span>
-          与最近对话调节语气；刻度仍主要由对方回复中的判定增减；达阈后可发起联络互换仪式。
-        </p>
-        {canTrySync ? (
-          <Pressable
-            onClick={() => void injectWechat()}
-            className="mt-2 w-full rounded-[10px] border border-gray-200 py-2 text-[12px] text-[#3d3a34]"
-            style={{
-              background: 'color-mix(in oklab, white 92%, transparent)',
-            }}
-          >
-            手动同步到微信通讯录 · {resolvedWx}
-          </Pressable>
-        ) : null}
-        {npc.comprehensivePersona ? (
-          <Pressable
-            onClick={() => setWorldbookOpen(true)}
-            className="mt-2 flex w-full items-center justify-center gap-2 rounded-[10px] border border-[#D4AF37]/35 py-2 text-[12px] text-[#3d3a34]"
-            style={{
-              background: 'color-mix(in oklab, var(--wx-surface) 95%, transparent)',
-            }}
-          >
-            <BookMarked className="size-3.5 opacity-70" strokeWidth={1.25} />
-            世界书 · 分册与条目
-          </Pressable>
-        ) : null}
-        {syncError ? <p className="mt-1 text-[11px] text-red-600/90">{syncError}</p> : null}
+        {syncError ? <p className="mt-2 text-[11px] text-red-600/90">{syncError}</p> : null}
       </div>
 
-      <div
-        ref={scrollRef}
-        className="meet-scrollbar relative flex min-h-0 flex-1 flex-col gap-2 overflow-y-auto overflow-x-hidden py-4 pl-0 pr-0 [-webkit-overflow-scrolling:touch]"
-      >
-        {messages.map((m, i) => {
+      <div className="relative flex min-h-0 flex-1 flex-col">
+        <EncounterActionBar
+          onProfile={onToolbarProfile}
+          onConnect={onToolbarConnect}
+          connectDisabled={connectToolbarDisabled}
+          connectLinked={connectToolbarLinked}
+          connectPendingWechatSync={connectPendingWechatSync}
+          onTruthMirror={() => {
+            setTruthMirrorAutoPick(false)
+            setTruthMirrorOpen(true)
+          }}
+          anyLoading={loading}
+        />
+        {meetBg ? (
+          <>
+            <div
+              className="pointer-events-none absolute inset-0 z-0 bg-cover bg-center bg-no-repeat"
+              style={{ backgroundImage: `url(${meetBg})` }}
+              aria-hidden
+            />
+            <div
+              className="pointer-events-none absolute inset-0 z-[1]"
+              style={{ background: 'color-mix(in oklab, white 58%, transparent)' }}
+              aria-hidden
+            />
+          </>
+        ) : null}
+        <div
+          ref={scrollRef}
+          className="meet-scrollbar relative z-[2] flex min-h-0 flex-1 flex-col gap-2 overflow-y-auto overflow-x-hidden py-4 pl-0 pr-0 [-webkit-overflow-scrolling:touch]"
+          style={{
+            ...(meetBg ? { background: 'transparent' } : {}),
+            paddingBottom: `calc(1rem + ${composerInsetPx}px)`,
+          }}
+        >
+        {timelineRows.map((row) => {
+          if (row.kind === 'time') {
+            if (!showMeetTimestamp) return null
+            return <MeetChatTimestampRow key={row.id} text={row.text} />
+          }
+          const m = row.message
+          const i = row.index
+          if (m.kind === 'meet_contract_user_request') {
+            return (
+              <MeetContractUserRequestCard
+                key={m.id}
+                selfAvatarUrl={meetSelfAvatar}
+                showAvatar={bubbleTheme.showAvatar}
+                avatarRadiusPx={bubbleTheme.avatarRadiusPx}
+              />
+            )
+          }
+          if (m.kind === 'meet_contract_npc_status' && m.meetContractStatus) {
+            return (
+              <MeetContractNpcResponseCard
+                key={m.id}
+                payload={m.meetContractStatus}
+                otherAvatarUrl={liveNpc.avatarUrl}
+                showAvatar={bubbleTheme.showAvatar}
+                avatarRadiusPx={bubbleTheme.avatarRadiusPx}
+                onCopyWechat={copyNpcWechatId}
+              />
+            )
+          }
+          if (m.kind === 'meet_contract_char_request') {
+            return (
+              <MeetContractCharRequestCard
+                key={m.id}
+                resolved={!!m.meetContractCharRequest?.resolved}
+                otherAvatarUrl={liveNpc.avatarUrl}
+                showAvatar={bubbleTheme.showAvatar}
+                avatarRadiusPx={bubbleTheme.avatarRadiusPx}
+                disabled={loading}
+                onAccept={() => void onCharContractAccept(m.id)}
+                onDecline={() => onCharContractDecline(m.id)}
+              />
+            )
+          }
+          if (m.kind === 'meet_contract_user_response' && m.meetContractStatus) {
+            return (
+              <MeetContractUserResponseCard
+                key={m.id}
+                outcome={m.meetContractStatus.outcome}
+                selfAvatarUrl={meetSelfAvatar}
+                showAvatar={bubbleTheme.showAvatar}
+                avatarRadiusPx={bubbleTheme.avatarRadiusPx}
+              />
+            )
+          }
           if (m.kind === 'wechat_swap_card' && m.swapCard) {
             return <EncounterWeChatSwapCard key={m.id} payload={m.swapCard} />
+          }
+          if (m.kind === 'meet_system') {
+            return <MeetSystemCenterLine key={m.id} text={m.content} />
+          }
+          if (m.kind === 'meet_music_share' && m.musicShare) {
+            return <MeetMusicShareCard key={m.id} payload={m.musicShare} />
+          }
+          if (m.kind === 'meet_echo_reveal' && m.echoReveal) {
+            return <MeetEchoRevealCards key={m.id} payload={m.echoReveal} />
+          }
+          if (m.kind === 'meet_truth_mirror_char_request') {
+            const reqIdx = messages.findIndex((x) => x.id === m.id)
+            const userResp = messages
+              .slice(reqIdx + 1)
+              .find((x) => x.kind === 'meet_truth_mirror_user_response' && x.meetTruthMirrorUserResponse)
+            return (
+              <MeetTruthMirrorCharRequestCard
+                key={m.id}
+                resolved={!!m.meetTruthMirrorCharRequest?.resolved}
+                outcome={userResp?.meetTruthMirrorUserResponse?.outcome}
+                otherAvatarUrl={liveNpc.avatarUrl}
+                showAvatar={bubbleTheme.showAvatar}
+                avatarRadiusPx={bubbleTheme.avatarRadiusPx}
+                disabled={truthMirrorOpen}
+                onAccept={() => onTruthMirrorCharAccept(m.id)}
+                onDecline={() => onTruthMirrorCharDecline(m.id)}
+              />
+            )
+          }
+          if (m.kind === 'meet_truth_mirror_user_response' && m.meetTruthMirrorUserResponse) {
+            return (
+              <MeetTruthMirrorUserResponseCard
+                key={m.id}
+                outcome={m.meetTruthMirrorUserResponse.outcome}
+                selfAvatarUrl={meetSelfAvatar}
+                showAvatar={bubbleTheme.showAvatar}
+                avatarRadiusPx={bubbleTheme.avatarRadiusPx}
+              />
+            )
+          }
+          if (m.kind === 'meet_truth_mirror_record' && m.truthMirrorRecord) {
+            return <MeetTruthMirrorRecordCard key={m.id} payload={m.truthMirrorRecord} npcGender={liveNpc.gender} />
           }
           const prev = i > 0 ? messages[i - 1] : undefined
           const merge = bubbleTheme.mergeConsecutiveAvatarGroup
           const sameRun = prev && prev.role === m.role
           const showAvatarColumn = !merge || !sameRun
+          const image = m.images?.[0]
+          const imgB64 = image?.base64?.trim()
+          if (imgB64) {
+            const isSelfImg = m.role === 'user'
+            const src = `data:${image?.type ?? 'image/jpeg'};base64,${imgB64}`
+            return (
+              <motion.div key={m.id} id={`meet-msg-${m.id}`} className="w-full max-w-full shrink-0">
+                <WeChatChatImageBubbleRow
+                  id={m.id}
+                  isSelf={isSelfImg}
+                  src={src}
+                  bubble={bubbleTheme}
+                  showAvatar={bubbleTheme.showAvatar}
+                  showAvatarColumn={showAvatarColumn}
+                  chatSelfAvatarUrl={meetSelfAvatar}
+                  chatOtherAvatarUrl={liveNpc.avatarUrl}
+                  selected={meetActionPanelOpen && meetActionTarget?.id === m.id}
+                  onLongPress={(rect) => openMeetActionPanelFor(m, rect)}
+                />
+              </motion.div>
+            )
+          }
+          const display = resolveMeetMessageDisplay(m, quoteLabels)
+          const bubbleText = meetOutboundBubbleDisplayText(display)
+          const quoteOnly = isMeetQuoteOnlyBubbleMessage(m)
+          const isSelf = m.role === 'user'
+          if (quoteOnly) return null
           return (
-            <WeChatMessageBubbleRow
-              key={m.id}
-              messageText={m.content}
-              isSelf={m.role === 'user'}
-              bubble={bubbleTheme}
-              showAvatar={bubbleTheme.showAvatar}
-              showBubbleTail={bubbleTheme.showBubbleTail}
-              variant="chat"
-              showAvatarColumn={showAvatarColumn}
-              chatSelfAvatarUrl={playerAvatarUrl}
-              chatOtherAvatarUrl={npc.avatarUrl}
-              bubbleSelected={meetActionPanelOpen && meetActionTarget?.id === m.id}
-              onBubbleLongPress={(rect) => openMeetActionPanelFor(m, rect)}
-            />
+            <motion.div key={m.id} id={`meet-msg-${m.id}`} className="w-full max-w-full shrink-0">
+              <WeChatMessageBubbleRow
+                messageText={bubbleText}
+                isSelf={isSelf}
+                bubble={bubbleTheme}
+                showAvatar={bubbleTheme.showAvatar}
+                showBubbleTail={bubbleTheme.showBubbleTail}
+                variant="chat"
+                showAvatarColumn={showAvatarColumn}
+                chatSelfAvatarUrl={meetSelfAvatar}
+                chatOtherAvatarUrl={liveNpc.avatarUrl}
+                bubbleSelected={meetActionPanelOpen && meetActionTarget?.id === m.id}
+                onBubbleLongPress={(rect) => openMeetActionPanelFor(m, rect)}
+                chatBubbleSurfaceStyle={meetEncounterBubbleSurfaceStyle(isSelf)}
+                replyPreviewInsetStyle={meetEncounterQuoteInsetStyle(isSelf)}
+                replyPreview={
+                  display.replyTo
+                    ? {
+                        senderName: display.replyTo.senderName,
+                        content: display.replyTo.content,
+                        onClick: display.replyTo.messageId
+                          ? () => {
+                              const el = document.getElementById(`meet-msg-${display.replyTo!.messageId}`)
+                              el?.scrollIntoView({ behavior: 'smooth', block: 'center' })
+                            }
+                          : undefined,
+                      }
+                    : undefined
+                }
+              />
+            </motion.div>
           )
         })}
         {loading ? (
@@ -753,18 +1655,30 @@ export function EncounterChatRoom({ npc, onBack }: { npc: EncounterNPC; onBack: 
           >
             <div className="flex max-w-full flex-row items-end gap-3">
               {bubbleTheme.showAvatar ? (
-                <img
-                  src={npc.avatarUrl}
-                  alt=""
-                  width={40}
-                  height={40}
-                  className="h-10 w-10 shrink-0 object-cover"
-                  style={{
-                    borderRadius: `${bubbleTheme.avatarRadiusPx}px`,
-                    border: '1px solid color-mix(in oklab, var(--wx-border) 70%, transparent)',
-                  }}
-                  aria-hidden
-                />
+                liveNpc.avatarUrl?.trim() ? (
+                  <img
+                    src={liveNpc.avatarUrl}
+                    alt=""
+                    width={40}
+                    height={40}
+                    className="h-10 w-10 shrink-0 object-cover"
+                    style={{
+                      borderRadius: `${bubbleTheme.avatarRadiusPx}px`,
+                      border: '1px solid color-mix(in oklab, var(--wx-border) 70%, transparent)',
+                    }}
+                    aria-hidden
+                  />
+                ) : (
+                  <div
+                    className="h-10 w-10 shrink-0"
+                    style={{
+                      borderRadius: `${bubbleTheme.avatarRadiusPx}px`,
+                      background: 'rgba(0,0,0,0.06)',
+                      border: '1px solid color-mix(in oklab, var(--wx-border) 70%, transparent)',
+                    }}
+                    aria-hidden
+                  />
+                )
               ) : null}
               <div
                 className="inline-flex items-center gap-[3px] rounded-lg bg-[#ededed] px-3 py-2"
@@ -787,10 +1701,12 @@ export function EncounterChatRoom({ npc, onBack }: { npc: EncounterNPC; onBack: 
         ) : null}
         <style>{`@keyframes meetTypingDot { 0%, 80%, 100% { transform: translateY(0); opacity: 0.35; } 40% { transform: translateY(-4px); opacity: 1; } }`}</style>
       </div>
+      </div>
 
       {/* 与 ChatRoom 底栏一致：上内边距 + 底部安全区 */}
       <div
         className="relative z-10 w-full max-w-full shrink-0 border-t"
+        data-meet-coach="composer"
         style={{
           backgroundColor: 'var(--wx-input-bg)',
           borderTopColor: 'var(--wx-border)',
@@ -798,52 +1714,17 @@ export function EncounterChatRoom({ npc, onBack }: { npc: EncounterNPC; onBack: 
           paddingRight: 12,
           paddingTop: 12,
           paddingBottom: 'max(12px, env(safe-area-inset-bottom, 0px))',
+          transform: composerInsetPx > 0 ? `translate3d(0, -${composerInsetPx}px, 0)` : undefined,
+          transition: 'transform 220ms ease-out',
+          willChange: composerInsetPx > 0 ? 'transform' : undefined,
         }}
       >
-        {((intimacy >= 100 && swapMeta.wechatSwapStatus === 'available') ||
-          swapMeta.wechatSwapStatus === 'char_requested') &&
-        npc.status !== 'wechat_added' ? (
-          <div className="mb-3 rounded-full border border-[#D4AF37]/30 bg-white/90 px-3 py-2 shadow-[0_8px_32px_rgba(28,24,18,0.05)]">
-            <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-              <p className="font-mono text-[10px] leading-snug text-gray-500">
-                [ System ]{' '}
-                {swapMeta.wechatSwapStatus === 'char_requested'
-                  ? '对方提议交换联络方式，可确认你的微信号并衔接回复。'
-                  : '情感共鸣已达阈值，可申请交换联络方式。'}
-              </p>
-              <button
-                type="button"
-                disabled={loading}
-                onClick={() => onSwapCeremonyRequest()}
-                className="shrink-0 rounded-full border border-[#D4AF37]/50 px-3 py-1 font-mono text-[10px] uppercase tracking-wide text-[#6b6459] disabled:opacity-40"
-                style={{ background: 'color-mix(in oklab, white 96%, transparent)' }}
-              >
-                发起申请 · Request
-              </button>
-            </div>
-            <input
-              type="text"
-              value={userWxDraft}
-              onChange={(e) => {
-                const v = e.target.value.trimStart()
-                setUserWxDraft(v)
-                patchEncounterSwap(npc.id, { userWechatId: v })
-              }}
-              placeholder="Your WeChat ID"
-              disabled={loading}
-              className="mt-2 w-full rounded-[10px] border border-gray-200 bg-white px-3 py-2 font-mono text-[11px] text-[#3d3a34] outline-none placeholder:text-gray-400 disabled:opacity-50"
-              spellCheck={false}
-              autoCapitalize="off"
-              autoCorrect="off"
-            />
-          </div>
-        ) : null}
         {quoteTarget ? (
           <div className="mb-2 flex items-start gap-2 rounded-[12px] border border-[#D4AF37]/25 bg-white/95 px-3 py-2">
             <div className="min-w-0 flex-1">
-              <p className="font-mono text-[9px] uppercase tracking-[0.14em] text-[#b8973a]">Quote · 引用</p>
+              <p className="text-[9px] tracking-[0.12em] text-[#b8973a]">引用</p>
               <p className="mt-0.5 line-clamp-3 text-[12px] leading-snug text-[#4a463f]">
-                {quoteTarget.role === 'npc' ? '对方' : '自己'}：{quoteTarget.text}
+                {quoteTarget.role === 'npc' ? quoteLabels.npcNickname : quoteLabels.userNickname}：{quoteTarget.text}
               </p>
             </div>
             <button
@@ -857,6 +1738,50 @@ export function EncounterChatRoom({ npc, onBack }: { npc: EncounterNPC; onBack: 
           </div>
         ) : null}
         <div className="flex w-full max-w-full items-end gap-2">
+          <input
+            ref={imageFileInputRef}
+            type="file"
+            accept="image/*"
+            className="hidden"
+            onChange={(e) => {
+              const f = e.target.files?.[0]
+              e.target.value = ''
+              if (!f || !f.type.startsWith('image/')) return
+              const r = new FileReader()
+              r.onload = () => {
+                const url = typeof r.result === 'string' ? r.result : ''
+                if (!url) return
+                const mime = (
+                  f.type === 'image/png' ||
+                  f.type === 'image/gif' ||
+                  f.type === 'image/webp'
+                    ? f.type
+                    : 'image/jpeg'
+                ) as MeetImageMime
+                const b64 = url.replace(/^data:image\/\w+;base64,/, '')
+                void commitSendImage(b64, false, mime)
+              }
+              r.readAsDataURL(f)
+            }}
+          />
+          <Pressable
+            type="button"
+            disabled={loading}
+            onClick={() => imageFileInputRef.current?.click()}
+            className="mb-[2px] flex h-9 w-9 shrink-0 items-center justify-center rounded-full border border-[#e8e4dc] bg-white text-[#6e6860] disabled:opacity-40"
+            aria-label="从相册选择图片"
+          >
+            <ImagePlus className="size-5" strokeWidth={1.5} aria-hidden />
+          </Pressable>
+          <Pressable
+            type="button"
+            disabled={loading}
+            onClick={() => setCameraOpen(true)}
+            className="mb-[2px] flex h-9 w-9 shrink-0 items-center justify-center rounded-full border border-[#e8e4dc] bg-white text-[#6e6860] disabled:opacity-40"
+            aria-label="拍摄图片"
+          >
+            <span className="text-[11px] font-medium tracking-[0.04em]">拍</span>
+          </Pressable>
           <textarea
             ref={textareaRef}
             value={draft}
@@ -873,6 +1798,11 @@ export function EncounterChatRoom({ npc, onBack }: { npc: EncounterNPC; onBack: 
               maxHeight: 120,
             }}
             onKeyDown={onComposerKeyDown}
+            onFocus={() => {
+              requestAnimationFrame(() => {
+                textareaRef.current?.scrollIntoView({ block: 'nearest', behavior: 'smooth' })
+              })
+            }}
             aria-label="输入消息"
           />
           <Pressable
@@ -890,14 +1820,6 @@ export function EncounterChatRoom({ npc, onBack }: { npc: EncounterNPC; onBack: 
             <SendPlaneIcon color={planeColor} />
           </Pressable>
         </div>
-        <p
-          className="mt-2 px-0.5 text-[11px] leading-tight"
-          style={{ color: 'var(--wx-text-muted)' }}
-        >
-          单击回车仅发己方气泡；双击回车或点纸飞机后请求对方回复。若已发过话且输入框为空，点纸飞机或按一次回车可催对方回复。对方多条回复按句逐条露出（与微信私聊节奏一致）。
-          <span className="text-gray-600">长按气泡</span>
-          可引用、复制；己方最后一条可撤回。Shift+Enter 换行。
-        </p>
       </div>
 
       {npc.comprehensivePersona ? (
@@ -909,8 +1831,95 @@ export function EncounterChatRoom({ npc, onBack }: { npc: EncounterNPC; onBack: 
           avatarUrl={npc.avatarUrl}
           dossier={npc.comprehensivePersona}
           meetProfile={profile}
+          intimacyScore={intimacy}
+          worldbookRefreshKey={worldbookRefreshKey}
         />
       ) : null}
+
+      <ConnectCovenantModalPortal
+        open={covenantModalOpen}
+        onClose={() => setCovenantModalOpen(false)}
+        onConfirmSend={() => void onCovenantConfirmSend()}
+      />
+
+      <AnimatePresence>
+        {cameraOpen ? (
+          <WeChatChatCameraScreen
+            open={cameraOpen}
+            onClose={() => setCameraOpen(false)}
+            onToast={showLoreToast}
+            onSend={({ base64, mime }) => {
+              setCameraOpen(false)
+              void commitSendImage(base64, false, mime)
+            }}
+          />
+        ) : null}
+      </AnimatePresence>
+
+      <MeetChatTutorialModalPortal
+        open={tutorialOpen}
+        onClose={() => setTutorialOpen(false)}
+        onStartLiveCoach={startLiveCoach}
+      />
+
+      <MeetEncounterChatCoachPortal
+        open={coachOpen}
+        stepIndex={coachStepIndex}
+        onStepChange={setCoachStepIndex}
+        onSkip={() => finishCoach()}
+        onComplete={(opts) => finishCoach(opts)}
+      />
+
+      <MeetLinkedWechatRevealModalPortal
+        open={linkedWechatPeekOpen}
+        peerRealName={resolveMeetNpcPeerRealName(liveNpc)}
+        wechatId={resolvedNpcWechatId.trim()}
+        onClose={() => setLinkedWechatPeekOpen(false)}
+        onCopy={() => copyNpcWechatId(resolvedNpcWechatId)}
+      />
+
+      <TruthMirrorCharInvitePortal
+        open={truthMirrorInviteOpen}
+        minimized={truthMirrorInviteMinimized}
+        nickname={liveNpc.nickname}
+        npcGender={liveNpc.gender}
+        onMinimize={() => setTruthMirrorInviteMinimized(true)}
+        onExpand={() => setTruthMirrorInviteMinimized(false)}
+        onAccept={onTruthMirrorInviteAccept}
+        onDecline={onTruthMirrorInviteDecline}
+      />
+
+      <TruthMirrorCeremonyPortal
+        open={truthMirrorOpen}
+        onClose={() => {
+          setTruthMirrorOpen(false)
+          setTruthMirrorAutoPick(false)
+        }}
+        autoPickCard={truthMirrorAutoPick}
+        npc={liveNpc}
+        userProfile={profile}
+        apiConfig={apiConfig}
+        dualPersonaDirective={dualDirective}
+        encounterSwapStatus={swapMeta.wechatSwapStatus}
+        getThreadMessages={() => getPersistedSnapshot().chatThreads[npc.id] ?? []}
+        setParentLoading={setLoading}
+        onPersist={(payload) => {
+          pushChatMessage(npc.id, {
+            role: 'npc',
+            content: '\u200b',
+            kind: 'meet_truth_mirror_record',
+            truthMirrorRecord: payload,
+          })
+          void appendMeetTruthMirrorToCharacterWorldbook({
+            characterId: npc.id,
+            charNickname: liveNpc.nickname,
+            charRealName: resolveMeetNpcCharRealNameForLore(liveNpc),
+            playerDisplayName: meetDisplayName,
+            record: payload,
+          }).then(() => setWorldbookRefreshKey((k) => k + 1))
+          refocusComposer()
+        }}
+      />
 
       <AnimatePresence>
         {contactSyncOverlay ? (
@@ -934,10 +1943,10 @@ export function EncounterChatRoom({ npc, onBack }: { npc: EncounterNPC; onBack: 
               <p id="meet-sync-overlay-title" className="text-[16px] font-medium tracking-[0.04em] text-[#2c2a26]">
                 {contactSyncOverlay.phase === 'epilogue' ? '正在写入尾声延展条目…' : '正在同步至通讯录与人设…'}
               </p>
-              <p className="meet-caption-en mt-3 text-[11px] leading-relaxed text-[#7a736b]">
+              <p className="mt-3 text-[11px] leading-relaxed text-[#7a736b]">
                 {contactSyncOverlay.phase === 'epilogue'
-                  ? '正在根据临时会话生成收束稿，并写入档案法则。'
-                  : '正在写入人设库、遇见同步世界书分册（含尾声延展）与镜像微信通讯录，请稍候。'}
+                  ? '正在根据邂逅聊天记录撰写结业初印象（约百字，写入 vol10）…'
+                  : '正在写入人设库并加入微信通讯录，请稍候。'}
               </p>
             </div>
           </motion.div>
@@ -969,14 +1978,16 @@ export function EncounterChatRoom({ npc, onBack }: { npc: EncounterNPC; onBack: 
               <div className="border-b border-[#ebe7e0] px-5 pb-3 pt-5 text-center">
                 <p
                   id="meet-epilogue-notice-title"
-                  className="font-mono text-[10px] uppercase tracking-[0.24em] text-[#9a9590]"
+                  className="text-[10px] tracking-[0.2em] text-[#9a9590]"
                 >
-                  Lumi Meet
+                  遇见
                 </p>
                 <p className="mt-2 text-[17px] font-medium tracking-[0.06em] text-[#2c2a26]">已添加至通讯录</p>
               </div>
               <div className="px-5 py-4">
-                <p className="text-[13px] leading-relaxed text-[#5c574f]">「{npc.nickname}」已同步至镜像微信通讯录。</p>
+                <p className="text-[13px] leading-relaxed text-[#5c574f]">
+                  「{npc.nickname}」已同步至你的微信通讯录；并根据邂逅记录写入了 vol10「对 TA 的当前态度」结业初印象。
+                </p>
               </div>
               <div className="border-t border-[#ebe7e0] px-5 pb-[max(14px,env(safe-area-inset-bottom,0px))] pt-3">
                 <Pressable
@@ -1006,133 +2017,6 @@ export function EncounterChatRoom({ npc, onBack }: { npc: EncounterNPC; onBack: 
         onAction={onMeetPanelAction}
         actionIds={meetPanelActionIds}
       />
-
-      <AnimatePresence>
-        {devPanelOpen ? (
-          <motion.div
-            key="meet-dev-overlay"
-            role="presentation"
-            className="fixed inset-0 z-[540] flex items-end justify-center bg-black/45 px-3 pb-[max(12px,env(safe-area-inset-bottom,0px))] pt-10 sm:items-center"
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            exit={{ opacity: 0 }}
-            transition={{ duration: 0.2 }}
-            onClick={() => setDevPanelOpen(false)}
-          >
-            <motion.div
-              role="dialog"
-              aria-modal="true"
-              aria-labelledby="meet-dev-panel-title"
-              layout
-              initial={{ y: 28, opacity: 0 }}
-              animate={{ y: 0, opacity: 1 }}
-              exit={{ y: 24, opacity: 0 }}
-              transition={{ type: 'spring', stiffness: 420, damping: 34 }}
-              className="meet-scrollbar pointer-events-auto max-h-[min(78vh,560px)] w-full max-w-md overflow-y-auto rounded-t-[20px] border border-[#e8e4dc] bg-[#faf8f5] shadow-[0_-20px_80px_rgba(22,18,14,0.22)] sm:rounded-[20px]"
-              onClick={(e) => e.stopPropagation()}
-            >
-              <div className="sticky top-0 z-[1] flex items-start justify-between gap-2 border-b border-[#ebe7e0] bg-[#faf8f5]/95 px-4 py-3 backdrop-blur-sm">
-                <div className="min-w-0">
-                  <p id="meet-dev-panel-title" className="font-mono text-[10px] uppercase tracking-[0.22em] text-[#9a9590]">
-                    Dev Tools
-                  </p>
-                  <p className="mt-0.5 text-[15px] font-medium text-[#2c2a26]">开发者调试</p>
-                  <p className="mt-1 text-[10px] leading-relaxed text-[#8a8478]">
-                    调整好感与互换状态后，用正常发消息 / 催更走模型；「已互换」仅改标记，不会自动执行通讯录同步。
-                  </p>
-                </div>
-                <button
-                  type="button"
-                  onClick={() => setDevPanelOpen(false)}
-                  className="flex size-9 shrink-0 items-center justify-center rounded-full border border-[#e5e0d8] bg-white/90 text-[#6a6560] hover:border-[#d4c8b8]"
-                  aria-label="关闭"
-                >
-                  <X className="size-4" strokeWidth={1.5} aria-hidden />
-                </button>
-              </div>
-
-              <div className="space-y-5 px-4 py-4">
-                <section>
-                  <p className="font-mono text-[10px] uppercase tracking-[0.16em] text-[#9a9590]">Resonance · 好感</p>
-                  <p className="mt-1 text-[12px] text-[#5c574f]">
-                    当前存档：<span className="font-mono text-[#2c2a26]">{intimacy}</span> / 100
-                  </p>
-                  <div className="mt-3 flex items-center gap-3">
-                    <input
-                      type="range"
-                      min={0}
-                      max={100}
-                      value={devIntDraft}
-                      onChange={(e) => setDevIntDraft(Number(e.target.value))}
-                      className="min-w-0 flex-1 accent-[#b8973a]"
-                      aria-valuetext={`${devIntDraft}`}
-                    />
-                    <span className="w-9 shrink-0 text-right font-mono text-[13px] text-[#2c2a26]">{devIntDraft}</span>
-                  </div>
-                  <div className="mt-2 flex flex-wrap gap-2">
-                    {([-10, -5, 5, 10] as const).map((d) => (
-                      <button
-                        key={d}
-                        type="button"
-                        onClick={() => setDevIntDraft((v) => Math.max(0, Math.min(100, v + d)))}
-                        className="rounded-full border border-[#e5e0d8] bg-white px-3 py-1.5 font-mono text-[11px] text-[#5c574f] active:scale-[0.98]"
-                      >
-                        {d > 0 ? `+${d}` : `${d}`}
-                      </button>
-                    ))}
-                    {([0, 18, 50, 99, 100] as const).map((v) => (
-                      <button
-                        key={v}
-                        type="button"
-                        onClick={() => setDevIntDraft(v)}
-                        className="rounded-full border border-[#e5e0d8] bg-[#fffcf9] px-3 py-1.5 font-mono text-[11px] text-[#5c574f] active:scale-[0.98]"
-                      >
-                        {v}
-                      </button>
-                    ))}
-                  </div>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setEncounterIntimacy(npc.id, devIntDraft)
-                      setResonanceFlashKey((k) => k + 1)
-                    }}
-                    className="meet-btn-primary mt-3 w-full py-2.5 text-[13px]"
-                  >
-                    应用好感
-                  </button>
-                </section>
-
-                <section className="border-t border-[#ebe7e0] pt-4">
-                  <p className="font-mono text-[10px] uppercase tracking-[0.16em] text-[#9a9590]">WeChat swap · 互换</p>
-                  <p className="mt-1 text-[11px] leading-relaxed text-[#7a736b]">
-                    选「用户已发起」后，发一条消息或点纸飞机催更，可触发结业与（若配置 API）尾声档案写入。
-                  </p>
-                  <label className="mt-2 block text-[10px] text-[#9a9590]">状态</label>
-                  <select
-                    value={swapMeta.wechatSwapStatus}
-                    onChange={(e) => {
-                      const v = e.target.value as WechatSwapStatus
-                      patchEncounterSwap(npc.id, { wechatSwapStatus: v })
-                    }}
-                    className="mt-1 w-full rounded-[12px] border border-[#e5e0d8] bg-white px-3 py-2.5 text-[13px] text-[#2c2a26] outline-none"
-                  >
-                    {SWAP_DEV_OPTIONS.map((o) => (
-                      <option key={o.value} value={o.value}>
-                        {o.zh}
-                      </option>
-                    ))}
-                  </select>
-                  <p className="mt-2 text-[10px] text-[#a39e96]">
-                    当前界面：<span className="font-mono">{swapMeta.wechatSwapStatus}</span>
-                    {npc.status === 'wechat_added' ? ' · 已写入通讯录' : ''}
-                  </p>
-                </section>
-              </div>
-            </motion.div>
-          </motion.div>
-        ) : null}
-      </AnimatePresence>
 
       <AnimatePresence>
         {loreToast ? (

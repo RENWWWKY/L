@@ -16,6 +16,7 @@ import { Pressable } from '../../../components/Pressable'
 
 export type WeChatGlobalSettingsNav =
   | { screen: 'root' }
+  | { screen: 'account-security' }
   | { screen: 'danmaku' }
   | { screen: 'notify' }
   | { screen: 'busy' }
@@ -30,7 +31,12 @@ type RowDef = {
 }
 
 const ROWS: RowDef[] = [
-  { id: 'security', label: '账号安全', icon: <Shield className="size-5 text-black" strokeWidth={1.75} />, nav: { screen: 'stub', title: '账号安全' } },
+  {
+    id: 'security',
+    label: '账号安全',
+    icon: <Shield className="size-5 text-black" strokeWidth={1.75} />,
+    nav: { screen: 'account-security' },
+  },
   { id: 'notify', label: '通知', icon: <Bell className="size-5 text-black" strokeWidth={1.75} />, nav: { screen: 'notify' } },
   { id: 'friends', label: '朋友权限', icon: <Users className="size-5 text-black" strokeWidth={1.75} />, nav: { screen: 'stub', title: '朋友权限' } },
   { id: 'storage', label: '存储空间', icon: <HardDrive className="size-5 text-black" strokeWidth={1.75} />, nav: { screen: 'stub', title: '存储空间' } },

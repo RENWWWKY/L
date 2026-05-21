@@ -11,6 +11,7 @@ import { resolveOfflineDatingArchiveContext } from '../dating/offlineDatingArchi
 import { personaDb } from '../newFriendsPersona/idb'
 import type { CharacterMemory, CharacterMemoryTriggerMode } from '../newFriendsPersona/types'
 import { uid } from '../newFriendsPersona/utils'
+import { reconcileMemoryUserPlaceholdersOnSave } from '../memoryUserPlaceholderBindings'
 import { MemoryContentWithSourceBadgesFromRow } from './memoryContentExpanded'
 import { composeMemoryWithSourcePrefix, parseMemorySourcePrefix } from './memorySourceBadges'
 import { memoryTextMatchesQuery } from './memorySearchFilter'
@@ -172,13 +173,24 @@ export function PrivateMemoryList({ contacts }: { contacts: WeChatContactRow[] }
     const t = editDraft.trim()
     if (!t) return
     const flags = parseMemorySourcePrefix(editRow.content)
-    const content = composeMemoryWithSourcePrefix(flags, t).slice(0, 4000)
+    let body = t
+    const reconciled = await reconcileMemoryUserPlaceholdersOnSave({
+      content: body,
+      userPlaceholderBindings: editRow.userPlaceholderBindings,
+      sourceWechatAccountId: editRow.sourceWechatAccountId,
+      sourceSessionPlayerIdentityId: editRow.sourceSessionPlayerIdentityId,
+    })
+    body = reconciled.content
+    const content = composeMemoryWithSourcePrefix(flags, body).slice(0, 4000)
     const mode: CharacterMemoryTriggerMode = editTriggerMode === 'always' ? 'always' : 'keyword'
     const normalized = [...new Set(editKeywords.map((x) => x.replace(/\s+/g, ' ').trim()).filter(Boolean))]
     const kws = normalized.length ? normalized : undefined
     await personaDb.upsertCharacterMemory({
       ...editRow,
       content,
+      ...(reconciled.userPlaceholderBindings.length
+        ? { userPlaceholderBindings: reconciled.userPlaceholderBindings }
+        : {}),
       memoryTriggerMode: mode,
       memoryTriggerCategory: undefined,
       memoryTriggerPrecise: undefined,
@@ -232,6 +244,9 @@ export function PrivateMemoryList({ contacts }: { contacts: WeChatContactRow[] }
     memoryScope: editRow?.memoryScope === 'linked' ? 'linked' : 'private',
     linkedFromCharacterId: editRow?.linkedFromCharacterId,
     involvedCharIds: editRow?.involvedCharIds,
+    userPlaceholderBindings: editRow?.userPlaceholderBindings,
+    sourceWechatAccountId: editRow?.sourceWechatAccountId,
+    sourceSessionPlayerIdentityId: editRow?.sourceSessionPlayerIdentityId,
   })
 
   const saveAdd = async () => {
@@ -478,7 +493,7 @@ export function PrivateMemoryList({ contacts }: { contacts: WeChatContactRow[] }
               ) : (
                 <>
                   可直接输入正文；需要时在文首加
-                  <span className="text-neutral-600"> [私聊] [群聊] [线下] [关联线下] </span>
+                  <span className="text-neutral-600"> [遇见] [私聊] [群聊] [线下] [关联线下] </span>
                   标记来源（顺序须一致）。
                 </>
               )}

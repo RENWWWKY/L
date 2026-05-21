@@ -1,3 +1,8 @@
+import {
+  MEET_ENCOUNTER_MEMORY_SUMMARY_SYSTEM,
+  UNIFIED_MEET_ONLY_MEMORY_SUMMARY_SYSTEM,
+} from '../lumiMeet/meetMemorySummaryPrompt'
+import { buildWeChatHomeProfilePromptBlock } from '../lumiMeet/meetUserProfileSnapshot'
 import type { ApiConfig } from '../api/types'
 import type {
   Character,
@@ -10,6 +15,11 @@ import type {
   WeChatReplyToMeta,
 } from './newFriendsPersona/types'
 import { genderLabelZh } from './newFriendsPersona/utils'
+import {
+  buildMemorySummaryCharGenderDirective,
+  normalizeMemorySummaryBodyAfterModel,
+} from './memory/memorySummaryContentNormalize'
+import { personaDb } from './newFriendsPersona/idb'
 import { openAiCompatibleChat, openAiCompatibleChatAny, type OpenAiCompatibleMessage } from './newFriendsPersona/ai'
 import { LUMI_ASSISTANT_SYSTEM_PROMPT } from './lumiAssistantPrompt'
 import {
@@ -17,6 +27,7 @@ import {
   WECHAT_REPLY_OUTPUT_APPENDIX,
   WECHAT_THINKING_CHAIN_APPENDIX,
 } from './wechatReplyOutputPrompt'
+import { WECHAT_FRIEND_REQUEST_ADJUDICATION_OUTPUT_APPENDIX } from './wechatFriendRequestAdjudicationPrompt'
 import { WECHAT_ROLEPLAY_SYSTEM_PROMPT } from './wechatChatPrompt'
 import { buildStickerCatalogPromptBlock } from './stickers/stickerStore'
 import { WECHAT_HEART_WHISPER_SYSTEM_PROMPT } from './wechatHeartWhisperPrompt'
@@ -38,7 +49,16 @@ import {
 import { buildWorldbookContext } from '../../worldbook/buildWorldbookContext'
 import type { GlobalWechatPlate } from '../../worldbook/globalWorldBookTypes'
 import { getWorldbookLoreEntriesSnapshot } from '../../worldbook/worldbookLoreStore'
-import { expandLinkedMemoryPlaceholders, resolveCharUserNamesForPrompt } from './charUserPlaceholders'
+import {
+  buildWechatHeartWhisperSpeakerSplitDirective,
+  buildWechatTranscriptSpeakerAttributionLine,
+  buildWechatWorldBookUserPlaceholderDirective,
+  expandLinkedMemoryPlaceholders,
+  expandScopedWorldBookUserPlaceholdersInText,
+  expandSystemPromptPlaceholders,
+  resolveCharUserNamesForPrompt,
+} from './charUserPlaceholders'
+import { expandWorldBookItemUserPlaceholders } from './worldBookUserPlaceholderBindings'
 import {
   buildChatAfterWorldBookDynamicSection,
   buildWorldBookAfterPatchOutputAppendix,
@@ -257,6 +277,68 @@ export function buildWorldBookText(
   return `${raw.slice(0, cap)}\n\n（以下世界书内容因长度已截断…）`
 }
 
+/** 注入模型前：展开条目内 `{{user}}`（按 userPlaceholderBindings）及旧式 `{{user:…}}`。 */
+export async function buildWorldBookTextForPrompt(
+  character: Character | null,
+  maxChars: number = WORLD_BOOK_MAX_CHARS,
+  opts?: { voice?: WorldBookPromptVoice },
+): Promise<string> {
+  if (!character) return ''
+  const voice: WorldBookPromptVoice = opts?.voice ?? 'character_card'
+  const subjectName = String(character.name ?? '').trim() || (voice === 'player_identity' ? '用户' : '该角色')
+  const currentMbti = normalizeMbti(character.mbti)
+  const currentMbtiWorldBookName = currentMbti ? getMbtiPersonalityWorldBookName(currentMbti) : null
+
+  const existingEnabledWorldBooks = (character.worldBooks ?? []).filter((w) => {
+    if (!w?.enabled) return false
+    if (!currentMbtiWorldBookName) return true
+    if (isMbtiPersonalityWorldBookName(w.name) && w.name !== currentMbtiWorldBookName) return false
+    return true
+  })
+
+  const existingParts = await Promise.all(
+    existingEnabledWorldBooks.map(async (w) => {
+      const lines = await Promise.all(
+        (w.items ?? [])
+          .filter((it) => it.enabled && String(it.content || '').trim())
+          .map(async (it) => {
+            const expanded = await expandWorldBookItemUserPlaceholders(
+              String(it.content).trim(),
+              it.userPlaceholderBindings,
+            )
+            return formatWorldBookItemLineForPrompt({
+              priority: it.priority,
+              name: it.name,
+              content: expanded,
+              pronounGuide: it.pronounGuide,
+              subjectName,
+              voice,
+            })
+          }),
+      )
+      const joined = lines.filter(Boolean).join('\n')
+      return joined ? `《${w.name}》\n${joined}` : ''
+    }),
+  )
+
+  const hasCurrentMbtiContent = Boolean(
+    currentMbtiWorldBookName &&
+      existingEnabledWorldBooks.some(
+        (w) =>
+          w.name === currentMbtiWorldBookName &&
+          (w.items ?? []).some((it) => it.enabled && String(it.content || '').trim()),
+      ),
+  )
+
+  const injectedMbtiWorldBookText = currentMbti && !hasCurrentMbtiContent ? buildMbtiPersonalityWorldBookText(currentMbti) : ''
+
+  const parts = [injectedMbtiWorldBookText, ...existingParts.filter(Boolean)]
+  const raw = parts.join('\n\n')
+  const cap = Math.max(200, maxChars)
+  if (raw.length <= cap) return raw
+  return `${raw.slice(0, cap)}\n\n（以下世界书内容因长度已截断…）`
+}
+
 /** 从人设身高/体重字段解析 cm；无有效数字时返回 null（提示词不写默认值，避免胡编）。 */
 function parseProfileHeightCm(raw?: string): number | null {
   const t = String(raw ?? '').trim().toLowerCase()
@@ -383,6 +465,12 @@ function buildUnsummarizedGroupSection(notes?: string): string {
   return `\n\n---\n【尚未写入长期记忆的群聊片段（本地游标之后）】\n${t}\n`
 }
 
+function buildUnsummarizedMeetSection(notes?: string): string {
+  const t = notes?.trim()
+  if (!t) return ''
+  return `\n\n---\n【尚未写入长期记忆的遇见临时会话片段（本地游标之后）】\n${t}\n`
+}
+
 function buildScheduleSection(params: { playerIdentity: ScheduleTable | null; character: ScheduleTable | null }): string {
   const chunks: string[] = []
   if (params.playerIdentity) {
@@ -423,11 +511,19 @@ export function buildSystemContent(params: {
   playerIdentity: PlayerIdentity | null
   playerDisplayName: string
   promptMode: WeChatChatPromptMode
+  /** 遇见转微信：以微信「我」页资料替代玩家身份卡注入 */
+  wechatHomeProfile?: { displayName: string; signature?: string } | null
+  /** 遇见转微信：私聊承接块（禁止初见式反应微信昵称） */
+  meetWechatContinuityBlock?: string
+  /** 小号试探：同角色在其他微信号通讯录中时的秘密指令 */
+  altAccountProbeBlock?: string
   longTermMemoryNotes?: string
   /** 角色关联的世界背景（优先于通用扮演，次于世界书条目） */
   worldBackgroundPrompt?: string
   /** 约会页最近若干条线下剧情正文（与微信同一角色时间线）；由调用方拉取 */
   offlineDatingPlotsContext?: string
+  /** 遇见 App 已总结长期记忆（带 [遇见] 板块标签） */
+  meetEncounterMemoriesContext?: string
   /**
    * 私聊专用：与线下剧情同理，仅注入**本地聊天记录摘录**（IndexedDB），**不经过模型**；
    * 用于群聊→私聊时承接近期群内对话，与 `longTermMemoryNotes`（已落库总结）分开展示。
@@ -437,6 +533,8 @@ export function buildSystemContent(params: {
   unsummarizedPrivateNotes?: string
   /** 私聊：各群游标后的未总结群消息摘录；或群聊房内当前群的未总结片段 */
   unsummarizedGroupNotes?: string
+  /** 遇见转微信：游标后的遇见临时会话未总结摘录 */
+  unsummarizedMeetNotes?: string
   /** 当前轮次的回复偏向（仅本轮生效） */
   replyBias?: string
   /** 当前会话时间戳（毫秒）；未传时默认系统时间 */
@@ -452,12 +550,40 @@ export function buildSystemContent(params: {
    * 不含条目时仍走 char/user 展开；无 id 映射时占位符保留原文。
    */
   worldBookPlaceholderIdMap?: Readonly<Record<string, string>>
+  /** 已展开 {{user}} 绑定的世界书全文；传入则不再调用 buildWorldBookText */
+  worldBookTextForPrompt?: string
+  /** 新朋友-验证申请：称呼遵守好友申请铁则，勿用微信资料名直呼 */
+  friendRequestAdjudication?: boolean
+  /** 当前发言人 ≠ 档案主绑定：禁止对号认亲、勿用社长称呼当前对方 */
+  nonPrimarySpeakerLine?: boolean
+  /** 世界书 {{user}} 展开用：主微信账号锚点身份（勿用当前窗口扮演档） */
+  worldBookPlayerIdentity?: PlayerIdentity | null
+  /** 世界书 {{user}} 分线标签，如「微信号A · 扮演「社长」」 */
+  worldBookUserLineLabel?: string
 }): string {
+  const worldBookIdentity = params.worldBookPlayerIdentity ?? params.playerIdentity
   const expandNames = resolveCharUserNamesForPrompt({
+    character: params.character,
+    playerIdentity: worldBookIdentity,
+    playerDisplayName: params.playerDisplayName,
+  })
+  const sessionExpandNames = resolveCharUserNamesForPrompt({
     character: params.character,
     playerIdentity: params.playerIdentity,
     playerDisplayName: params.playerDisplayName,
   })
+  const wbLineLabel = params.worldBookUserLineLabel?.trim() || expandNames.userName
+  const speakerSplit =
+    expandNames.userName.trim().toLowerCase() !== sessionExpandNames.userName.trim().toLowerCase()
+  const wbUserDirective =
+    params.character && params.promptMode === 'persona' && worldBookIdentity && speakerSplit
+      ? buildWechatWorldBookUserPlaceholderDirective({
+          charName: expandNames.charName,
+          worldBookUserLineLabel: wbLineLabel,
+          primaryUserName: expandNames.userName,
+          currentWindowSpeakerLabel: sessionExpandNames.userName,
+        })
+      : ''
   const loreInject = resolveWorldbookLoreInjection({
     worldbookLoreContext: params.worldbookLoreContext,
     chatMemberIds: params.chatMemberIds,
@@ -468,8 +594,17 @@ export function buildSystemContent(params: {
   const attributionLine =
     params.promptMode === 'lumi-assistant'
       ? `对方消息里的「我」「我的」默认指${player}本人在自述；勿把这些遭遇误写成发生在助手自己身上。\n`
-      : `对方发来的内容里出现的「我」「我的」，默认指${player}本人正在自述——不要把那些事当成角色自己的遭遇来接续叙述。\n`
-  const peerLine = `\n\n---\n【会话对方】对方的微信资料名或备注可能显示为：${player}。请用自然称呼，不要机械重复全名除非语境需要。\n${attributionLine}【技术席位说明】在本请求的消息列表里：role 为 user 的条目即该真人已发送内容；role 为 assistant 的条目即你（对方角色）已发送过的历史。你本轮只生成新的 assistant 侧回复。禁止身份倒错、禁止替该真人续写其下一句台词。\n`
+      : wbUserDirective.trim()
+        ? buildWechatTranscriptSpeakerAttributionLine({
+            sessionSpeakerLabel: sessionExpandNames.userName,
+            worldBookUserLineLabel: wbLineLabel,
+            primaryUserName: expandNames.userName,
+          })
+        : `对方发来的内容里出现的「我」「我的」，默认指${player}本人正在自述——不要把那些事当成角色自己的遭遇来接续叙述。\n`
+  const peerLine =
+    params.friendRequestAdjudication || params.nonPrimarySpeakerLine
+      ? `\n\n---\n【会话对方】通讯录可能显示为「${player}」，仅为界面展示名，**不是**真名，**不是**档案主绑定本人；**禁止**用该名或「社长大人」等称呼当前对方；默认叫「你」。\n${attributionLine}【技术席位说明】在本请求的消息列表里：role 为 user 的条目即该真人已发送内容；role 为 assistant 的条目即你（对方角色）已发送过的历史。你本轮只生成新的 assistant 侧回复。禁止身份倒错、禁止替该真人续写其下一句台词。\n`
+      : `\n\n---\n【会话对方】对方的微信资料名或备注可能显示为：${player}。请用自然称呼，不要机械重复全名除非语境需要。\n${attributionLine}【技术席位说明】在本请求的消息列表里：role 为 user 的条目即该真人已发送内容；role 为 assistant 的条目即你（对方角色）已发送过的历史。你本轮只生成新的 assistant 侧回复。禁止身份倒错、禁止替该真人续写其下一句台词。\n`
   const mem = buildLongTermMemorySection(params.longTermMemoryNotes)
   const memScopeFence =
     params.character && params.promptMode === 'persona'
@@ -477,8 +612,12 @@ export function buildSystemContent(params: {
       : ''
   const unsPriv = buildUnsummarizedPrivateSection(params.unsummarizedPrivateNotes)
   const unsGrp = buildUnsummarizedGroupSection(params.unsummarizedGroupNotes)
+  const unsMeet = buildUnsummarizedMeetSection(params.unsummarizedMeetNotes)
   const offlinePlots = params.offlineDatingPlotsContext?.trim()
     ? `\n\n---\n${params.offlineDatingPlotsContext.trim()}\n`
+    : ''
+  const meetEncounter = params.meetEncounterMemoriesContext?.trim()
+    ? `\n\n---\n${params.meetEncounterMemoriesContext.trim()}\n`
     : ''
   const groupChatsRecent = params.recentGroupChatsReference?.trim()
     ? `\n\n---\n【群聊近期参考（本地消息摘录，非模型总结；用法同上方线下剧情参考）】\n${params.recentGroupChatsReference.trim()}\n`
@@ -490,7 +629,18 @@ export function buildSystemContent(params: {
     playerIdentity: (params.playerIdentity?.schedule as ScheduleTable | undefined) ?? null,
     character: (params.character?.schedule as ScheduleTable | undefined) ?? null,
   })
-  const pi = buildPlayerIdentitySection(params.playerIdentity)
+  const meetContinuity = params.meetWechatContinuityBlock?.trim()
+    ? `\n\n---\n${params.meetWechatContinuityBlock.trim()}\n`
+    : ''
+  const altProbe = params.altAccountProbeBlock?.trim()
+    ? `\n\n${params.altAccountProbeBlock.trim()}\n`
+    : ''
+  const pi = params.wechatHomeProfile
+    ? buildWeChatHomeProfilePromptBlock(params.wechatHomeProfile, {
+        forFriendRequest:
+          !!params.friendRequestAdjudication || !!params.nonPrimarySpeakerLine,
+      })
+    : buildPlayerIdentitySection(params.playerIdentity)
   const fictionCot = `\n\n${FICTIONAL_COT_APPENDIX}\n`
 
   const linkedExpand = (raw: string) =>
@@ -502,15 +652,19 @@ export function buildSystemContent(params: {
 
   if (isLumiAssistant) {
     // 助手模式：不注入「虚构沙盒」免责声明，避免诱导沉浸式扮演。
-    const raw = `${LUMI_ASSISTANT_SYSTEM_PROMPT}${loreBlock}${mem}${memScopeFence}${unsPriv}${unsGrp}${offlinePlots}${groupChatsRecent}${replyBias}${currentTime}${schedule}${pi}${peerLine}`
+    const raw = `${LUMI_ASSISTANT_SYSTEM_PROMPT}${loreBlock}${mem}${memScopeFence}${unsPriv}${unsGrp}${unsMeet}${offlinePlots}${meetEncounter}${meetContinuity}${altProbe}${groupChatsRecent}${replyBias}${currentTime}${schedule}${pi}${peerLine}`
     return linkedExpand(raw)
   }
 
-  const wb = buildWorldBookText(params.character)
+  const wb =
+    params.worldBookTextForPrompt?.trim() ?? buildWorldBookText(params.character)
   const card = buildCharacterCard(params.character)
   const wbg = params.worldBackgroundPrompt?.trim()
   let extra = ''
   if (params.character) {
+    if (wbUserDirective.trim()) {
+      extra += `\n\n---\n${wbUserDirective.trim()}\n`
+    }
     extra += `\n\n---\n【角色档案摘要】\n${card}\n`
     if (wbg) {
       extra += `\n---\n【世界背景（次于档案与世界书、人设世界书；若与下方世界书冲突，以世界书为准）】\n${wbg}\n`
@@ -526,8 +680,28 @@ export function buildSystemContent(params: {
     extra += `\n\n---\n【当前状态】未绑定完整人设档案（无世界书）。请以友善、有分寸的微信好友身份交谈，仍须遵守上述通用铁则，且绝不暴露非人类身份。\n`
   }
 
-  const rawMain = `${WECHAT_ROLEPLAY_SYSTEM_PROMPT}${loreBlock}${mem}${memScopeFence}${unsPriv}${unsGrp}${offlinePlots}${groupChatsRecent}${replyBias}${currentTime}${schedule}${pi}${fictionCot}${extra}${peerLine}`
+  const rawMain = `${WECHAT_ROLEPLAY_SYSTEM_PROMPT}${loreBlock}${mem}${memScopeFence}${unsPriv}${unsGrp}${unsMeet}${offlinePlots}${meetEncounter}${meetContinuity}${altProbe}${groupChatsRecent}${replyBias}${currentTime}${schedule}${pi}${fictionCot}${extra}${peerLine}`
   return linkedExpand(rawMain)
+}
+
+type BuildSystemContentParams = Parameters<typeof buildSystemContent>[0]
+
+/** 先展开世界书绑定 {{user}}，再展开正文里残留的 {{char}} / 裸 {{user}}。 */
+async function materializeSystemContent(params: BuildSystemContentParams): Promise<string> {
+  const worldBookTextForPrompt = params.character
+    ? await buildWorldBookTextForPrompt(params.character)
+    : ''
+  const raw = buildSystemContent({
+    ...params,
+    worldBookTextForPrompt,
+  })
+  const wbIden = params.worldBookPlayerIdentity ?? params.playerIdentity ?? null
+  return expandSystemPromptPlaceholders(raw, {
+    character: params.character,
+    worldBookPlayerIdentity: wbIden,
+    playerDisplayName: params.playerDisplayName,
+    idToDisplayName: params.worldBookPlaceholderIdMap,
+  })
 }
 
 function transcriptToMessages(turns: ChatTranscriptTurn[], opts?: { groupChat?: boolean }): OpenAiCompatibleMessage[] {
@@ -700,6 +874,8 @@ export type WeChatPeerReplyResult = {
   bubbles: string[]
   thinking?: string
   danmakuLines?: string[]
+  /** 模型原始正文（裁决 XML 解析用，避免按气泡拆分后丢失） */
+  rawText?: string
   /** 模型在本轮末尾提交的「尾声延展」世界书覆盖（若有；priority=after） */
   worldBookPatches?: WorldBookAfterPatch[]
 }
@@ -833,12 +1009,17 @@ export async function requestWeChatPeerReplyBubbles(params: {
   playerDisplayName: string
   transcript: ChatTranscriptTurn[]
   promptMode: WeChatChatPromptMode
+  wechatHomeProfile?: { displayName: string; signature?: string } | null
+  meetWechatContinuityBlock?: string
+  altAccountProbeBlock?: string
   longTermMemoryNotes?: string
   worldBackgroundPrompt?: string
   offlineDatingPlotsContext?: string
+  meetEncounterMemoriesContext?: string
   recentGroupChatsReference?: string
   unsummarizedPrivateNotes?: string
   unsummarizedGroupNotes?: string
+  unsummarizedMeetNotes?: string
   replyBias?: string
   busyContext?: BusyRuntimeContext
   includeThinkingChain?: boolean
@@ -850,6 +1031,12 @@ export async function requestWeChatPeerReplyBubbles(params: {
   chatMemberIds?: string[]
   globalWechatPlate?: GlobalWechatPlate
   worldBookPlaceholderIdMap?: Readonly<Record<string, string>>
+  /** 用户主动加好友裁决：专用 XML 协议，避免与普通私聊输出格式冲突 */
+  friendRequestAdjudication?: boolean
+  /** 当前发言人 ≠ 档案主绑定 */
+  nonPrimarySpeakerLine?: boolean
+  worldBookPlayerIdentity?: PlayerIdentity | null
+  worldBookUserLineLabel?: string
 }): Promise<WeChatPeerReplyResult> {
   const cfg = params.apiConfig
   if (!cfg?.apiUrl?.trim() || !cfg.apiKey?.trim() || !cfg.modelId?.trim()) {
@@ -862,22 +1049,31 @@ export async function requestWeChatPeerReplyBubbles(params: {
     globalWechatPlate: params.globalWechatPlate,
   })
 
-  const base = buildSystemContent({
+  const base = await materializeSystemContent({
     character: params.character,
     playerIdentity: params.playerIdentity,
     playerDisplayName: params.playerDisplayName,
     promptMode: params.promptMode,
+    wechatHomeProfile: params.wechatHomeProfile,
+    meetWechatContinuityBlock: params.meetWechatContinuityBlock,
+    altAccountProbeBlock: params.altAccountProbeBlock,
     longTermMemoryNotes: params.longTermMemoryNotes,
     worldBackgroundPrompt: params.worldBackgroundPrompt,
     offlineDatingPlotsContext: params.offlineDatingPlotsContext,
+    meetEncounterMemoriesContext: params.meetEncounterMemoriesContext,
     recentGroupChatsReference: params.recentGroupChatsReference,
     unsummarizedPrivateNotes: params.unsummarizedPrivateNotes,
     unsummarizedGroupNotes: params.unsummarizedGroupNotes,
+    unsummarizedMeetNotes: params.unsummarizedMeetNotes,
     replyBias: params.replyBias,
     currentTimeMs: params.currentTimeMs,
     chatMemberIds: wbMemberIds,
     globalWechatPlate: params.globalWechatPlate,
     worldBookPlaceholderIdMap: params.worldBookPlaceholderIdMap,
+    friendRequestAdjudication: params.friendRequestAdjudication,
+    nonPrimarySpeakerLine: params.nonPrimarySpeakerLine,
+    worldBookPlayerIdentity: params.worldBookPlayerIdentity,
+    worldBookUserLineLabel: params.worldBookUserLineLabel,
   })
   const isLumi = params.promptMode === 'lumi-assistant'
   const busyPrefix = buildBusyPrefix(params.busyContext)
@@ -893,23 +1089,27 @@ export async function requestWeChatPeerReplyBubbles(params: {
     worldBackgroundPrompt: params.worldBackgroundPrompt,
     transcript: params.transcript,
   })
-  const recallGuide = isLumi
-    ? `【撤回】仅在明显误发时可极少使用输出协议中的撤回格式；禁止用于恋爱拉扯或虚构剧情。`
-    : WECHAT_CHARACTER_RECALL_GUIDE
-  const outputAppendix = isLumi
-    ? WECHAT_LUMI_ASSISTANT_OUTPUT_APPENDIX
-    : appendWorldBookAfterPatchOutputRules(
-        params.character,
-        isLumi,
-        `${WECHAT_REPLY_OUTPUT_APPENDIX}\n\n${WECHAT_THINKING_CHAIN_APPENDIX}`,
-      )
-  const system = `${busyPrefix ? `${busyPrefix}\n\n` : ''}${base}\n\n${recallGuide}\n\n${outputAppendix}${danmakuInstruction ? `\n\n${danmakuInstruction}` : ''}\n\n${stickerCat}`
+  const recallGuide = params.friendRequestAdjudication
+    ? ''
+    : isLumi
+      ? `【撤回】仅在明显误发时可极少使用输出协议中的撤回格式；禁止用于恋爱拉扯或虚构剧情。`
+      : WECHAT_CHARACTER_RECALL_GUIDE
+  const outputAppendix = params.friendRequestAdjudication
+    ? WECHAT_FRIEND_REQUEST_ADJUDICATION_OUTPUT_APPENDIX
+    : isLumi
+      ? WECHAT_LUMI_ASSISTANT_OUTPUT_APPENDIX
+      : appendWorldBookAfterPatchOutputRules(
+          params.character,
+          isLumi,
+          `${WECHAT_REPLY_OUTPUT_APPENDIX}\n\n${WECHAT_THINKING_CHAIN_APPENDIX}`,
+        )
+  const system = `${busyPrefix ? `${busyPrefix}\n\n` : ''}${base}${recallGuide ? `\n\n${recallGuide}` : ''}\n\n${outputAppendix}${danmakuInstruction ? `\n\n${danmakuInstruction}` : ''}\n\n${stickerCat}`
 
   const history = transcriptToMessages(params.transcript, { groupChat: params.groupChatTranscript })
   const messages: OpenAiCompatibleMessage[] = [{ role: 'system', content: system }, ...history]
 
   const text = await openAiCompatibleChat(cfg, messages, {
-    temperature: isLumi ? 0.62 : 0.82,
+    temperature: params.friendRequestAdjudication ? 0.38 : isLumi ? 0.62 : 0.82,
     max_tokens: WECHAT_PEER_REPLY_MAX_OUTPUT_TOKENS,
   })
   const parsed = parseWeChatPeerReplyWithThinking(text)
@@ -921,6 +1121,7 @@ export async function requestWeChatPeerReplyBubbles(params: {
     thinking: parsed.thinking,
     danmakuLines: parsed.danmakuLines,
     worldBookPatches: parsed.worldBookPatches,
+    rawText: text,
   }
 }
 
@@ -950,7 +1151,7 @@ export async function requestWeChatVoiceCallReplyText(params: {
   if (!cfg?.apiUrl?.trim() || !cfg.apiKey?.trim() || !cfg.modelId?.trim()) {
     throw new Error('未配置 AI API')
   }
-  const base = buildSystemContent({
+  const base = await materializeSystemContent({
     character: params.character,
     playerIdentity: params.playerIdentity,
     playerDisplayName: params.playerDisplayName,
@@ -1043,7 +1244,7 @@ export async function requestWeChatVoiceCallDecision(params: {
   if (!cfg?.apiUrl?.trim() || !cfg.apiKey?.trim() || !cfg.modelId?.trim()) {
     return { decision: 'NO_ANSWER', internal_thought: '未配置 API' }
   }
-  const base = buildSystemContent({
+  const base = await materializeSystemContent({
     character: params.character,
     playerIdentity: params.playerIdentity,
     playerDisplayName: params.playerDisplayName,
@@ -1112,12 +1313,17 @@ export async function requestWeChatPeerReplyBubblesWithImage(params: {
   imageMime: 'image/jpeg' | 'image/png' | 'image/gif' | 'image/webp'
   /** 用户侧为表情包消息时走较短接话协议，避免过度评图 */
   userImageIsSticker?: boolean
+  wechatHomeProfile?: { displayName: string; signature?: string } | null
+  meetWechatContinuityBlock?: string
+  altAccountProbeBlock?: string
   longTermMemoryNotes?: string
   worldBackgroundPrompt?: string
   offlineDatingPlotsContext?: string
+  meetEncounterMemoriesContext?: string
   recentGroupChatsReference?: string
   unsummarizedPrivateNotes?: string
   unsummarizedGroupNotes?: string
+  unsummarizedMeetNotes?: string
   replyBias?: string
   busyContext?: BusyRuntimeContext
   includeThinkingChain?: boolean
@@ -1127,6 +1333,9 @@ export async function requestWeChatPeerReplyBubblesWithImage(params: {
   chatMemberIds?: string[]
   globalWechatPlate?: GlobalWechatPlate
   worldBookPlaceholderIdMap?: Readonly<Record<string, string>>
+  nonPrimarySpeakerLine?: boolean
+  worldBookPlayerIdentity?: PlayerIdentity | null
+  worldBookUserLineLabel?: string
 }): Promise<WeChatPeerReplyResult> {
   const cfg = params.apiConfig
   if (!cfg?.apiUrl?.trim() || !cfg.apiKey?.trim() || !cfg.modelId?.trim()) {
@@ -1138,22 +1347,30 @@ export async function requestWeChatPeerReplyBubblesWithImage(params: {
     globalWechatPlate: params.globalWechatPlate,
   })
 
-  const base = buildSystemContent({
+  const base = await materializeSystemContent({
     character: params.character,
     playerIdentity: params.playerIdentity,
     playerDisplayName: params.playerDisplayName,
     promptMode: params.promptMode,
+    wechatHomeProfile: params.wechatHomeProfile,
+    meetWechatContinuityBlock: params.meetWechatContinuityBlock,
+    altAccountProbeBlock: params.altAccountProbeBlock,
     longTermMemoryNotes: params.longTermMemoryNotes,
     worldBackgroundPrompt: params.worldBackgroundPrompt,
     offlineDatingPlotsContext: params.offlineDatingPlotsContext,
+    meetEncounterMemoriesContext: params.meetEncounterMemoriesContext,
     recentGroupChatsReference: params.recentGroupChatsReference,
     unsummarizedPrivateNotes: params.unsummarizedPrivateNotes,
     unsummarizedGroupNotes: params.unsummarizedGroupNotes,
+    unsummarizedMeetNotes: params.unsummarizedMeetNotes,
     replyBias: params.replyBias,
     currentTimeMs: params.currentTimeMs,
     chatMemberIds: wbMemberIds,
     globalWechatPlate: params.globalWechatPlate,
     worldBookPlaceholderIdMap: params.worldBookPlaceholderIdMap,
+    nonPrimarySpeakerLine: params.nonPrimarySpeakerLine,
+    worldBookPlayerIdentity: params.worldBookPlayerIdentity,
+    worldBookUserLineLabel: params.worldBookUserLineLabel,
   })
   const isLumi = params.promptMode === 'lumi-assistant'
   const roleName = params.character?.name?.trim() || (isLumi ? 'Lumi' : '对方')
@@ -1334,7 +1551,7 @@ export async function requestWeChatPeerReply(params: {
   }
 
   const promptMode = params.promptMode ?? 'persona'
-  const system = buildSystemContent({
+  const system = await materializeSystemContent({
     character: params.character,
     playerIdentity: params.playerIdentity ?? null,
     playerDisplayName: params.playerDisplayName,
@@ -1607,7 +1824,7 @@ export async function requestWeChatGroupPsyche(params: {
       npc_pronoun: r.npcPronoun === '她' ? '她' : '他',
     })),
   )
-  const base = buildSystemContent({
+  const base = await materializeSystemContent({
     character: null,
     playerIdentity: params.playerIdentity,
     playerDisplayName: params.playerDisplayName,
@@ -1657,16 +1874,47 @@ export async function requestWeChatHeartWhisper(params: {
   chatMemberIds?: string[]
   globalWechatPlate?: GlobalWechatPlate
   worldBookPlaceholderIdMap?: Readonly<Record<string, string>>
+  wechatHomeProfile?: { displayName: string; signature?: string } | null
+  altAccountProbeBlock?: string
+  nonPrimarySpeakerLine?: boolean
+  worldBookPlayerIdentity?: PlayerIdentity | null
+  worldBookUserLineLabel?: string
 }): Promise<HeartWhisper> {
   const cfg = params.apiConfig
   if (!cfg?.apiUrl?.trim() || !cfg.apiKey?.trim() || !cfg.modelId?.trim()) {
     throw new Error('未配置 AI API')
   }
-  const base = buildSystemContent({
+  const worldBookIdentity = params.worldBookPlayerIdentity ?? params.playerIdentity
+  const expandNames = resolveCharUserNamesForPrompt({
+    character: params.character,
+    playerIdentity: worldBookIdentity,
+    playerDisplayName: params.playerDisplayName,
+  })
+  const sessionExpandNames = resolveCharUserNamesForPrompt({
+    character: params.character,
+    playerIdentity: params.playerIdentity,
+    playerDisplayName: params.playerDisplayName,
+  })
+  const wbLineLabel = params.worldBookUserLineLabel?.trim() || expandNames.userName
+  const speakerSplit =
+    expandNames.userName.trim().toLowerCase() !== sessionExpandNames.userName.trim().toLowerCase()
+  const heartSplitDirective =
+    params.character && params.promptMode === 'persona' && speakerSplit
+      ? buildWechatHeartWhisperSpeakerSplitDirective({
+          charName: expandNames.charName,
+          worldBookUserLineLabel: wbLineLabel,
+          primaryUserName: expandNames.userName,
+          sessionSpeakerLabel: sessionExpandNames.userName,
+        })
+      : ''
+
+  const base = await materializeSystemContent({
     character: params.character,
     playerIdentity: params.playerIdentity,
     playerDisplayName: params.playerDisplayName,
     promptMode: params.promptMode,
+    wechatHomeProfile: params.wechatHomeProfile,
+    altAccountProbeBlock: params.altAccountProbeBlock,
     longTermMemoryNotes: params.longTermMemoryNotes,
     worldBackgroundPrompt: params.worldBackgroundPrompt,
     offlineDatingPlotsContext: params.offlineDatingPlotsContext,
@@ -1677,13 +1925,16 @@ export async function requestWeChatHeartWhisper(params: {
     chatMemberIds: resolveChatWorldbookMemberIds(params.chatMemberIds, params.character),
     globalWechatPlate: params.globalWechatPlate ?? 'private_chat',
     worldBookPlaceholderIdMap: params.worldBookPlaceholderIdMap,
+    nonPrimarySpeakerLine: params.nonPrimarySpeakerLine,
+    worldBookPlayerIdentity: params.worldBookPlayerIdentity,
+    worldBookUserLineLabel: params.worldBookUserLineLabel,
   })
   const history = transcriptToMessages(params.transcript.slice(-24))
   const userPronoun = resolveUserPronoun(params.playerIdentity)
   const messages: OpenAiCompatibleMessage[] = [
     {
       role: 'system',
-      content: `${base}\n\n---\n【心语生成规则】\n${WECHAT_HEART_WHISPER_SYSTEM_PROMPT}\n\n【本轮代词约束】\n在 view_on_user 字段里，用户必须被称为“${userPronoun}”，禁止出现 ta/TA/Ta。`,
+      content: `${base}\n\n---\n【心语生成规则】\n${WECHAT_HEART_WHISPER_SYSTEM_PROMPT}${heartSplitDirective ? `\n\n${heartSplitDirective}` : ''}\n\n【本轮代词约束】\n在 view_on_user 字段里，用户必须被称为“${userPronoun}”，指**本窗口发言人**；禁止出现 ta/TA/Ta。`,
     },
     ...history,
     { role: 'user', content: '请基于刚刚最后一轮对话，输出心语 JSON。' },
@@ -1708,7 +1959,7 @@ const MEMORY_BODY_PLACEHOLDER_INSTRUCTION = `
 【记忆正文·指称铁律】（**仅**约束 JSON 的 content 正文；**primary 与 linked[].content 同等遵守**）
 - 正文**禁止**抄写材料里的**玩家、对方人设及其他出镜角色**的**真实姓名、完整档案昵称、微信号**。
 - **禁止**把材料里出现过的称呼**原样汉字串**写进 content（含：对话台词里的直呼、群昵称、通讯录备注、摘录标题行「显示名：」后的标签、线上发言者标签里的昵称等）。指人**只能**用 {{user}} / {{char}} / {{archive_char}} / {{id:UUID}}，或不含上述专名的**纯泛称**（如「对方店里那位同事」须仍不夹真名）。
-- 玩家：叙事主视角用第一人称「我」（「我」=玩家）；若句子里需要第三人称指玩家，**只许** {{user}}；**禁止**用「用户」「玩家」及材料中的身份姓名为指代（关联记忆 linked 为全文第三人称时尤须遵守）。
+- 玩家：**全文第三人称档案体**；凡写到玩家的行为/发言/请求，**必须**写 **{{user}}**（可写「{{user}}向{{char}}…」），**禁止**第一人称「我」「我的」；**禁止**用「用户」「玩家」及材料中的身份姓名为指代。
 - **当前私聊会话中的对方人设**（本条记忆将挂在该角色档案下）：须用 {{char}} 指代，**禁止**写其材料中的显示名。
 - 若材料涉及**线下约会存档主角**（人脉/约会根人设）：用 {{archive_char}}；**禁止**用「主要角色」「男主角」「女主角」「存档主角」等泛称代替占位符。
 - 其他已知人设：若用户消息附录或摘录标题中给出了 **character_id**（UUID），正文须写 {{id:该id}}（把「该id」换成真实 UUID），与材料**完全一致、无空格**；**禁止**臆造 id。无 id 时用「另一名在场者」等**不涉真名**的泛称。
@@ -1717,7 +1968,7 @@ const MEMORY_BODY_PLACEHOLDER_INSTRUCTION = `
 
 const MEMORY_JSON_OUTPUT_RULE = `
 【输出格式】只输出一个 JSON 对象，禁止 markdown 代码围栏，禁止 JSON 前后任何解释文字。字段如下：
-- "content": string，第一人称「我」视角的一条长期记忆正文（「我」=玩家）；**必须**遵守下方【记忆正文·指称铁律】，用 {{char}} / {{user}} / {{archive_char}} / {{id:人设UUID}} 指人，勿写真名。
+- "content": string，**第三人称**长期记忆备忘（档案口吻，非对话复述）；**必须**用 {{user}} 指玩家、{{char}} 指当前私聊对象；**禁止**第一人称「我」；遵守下方【记忆正文·指称铁律】。
 - "category": string，大分类触发词，**不超过 5 个汉字**（如「工作」「吵架」「约会」）。
 - "precise": string，精准匹配词，**不超过 10 个汉字**，须是**完整可读**的钩子（专名片段、场景简称、约定代称），如「校庆后台」「司予吉他」；**禁止**输出半句叙事或长到会被截断的从句；须与材料可核对。
 - "emotion_need": string[]，情绪/需求侧触发词，**3～5 个**短词（每个建议 2～8 个汉字），如「委屈」「道歉」「追问」。
@@ -1728,7 +1979,7 @@ ${MEMORY_BODY_PLACEHOLDER_INSTRUCTION}`.trim()
 const MEMORY_SUMMARY_SYSTEM = `
 你是「长期记忆」提取助手。根据用户给出的“本次未总结片段”对话摘录，写出一条可长期沿用的记忆条目，并提炼触发关键词。
 要求：
-- 必须使用第一人称“我”，并且站在用户视角叙述；指对方人设时**只写** {{char}}，不要用材料里的对方昵称或姓名。
+- **全文第三人称**；玩家一律 **{{user}}**，当前私聊对象一律 **{{char}}**；**禁止**第一人称「我」「我的」；不要用材料里的真名/昵称汉字。
 - 只总结本次提供的片段，禁止混入历史记忆、禁止补写片段外剧情。
 - 只阐述可从聊天文本直接核对的事实：谁说了什么、确认了什么、约定了什么、结果怎样。
 - 禁止写“我怎么想/我觉得/我感到”等主观心理活动；禁止写角色未在聊天里明确表达的心理活动。
@@ -1797,6 +2048,8 @@ export function parseMemoryAutoSummaryModelOutput(raw: string): MemoryAutoSummar
 export async function requestWeChatMemorySummary(params: {
   apiConfig: ApiConfig | null
   transcript: ChatTranscriptTurn[]
+  /** 当前私聊对象人设 id，用于性别指代附录 */
+  peerCharacterId?: string
 }): Promise<MemoryAutoSummaryResult> {
   const cfg = params.apiConfig
   if (!cfg?.apiUrl?.trim() || !cfg.apiKey?.trim() || !cfg.modelId?.trim()) {
@@ -1807,13 +2060,14 @@ export async function requestWeChatMemorySummary(params: {
     .map((t) => `${t.from === 'self' ? '我' : '对方'}：${String(t.text || '').trim()}`)
     .filter((s) => s.length > 3)
   const userBlock = lines.length ? lines.join('\n') : '（无有效对话）'
+  const genderAppendix = await buildMemorySummaryPeerGenderAppendix(params.peerCharacterId)
   const messages: OpenAiCompatibleMessage[] = [
     { role: 'system', content: MEMORY_SUMMARY_SYSTEM },
     {
       role: 'user',
       content:
         `以下是“尚未总结”的对话摘录，请仅基于这段内容生成长期记忆 JSON：\n\n${userBlock}\n\n` +
-        `【指称】摘录中气泡正文可能出现昵称或@名；写入 JSON 的 content 时指对方人设**只许** {{char}}，指玩家第三人称用 {{user}}，**禁止**把对话里出现的对方真名/昵称汉字原样抄进正文。`,
+        `【指称】摘录标签「我」=玩家、「对方」= {{char}}；写入 JSON 的 content 须**第三人称**：玩家**只许** {{user}}，对方**只许** {{char}}，**禁止**第一人称「我」及真名/昵称汉字。${genderAppendix}`,
     },
   ]
   const text = await openAiCompatibleChat(cfg, messages, {
@@ -1823,10 +2077,55 @@ export async function requestWeChatMemorySummary(params: {
   return parseMemoryAutoSummaryModelOutput(text)
 }
 
+const MEET_MEMORY_SUMMARY_SYSTEM = MEET_ENCOUNTER_MEMORY_SUMMARY_SYSTEM
+
+/** 遇见临时会话 → 长期记忆（入库带 memoryScope=meet 与 [遇见] 前缀） */
+export async function requestMeetEncounterMemorySummary(params: {
+  apiConfig: ApiConfig | null
+  transcript: ChatTranscriptTurn[]
+  npcNickname?: string
+}): Promise<MemoryAutoSummaryResult> {
+  const cfg = params.apiConfig
+  if (!cfg?.apiUrl?.trim() || !cfg.apiKey?.trim() || !cfg.modelId?.trim()) {
+    throw new Error('未配置 AI API')
+  }
+  const tail = params.transcript.slice(-48)
+  const lines = tail
+    .map((t) => `${t.from === 'self' ? '我' : '对方'}：${String(t.text || '').trim()}`)
+    .filter((s) => s.length > 3)
+  const nick = params.npcNickname?.trim()
+  const userBlock = lines.length ? lines.join('\n') : '（无有效对话）'
+  const messages: OpenAiCompatibleMessage[] = [
+    { role: 'system', content: MEET_MEMORY_SUMMARY_SYSTEM },
+    {
+      role: 'user',
+      content:
+        `以下是「遇见」App 临时邂逅会话摘录${nick ? `（对方网名：${nick}，正文指代仍用 {{char}}）` : ''}，请生成长期记忆 JSON：\n\n${userBlock}\n\n` +
+        `【指称】摘录中的显示名不得写入 content；全文第三人称；指对方人设只许 {{char}}，指玩家只许 {{user}}；禁止第一人称「我」。`,
+    },
+  ]
+  const text = await openAiCompatibleChat(cfg, messages, {
+    temperature: 0.35,
+    max_tokens: 720,
+  })
+  const parsed = parseMemoryAutoSummaryModelOutput(text)
+  return {
+    ...parsed,
+    content: sanitizeMeetMemorySummaryPlainContent(parsed.content),
+  }
+}
+
+function sanitizeMeetMemorySummaryPlainContent(raw: string): string {
+  return String(raw ?? '')
+    .replace(/^\s*【[^】]+】\s*/g, '')
+    .replace(/^\s*(\[遇见\]|\[私聊\]|\[线上\]|\[线下\]|\[群聊\]|\[关联线下\])+\s*/g, '')
+    .trim()
+}
+
 const UNIFIED_MEMORY_SUMMARY_SYSTEM = `
 你是「长期记忆」提取助手。用户会提供两段材料：「线上聊天摘录」与「线下约会剧情摘录」，任一段可能为「（无）」。
 要求：
-- 必须使用第一人称“我”，站在用户视角叙述，把线上与线下里**实际发生**的信息合成一条连贯备忘；指人称时遵守 JSON 内【记忆正文·指称铁律】（对方用 {{char}}，玩家用「我」或 {{user}}，线下主角涉及用 {{archive_char}}，其他人设用 {{id:UUID}}）。
+- **全文第三人称**；把线上与线下里**实际发生**的信息合成一条连贯备忘；玩家用 **{{user}}**，对方用 **{{char}}**；**禁止**「我」；线下主角用 {{archive_char}}，其他人设用 {{id:UUID}}（遵守【记忆正文·指称铁律】）。
 - 只总结本次材料中可直接核对的事实：谁说了什么、做了什么、约定了什么、场景与结果；禁止混入材料外的剧情。
 - 禁止写“我怎么想/我觉得/我感到”等主观心理；禁止推断角色未说出口的心理。
 - 若某一栏为「（无）」，不要编造该栏内容；另一栏有内容则正常总结。
@@ -1882,10 +2181,24 @@ export async function requestUnifiedMemorySummary(params: {
 }
 
 function sanitizeUnifiedMemorySummaryPlainContent(raw: string): string {
-  return String(raw ?? '')
-    .replace(/^\s*【[^】]+】\s*/g, '')
-    .replace(/^\s*(\[私聊\]|\[线上\]|\[线下\]|\[群聊\]|\[关联线下\])+\s*/g, '')
-    .trim()
+  return normalizeMemorySummaryBodyAfterModel(
+    String(raw ?? '')
+      .replace(/^\s*【[^】]+】\s*/g, '')
+      .replace(/^\s*(\[遇见\]|\[私聊\]|\[线上\]|\[线下\]|\[群聊\]|\[关联线下\])+\s*/g, '')
+      .trim(),
+  )
+}
+
+async function buildMemorySummaryPeerGenderAppendix(peerCharacterId: string | null | undefined): Promise<string> {
+  const cid = peerCharacterId?.trim()
+  if (!cid) return ''
+  try {
+    const ch = await personaDb.getCharacter(cid)
+    const line = buildMemorySummaryCharGenderDirective(ch?.gender)
+    return line ? `\n\n${line}` : ''
+  } catch {
+    return ''
+  }
 }
 
 /** 约会剧情同一 HTTP 回复末尾追加的合并长期记忆 JSON 分隔符（须单独成行）。 */
@@ -1986,7 +2299,7 @@ ${UNIFIED_MEMORY_LINKED_JSON_RULE}
 
 【本轮合并长期记忆的语义要求】
 - 你是嵌入在本轮剧情模型里的「长期记忆」子任务：须综合下列「线上 / 已有线下 / 人脉 NPC 摘录」以及**分隔符上方你刚输出的全部剧情正文**（去掉 \`<thinking>…</thinking>\`；VN 标签可保留）提炼事实。
-- primary：用户视角第一人称「我」；合成线上（若有）+ 游标后已有线下（若有）+ **本轮新正文**；**正文指人一律占位符**（{{user}} / {{char}} / {{archive_char}} / {{id:UUID}}，勿写真名）；不要在 JSON 里写 [私聊][线下] 前缀。
+- primary：**第三人称**；合成线上（若有）+ 游标后已有线下（若有）+ **本轮新正文**；玩家 **{{user}}**、对方 **{{char}}**；**禁止「我」**；不要在 JSON 里写 [私聊][线下] 前缀。
 - linked：除上表摘录外，**必须**结合你刚写的**本轮剧情正文**判断人脉 NPC 是否有可记事实（见「约会特则」）；勿因摘录为（无）就整段 linked 留空——若正文里确有下表 id 之事实，须写 linked。每条 linked 的 content **须为第三人称**，且凡涉玩家、存档主角、本条 NPC、他人脉**一律**写 **{{user}} / {{archive_char}} / {{char}} / {{id:UUID}}**，**禁止**「用户」「玩家」「主角」「主要角色」及材料真名（规则同上方 JSON 与【记忆正文·指称铁律】）。
 - 若汇总后确实无任何可核对的新事实，primary.content 可为 "" 且 linked=[]。
 
@@ -2009,7 +2322,7 @@ ${npc}
 const UNIFIED_MEMORY_SUMMARY_SYSTEM_WITH_LINKED = `
 你是「长期记忆」提取助手。用户会提供三段正文材料：「线上聊天摘录」「线下约会剧情摘录」「人脉 NPC 线下关联摘录」，任一段可能为「（无）」。
 要求：
-- primary：把「线上」与「线下约会剧情摘录」里**实际发生**的信息合成一条连贯备忘，站在用户视角用第一人称「我」；**content 须遵守【记忆正文·指称铁律】**（与 linked 占位符规则一致）；若某一栏为「（无）」，勿编造该栏；另一栏有内容则正常总结。
+- primary：把「线上」与「线下约会剧情摘录」里**实际发生**的信息合成一条连贯备忘，**全文第三人称**；玩家 **{{user}}**、对方 **{{char}}**；**禁止「我」**；须遵守【记忆正文·指称铁律】；若某一栏为「（无）」，勿编造该栏。
 - linked：仅基于「人脉 NPC 线下关联摘录」中**对应 character_id 的片段**，为各 NPC 各写一条备忘；**全文第三人称**；凡涉玩家、存档主角、本条 NPC、他人脉**必须**分别写 **{{user}}、{{archive_char}}、{{char}}、{{id:人设UUID}}**（与摘录 id 一致），**禁止**「用户」「玩家」「主角」「主要角色」及材料真名；摘录为「（无）」时 linked 必须为 []。
 - 只总结材料中可直接核对的事实；禁止主观心理臆测；禁止材料外剧情。
 - 口语化、具体；primary 正文约 60～200 字；每条 linked 约 40～160 字（信息很少可更短）。
@@ -2084,30 +2397,52 @@ export function parseUnifiedMemorySummaryWithLinkedModelOutput(raw: string): Uni
 export async function requestUnifiedMemorySummaryWithLinked(params: {
   apiConfig: ApiConfig | null
   onlineTranscript: ChatTranscriptTurn[]
+  /** 遇见 App 临时邂逅会话（游标后、尚未写入长期记忆） */
+  meetTranscript?: ChatTranscriptTurn[]
   offlineTextBlock: string
   npcLinkedExcerptsBlock: string
+  peerFallback?: string
+  /** 当前私聊/约会对象人设 id（primary 的 {{char}}） */
+  peerCharacterId?: string
 }): Promise<UnifiedMemorySummaryWithLinkedResult> {
   const cfg = params.apiConfig
   if (!cfg?.apiUrl?.trim() || !cfg.apiKey?.trim() || !cfg.modelId?.trim()) {
     throw new Error('未配置 AI API')
   }
-  const onlineBlock = formatUnifiedMemoryOnlineBlock(params.onlineTranscript)
+  const peer = params.peerFallback?.trim() || '对方'
+  const onlineBlock = formatUnifiedMemoryOnlineBlock(params.onlineTranscript, peer)
+  const meetTail = (params.meetTranscript ?? []).slice(-40)
+  const meetBlock = meetTail.length
+    ? formatUnifiedMemoryOnlineBlock(meetTail, peer)
+    : '（无）'
   let offlineBlock = String(params.offlineTextBlock || '').trim()
   if (!offlineBlock) offlineBlock = '（无）'
   if (offlineBlock.length > 8000) offlineBlock = `${offlineBlock.slice(0, 8000)}\n\n（以下线下摘录因长度已截断）`
   let npcBlock = String(params.npcLinkedExcerptsBlock || '').trim()
   if (!npcBlock) npcBlock = '（无）'
   if (npcBlock.length > 12000) npcBlock = `${npcBlock.slice(0, 12000)}\n\n（人脉 NPC 摘录因长度已截断）`
+  const hadOnline = params.onlineTranscript.some((t) => String(t.text || '').trim().length > 3)
+  const hadMeet = meetTail.length > 0
+  const hadOffline = offlineBlock !== '（无）'
+  const meetOnly = hadMeet && !hadOnline && !hadOffline
+  const systemPrompt = meetOnly
+    ? UNIFIED_MEET_ONLY_MEMORY_SUMMARY_SYSTEM
+    : UNIFIED_MEMORY_SUMMARY_SYSTEM_WITH_LINKED
+  const genderAppendix = await buildMemorySummaryPeerGenderAppendix(params.peerCharacterId)
+  const pointerHint = meetOnly
+    ? `【指称】材料中的网名/显示名不得写入 content；primary 须第三人称，指玩家 {{user}}、指对方 {{char}}；**禁止「我」**；linked 必须为 []。${genderAppendix}`
+    : `【指称】材料中的发言者昵称、摘录「显示名：」、剧情里的人名**不得**原样写入任一 content；须 {{user}}/{{char}}/{{archive_char}}/{{id:UUID}}；**禁止第一人称「我」**（与【记忆正文·指称铁律】一致）。${genderAppendix}`
   const messages: OpenAiCompatibleMessage[] = [
-    { role: 'system', content: UNIFIED_MEMORY_SUMMARY_SYSTEM_WITH_LINKED },
+    { role: 'system', content: systemPrompt },
     {
       role: 'user',
       content:
         `以下是「尚未总结」的材料，请仅基于这些内容输出 JSON（含 primary 与 linked）：\n\n` +
-        `【线上聊天摘录】\n${onlineBlock}\n\n` +
+        `【微信私聊摘录（未总结）】\n${onlineBlock}\n\n` +
+        `【遇见 App 临时会话摘录（未总结）】\n${meetBlock}\n\n` +
         `【线下约会剧情摘录】\n${offlineBlock}\n\n` +
         `【人脉 NPC 线下关联摘录】\n${npcBlock}\n\n` +
-        `【指称】材料中的发言者昵称、摘录「显示名：」、剧情里的人名**不得**原样写入任一 content；须 {{user}}/{{char}}/{{archive_char}}/{{id:UUID}}（与系统提示【记忆正文·指称铁律】一致）。`,
+        pointerHint,
     },
   ]
   const text = await openAiCompatibleChat(cfg, messages, {
@@ -2120,8 +2455,8 @@ export async function requestUnifiedMemorySummaryWithLinked(params: {
 const GROUP_CHAT_MEMORY_SUMMARY_SYSTEM = `
 你是「长期记忆」提取助手。用户会提供两段材料：「线上群聊摘录」与「群成员与群状态快照」，任一段可能为「（无）」。
 要求：
-- 必须使用第一人称“我”，站在用户视角叙述，把两段里**实际发生**的信息合成一条连贯备忘；**禁止**在 content 里写群成员真名或完整档案昵称，也**禁止**把材料「群名」「用户在本群的昵称」「成员与身份」行里出现的称呼汉字原样抄入正文（他人一律 {{id:UUID}} 或泛称）。
-- 玩家用「我」或 {{user}}；提及其他群成员时，**必须**使用用户消息末尾【群成员 character_id 对照】中的 {{id:UUID}} 形式（与 UUID 完全一致），不要用群昵称替代；无对照条的成员用泛称。
+- **全文第三人称**；把两段里**实际发生**的信息合成一条连贯备忘；**禁止**在 content 里写群成员真名或完整档案昵称，也**禁止**把材料里的称呼汉字原样抄入正文（他人一律 {{id:UUID}} 或泛称）。
+- 玩家**只许** {{user}}，**禁止**「我」；提及其他群成员时，**必须**使用用户消息末尾【群成员 character_id 对照】中的 {{id:UUID}} 形式（与 UUID 完全一致），不要用群昵称替代；无对照条的成员用泛称。
 - 必须覆盖：谁在群里、谁发了什么要点、角色之间有无互相接话；若有群状态快照中的**群主/管理员/禁言**等，也要如实写入（仅基于快照，勿编造未写明的操作）。
 - 只总结本次材料中可直接核对的事实；禁止混入材料外的剧情。
 - 禁止写“我怎么想/我觉得/我感到”等主观心理；禁止推断角色未说出口的心理。
@@ -2461,7 +2796,7 @@ export async function requestWeChatDanmakuVarietyShow(params: {
   let messages: OpenAiCompatibleMessage[]
 
   if (params.useMemory) {
-    const base = buildSystemContent({
+    const base = await materializeSystemContent({
       character: params.character,
       playerIdentity: params.playerIdentity,
       playerDisplayName: params.playerDisplayName,

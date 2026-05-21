@@ -267,7 +267,13 @@ export function buildPersonaSummaryFromComprehensive(p: ComprehensivePersona): s
   const a = p.base.info.slice(0, 120)
   const b = p.core.surface.slice(0, 100)
   const c = p.core.flaws.slice(0, 80)
-  return [a, b, c].filter((x) => x && x !== PLACEHOLDER).join(' ').slice(0, 320) || PLACEHOLDER
+  const raw = [a, b, c].filter((x) => x && x !== PLACEHOLDER).join(' ').trim()
+  if (!raw) return PLACEHOLDER
+  // 与九维 worldbook / persona 电梯句一致：兜底摘要须带字面量 {{char}}，便于列表展开与模型收束
+  if (!raw.includes('{{char}}')) {
+    return `{{char}}给人的侧写：${raw.slice(0, 220)}。旁人眼里的{{char}}也与此气质相合。`.slice(0, 320)
+  }
+  return raw.slice(0, 320)
 }
 
 function pickOfflineOrientationOrigin(seed: string, orientationTag: string): string {

@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 
-/** 浅色铂金风 · 情感共鸣刻度（RESONANCE），细线与铂金色进度 */
+/** 浅色铂金风 · 情感共鸣刻度，细线与铂金色进度 */
 export function AffectionMeter({
   value,
   flashKey,
@@ -49,7 +49,7 @@ export function AffectionMeter({
     <div className="w-full">
       <div className="flex items-end justify-end gap-2">
         <span className="font-mono text-[10px] tracking-tight text-gray-400">
-          RESONANCE: {display}%
+          情感共鸣 {display}%
         </span>
       </div>
       <div

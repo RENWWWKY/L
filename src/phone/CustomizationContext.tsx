@@ -519,6 +519,10 @@ type Ctx = {
   /** 先移除指定 characterId 的旧条目，再追加（用于某主角及其 NPC 整批同步通讯录） */
   replaceWeChatPersonaContacts: (removeCharacterIds: string[], add: WeChatPersonaContact[]) => void
   removeWeChatPersonaContactsByCharacterIds: (characterIds: string[]) => void
+  /** 深度注销微信账号：清空通讯录缓存（不重置手机主题等） */
+  clearWeChatPersonaContacts: () => void
+  /** 切换微信账号：整表替换通讯录快照 */
+  setWeChatPersonaContacts: (contacts: WeChatPersonaContact[]) => void
   resetDefaults: () => void
   themeStyle: React.CSSProperties
   wechatThemeStyle: React.CSSProperties
@@ -941,6 +945,14 @@ export function CustomizationProvider({ children }: { children: ReactNode }) {
     }))
   }, [])
 
+  const clearWeChatPersonaContacts = useCallback(() => {
+    setState((s) => ({ ...s, wechatPersonaContacts: [] }))
+  }, [])
+
+  const setWeChatPersonaContacts = useCallback((contacts: WeChatPersonaContact[]) => {
+    setState((s) => ({ ...s, wechatPersonaContacts: contacts.map((c) => ({ ...c })) }))
+  }, [])
+
   const resetDefaults = useCallback(() => {
     setState(DEFAULT_CUSTOMIZATION)
     void personaDb.deletePhoneKv(STORAGE_KEY)
@@ -977,6 +989,8 @@ export function CustomizationProvider({ children }: { children: ReactNode }) {
       setGestureEffects,
       replaceWeChatPersonaContacts,
       removeWeChatPersonaContactsByCharacterIds,
+      clearWeChatPersonaContacts,
+      setWeChatPersonaContacts,
       resetDefaults,
       themeStyle,
       wechatThemeStyle,
@@ -1000,6 +1014,8 @@ export function CustomizationProvider({ children }: { children: ReactNode }) {
       setGestureEffects,
       replaceWeChatPersonaContacts,
       removeWeChatPersonaContactsByCharacterIds,
+      clearWeChatPersonaContacts,
+      setWeChatPersonaContacts,
       resetDefaults,
       themeStyle,
       wechatThemeStyle,

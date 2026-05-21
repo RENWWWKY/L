@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useState, type ReactNode } from 'react'
 import { AnimatePresence, motion } from 'framer-motion'
 import { ChevronDown, X } from 'lucide-react'
-import type { MemoryTraceData } from './memoryTraceTypes'
+import type { MemoryTraceData, MemoryTraceLineRelation } from './memoryTraceTypes'
+import { lineRelationUiLabel } from './wechatMemoryLineScope'
 
 export type { MemoryTraceData } from './memoryTraceTypes'
 
@@ -13,6 +14,36 @@ type AccordionId = 'sample' | 'wbAfter' | 'core' | 'cursor' | 'deep'
 
 function pct(score: number): string {
   return `${Math.round(score * 1000) / 10}%`
+}
+
+function LineScopeBadge(props: {
+  sourceLineLabel?: string
+  lineRelation?: MemoryTraceLineRelation
+}) {
+  const label = props.sourceLineLabel?.trim()
+  const rel = props.lineRelation
+  if (!label && !rel) return null
+  const relText = rel ? lineRelationUiLabel(rel) : ''
+  const isCurrent = rel === 'current'
+  const isOther = rel === 'other'
+  return (
+    <p className="mb-1 flex flex-wrap items-center gap-1.5">
+      {relText ? (
+        <span
+          className="rounded-md px-1.5 py-0.5 text-[10px] font-semibold tracking-wide"
+          style={{
+            background: isCurrent ? 'rgba(212,175,55,0.14)' : isOther ? 'rgba(0,0,0,0.06)' : 'rgba(0,0,0,0.04)',
+            color: isCurrent ? '#8B6914' : '#525252',
+          }}
+        >
+          {relText}
+        </span>
+      ) : null}
+      {label ? (
+        <span className="text-[10px] font-medium text-neutral-500">马甲 · {label}</span>
+      ) : null}
+    </p>
+  )
 }
 
 function AccordionRow(props: {
@@ -387,13 +418,20 @@ export function MemoryTraceModal({ open, onClose, data }: MemoryTraceModalProps)
                       </div>
                       <div>
                         <p className="text-[11px] font-medium uppercase tracking-[0.2em] text-neutral-400">尚未总结 · 私聊与群聊摘录</p>
+                        <p className="mt-1 text-[11px] leading-relaxed text-neutral-500">
+                          仅展示各线未总结聊天原文；分线阅读规则仅注入模型，不在此重复展示。
+                        </p>
                         <ul className="mt-2 space-y-3">
                           {matrix.recentContext.unsummarizedChats.map((row, i) => (
                             <li key={i} className="flex gap-3 text-[13px] leading-relaxed text-neutral-700">
                               <span className="mt-1.5 size-1.5 shrink-0 rounded-full bg-neutral-400 animate-pulse" aria-hidden />
                               <div className="min-w-0 flex-1">
+                                <LineScopeBadge
+                                  sourceLineLabel={row.sourceLineLabel}
+                                  lineRelation={row.lineRelation}
+                                />
                                 <p className="text-[11px] font-bold uppercase tracking-[0.08em] text-neutral-800">
-                                  {row.type === 'group' ? `From Group: ${row.source}` : `From Private: ${row.source}`}
+                                  {row.type === 'group' ? `群聊 · ${row.source}` : row.source || '私聊摘录'}
                                 </p>
                                 <pre className="mt-1 whitespace-pre-wrap font-sans text-[12px] text-neutral-600">{row.snippet}</pre>
                               </div>
@@ -411,11 +449,18 @@ export function MemoryTraceModal({ open, onClose, data }: MemoryTraceModalProps)
                     onToggle={() => toggleAccordion('deep')}
                   >
                     <div className="space-y-5 px-1">
+                      <p className="text-[11px] leading-relaxed text-neutral-500">
+                        每条长期记忆标注来源微信账号与扮演马甲；「当前微信线」相对本窗口会话，「其它微信线」勿默认对方已知。
+                      </p>
                       <div>
                         <p className="text-[11px] font-medium uppercase tracking-[0.2em] text-neutral-400">Keyword Hits · 关键词命中</p>
                         <ul className="mt-2 space-y-3">
                           {matrix.deepMemory.keywordHits.map((row, i) => (
                             <li key={i} className="rounded-lg border border-neutral-100 bg-neutral-50/50 p-3">
+                              <LineScopeBadge
+                                sourceLineLabel={row.sourceLineLabel}
+                                lineRelation={row.lineRelation}
+                              />
                               <p className="font-mono text-[11px] font-semibold tracking-wide" style={{ color: PLATINUM }}>
                                 {row.keyword}
                               </p>
@@ -432,7 +477,13 @@ export function MemoryTraceModal({ open, onClose, data }: MemoryTraceModalProps)
                               key={i}
                               className="flex gap-3 rounded-lg border border-neutral-100 bg-white p-3 shadow-[inset_0_1px_0_rgba(255,255,255,0.6)]"
                             >
-                              <p className="min-w-0 flex-1 text-[12px] leading-relaxed text-neutral-600">{row.content}</p>
+                              <div className="min-w-0 flex-1">
+                                <LineScopeBadge
+                                  sourceLineLabel={row.sourceLineLabel}
+                                  lineRelation={row.lineRelation}
+                                />
+                                <p className="text-[12px] leading-relaxed text-neutral-600">{row.content}</p>
+                              </div>
                               <span
                                 className="shrink-0 font-mono text-[10px] font-medium tabular-nums"
                                 style={{ color: PLATINUM }}

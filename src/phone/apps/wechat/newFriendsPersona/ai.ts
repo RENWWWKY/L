@@ -1050,8 +1050,8 @@ function clampMotto(s: string, max = MOTTO_MAX): string {
   return t.length > max ? t.slice(0, max) : t
 }
 
-/** 6–20 位小写英文+数字+下划线；过短则补后缀，禁止纯数字 */
-function normalizeWechatId(raw: string, seed: string): string {
+/** 6–20 位小写英文+数字+下划线；过短则补后缀，禁止纯数字（微信人设与遇见 NPC 共用） */
+export function normalizeWechatId(raw: string, seed: string): string {
   let s = raw.toLowerCase().replace(/[^a-z0-9_]/g, '')
   if (s.length > 20) s = s.slice(0, 20)
   const pad = () => {

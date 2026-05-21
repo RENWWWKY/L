@@ -1,11 +1,19 @@
 import { AnimatePresence, motion } from 'framer-motion'
 import { Sparkles, Trash2, X } from 'lucide-react'
-import { useCallback, useRef } from 'react'
+import { useCallback, useEffect, useRef } from 'react'
 import {
   WORLD_BOOK_CHAR_PLACEHOLDER,
   WORLD_BOOK_USER_PLACEHOLDER,
   linkedCharacterPlaceholder,
+  type WorldBookUserInsertContext,
 } from '../charUserPlaceholders'
+import {
+  describeWorldBookUserPlaceholderBindingState,
+  insertWorldBookUserPlaceholderInContent,
+  migrateWorldBookItemUserPlaceholderLegacy,
+  normalizeWorldBookItemUserPlaceholders,
+  worldBookItemHasLegacyScopedUserPlaceholder,
+} from '../worldBookUserPlaceholderBindings'
 import {
   PlaceholderAwareTextarea,
   type PlaceholderAwareTextareaHandle,
@@ -31,6 +39,7 @@ export function LoreEntryEditorSheet({
   canUseAi,
   generating,
   onOpenAiLengthModal,
+  worldBookUserInsertContext = null,
 }: {
   open: boolean
   onClose: () => void
@@ -46,9 +55,48 @@ export function LoreEntryEditorSheet({
   canUseAi: boolean
   generating: boolean
   onOpenAiLengthModal: () => void
+  worldBookUserInsertContext?: WorldBookUserInsertContext | null
 }) {
   const taHandleRef = useRef<PlaceholderAwareTextareaHandle | null>(null)
   const caretRef = useRef<{ start: number; end: number }>({ start: 0, end: 0 })
+
+  useEffect(() => {
+    if (!open) return
+    const sync = normalizeWorldBookItemUserPlaceholders(item.content ?? '', item.userPlaceholderBindings, null)
+    if (!sync.changed) return
+    onPatchItem(wbId, itemId, {
+      content: sync.content,
+      userPlaceholderBindings: sync.bindings,
+    })
+  }, [open, item.content, item.userPlaceholderBindings, wbId, itemId, onPatchItem])
+
+  useEffect(() => {
+    if (!open || !worldBookItemHasLegacyScopedUserPlaceholder(item)) return
+    let cancelled = false
+    void (async () => {
+      const patch = await migrateWorldBookItemUserPlaceholderLegacy(item, null)
+      if (cancelled || !patch) return
+      onPatchItem(wbId, itemId, patch)
+    })()
+    return () => {
+      cancelled = true
+    }
+  }, [open, item, wbId, itemId, worldBookUserInsertContext, onPatchItem])
+
+  const patchContent = useCallback(
+    (nextContent: string, bindingsOverride?: typeof item.userPlaceholderBindings) => {
+      const sync = normalizeWorldBookItemUserPlaceholders(
+        nextContent,
+        bindingsOverride ?? item.userPlaceholderBindings,
+        null,
+      )
+      onPatchItem(wbId, itemId, {
+        content: sync.content,
+        userPlaceholderBindings: sync.bindings,
+      })
+    },
+    [item.userPlaceholderBindings, onPatchItem, wbId, itemId],
+  )
 
   const insertToken = useCallback(
     (token: string) => {
@@ -64,22 +112,50 @@ export function LoreEntryEditorSheet({
         start = el.selectionStart ?? cur.length
         end = el.selectionEnd ?? start
       }
-      const next = cur.slice(0, start) + token + cur.slice(end)
-      const pos = start + token.length
-      caretRef.current = { start: pos, end: pos }
-      onPatchItem(wbId, itemId, { content: next })
+      if (token === WORLD_BOOK_USER_PLACEHOLDER && worldBookUserInsertContext) {
+        const { content, bindings } = insertWorldBookUserPlaceholderInContent({
+          content: cur,
+          bindings: item.userPlaceholderBindings,
+          caretStart: start,
+          caretEnd: end,
+          ctx: worldBookUserInsertContext,
+        })
+        const pos = start + WORLD_BOOK_USER_PLACEHOLDER.length
+        caretRef.current = { start: pos, end: pos }
+        onPatchItem(wbId, itemId, { content, userPlaceholderBindings: bindings })
+      } else {
+        const next = cur.slice(0, start) + token + cur.slice(end)
+        const pos = start + token.length
+        caretRef.current = { start: pos, end: pos }
+        patchContent(next)
+      }
+
       queueMicrotask(() => {
         const t = taHandleRef.current?.getTextareaElement()
         if (!t) return
+        const caret = caretRef.current
         t.focus()
         try {
-          t.setSelectionRange(pos, pos)
+          t.setSelectionRange(caret.start, caret.end)
         } catch {
           /* ignore */
         }
       })
     },
-    [item.content, onPatchItem, wbId, itemId],
+    [
+      item.content,
+      item.userPlaceholderBindings,
+      onPatchItem,
+      patchContent,
+      wbId,
+      itemId,
+      worldBookUserInsertContext,
+    ],
+  )
+
+  const bindingState = describeWorldBookUserPlaceholderBindingState(
+    item.content ?? '',
+    item.userPlaceholderBindings,
   )
 
   /** 关闭时若正文只有空白可选不变 — 保持简单：不关逻辑 */
@@ -216,13 +292,19 @@ export function LoreEntryEditorSheet({
                     </button>
                     <button
                       type="button"
-                      disabled={generating}
+                      disabled={generating || !worldBookUserInsertContext}
                       onMouseDown={(e) => e.preventDefault()}
                       onClick={() => insertToken(WORLD_BOOK_USER_PLACEHOLDER)}
-                      title={`插入原文：${WORLD_BOOK_USER_PLACEHOLDER}`}
+                      title={
+                        worldBookUserInsertContext
+                          ? `插入 {{user}}，后台绑定 ${worldBookUserInsertContext.lineLabel}（${worldBookUserInsertContext.displayName}）`
+                          : '请先选择当前微信账号与扮演身份'
+                      }
                       className="shrink-0 rounded-full bg-stone-100 px-3 py-1.5 text-[11px] text-stone-700 transition-colors hover:bg-stone-200 disabled:opacity-50"
                     >
-                      绑定的玩家
+                      {worldBookUserInsertContext
+                        ? `玩家·${worldBookUserInsertContext.displayName.length > 6 ? `${worldBookUserInsertContext.displayName.slice(0, 5)}…` : worldBookUserInsertContext.displayName}`
+                        : '绑定的玩家'}
                     </button>
                     {networkPeersForInsert.map((peer) => {
                       const token = linkedCharacterPlaceholder(peer.id)
@@ -245,6 +327,25 @@ export function LoreEntryEditorSheet({
                       )
                     })}
                   </div>
+                  {bindingState.slotCount > 0 ? (
+                    <p className="mt-2 text-[10px] leading-relaxed text-stone-500">
+                      正文 {bindingState.slotCount} 处{' '}
+                      <code className="text-stone-600">{`{{user}}`}</code>
+                      {bindingState.summary ? (
+                        <>
+                          ，已绑定 {bindingState.boundCount} 处：{bindingState.summary}
+                        </>
+                      ) : (
+                        <>（尚未写入绑定，保存或再点一次「玩家」插入可补齐）</>
+                      )}
+                      {bindingState.hasLegacyScoped ? (
+                        <span className="text-amber-700"> · 检测到旧式长表达式，将自动改为裸占位符</span>
+                      ) : null}
+                      {bindingState.slotCount > bindingState.boundCount && !bindingState.hasLegacyScoped ? (
+                        <span className="text-amber-700"> · 有槽位未绑定账号/身份</span>
+                      ) : null}
+                    </p>
+                  ) : null}
                 </div>
               ) : null}
             </div>
@@ -257,7 +358,7 @@ export function LoreEntryEditorSheet({
                     value={generating ? WB_ITEM_GENERATING_TEXT : (item.content ?? '')}
                     readOnly={generating}
                     onChange={(e) => {
-                      if (!generating) onPatchItem(wbId, itemId, { content: e.target.value })
+                      if (!generating) patchContent(e.target.value)
                     }}
                     className="h-full min-h-[220px] w-full resize-none border-0 bg-transparent text-[15px] leading-relaxed text-stone-800 outline-none placeholder:text-stone-300 read-only:cursor-wait"
                     placeholder="书写属于你的世界片段…"
@@ -273,9 +374,10 @@ export function LoreEntryEditorSheet({
                     readOnly={generating}
                     value={generating ? WB_ITEM_GENERATING_TEXT : (item.content ?? '')}
                     onChange={(v) => {
-                      if (!generating) onPatchItem(wbId, itemId, { content: v })
+                      if (!generating) patchContent(v)
                     }}
                     characterId={character.id}
+                    worldBookUserPlaceholderBindings={item.userPlaceholderBindings}
                     placeholderPreview
                     previewEditRequiresDoubleClick={false}
                     previewShellWorldBook={false}

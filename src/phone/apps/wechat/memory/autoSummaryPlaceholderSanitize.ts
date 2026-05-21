@@ -6,7 +6,13 @@
 
 import { personaDb } from '../newFriendsPersona/idb'
 import type { Character, GroupChatRow, PlayerIdentity } from '../newFriendsPersona/types'
+import type { WorldBookUserInsertContext } from '../charUserPlaceholders'
+import {
+  attachMemoryUserPlaceholderBindings,
+  type SanitizedMemoryBody,
+} from '../memoryUserPlaceholderBindings'
 import { WECHAT_GROUP_BOT_CHARACTER_ID, WECHAT_GROUP_USER_CHAR_ID } from '../wechatConversationKey'
+import { normalizeMemorySummaryBodyAfterModel } from './memorySummaryContentNormalize'
 
 const MIN_TOKEN_LEN = 2
 
@@ -76,13 +82,23 @@ export async function sanitizeUnifiedPrimaryMemoryBody(
   body: string,
   peerCharacterId: string,
   archiveRootId: string,
-): Promise<string> {
+  userBindCtx?: WorldBookUserInsertContext | null,
+): Promise<SanitizedMemoryBody> {
   const peer = peerCharacterId.trim()
   const arch = (archiveRootId.trim() || peer).trim()
-  if (!peer || !String(body ?? '').trim()) return body
+  if (!peer || !String(body ?? '').trim()) {
+    return { content: body, userPlaceholderBindings: [] }
+  }
+
+  let text = normalizeMemorySummaryBodyAfterModel(body)
 
   const ordered: Array<{ token: string; ph: string }> = []
-  pushCharRules(ordered, await loadPlayerIdentityForPeer(peer), '{{user}}')
+  if (userBindCtx) {
+    const dn = userBindCtx.displayName?.trim()
+    if (dn.length >= MIN_TOKEN_LEN) ordered.push({ token: dn, ph: '{{user}}' })
+  } else {
+    pushCharRules(ordered, await loadPlayerIdentityForPeer(peer), '{{user}}')
+  }
   pushCharRules(ordered, await personaDb.getCharacter(peer), '{{char}}')
   if (arch && arch !== peer) {
     pushCharRules(ordered, await personaDb.getCharacter(arch), '{{archive_char}}')
@@ -98,7 +114,8 @@ export async function sanitizeUnifiedPrimaryMemoryBody(
     if (!nid || nid === peer) continue
     pushCharRules(ordered, n, `{{id:${nid}}}`)
   }
-  return applyRules(body, mergeRules(ordered))
+  const content = applyRules(text, mergeRules(ordered))
+  return attachMemoryUserPlaceholderBindings({ content, userPlaceholderBindings: [] }, userBindCtx)
 }
 
 /** 关联记忆 linked：挂在人脉 NPC，存档根为 linkedFrom */
@@ -107,14 +124,24 @@ export async function sanitizeUnifiedLinkedMemoryBody(
   linkedNpcId: string,
   archiveRootId: string,
   datingPeerCharacterId: string,
-): Promise<string> {
+  userBindCtx?: WorldBookUserInsertContext | null,
+): Promise<SanitizedMemoryBody> {
   const npc = linkedNpcId.trim()
   const arch = archiveRootId.trim()
   const peer = datingPeerCharacterId.trim()
-  if (!npc || !String(body ?? '').trim()) return body
+  if (!npc || !String(body ?? '').trim()) {
+    return { content: body, userPlaceholderBindings: [] }
+  }
+
+  let text = normalizeMemorySummaryBodyAfterModel(body)
 
   const ordered: Array<{ token: string; ph: string }> = []
-  pushCharRules(ordered, await loadPlayerIdentityForPeer(peer), '{{user}}')
+  if (userBindCtx) {
+    const dn = userBindCtx.displayName?.trim()
+    if (dn.length >= MIN_TOKEN_LEN) ordered.push({ token: dn, ph: '{{user}}' })
+  } else {
+    pushCharRules(ordered, await loadPlayerIdentityForPeer(peer), '{{user}}')
+  }
   pushCharRules(ordered, await personaDb.getCharacter(npc), '{{char}}')
   if (arch) pushCharRules(ordered, await personaDb.getCharacter(arch), '{{archive_char}}')
 
@@ -132,7 +159,8 @@ export async function sanitizeUnifiedLinkedMemoryBody(
   if (peer && peer !== npc && peer !== arch) {
     pushCharRules(ordered, await personaDb.getCharacter(peer), `{{id:${peer}}}`)
   }
-  return applyRules(body, mergeRules(ordered))
+  const content = applyRules(text, mergeRules(ordered))
+  return attachMemoryUserPlaceholderBindings({ content, userPlaceholderBindings: [] }, userBindCtx)
 }
 
 /** 群聊总结：他人一律 {{id:…}}，玩家 {{user}} */
@@ -140,27 +168,37 @@ export async function sanitizeGroupMemorySummaryBody(
   body: string,
   group: GroupChatRow | null,
   playerIdentityId: string,
-): Promise<string> {
-  if (!String(body ?? '').trim() || !group?.members?.length) return body
+  userBindCtx?: WorldBookUserInsertContext | null,
+): Promise<SanitizedMemoryBody> {
+  if (!String(body ?? '').trim() || !group?.members?.length) {
+    return { content: body, userPlaceholderBindings: [] }
+  }
+
+  let text = normalizeMemorySummaryBodyAfterModel(body)
 
   const ordered: Array<{ token: string; ph: string }> = []
-  const pid = playerIdentityId.trim()
-  let userIden: PlayerIdentity | null = null
-  if (pid) {
-    try {
-      userIden = await personaDb.getPlayerIdentity(pid)
-    } catch {
-      userIden = null
+  if (userBindCtx) {
+    const dn = userBindCtx.displayName?.trim()
+    if (dn.length >= MIN_TOKEN_LEN) ordered.push({ token: dn, ph: '{{user}}' })
+  } else {
+    const pid = playerIdentityId.trim()
+    let userIden: PlayerIdentity | null = null
+    if (pid) {
+      try {
+        userIden = await personaDb.getPlayerIdentity(pid)
+      } catch {
+        userIden = null
+      }
     }
-  }
-  if (!userIden) {
-    try {
-      userIden = await personaDb.getCurrentIdentity()
-    } catch {
-      userIden = null
+    if (!userIden) {
+      try {
+        userIden = await personaDb.getCurrentIdentity()
+      } catch {
+        userIden = null
+      }
     }
+    pushCharRules(ordered, userIden, '{{user}}')
   }
-  pushCharRules(ordered, userIden, '{{user}}')
 
   for (const mem of group.members) {
     const cid = mem.charId.trim()
@@ -175,15 +213,29 @@ export async function sanitizeGroupMemorySummaryBody(
     if (gn.length >= MIN_TOKEN_LEN) ordered.push({ token: gn, ph: `{{id:${cid}}}` })
     pushCharRules(ordered, ch, `{{id:${cid}}}`)
   }
-  return applyRules(body, mergeRules(ordered))
+  const content = applyRules(text, mergeRules(ordered))
+  return attachMemoryUserPlaceholderBindings({ content, userPlaceholderBindings: [] }, userBindCtx)
 }
 
 /** 仅私聊摘录总结（如好友申请）：玩家 + 对方人设 */
-export async function sanitizePrivateMemorySummaryBody(body: string, peerCharacterId: string): Promise<string> {
+export async function sanitizePrivateMemorySummaryBody(
+  body: string,
+  peerCharacterId: string,
+  userBindCtx?: WorldBookUserInsertContext | null,
+): Promise<SanitizedMemoryBody> {
   const peer = peerCharacterId.trim()
-  if (!peer || !String(body ?? '').trim()) return body
+  if (!peer || !String(body ?? '').trim()) {
+    return { content: body, userPlaceholderBindings: [] }
+  }
+  let text = normalizeMemorySummaryBodyAfterModel(body)
   const ordered: Array<{ token: string; ph: string }> = []
-  pushCharRules(ordered, await loadPlayerIdentityForPeer(peer), '{{user}}')
+  if (userBindCtx) {
+    const dn = userBindCtx.displayName?.trim()
+    if (dn.length >= MIN_TOKEN_LEN) ordered.push({ token: dn, ph: '{{user}}' })
+  } else {
+    pushCharRules(ordered, await loadPlayerIdentityForPeer(peer), '{{user}}')
+  }
   pushCharRules(ordered, await personaDb.getCharacter(peer), '{{char}}')
-  return applyRules(body, mergeRules(ordered))
+  const content = applyRules(text, mergeRules(ordered))
+  return attachMemoryUserPlaceholderBindings({ content, userPlaceholderBindings: [] }, userBindCtx)
 }

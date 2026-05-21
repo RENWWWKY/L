@@ -26,7 +26,7 @@ export function DataTransferTab({
   return (
     <section className="relative overflow-hidden rounded-[14px] border border-neutral-200/90 bg-white px-4 pb-10 pt-5 shadow-[0_1px_2px_rgba(0,0,0,0.04)]">
       <header className="mb-8 border-b border-neutral-100 pb-4">
-        <p className="text-[9px] font-semibold uppercase tracking-[0.28em] text-neutral-400">08 DATA · 中枢</p>
+        <p className="text-[9px] font-semibold uppercase tracking-[0.28em] text-neutral-400">09 DATA · 中枢</p>
         <h2 className="mt-2 text-[17px] font-semibold tracking-tight text-[#1C1C1E]">导入 / 导出</h2>
         <p className="mt-2 text-[11px] font-light leading-relaxed text-neutral-500">
           完整人设包仅在此页操作；导入为追加副本，不含旧身份绑定字段。

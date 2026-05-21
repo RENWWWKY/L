@@ -4,8 +4,20 @@ import { getWorldbookLoreEntriesSnapshot } from '../../worldbook/worldbookLoreSt
 import type { GlobalWechatPlate } from '../../worldbook/globalWorldBookTypes'
 import type { Character, PlayerIdentity } from './newFriendsPersona/types'
 import { personaDb } from './newFriendsPersona/idb'
-import { expandCharUserPlaceholders, resolveCharUserNamesForPrompt } from './charUserPlaceholders'
+import {
+  expandCharUserPlaceholders,
+  resolveCharUserNamesForPrompt,
+  resolveWorldBookUserBinding,
+} from './charUserPlaceholders'
+import { getCharacterMemoryRelevanceTraceForPromptInjection } from './memory/formatCharacterMemoriesForPromptInjection'
 import { buildMemoryRelevanceHaystack } from './wechatMemoryPromptBlocks'
+import { stripPromptPolicyBlocksForTraceDisplay } from './memoryTraceDisplaySanitize'
+import {
+  buildPrivateUnsummarizedTraceBlocks,
+  lineRelationUiLabel,
+  normalizeMemoryPromptLineScope,
+  parseLineScopedUnsummarizedTextForTrace,
+} from './wechatMemoryLineScope'
 import { listUnsummarizedOfflinePlotTraceItems } from './dating/loadOfflineDatingPlotsForWechatPrompt'
 import type {
   MemoryTraceData,
@@ -19,7 +31,11 @@ import {
 } from './newFriendsPersona/worldBookAfterPatch'
 import { setLastMemoryTrace } from './memoryTraceStore'
 import type { ChatTranscriptTurn } from './wechatChatAi'
-import { WECHAT_HISTORY_MAX_MESSAGES, buildCharacterCard, buildWorldBookText } from './wechatChatAi'
+import {
+  WECHAT_HISTORY_MAX_MESSAGES,
+  buildCharacterCard,
+  buildWorldBookTextForPrompt,
+} from './wechatChatAi'
 import { splitDatingAssistantOutput } from './dating/plotCoT'
 
 /** 与 DatingStoryPage 一致：剔除漏出的 VN 语音 JSON 碎片行，避免进思维溯源 */
@@ -250,18 +266,10 @@ async function expandTraceTextForCharacter(
     const fb = playerDisplayFallback.trim() || '用户'
     return (s: string) => expandCharUserPlaceholders(String(s ?? ''), { charName: '对方', userName: fb })
   }
-  let iden: PlayerIdentity | null = null
-  const boundId = ch.playerIdentityId?.trim()
-  if (boundId && boundId !== '__none__') {
-    try {
-      iden = await personaDb.getPlayerIdentity(boundId)
-    } catch {
-      iden = null
-    }
-  }
+  const binding = await resolveWorldBookUserBinding(ch)
   const names = resolveCharUserNamesForPrompt({
     character: ch,
-    playerIdentity: iden,
+    playerIdentity: binding?.row ?? null,
     playerDisplayName: playerDisplayFallback.trim(),
   })
   return (s: string) => expandCharUserPlaceholders(String(s ?? ''), names)
@@ -275,6 +283,12 @@ export async function publishWeChatPrivatePersonaMemoryTrace(params: {
   worldBackgroundPrompt: string
   offlineDatingPlotsContext: string
   unsPrivateNotes: string
+  /** 跨号未总结摘录（未包当前线标题，供溯源分块） */
+  crossAccountPrivateRaw?: string
+  /** 当前线未总结私聊原文（未包标题） */
+  currentLinePrivateRaw?: string
+  wechatAccountId?: string | null
+  sessionPlayerIdentityId?: string | null
   unsGroupNotes: string
   recentGroupChatsReference: string
   chatMemberIds: string[]
@@ -293,12 +307,22 @@ export async function publishWeChatPrivatePersonaMemoryTrace(params: {
     ...params.transcript.slice(-32).map((t) => t.text),
     params.biasText,
   ])
-  const deep = await personaDb.getCharacterMemoryRelevanceTraceByRelevance(cid, hay, {
+  const lineScope = normalizeMemoryPromptLineScope(
+    params.wechatAccountId,
+    params.sessionPlayerIdentityId,
+  )
+  const { getCharacterMemoryRelevanceTraceForPromptInjection } = await import(
+    './memory/formatCharacterMemoriesForPromptInjection'
+  )
+  const deep = await getCharacterMemoryRelevanceTraceForPromptInjection(cid, hay, {
     apiConfig: pickTrimmedApiUrlKey(params.apiConfig),
+    lineScope: lineScope ?? undefined,
   })
 
   const personaDetail = buildFullPersonaDetailForMemoryTrace(params.character)
-  const characterWorldBookRaw = buildWorldBookText(params.character, TRACE_WORLD_BOOK_MAX_CHARS).trim()
+  const characterWorldBookRaw = (
+    await buildWorldBookTextForPrompt(params.character, TRACE_WORLD_BOOK_MAX_CHARS)
+  ).trim()
   const globalWorldbookRaw = buildWorldbookContext(
     params.chatMemberIds,
     getWorldbookLoreEntriesSnapshot(),
@@ -318,12 +342,33 @@ export async function publishWeChatPrivatePersonaMemoryTrace(params: {
   })
 
   const unsChats: MemoryTraceData['contextMatrix']['recentContext']['unsummarizedChats'] = []
-  if (params.unsPrivateNotes.trim()) {
-    unsChats.push({
-      type: 'private',
-      source: '私聊（记忆总结游标后）',
-      snippet: params.unsPrivateNotes.trim(),
-    })
+  const privateTraceBlocks = await buildPrivateUnsummarizedTraceBlocks({
+    crossAccountMerged: params.crossAccountPrivateRaw,
+    currentLineRaw: params.currentLinePrivateRaw,
+    lineScope,
+  })
+  if (privateTraceBlocks.length) {
+    for (const b of privateTraceBlocks) {
+      unsChats.push({
+        type: 'private',
+        source: `${lineRelationUiLabel(b.lineRelation)} · ${b.sourceLineLabel}`,
+        sourceLineLabel: b.sourceLineLabel,
+        lineRelation: b.lineRelation,
+        snippet: b.snippet,
+      })
+    }
+  } else if (params.unsPrivateNotes.trim()) {
+    for (const b of parseLineScopedUnsummarizedTextForTrace(
+      stripPromptPolicyBlocksForTraceDisplay(params.unsPrivateNotes),
+    )) {
+      unsChats.push({
+        type: 'private',
+        source: `${lineRelationUiLabel(b.lineRelation)} · ${b.sourceLineLabel}`,
+        sourceLineLabel: b.sourceLineLabel,
+        lineRelation: b.lineRelation,
+        snippet: b.snippet,
+      })
+    }
   }
   if (params.unsGroupNotes.trim()) {
     unsChats.push({
@@ -420,13 +465,15 @@ export async function publishWeChatGroupMemoryTrace(params: {
     params.biasText,
     params.offlinePlotsCombined,
   ])
-  const deep = await personaDb.getCharacterMemoryRelevanceTraceByRelevance(cid, hay, {
+  const deep = await getCharacterMemoryRelevanceTraceForPromptInjection(cid, hay, {
     apiConfig: pickTrimmedApiUrlKey(params.apiConfig),
   })
 
   const primaryChar = await personaDb.getCharacter(cid)
   const personaDetail = buildFullPersonaDetailForMemoryTrace(primaryChar)
-  const characterWorldBookRaw = buildWorldBookText(primaryChar, TRACE_WORLD_BOOK_MAX_CHARS).trim()
+  const characterWorldBookRaw = (
+    await buildWorldBookTextForPrompt(primaryChar, TRACE_WORLD_BOOK_MAX_CHARS)
+  ).trim()
   const globalWorldbookRaw = buildWorldbookContext(
     params.wbGroupCharIds,
     getWorldbookLoreEntriesSnapshot(),
@@ -522,14 +569,16 @@ export async function publishDatingOfflineMemoryTrace(params: {
   if (!cid) return
 
   const hay = buildMemoryRelevanceHaystack([params.userText, params.unsPrivateBlock, params.unsGroupBlock])
-  const deep = await personaDb.getCharacterMemoryRelevanceTraceByRelevance(cid, hay, {
+  const deep = await getCharacterMemoryRelevanceTraceForPromptInjection(cid, hay, {
     apiConfig: pickTrimmedApiUrlKey(params.apiConfig),
   })
 
   const plate = params.isVnMode ? ('vn' as const) : ('offline_plot' as const)
   const chRow = await personaDb.getCharacter(cid)
   const personaDetail = buildFullPersonaDetailForMemoryTrace(chRow)
-  const characterWorldBookRaw = buildWorldBookText(chRow, TRACE_WORLD_BOOK_MAX_CHARS).trim()
+  const characterWorldBookRaw = (
+    await buildWorldBookTextForPrompt(chRow, TRACE_WORLD_BOOK_MAX_CHARS)
+  ).trim()
   const globalWorldbookRaw = buildWorldbookContext([cid], getWorldbookLoreEntriesSnapshot(), plate, {
     skipLengthCap: true,
     plainUserEntriesOnly: true,

@@ -30,7 +30,7 @@ export function formatComprehensivePersonaMarkdown(
     `**${labelEn}** ${labelZh}\n${body.trim()}\n`
 
   const md = [
-    `# 核心人设档案 · {{char}}`,
+    `# 九维人设全文 · {{char}}`,
     '',
     '> 来源：遇见 Lumi Meet · 九维立体人格矩阵',
     '',

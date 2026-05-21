@@ -16,6 +16,7 @@ export function memoryTextMatchesQuery(mem: CharacterMemory, query: string): boo
     src.hasGroupChatTag ? '群聊' : '',
     src.hasOfflineTag ? '线下' : '',
     src.hasLinkedOfflineTag ? '关联线下' : '',
+    src.hasMeetTag ? '遇见' : '',
   ].filter(Boolean)
   const meta = [
     ...sourceLabels,

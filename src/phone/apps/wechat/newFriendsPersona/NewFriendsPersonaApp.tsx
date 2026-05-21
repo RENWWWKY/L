@@ -1,7 +1,7 @@
 import { ArrowLeft, Plus, Save, Trash2, User, UserPlus, X } from 'lucide-react'
 import { AnimatePresence, motion } from 'framer-motion'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { personaDb } from './idb'
+import { emitWeChatStorageChanged, personaDb } from './idb'
 import type { Character, PlayerIdentity, Relationship } from './types'
 import { genderLabelZh, uid } from './utils'
 import { formatLinkedNpcsForWorldBookPrompt, generateCharacterOpeningLines, generateWechatProfilesForPersonaCharacters } from './ai'
@@ -17,7 +17,8 @@ import { ScheduleEditorScreen } from '../schedule/ScheduleEditorScreen'
 import { buildCharacterExportBundle, importCharacterBundle, parseCharacterImportFile } from './characterBundleIo'
 import { formatWorldBackgroundForPrompt } from './worldBackgroundFormat'
 import { WorldBackgroundEditPage, WorldBackgroundPickerPage } from './WorldBackgroundScreens'
-import { NewFriendsList, type FriendRequest } from './NewFriendsList'
+import type { FriendRequest } from './friendRequestTypes'
+import { NewFriendsPage } from './NewFriendsPage'
 import { RequestDetail } from './RequestDetail'
 import {
   buildMbtiPersonalityWorldBook,
@@ -27,15 +28,43 @@ import {
   normalizeMbti,
 } from '../mbtiPersonalityWorldBook'
 import { isLargeMbtiAvatar } from './mbtiProfileUi'
+import { useWechatStore } from '../useWechatStore'
+import {
+  backfillCharacterPlayerIdentityLinkMeta,
+  buildIdentityDisplayNameMapForCharacters,
+  repairCharacterSlotPrimaryBindingFromLinked,
+} from '../wechatCharacterPlayerIdentity'
+import {
+  formatWechatAccountLabel,
+  resolvePlayerIdentityWechatAccountId,
+} from '../wechatContactIdentityPrompt'
+import { loadAccountsBundle } from '../wechatAccountPersistence'
+import { deleteCharacterPersonaForWechatAccount } from '../wechatCharacterPersonaDelete'
+import {
+  collectCanonicalIdsPreservedAcrossAccounts,
+  expandCanonicalIdSet,
+  resolveCanonicalCharacterId,
+} from '../wechatGlobalCharacterRegistry'
+import { normalizeAccountsBundle, WECHAT_ACCOUNTS_BUNDLE_KV_KEY } from '../wechatAccountTypes'
+import {
+  characterAccessibleToWechatAccount,
+  characterBelongsToWechatAccount,
+  stampWechatAccountOwner,
+} from '../wechatAccountScope'
 import { ArchiveIndexTabs } from './personaEditor/ArchiveIndexTabs'
 import type { PersonaEditTabId } from './personaEditor/personaEditorTabs'
 import { BasicInfoTab } from './personaEditor/BasicInfoTab'
+import { BindingsInfoTab } from './personaEditor/BindingsInfoTab'
 import { ConnectionsTab } from './personaEditor/ConnectionsTab'
 import { DataTransferTab } from './personaEditor/DataTransferTab'
 import { FirstMessageTab } from './personaEditor/FirstMessageTab'
 import { ScheduleTimelineTab } from './personaEditor/ScheduleTimelineTab'
 import { WeChatProfileTab } from './personaEditor/WeChatProfileTab'
 import { WorldBackgroundTab } from './personaEditor/WorldBackgroundTab'
+import {
+  consolidateMeetCharacterWorldBooks,
+  meetWorldbooksNeedConsolidation,
+} from '../../lumiMeet/meetWorldbookConsolidate'
 import { WorldbookTab } from './personaEditor/WorldbookTab'
 
 const bg = '#f5f5f5'
@@ -665,24 +694,36 @@ export function NewFriendsPersonaApp({
   onBack,
   onOpenIdentityManager,
   initialEditCharacterId,
+  initialActiveRequestId,
+  onInitialActiveRequestConsumed,
   pendingRequests,
   onMarkRequestsRead,
   onResolveRequest,
   onReplyRequest,
   onTriggerReplyRequest,
+  onRetryAdjudication,
   replyingRequestIds,
+  onSendTempChat,
+  tempChatReplyingIds,
   entrySource,
 }: {
   onBack: () => void
   onOpenIdentityManager?: () => void
   /** 从聊天设置「聊天设定」等入口直达某角色编辑页 */
   initialEditCharacterId?: string
+  /** 添加朋友发送成功后直达该条验证详情 */
+  initialActiveRequestId?: string
+  onInitialActiveRequestConsumed?: () => void
   pendingRequests?: PendingNewFriendRequest[]
   onMarkRequestsRead?: () => void
   onResolveRequest?: (requestId: string, action: 'accepted' | 'declined') => void
   onReplyRequest?: (requestId: string, replyText: string) => void | Promise<void>
   onTriggerReplyRequest?: (requestId: string) => void | Promise<void>
+  /** 用户主动申请：强制重跑裁决（清卡死 in-flight） */
+  onRetryAdjudication?: (requestId: string) => void | Promise<void>
   replyingRequestIds?: string[]
+  onSendTempChat?: (requestId: string, text: string) => void | Promise<void>
+  tempChatReplyingIds?: string[]
   entrySource?: 'contacts' | 'profile' | 'dating'
 }) {
   const [page, setPage] = useState<
@@ -702,9 +743,11 @@ export function NewFriendsPersonaApp({
   const [list, setList] = useState<Character[]>([])
   const [loading, setLoading] = useState(false)
   const [deleteId, setDeleteId] = useState<string | null>(null)
+  const [deleteTargetDetachHint, setDeleteTargetDetachHint] = useState<string | null>(null)
   const [identityPickOpen, setIdentityPickOpen] = useState(false)
   const [identityList, setIdentityList] = useState<PlayerIdentity[]>([])
   const [identityNameById, setIdentityNameById] = useState<Record<string, string>>({})
+  const [accountsBundle, setAccountsBundle] = useState<Awaited<ReturnType<typeof loadAccountsBundle>>>(null)
   const [identityLoading, setIdentityLoading] = useState(false)
   const [pendingNewDraft, setPendingNewDraft] = useState<Character | null>(null)
   const [bindingsOpen, setBindingsOpen] = useState(false)
@@ -715,30 +758,55 @@ export function NewFriendsPersonaApp({
   const requestRows = entrySource === 'contacts' ? (pendingRequests ?? []) : []
   const activeRequest = useMemo(() => requestRows.find((r) => r.id === activeRequestId) ?? null, [activeRequestId, requestRows])
 
-  const { replaceWeChatPersonaContacts, removeWeChatPersonaContactsByCharacterIds } = useCustomization()
+  useEffect(() => {
+    const id = initialActiveRequestId?.trim()
+    if (!id || entrySource !== 'contacts') return
+    setActiveRequestId(id)
+    onInitialActiveRequestConsumed?.()
+  }, [entrySource, initialActiveRequestId, onInitialActiveRequestConsumed])
+
+  const { state, replaceWeChatPersonaContacts, removeWeChatPersonaContactsByCharacterIds } = useCustomization()
+  const { currentAccountId, setActivePlayerIdentityForCurrentAccount } = useWechatStore()
+
+  const linkedCharacterIds = useMemo(
+    () => state.wechatPersonaContacts.map((c) => c.characterId.trim()).filter(Boolean),
+    [state.wechatPersonaContacts],
+  )
+  const linkedCharacterIdSet = useMemo(() => new Set(linkedCharacterIds), [linkedCharacterIds])
   const apiConfigList = useCurrentApiConfig('chatCard')
 
   const refresh = useCallback(async () => {
     setLoading(true)
     try {
-      const [res, ids] = await Promise.all([personaDb.listRootCharacters(), personaDb.listPlayerIdentities()])
+      const acc = currentAccountId?.trim()
+      if (!acc) {
+        setList([])
+        setIdentityNameById({})
+        return
+      }
+      let res = await personaDb.listRootCharactersAccessibleToWechatAccount(acc, linkedCharacterIds)
+      let repaired = false
+      for (const c of res) {
+        if (await repairCharacterSlotPrimaryBindingFromLinked(c.id)) repaired = true
+        if (await backfillCharacterPlayerIdentityLinkMeta(c.id)) repaired = true
+      }
+      if (repaired) {
+        res = await personaDb.listRootCharactersAccessibleToWechatAccount(acc, linkedCharacterIds)
+      }
       setList(res)
-      setIdentityNameById(
-        Object.fromEntries(
-          ids.map((it) => [it.id, (it.name || '').trim() || '未命名身份']),
-        ),
-      )
+      setIdentityNameById(await buildIdentityDisplayNameMapForCharacters(acc, res))
+      setAccountsBundle(await loadAccountsBundle())
     } catch (e) {
       console.warn('[persona] list refresh failed', e)
       window.alert(e instanceof Error ? e.message : '加载角色列表失败，请稍后重试')
     } finally {
       setLoading(false)
     }
-  }, [])
+  }, [currentAccountId, linkedCharacterIds])
 
   const refreshIdentities = async () => {
     setIdentityLoading(true)
-    const res = await personaDb.listPlayerIdentities()
+    const res = await personaDb.listPlayerIdentities(currentAccountId ?? undefined)
     setIdentityList(res)
     setIdentityLoading(false)
   }
@@ -766,11 +834,11 @@ export function NewFriendsPersonaApp({
     }
   }, [page.name, refresh])
 
+  /** 进入通讯录「新的朋友」列表：清除被拒红点，并将待处理验证会话标为已读 */
   useEffect(() => {
-    if (page.name !== 'list') return
-    if (!requestRows.some((r) => r.unread)) return
+    if (entrySource !== 'contacts' || page.name !== 'list') return
     onMarkRequestsRead?.()
-  }, [onMarkRequestsRead, page.name, requestRows])
+  }, [entrySource, onMarkRequestsRead, page.name])
 
   const buildPersonaContactEntries = useCallback((chars: Character[]): WeChatPersonaContact[] => {
     return chars.map((ch) => ({
@@ -784,15 +852,16 @@ export function NewFriendsPersonaApp({
 
   const runDirectWechatContacts = useCallback(
     async (rootId: string) => {
+      const acc = currentAccountId?.trim()
       const root = await personaDb.getCharacter(rootId)
-      if (!root) return
-      const npcs = await personaDb.listNpcsFor(rootId)
+      if (!root || !acc || !characterAccessibleToWechatAccount(root, acc, linkedCharacterIdSet)) return
+      const npcs = await personaDb.listNpcsForAccessibleRoot(rootId, acc, linkedCharacterIds)
       const all = [root, ...npcs]
       const ids = all.map((x) => x.id)
       replaceWeChatPersonaContacts(ids, buildPersonaContactEntries(all))
       setContactGenRootId(null)
     },
-    [buildPersonaContactEntries, replaceWeChatPersonaContacts],
+    [buildPersonaContactEntries, currentAccountId, linkedCharacterIdSet, linkedCharacterIds, replaceWeChatPersonaContacts],
   )
 
   const runAiWechatContacts = useCallback(
@@ -800,9 +869,12 @@ export function NewFriendsPersonaApp({
       setContactGenRootId(null)
       setAiGeneratingWechat(true)
       try {
+        const acc = currentAccountId?.trim()
         const root = await personaDb.getCharacter(rootId)
-        if (!root) throw new Error('角色不存在')
-        const npcs = await personaDb.listNpcsFor(rootId)
+        if (!root || !acc || !characterAccessibleToWechatAccount(root, acc, linkedCharacterIdSet)) {
+          throw new Error('角色不存在')
+        }
+        const npcs = await personaDb.listNpcsForAccessibleRoot(rootId, acc, linkedCharacterIds)
         const all = [root, ...npcs]
         const rows = await generateWechatProfilesForPersonaCharacters({ apiConfig: apiConfigList, characters: all })
         const now = Date.now()
@@ -830,7 +902,15 @@ export function NewFriendsPersonaApp({
         setAiGeneratingWechat(false)
       }
     },
-    [apiConfigList, buildPersonaContactEntries, refresh, replaceWeChatPersonaContacts],
+    [
+      apiConfigList,
+      buildPersonaContactEntries,
+      currentAccountId,
+      linkedCharacterIdSet,
+      linkedCharacterIds,
+      refresh,
+      replaceWeChatPersonaContacts,
+    ],
   )
 
   if (page.name === 'list') {
@@ -854,6 +934,10 @@ export function NewFriendsPersonaApp({
                 <RequestDetail
                   key={`request-detail-${activeRequest.id}`}
                   request={activeRequest}
+                  userInitiated={activeRequest.direction === 'outbound' || !!activeRequest.userInitiated}
+                  onRetryAdjudication={() =>
+                    (onRetryAdjudication ?? onTriggerReplyRequest)?.(activeRequest.id)
+                  }
                   onBack={() => setActiveRequestId(null)}
                   onReply={(text) => onReplyRequest?.(activeRequest.id, text)}
                   onTriggerReply={() => onTriggerReplyRequest?.(activeRequest.id)}
@@ -866,7 +950,14 @@ export function NewFriendsPersonaApp({
                   key="request-list"
                   className="h-full min-h-0 overflow-y-auto px-4 pb-[max(18px,env(safe-area-inset-bottom,0px))] pt-4 [scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden"
                 >
-                  <NewFriendsList requests={requestRows} onOpenRequest={setActiveRequestId} />
+                  <NewFriendsPage
+                    requests={requestRows}
+                    replyingRequestIds={replyingRequestIds}
+                    tempChatReplyingIds={tempChatReplyingIds}
+                    onRetryRequest={(id) => onTriggerReplyRequest?.(id)}
+                    onSendTempChat={onSendTempChat}
+                    onOpenRequest={(id) => setActiveRequestId(id)}
+                  />
                 </div>
               )}
             </AnimatePresence>
@@ -920,11 +1011,45 @@ export function NewFriendsPersonaApp({
                           {c.identity} · {genderLabelZh(c.gender)} · {c.zodiac || '未设置生日'}
                         </p>
                         <p className="mt-1 truncate text-[12px]" style={{ color: sub, fontWeight: 300 }}>
-                          绑定身份：
                           {(() => {
                             const bindId = c.playerIdentityId?.trim()
-                            if (!bindId) return '未绑定'
-                            return identityNameById[bindId] || '未命名身份'
+                            const primaryLabel = !bindId
+                              ? '未绑定'
+                              : identityNameById[bindId] || '未命名身份'
+                            const linked = (c.linkedPlayerIdentityIds ?? []).filter(
+                              (id) => id?.trim() && id.trim() !== bindId,
+                            )
+                            const primaryAcc = bindId
+                              ? resolvePlayerIdentityWechatAccountId(
+                                  c,
+                                  bindId,
+                                  identityList.find((i) => i.id === bindId),
+                                )
+                              : ''
+                            const primaryAccLabel = primaryAcc
+                              ? formatWechatAccountLabel(accountsBundle, primaryAcc)
+                              : ''
+                            const linkedSuffix = linked.length
+                              ? ` · 关联马甲：${linked
+                                  .map((id) => {
+                                    const name = identityNameById[id.trim()] || '未命名'
+                                    const la = resolvePlayerIdentityWechatAccountId(
+                                      c,
+                                      id.trim(),
+                                      identityList.find((i) => i.id === id.trim()),
+                                    )
+                                    const accLabel = la
+                                      ? formatWechatAccountLabel(accountsBundle, la)
+                                      : ''
+                                    return accLabel ? `${name}·${accLabel}` : name
+                                  })
+                                  .slice(0, 2)
+                                  .join('、')}${linked.length > 2 ? '…' : ''}`
+                              : ''
+                            const primaryWithAcc = primaryAccLabel
+                              ? `${primaryLabel}·${primaryAccLabel}`
+                              : primaryLabel
+                            return `档案主绑定：${primaryWithAcc}${linkedSuffix}`
                           })()}
                         </p>
                       </div>
@@ -942,7 +1067,34 @@ export function NewFriendsPersonaApp({
                       </button>
                       <button
                         type="button"
-                        onClick={() => setDeleteId(c.id)}
+                        onClick={() => {
+                          void (async () => {
+                            const acc = currentAccountId?.trim()
+                            if (!acc) {
+                              setDeleteTargetDetachHint(null)
+                              setDeleteId(c.id)
+                              return
+                            }
+                            const canonical = (await resolveCanonicalCharacterId(c.id)) || c.id
+                            const ch = await personaDb.getCharacter(canonical)
+                            const bundle = normalizeAccountsBundle(
+                              await personaDb.getPhoneKv(WECHAT_ACCOUNTS_BUNDLE_KV_KEY),
+                            )
+                            const preserved = bundle
+                              ? await expandCanonicalIdSet(
+                                  collectCanonicalIdsPreservedAcrossAccounts(bundle, acc),
+                                )
+                              : new Set<string>()
+                            const ownedHere = ch ? characterBelongsToWechatAccount(ch, acc) : false
+                            const usedElsewhere = preserved.has(canonical)
+                            setDeleteTargetDetachHint(
+                              usedElsewhere || !ownedHere
+                                ? '该角色可能在其它微信账号中仍在使用。确认后仅从当前账号移除联系人、本号聊天记录与本号可见的人设；其它马甲上的同一角色档案与共享长期记忆将保留。'
+                                : null,
+                            )
+                            setDeleteId(c.id)
+                          })()
+                        }}
                         className="rounded-xl border bg-white p-2 transition-all duration-200 ease-out hover:bg-[#fafafa]"
                         style={{ borderColor: border, color: sub }}
                         aria-label="删除角色"
@@ -1013,19 +1165,39 @@ export function NewFriendsPersonaApp({
         <CenterDialog
           open={!!deleteId}
           title="删除角色？"
-          message="将从 IndexedDB 中移除该角色及其全部世界书内容。此操作不可撤销。"
+          message={
+            deleteTargetDetachHint ??
+            '将从本微信账号移除该角色人设、世界书及本号聊天记录。若其它马甲仍保留该角色，则不会删除共享档案。此操作不可撤销。'
+          }
           confirmText="删除"
-          onCancel={() => setDeleteId(null)}
+          onCancel={() => {
+            setDeleteId(null)
+            setDeleteTargetDetachHint(null)
+          }}
           onConfirm={async () => {
             const id = deleteId
             setDeleteId(null)
+            setDeleteTargetDetachHint(null)
             if (!id) return
             try {
-              const npcs = await personaDb.listNpcsFor(id)
+              const acc = currentAccountId?.trim()
+              if (!acc) {
+                window.alert('请先选择微信账号')
+                return
+              }
+              const npcs = await personaDb.listNpcsForWechatAccount(id, acc)
               removeWeChatPersonaContactsByCharacterIds([id, ...npcs.map((n) => n.id)])
-              await personaDb.deleteCharacter(id)
+              const mode = await deleteCharacterPersonaForWechatAccount({
+                characterId: id,
+                wechatAccountId: acc,
+              })
               setList((prev) => prev.filter((c) => c.id !== id))
               await refresh()
+              if (mode === 'detached-from-account') {
+                window.alert(
+                  '已从当前微信账号移除该角色与本号聊天记录；其它马甲若仍保留该角色，其档案与记忆不受影响。',
+                )
+              }
             } catch (e) {
               window.alert(e instanceof Error ? e.message : '删除失败')
               await refresh()
@@ -1098,8 +1270,9 @@ export function NewFriendsPersonaApp({
             onOpenIdentityManager?.()
           }}
           onPick={async (identityId) => {
-            const draft = { ...(pendingNewDraft ?? newCharacter()), playerIdentityId: identityId }
-            await personaDb.setCurrentIdentityId(identityId)
+            const base = { ...(pendingNewDraft ?? newCharacter()), playerIdentityId: identityId }
+            const draft = currentAccountId ? stampWechatAccountOwner(base, currentAccountId) : base
+            await setActivePlayerIdentityForCurrentAccount(identityId)
             setIdentityPickOpen(false)
             setPendingNewDraft(null)
             // 仅创建草稿，不写入 IndexedDB；只有点击“保存”才会持久化
@@ -1149,6 +1322,10 @@ function PersonaEditPage({
 }) {
   const [data, setData] = useState<Character | null>(null)
   const [dirty, setDirty] = useState(false)
+  const dirtyRef = useRef(false)
+  useEffect(() => {
+    dirtyRef.current = dirty
+  }, [dirty])
   const [saving, setSaving] = useState(false)
   const [bioGenerating, setBioGenerating] = useState(false)
   const [openingGenerating, setOpeningGenerating] = useState(false)
@@ -1182,21 +1359,68 @@ function PersonaEditPage({
   /** 主角在剧情/人脉中对用户的称呼（PlayerNetworkLink.theyCallYou，characterId = 根主角 id） */
   const [protagonistCallsUser, setProtagonistCallsUser] = useState('')
   const protagonistCallsTouchedRef = useRef(false)
+  const { currentAccountId } = useWechatStore()
+  const { state: phoneState } = useCustomization()
+  const linkedCharacterIdSet = useMemo(
+    () => new Set(phoneState.wechatPersonaContacts.map((c) => c.characterId.trim()).filter(Boolean)),
+    [phoneState.wechatPersonaContacts],
+  )
 
   useEffect(() => {
     void (async () => {
       if (draft) {
-        setData(draft)
+        setData(
+          currentAccountId && !draft.wechatAccountId?.trim()
+            ? stampWechatAccountOwner(draft, currentAccountId)
+            : draft,
+        )
         setDirty(false)
         protagonistCallsTouchedRef.current = false
         return
       }
-      const c = await personaDb.getCharacter(id)
+      const acc = currentAccountId?.trim()
+      let c = await personaDb.getCharacter(id)
+      if (c && acc && !characterAccessibleToWechatAccount(c, acc, linkedCharacterIdSet)) {
+        c = null
+      }
+      if (c && meetWorldbooksNeedConsolidation(c.id, c.worldBooks ?? [])) {
+        const worldBooks = consolidateMeetCharacterWorldBooks(c.id, c.worldBooks ?? [])
+        c = { ...c, worldBooks, updatedAt: Date.now() }
+        await personaDb.upsertCharacter(c)
+        emitWeChatStorageChanged()
+      }
       setData(c)
       setDirty(false)
       protagonistCallsTouchedRef.current = false
     })()
-  }, [draft, id])
+  }, [currentAccountId, draft, id])
+
+  /** 遇见结业等路径会直接写 IndexedDB；本页无未保存修改时同步拉取，避免世界书分册与档案法则预览不一致 */
+  useEffect(() => {
+    if (isNew || draft) return
+    const sid = id.trim()
+    if (!sid) return
+    const onStorage = () => {
+      void (async () => {
+        if (dirtyRef.current) return
+        try {
+          let fresh = await personaDb.getCharacter(sid)
+          const acc = currentAccountId?.trim()
+          if (fresh && acc && !characterAccessibleToWechatAccount(fresh, acc, linkedCharacterIdSet)) fresh = null
+          if (fresh && meetWorldbooksNeedConsolidation(fresh.id, fresh.worldBooks ?? [])) {
+            const worldBooks = consolidateMeetCharacterWorldBooks(fresh.id, fresh.worldBooks ?? [])
+            fresh = { ...fresh, worldBooks, updatedAt: Date.now() }
+            await personaDb.upsertCharacter(fresh)
+          }
+          if (fresh) setData(fresh)
+        } catch {
+          /* ignore */
+        }
+      })()
+    }
+    window.addEventListener('wechat-storage-changed', onStorage as EventListener)
+    return () => window.removeEventListener('wechat-storage-changed', onStorage as EventListener)
+  }, [currentAccountId, id, isNew, draft, linkedCharacterIdSet])
 
   useEffect(() => {
     if (!data?.worldBackgroundId) return
@@ -1233,8 +1457,11 @@ function PersonaEditPage({
     if (editTab !== 'worldbook') return
     void (async () => {
       const parentId = data.generatedForCharacterId?.trim() || data.id
+      const acc = currentAccountId?.trim() || data.wechatAccountId?.trim()
       try {
-        const npcs = await personaDb.listNpcsFor(parentId)
+        const npcs = acc
+          ? await personaDb.listNpcsForWechatAccount(parentId, acc)
+          : await personaDb.listNpcsFor(parentId)
         const others = npcs.filter((c) => c.id !== data.id)
         setLinkedNpcsWbContext(formatLinkedNpcsForWorldBookPrompt(others))
       } catch {
@@ -1338,10 +1565,18 @@ function PersonaEditPage({
   const save = async () => {
     if (!data) return
     if (!data.name.trim()) return
+    const acc = currentAccountId?.trim()
+    if (!acc) {
+      window.alert('请先登录微信账号后再保存人设')
+      return
+    }
     setSaving(true)
     // 仅新建角色时才使用“当前身份”兜底，避免编辑既有角色时被全局身份误覆盖。
     const identityId = data.playerIdentityId?.trim() || (isNew ? await personaDb.getCurrentIdentityId() : '')
-    const next = { ...data, playerIdentityId: identityId || undefined, updatedAt: Date.now() }
+    const next = stampWechatAccountOwner(
+      { ...data, playerIdentityId: identityId || undefined, updatedAt: Date.now() },
+      acc,
+    )
     await personaDb.upsertCharacter(next)
     const rootId = networkRootCharacterId(next)
     if (rootId) {
@@ -1416,7 +1651,11 @@ function PersonaEditPage({
 
   const persistSchedule = async (next: ScheduleTable) => {
     if (!data) return
-    const merged: Character = { ...data, schedule: next, updatedAt: Date.now() }
+    const acc = currentAccountId?.trim()
+    const merged: Character = stampWechatAccountOwner(
+      { ...data, schedule: next, updatedAt: Date.now() },
+      acc,
+    )
     setDirty(true)
     setData(merged)
     await personaDb.upsertCharacter(merged)
@@ -1635,6 +1874,8 @@ function PersonaEditPage({
               />
             ) : null}
 
+            {editTab === 'bindings' ? <BindingsInfoTab character={data} /> : null}
+
             {editTab === 'opening' ? (
               <FirstMessageTab
                 editorId={data?.id ?? id}
@@ -1751,11 +1992,16 @@ function PersonaEditPage({
                         window.alert('此处一次仅支持单个完整人设包。若 JSON 内包含多个包，请拆成多个文件后分别导入。')
                         return
                       }
-                      const result = await importCharacterBundle(bundles[0], 'new')
+                      const acc = currentAccountId?.trim()
+                      if (!acc) {
+                        window.alert('请先登录微信账号后再导入人设包')
+                        return
+                      }
+                      const result = await importCharacterBundle(bundles[0], 'new', { wechatAccountId: acc })
                       const importedRoot = result.rootId
                       onNavigateToCharacter(importedRoot)
                       await onBundleImported?.({ rootId: importedRoot, replacePage: false })
-                      window.alert('导入成功，已追加为新的人设副本（未覆盖当前正在编辑的条目）。')
+                      window.alert('导入成功：已写入当前微信账号，并已后台存档人设包与绑定身份。')
                     } catch (err) {
                       window.alert(err instanceof Error ? err.message : '导入失败')
                     } finally {

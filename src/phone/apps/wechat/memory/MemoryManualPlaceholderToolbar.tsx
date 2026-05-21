@@ -1,7 +1,13 @@
 import { useEffect, useMemo, useRef, useState, type RefObject } from 'react'
+import type { WorldBookUserInsertContext } from '../charUserPlaceholders'
 import { personaDb } from '../newFriendsPersona/idb'
-import type { Character, CharacterMemoryScope } from '../newFriendsPersona/types'
+import type {
+  Character,
+  CharacterMemoryScope,
+  WorldBookUserPlaceholderBinding,
+} from '../newFriendsPersona/types'
 import { WECHAT_GROUP_BOT_CHARACTER_ID, WECHAT_GROUP_USER_CHAR_ID } from '../wechatConversationKey'
+import { insertWorldBookUserPlaceholderInContent } from '../worldBookUserPlaceholderBindings'
 
 /** 手动插入仍为表达式；按钮文案用中文便于识别 */
 const SNIPPETS = [
@@ -145,6 +151,9 @@ export function useMemoryDraftPlaceholderPreview(opts: {
   memoryScope?: CharacterMemoryScope
   linkedFromCharacterId?: string | null
   involvedCharIds?: string[] | null
+  userPlaceholderBindings?: import('../newFriendsPersona/types').WorldBookUserPlaceholderBinding[] | null
+  sourceWechatAccountId?: string | null
+  sourceSessionPlayerIdentityId?: string | null
   debounceMs?: number
 }): { expanded: string; loading: boolean } {
   const [expanded, setExpanded] = useState('')
@@ -170,6 +179,9 @@ export function useMemoryDraftPlaceholderPreview(opts: {
             memoryScope: opts.memoryScope,
             linkedFromCharacterId: opts.linkedFromCharacterId ?? undefined,
             involvedCharIds: opts.involvedCharIds ?? undefined,
+            userPlaceholderBindings: opts.userPlaceholderBindings ?? undefined,
+            sourceWechatAccountId: opts.sourceWechatAccountId ?? undefined,
+            sourceSessionPlayerIdentityId: opts.sourceSessionPlayerIdentityId ?? undefined,
           })
           if (!cancelled) setExpanded(out)
         } catch {
@@ -189,6 +201,9 @@ export function useMemoryDraftPlaceholderPreview(opts: {
     opts.memoryScope,
     opts.linkedFromCharacterId,
     opts.involvedCharIds,
+    opts.userPlaceholderBindings,
+    opts.sourceWechatAccountId,
+    opts.sourceSessionPlayerIdentityId,
     opts.debounceMs,
   ])
 
@@ -224,6 +239,10 @@ export function MemoryManualPlaceholderToolbar(props: {
   placeholderCharacterId: string | null
   memoryScope?: CharacterMemoryScope
   involvedCharIds?: string[] | null
+  /** 插入 {{user}} 时绑定到当前登录微信 + 扮演身份（非记忆写入来源线） */
+  userInsertContext?: WorldBookUserInsertContext | null
+  userPlaceholderBindings?: WorldBookUserPlaceholderBinding[] | null
+  onUserPlaceholderBindingsChange?: (next: WorldBookUserPlaceholderBinding[]) => void
 }) {
   const {
     textareaRef,
@@ -235,6 +254,9 @@ export function MemoryManualPlaceholderToolbar(props: {
     placeholderCharacterId,
     memoryScope = 'private',
     involvedCharIds = null,
+    userInsertContext = null,
+    userPlaceholderBindings = null,
+    onUserPlaceholderBindingsChange,
   } = props
 
   const showPreview = value.includes('{{')
@@ -359,10 +381,40 @@ export function MemoryManualPlaceholderToolbar(props: {
           <button
             key={s.insert}
             type="button"
-            title={`${s.title} → ${s.insert}`}
+            title={
+              s.insert === '{{user}}' && userInsertContext
+                ? `插入 {{user}}，绑定到当前编辑账号：${userInsertContext.displayName || userInsertContext.lineLabel}`
+                : `${s.title} → ${s.insert}`
+            }
             className={chip}
             style={variant === 'themed' ? { borderColor: '#e5e5e5', color: '#000' } : undefined}
-            onClick={() => insertAtCaret(textareaRef.current, value, s.insert, onChange)}
+            onClick={() => {
+              if (
+                s.insert === '{{user}}' &&
+                userInsertContext &&
+                onUserPlaceholderBindingsChange
+              ) {
+                const ta = textareaRef.current
+                const start = ta?.selectionStart ?? value.length
+                const end = ta?.selectionEnd ?? start
+                const { content, bindings } = insertWorldBookUserPlaceholderInContent({
+                  content: value,
+                  bindings: userPlaceholderBindings ?? [],
+                  caretStart: start,
+                  caretEnd: end,
+                  ctx: userInsertContext,
+                })
+                onChange(content)
+                onUserPlaceholderBindingsChange(bindings)
+                const pos = start + '{{user}}'.length
+                queueMicrotask(() => {
+                  ta?.focus()
+                  ta?.setSelectionRange(pos, pos)
+                })
+                return
+              }
+              insertAtCaret(textareaRef.current, value, s.insert, onChange)
+            }}
           >
             {s.buttonLabel}
           </button>
@@ -409,7 +461,8 @@ export function MemoryManualPlaceholderToolbar(props: {
           <p className="mb-1.5 font-medium text-neutral-800">大白话版（保存进正文的是右边那种带花括号的「暗号」，改名后会自动对上最新名字）</p>
           <ul className="list-disc space-y-1 pl-4 marker:text-neutral-400">
             <li>
-              <strong>用户</strong>：点一下就是在正文里插入「我」在系统里的玩家身份称呼；你以后改身份昵称，这里也会跟着变，不用手改。
+              <strong>用户</strong>：插入 <code className="text-[10px]">{'{{user}}'}</code>
+              ，绑定到<strong>当前登录的微信账号与扮演身份</strong>（不是这条记忆当初总结时的来源号）；预览里会显示对应昵称。
             </li>
             <li>
               <strong>主角</strong>：
@@ -427,6 +480,9 @@ export function MemoryManualPlaceholderToolbar(props: {
             </li>
             <li>
               下面有<strong>替换预览</strong>时，可以先看一眼：暗号会被换成当前真实显示名，跟发给模型的效果一致。
+            </li>
+            <li>
+              想删掉一整段占位符时，把光标放在那段里（或紧挨在段尾后面），按一次<strong>退格</strong>或 <strong>Delete</strong>，整段表达式会一块儿删掉（含 {'{{user}}'} 的绑定槽位会同步去掉）。
             </li>
           </ul>
         </div>

@@ -13,11 +13,12 @@ import {
   isMeetProfilePlaceholder,
   sanitizeLoveBlocksForStaticLore,
 } from './comprehensivePersona'
+import { resolveMeetPublicDisplayName } from './meetPublicProfileDisplay'
 import type { EncounterNPC, MeetPublicProfile } from './meetTypes'
 
 export function resolveMeetCharUserNames(charNickname: string, profile: MeetPublicProfile): CharUserNames {
   const charName = String(charNickname ?? '').trim() || '对方'
-  const userName = String(profile.displayName ?? '').trim() || '用户'
+  const userName = resolveMeetPublicDisplayName(profile)
   return { charName, userName }
 }
 
@@ -154,4 +155,15 @@ export function buildMeetNpcVitalsSubtitle(npc: EncounterNPC): string | null {
   }
   if (w && !isMeetProfilePlaceholder(w)) parts.push(`${w} kg`)
   return parts.length ? parts.join(' · ') : null
+}
+
+/** 匹配卡首行：性别 · 性取向 · 职业 */
+export function buildMeetNpcProfileMetaLine(npc: EncounterNPC): string {
+  const occ =
+    npc.occupation?.trim() ||
+    (npc.comprehensivePersona
+      ? deriveMeetOccupationLabel(npc.comprehensivePersona.abilities.skills)
+      : '')
+  const parts = [npc.gender?.trim(), npc.orientation?.trim(), occ].filter(Boolean)
+  return parts.length ? parts.join(' · ') : '—'
 }

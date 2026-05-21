@@ -13,13 +13,14 @@ import { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import type { CSSProperties, PointerEvent } from 'react'
 import type { Character, PlayerNetworkLink, Relationship } from './types'
+import { useCustomization } from '../../../CustomizationContext'
 import { personaDb } from './idb'
+import { stampWechatAccountOwner } from '../wechatAccountScope'
 import { DEFAULT_WORLD_BACKGROUND_ID } from './worldBackgroundConstants'
 import { formatWorldBackgroundForPrompt } from './worldBackgroundFormat'
 import { generateNpcNetworkWithAi } from './npcNetworkGenerate'
 import { genderLabelZh, uid } from './utils'
 import type { ApiConfig } from '../../api/types'
-import { useCustomization } from '../../../CustomizationContext'
 
 /** 关系偏向：语义去重（职场含同事向、家族含亲属向、宿敌含对立向），避免胶囊列表冗长 */
 const REL_BIAS_OPTIONS = ['职场', '家族', '暗恋', '宿敌', '朋友', '同学', '恋人', '陌生人', '合作伙伴'] as const
@@ -228,6 +229,7 @@ function newBlankNpcForMain(main: Character): Character {
     worldBooks: [],
     generatedForCharacterId: main.id,
     playerIdentityId: main.playerIdentityId,
+    wechatAccountId: main.wechatAccountId,
     worldBackgroundId: main.worldBackgroundId?.trim() || DEFAULT_WORLD_BACKGROUND_ID,
   }
 }
@@ -277,6 +279,10 @@ type Props = {
 
 export function PersonaNetworkSection({ main, apiConfig, onApiMissing, onOpenNpcEdit }: Props) {
   const { state } = useCustomization()
+  const linkedCharacterIds = useMemo(
+    () => state.wechatPersonaContacts.map((c) => c.characterId.trim()).filter(Boolean),
+    [state.wechatPersonaContacts],
+  )
   const playerAvatarUrl = state.profile.avatarImageUrl || ''
   /** 用字符串承载输入，避免 number 受控时删空/删个位被强制成 0 */
   const [countInput, setCountInput] = useState('3')
@@ -393,8 +399,11 @@ export function PersonaNetworkSection({ main, apiConfig, onApiMissing, onOpenNpc
   }, [edgeDetail, playerLinkCharIdForModal])
 
   const reload = useCallback(async () => {
-    const list = await personaDb.listNpcsFor(main.id)
-    const allRoots = await personaDb.listRootCharacters()
+    const acc = main.wechatAccountId?.trim()
+    const list = acc
+      ? await personaDb.listNpcsForAccessibleRoot(main.id, acc, linkedCharacterIds)
+      : await personaDb.listNpcsFor(main.id)
+    const allRoots = acc ? await personaDb.listRootCharactersAccessibleToWechatAccount(acc, linkedCharacterIds) : []
     const rootIdSet = new Set(allRoots.map((c) => c.id))
     const allRelsFull = await personaDb.listAllRelationships()
     const linkedRootIds = new Set<string>()
@@ -414,7 +423,7 @@ export function PersonaNetworkSection({ main, apiConfig, onApiMissing, onOpenNpc
     setLinkedRoots(linked)
     setRels(r)
     setPlayerLinks(pl.filter((l) => ids.includes(l.characterId)))
-  }, [main.id])
+  }, [linkedCharacterIds, main.id, main.wechatAccountId])
 
   useEffect(() => {
     void reload()
@@ -511,8 +520,9 @@ export function PersonaNetworkSection({ main, apiConfig, onApiMissing, onOpenNpc
         customNote,
         worldBackgroundSummary,
       })
+      const acc = main.wechatAccountId?.trim()
       for (const c of characters) {
-        await personaDb.upsertCharacter(c)
+        await personaDb.upsertCharacter(acc ? stampWechatAccountOwner(c, acc) : c)
       }
       await personaDb.bulkPutRelationships(relationships)
       await personaDb.putPlayerNetworkLinks(main.id, nextPl)

@@ -1,5 +1,5 @@
 import { AnimatePresence, motion } from 'framer-motion'
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import { AppPlaceholderScreen } from './components/AppPlaceholderScreen'
 import { CustomizeScreen } from './components/CustomizeScreen'
 import { EntryNoticeModal } from './components/EntryNoticeModal'
@@ -17,6 +17,7 @@ import { RecycleBinApp } from './apps/recycleBin/RecycleBinApp'
 import { personaDb } from './apps/wechat/newFriendsPersona/idb'
 import { WeChatApp } from './apps/wechat/WeChatApp'
 import { LumiMeetApp } from './apps/lumiMeet/LumiMeetApp'
+import { LumiMeetProvider } from './apps/lumiMeet/LumiMeetStore'
 import { WorldbookLoreProvider } from './worldbook/worldbookLoreStore'
 import type { AppSlot } from './types'
 
@@ -53,6 +54,15 @@ function buildPageProps(disableTransitions: boolean) {
   }
 }
 const ENTRY_NOTICE_KEY = 'entry-notice-accepted-v1'
+
+/** Provider 置于路由层，避免与 LumiMeetApp 同文件热更新时子树脱离 Context */
+function LumiMeetAppRoute({ onBack }: { onBack: () => void }) {
+  return (
+    <LumiMeetProvider>
+      <LumiMeetApp onBack={onBack} />
+    </LumiMeetProvider>
+  )
+}
 
 export function PhoneApp() {
   const { state } = useCustomization()
@@ -155,7 +165,7 @@ export function PhoneApp() {
                 {route.id === 'wechat' ? (
                   <WeChatApp onBack={goHome} />
                 ) : route.id === 'lumiMeet' ? (
-                  <LumiMeetApp onBack={goHome} />
+                  <LumiMeetAppRoute onBack={goHome} />
                 ) : route.id === 'api' ? (
                   <ApiSettingsApp onBack={goHome} />
                 ) : route.id === 'voiceprint' ? (

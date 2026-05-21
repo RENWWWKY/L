@@ -26,7 +26,7 @@ export function ScheduleTimelineTab({
     <section className="rounded-[14px] border border-neutral-200/90 bg-white px-4 pb-8 pt-5 shadow-[0_1px_2px_rgba(0,0,0,0.04)]">
       <header className="mb-6 flex items-start justify-between gap-3 border-b border-neutral-100 pb-4">
         <div>
-          <p className="text-[9px] font-semibold uppercase tracking-[0.28em] text-neutral-400">06 TIME · 行程轴</p>
+          <p className="text-[9px] font-semibold uppercase tracking-[0.28em] text-neutral-400">07 TIME · 行程轴</p>
           <h2 className="mt-2 text-[17px] font-semibold tracking-tight text-[#1C1C1E]">日程表</h2>
           <p className="mt-1 text-[11px] font-light text-neutral-500">纵向时间轴摘要；完整表格在编辑器内修改。</p>
         </div>

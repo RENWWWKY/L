@@ -34,7 +34,26 @@ import {
 import { WeChatDiscoverInstagram } from '../../../components/WeChatDiscoverInstagram'
 import { DatingSystem } from './dating/DatingSystem'
 import { NewFriendsPersonaApp } from './newFriendsPersona/NewFriendsPersonaApp'
-import type { FriendRequest } from './newFriendsPersona/NewFriendsList'
+import type { FriendRequest } from './newFriendsPersona/friendRequestTypes'
+import { ensureMeetVol10EpilogueIfNeeded } from '../lumiMeet/meetEpilogueAfterContactsSync'
+import { MeetVol10EpilogueNoticeHost } from '../lumiMeet/MeetVol10EpilogueNoticeHost'
+import {
+  buildMeetWechatPrivateChatContinuityBlock,
+  isMeetSyncedCharacter,
+  loadMeetUserProfileSnapshotFromKv,
+} from '../lumiMeet/meetUserProfileSnapshot'
+import {
+  resolveUiHideBeforeForMeetImport,
+  shouldSyncMeetEncounterToWechat,
+  syncMeetEncounterToWechatAfterFriendLinked,
+} from '../lumiMeet/meetWechatSyncOnFriendLinked'
+import { mapFriendRequestRowToUi, lumiFallbackNickname } from './newFriendsPersona/mapFriendRequestToUi'
+import { countNewFriendsBadge } from './newFriendsPersona/newFriendsBadge'
+import {
+  appendFriendRequestTempChatMessage,
+  runFriendRequestTempChatReply,
+  tempChatThreadFromRow,
+} from './addFriend/friendRequestTempChat'
 import { PlayerIdentityApp } from './playerIdentity/PlayerIdentityApp'
 import { ChatSettingsScreen } from './chatSettings/ChatSettingsScreen'
 import { CreateGroupPickContactsSheet } from './group/CreateGroupPickContactsSheet'
@@ -63,11 +82,30 @@ import { formatWeChatMessagesTabPreviewFromStoredMessageContent } from './wechat
 import {
   WECHAT_LUMI_PEER_CHARACTER_ID,
   resolvePrivateChatSessionPlayerIdentityId,
-  resolvePrivateWeChatConversationKey,
+  resolveGroupWeChatStorageConversationKey,
+  resolvePrivateWeChatStorageConversationKey,
+  parseWechatAccountPrivateConversationKey,
   wechatConversationKey,
   wechatGroupConversationKey,
   wechatGroupPeerCharacterId,
 } from './wechatConversationKey'
+import {
+  ensureAccountScopedGroupConversation,
+  ensureAccountScopedPrivateConversation,
+  resolveAccountScopedPrivateConversationKey,
+} from './wechatAccountPrivateChatStorage'
+import {
+  collectWechatAccountPlayerIdentityIds,
+  linkCharacterPlayerIdentityFromAcceptedFriendRequest,
+  listFriendRequestsForWechatAccount,
+  resolveActivePrivateChatSessionPlayerIdentityId,
+  resolveOutgoingFriendRequestPlayerIdentityId,
+  isNonPrimaryBindingSession,
+} from './wechatCharacterPlayerIdentity'
+import { resolveWorldBookUserBinding } from './charUserPlaceholders'
+import { buildFriendRequestNonPrimaryBindingBias } from './wechatFriendRequestSessionBias'
+import { resolveCanonicalCharacterId } from './wechatGlobalCharacterRegistry'
+import { contactEntryFromCharacter } from './wechatPersonaContactsSync'
 import { WeChatMessageBubbleRow } from './WeChatMessageBubbleRow'
 import { WeChatForwardSelectChatScreen, type WeChatForwardMode } from './WeChatForwardSelectChatScreen'
 import type { GroupChatRow, WeChatChatMessage } from './newFriendsPersona/types'
@@ -76,6 +114,7 @@ import { setWeChatForegroundConversationKey } from './wechatSystemNotify'
 import { useCurrentApiConfig } from '../api/ApiSettingsContext'
 import { requestWeChatMemorySummary, requestWeChatPeerReplyBubbles, type ChatTranscriptTurn } from './wechatChatAi'
 import { sanitizePrivateMemorySummaryBody } from './memory/autoSummaryPlaceholderSanitize'
+import { resolveMemoryUserInsertContextFromSource } from './memoryUserPlaceholderBindings'
 import { buildAutoSummaryMemoryKeywordsBackup } from './memory/memoryTriggerUtils'
 import { uid } from './newFriendsPersona/utils'
 import { formatWorldBackgroundForPrompt } from './newFriendsPersona/worldBackgroundFormat'
@@ -85,14 +124,26 @@ import {
 } from './newFriendsPersona/worldBookAfterPatch'
 import {
   buildFriendRequestDeletionOrdinalBias,
+  FRIEND_REQUEST_APPLICANT_UNKNOWN_BIAS,
   buildFriendRequestPrivatePromptPack,
 } from './wechatFriendRequestPrivatePromptPack'
+import { buildAltWechatStrangerContactPromptBlock } from './wechatAltAccountPrompt'
+import {
+  isSecondaryWechatAccountInBundle,
+  loadAccountsBundle,
+  resolveAccountSessionIdentityId,
+} from './wechatAccountPersistence'
 import { getContactDeletionCount, incrementContactDeletionCount } from './wechatContactDeletionCount'
 import {
   clearGroupChatPrivatePeerAnchorDockStagingIfMatches,
   setGroupChatPrivatePeerAnchorFromDockTransition,
   setPrivateChatGroupAnchorFromDockTransition,
 } from './wechatPrivateGroupAnchorStaging'
+import { WeChatAuthGuard } from './WeChatAuthGuard'
+import { WeChatRegistration } from './WeChatRegistration'
+import { SwitchAccountPage } from './settings/SwitchAccountPage'
+import { WeChatWelcomeRevealLayer } from './WeChatWelcomeRevealLayer'
+import { useWechatStore, WechatStoreProvider } from './useWechatStore'
 import { WeChatDanmakuConfigScreen } from './settings/WeChatDanmakuConfigScreen'
 import {
   WeChatGlobalSettingsScreen,
@@ -102,6 +153,7 @@ import { WeChatNotificationSettingsScreen } from './settings/WeChatNotificationS
 import { WeChatBusySettingsScreen } from './settings/WeChatBusySettingsScreen'
 import { WeChatTimeSettingsScreen } from './settings/WeChatTimeSettingsScreen'
 import { WeChatSettingsStubScreen } from './settings/WeChatSettingsStubScreen'
+import { AccountSecurityPage } from './settings/accountSecurity/AccountSecurityPage'
 import { useWeChatCurrentTime } from './time/useWeChatCurrentTime'
 import { WalletCardsPage } from './wallet/WalletCardsPage'
 import { AffectionPayPage } from './wallet/AffectionPayPage'
@@ -115,6 +167,25 @@ import { WalletBankCardsPage } from './wallet/WalletBankCardsPage'
 import { WalletAffectionTransactionsPage } from './wallet/WalletAffectionTransactionsPage'
 import { WealthDashboardPage } from './wallet/WealthDashboardPage'
 import { StickerCenterPage } from './stickers/StickerCenterPage'
+import { AddFriendPage } from './addFriend/AddFriendPage'
+import { FriendRequestForm } from './addFriend/FriendRequestForm'
+import {
+  FRIEND_REQUEST_ADJUDICATION_INCOMPLETE_ERROR,
+  loadFriendRequestMessagesForAdjudication,
+  runCharacterFriendRequestAdjudication,
+} from './addFriend/friendRequestAdjudication'
+import { formatFriendRequestApiError } from './addFriend/friendRequestApiError'
+import {
+  FRIEND_REQUEST_ADJUDICATION_RESET_EVENT,
+  type FriendRequestAdjudicationResetDetail,
+} from './addFriend/friendRequestAdjudicationReset'
+import { isUserInitiatedFriendRequestSource } from './addFriend/submitUserOutgoingFriendRequest'
+import {
+  isFriendRequestAdjudicationInFlight,
+  registerFriendRequestAdjudicationJob,
+} from './addFriend/friendRequestAdjudicationInFlight'
+import { stampWechatAccountOwner } from './wechatAccountScope'
+import { StrangerProfilePage } from './addFriend/StrangerProfilePage'
 
 type WxGlobalNavState = null | WeChatGlobalSettingsNav
 
@@ -161,6 +232,8 @@ type WxRoute =
   /** 通讯录 → 群聊列表 */
   | { name: 'contacts-group-chats' }
   | { name: 'player-identities' }
+  | { name: 'switch-account' }
+  | { name: 'switch-account-register' }
   | { name: 'wallet-cards' }
   | { name: 'wallet-transactions' }
   | { name: 'wallet-affection-cards' }
@@ -213,6 +286,10 @@ type WxRoute =
   /** 私聊转账页（Lumi/角色私聊共用） */
   | { name: 'lumi-transfer'; chat: WxActiveChat }
   | { name: 'transfer-detail'; chat: WxActiveChat; transferId: string }
+  /** 主微信「添加朋友」：用户本人通讯录向 NPC 发起申请的全链路（非查手机镜像会话） */
+  | { name: 'add-friend' }
+  | { name: 'add-friend-stranger'; characterId: string }
+  | { name: 'add-friend-request-form'; characterId: string }
 
 /** 红包/转账等：IndexedDB 会话 peer characterId（含群占位 `wxgrp:`） */
 function wxWalletPeerCharacterId(chat: WxActiveChat): string {
@@ -277,14 +354,21 @@ function friendRequestGapBeforeBubbleMs(currentSegmentLength: number, isFirst: b
 
 function buildFriendRequestReplyBias(params: { messages: FriendRequest['messages']; extraBias?: string }): string {
   const hasUserReply = params.messages.some((m) => m.sender === 'user')
+  const adjudicationMode = /friend_request_response|系统裁决/.test(params.extraBias ?? '')
   const roundRule = hasUserReply
-    ? '当前不是首条验证消息阶段：可输出 1~4 条普通文本（每行一条）。'
+    ? adjudicationMode
+      ? '对方已发来验证：先输出裁决 XML（见补充偏向）；口语验证回复 0~2 行可选，无必要可只输出 XML。'
+      : '当前不是首条验证消息阶段：可输出 1~4 条普通文本（每行一条）。'
     : '当前是首条验证消息阶段：必须且只能输出 1 条普通文本。'
+  const rule1 = adjudicationMode
+    ? '1) 最开头必须输出补充偏向中的 `<friend_request_response>` 裁决块；其后仅写口语验证回复，禁止 [表情包]、引用、红包、转账等结构化消息。'
+    : '1) 只允许普通文本消息，禁止任何特殊格式：禁止 [表情包]、[引用:...]、[REDPACKET]、[TRANSFER]、[VOICECALL]、[BUSY]、JSON、Markdown、代码块、URL 图片链接。'
   const extra = params.extraBias?.trim() ? `\n补充偏向：${params.extraBias.trim()}` : ''
   return (
     `这是“新朋友-验证申请”专用聊天，不是普通私聊。\n` +
+    `角色**默认不认识**申请人是谁，只能依据本栏验证内容回应；不知真名时**禁止**用微信昵称直呼对方（默认叫「你」），不得当作已通过好友后的私聊。\n` +
     `输出硬规则：\n` +
-    `1) 只允许普通文本消息，禁止任何特殊格式：禁止 [表情包]、[引用:...]、[REDPACKET]、[TRANSFER]、[VOICECALL]、[BUSY]、JSON、Markdown、代码块、URL 图片链接。\n` +
+    `${rule1}\n` +
     `2) 语气必须像真实微信验证申请/验证聊天：简短、口语化、围绕“为何加回/是否认识/合作来意”推进，不要发散成日常闲聊。\n` +
     `3) 必须贴合角色人设与当前关系状态（刚删除后重加 or 验证沟通中）。\n` +
     `4) ${roundRule}\n` +
@@ -3524,6 +3608,8 @@ function ThemePanel({
 
 function WeChatAppInner({ onBack }: Props) {
   const { consoleOpen, closeConsole } = useWeChatConsole()
+  const { accountSwitchRevision, currentAccountId, accounts, appendPersonaContactsForCurrentAccount } =
+    useWechatStore()
   const { state, wechatThemeStyle, setProfile, replaceWeChatPersonaContacts, removeWeChatPersonaContactsByCharacterIds } = useCustomization()
   const disableTransitions = state.ui.disablePageTransitions
   const pageProps = buildPageProps(disableTransitions)
@@ -3554,6 +3640,7 @@ function WeChatAppInner({ onBack }: Props) {
 
   const [route, setRoute] = useState<WxRoute>({ name: 'tabs', tab: 'messages' })
   const [pendingNewFriendRequests, setPendingNewFriendRequests] = useState<FriendRequest[]>([])
+  const [pendingOpenFriendRequestId, setPendingOpenFriendRequestId] = useState<string | null>(null)
   const [themeOpen, setThemeOpen] = useState(false)
   const [themePanelBoot, setThemePanelBoot] = useState<ThemePanelBoot>({})
   const [chatSettingsOpen, setChatSettingsOpen] = useState(false)
@@ -3585,7 +3672,10 @@ function WeChatAppInner({ onBack }: Props) {
   const [discoverMomentsOpen, setDiscoverMomentsOpen] = useState(false)
   const [chatOtherTyping, setChatOtherTyping] = useState(false)
   const [chatOpponentRevealPending, setChatOpponentRevealPending] = useState(false)
-  const newFriendsUnreadCount = useMemo(() => pendingNewFriendRequests.filter((x) => !!x.unread).length, [pendingNewFriendRequests])
+  const newFriendsUnreadCount = useMemo(
+    () => countNewFriendsBadge(pendingNewFriendRequests),
+    [pendingNewFriendRequests],
+  )
 
   const personaContactsForGroupPick = useMemo(
     () =>
@@ -3747,14 +3837,23 @@ function WeChatAppInner({ onBack }: Props) {
   const [playerIdentityId, setPlayerIdentityId] = useState<string | null>(null)
   useEffect(() => {
     let cancelled = false
-    void personaDb.getCurrentIdentityId().then((id) => {
+    const activeAcc = currentAccountId
+      ? accounts.find((a) => a.accountId === currentAccountId)
+      : null
+    const fromBundle = activeAcc ? resolveAccountSessionIdentityId(activeAcc).trim() : ''
+    void (async () => {
+      const fromDb = (await personaDb.getCurrentIdentityId()).trim()
+      const id = fromBundle || fromDb || '__none__'
       if (cancelled) return
-      setPlayerIdentityId(id?.trim() ? id : '__none__')
-    })
+      setPlayerIdentityId(id)
+      if (fromBundle && fromBundle !== fromDb) {
+        await personaDb.setCurrentIdentityId(fromBundle)
+      }
+    })()
     return () => {
       cancelled = true
     }
-  }, [route.name])
+  }, [route.name, accountSwitchRevision, currentAccountId, accounts])
 
   /** 把仍落在「未选身份」(__none__) 下的会话迁到当前身份；随后修复曾误入私聊键的群消息，避免与群会话双份并存。 */
   useEffect(() => {
@@ -3774,12 +3873,10 @@ function WeChatAppInner({ onBack }: Props) {
   const { isConversationMuted } = useMuteStatus(playerIdentityId)
 
   /**
-   * 聊天页实际使用的身份：
-   * - 角色私聊：优先角色绑定的 playerIdentityId；
-   * - Lumi/未绑定：回退当前全局身份。
+   * 聊天页实际使用的身份：与本马甲该角色已有私聊记录 / 好友申请档一致，
+   * 不再无条件使用档案主绑定（避免小号串大号身份）。
    */
   const [chatRouteIdentityId, setChatRouteIdentityId] = useState<string | null>(null)
-  /** 与 ChatRoom 入账一致：私聊用「角色绑定身份 ∪ 当前身份」，用于转账/红包等与 route.chat 绑定的子页 */
   useEffect(() => {
     let cancelled = false
     void (async () => {
@@ -3796,14 +3893,17 @@ function WeChatAppInner({ onBack }: Props) {
         if (!cancelled) setChatRouteIdentityId(playerIdentityId)
         return
       }
-      const ch = await personaDb.getCharacter(chat.characterId)
-      const bound = ch?.playerIdentityId?.trim()
-      if (!cancelled) setChatRouteIdentityId(bound || playerIdentityId)
+      const sid = await resolveActivePrivateChatSessionPlayerIdentityId({
+        characterId: chat.characterId,
+        wechatAccountId: currentAccountId,
+        appPlayerIdentityId: playerIdentityId,
+      })
+      if (!cancelled) setChatRouteIdentityId(sid)
     })()
     return () => {
       cancelled = true
     }
-  }, [wxDockChat, playerIdentityId])
+  }, [wxDockChat, playerIdentityId, currentAccountId])
 
   /** 群↔私 dock 切换：写锚点 KV + 同步 staging（layout 阶段，早于子组件首轮读） */
   const prevWxDockChatForAnchorRef = useRef<WxActiveChat | null>(null)
@@ -3850,17 +3950,29 @@ function WeChatAppInner({ onBack }: Props) {
     const pid = playerIdentityId.trim()
     if (!pid) return
 
-    const rows = await personaDb.listFriendRequests({ playerIdentityId: pid, pendingOnly: true })
+    const allRows = await listFriendRequestsForWechatAccount(currentAccountId, { pendingOnly: false })
+    const rows = allRows.filter((r) => {
+      const outbound = isUserInitiatedFriendRequestSource(r.source)
+      if (outbound) return true
+      return r.status === 'pending'
+    })
     const ui = await Promise.all(
       rows.map(async (r) => {
+        const requestPid = r.playerIdentityId.trim() || pid
         const ch = await personaDb.getCharacter(r.characterId)
+        const outboundRow = isUserInitiatedFriendRequestSource(r.source)
         const nickname =
+          (outboundRow && r.contactRemarkAlias?.trim()) ||
           ch?.remark?.trim() ||
           ch?.wechatNickname?.trim() ||
           ch?.name ||
-          (r.characterId === WECHAT_LUMI_PEER_CHARACTER_ID ? 'Lumi' : '对方')
+          lumiFallbackNickname(r.characterId)
         const avatar = ch?.avatarUrl?.trim() || (r.characterId === WECHAT_LUMI_PEER_CHARACTER_ID ? lumiWechatAvatarUrl : '')
-        const convKey = resolvePrivateWeChatConversationKey(r.characterId, ch, playerIdentityId)
+        const convKey = await resolveAccountScopedPrivateConversationKey({
+          wechatAccountId: currentAccountId,
+          characterId: r.characterId,
+          appSessionPlayerIdentityId: requestPid,
+        })
         const unreadCount = await personaDb.countUnreadWeChatCharacterMessages(convKey)
         const msgs = await personaDb.listWeChatChatMessagesRecent({ conversationKey: convKey, limit: 200 })
         const verificationEpochMs = r.verificationEpochMs ?? r.createdAt
@@ -3875,21 +3987,17 @@ function WeChatAppInner({ onBack }: Props) {
             timestampMs: m.timestamp,
           }))
           .filter((m) => m.content.length > 0)
-        return {
-          id: r.id,
-          avatar,
+        return mapFriendRequestRowToUi({
+          row: r,
           nickname,
-          source: r.source,
-          status: r.status,
+          avatar,
           messages,
           unread: unreadCount > 0,
-          characterId: r.characterId,
-          requestTimeMs: r.createdAt,
-        } satisfies FriendRequest
+        })
       }),
     )
     setPendingNewFriendRequests(ui)
-  }, [playerIdentityId, state.profile.displayName, state.wechatPersonaContacts])
+  }, [currentAccountId, playerIdentityId, state.profile.displayName, state.wechatPersonaContacts])
 
   useEffect(() => {
     void refreshPendingNewFriendRequests()
@@ -3969,14 +4077,43 @@ function WeChatAppInner({ onBack }: Props) {
       }
     }
 
-    const lumiKey = wechatConversationKey(WECHAT_LUMI_PEER_CHARACTER_ID, pid)
+    const acc = currentAccountId?.trim() ?? ''
+    const lumiKey = acc
+      ? await ensureAccountScopedPrivateConversation({
+          wechatAccountId: acc,
+          characterId: WECHAT_LUMI_PEER_CHARACTER_ID,
+          appSessionPlayerIdentityId: pid,
+        })
+      : wechatConversationKey(WECHAT_LUMI_PEER_CHARACTER_ID, pid)
     const lumiRowData = await buildOne(lumiKey, 'lumi', 'Lumi', lumiWechatAvatarUrl, WECHAT_LUMI_PEER_CHARACTER_ID)
 
+    const accountSessionIds = acc ? await collectWechatAccountPlayerIdentityIds(acc) : [pid]
     const personaRowsData = await Promise.all(
       state.wechatPersonaContacts.map(async (c) => {
-        const ch = await personaDb.getCharacter(c.characterId)
-        const k = resolvePrivateWeChatConversationKey(c.characterId, ch, pid)
-        const row = await buildOne(k, 'persona', c.remarkName, c.avatarUrl, c.characterId)
+        let bestKey = acc
+          ? await ensureAccountScopedPrivateConversation({
+              wechatAccountId: acc,
+              characterId: c.characterId,
+              appSessionPlayerIdentityId: pid,
+            })
+          : resolvePrivateWeChatStorageConversationKey(c.characterId, null, pid)
+        let bestTs = 0
+        for (const sid of accountSessionIds) {
+          const k = acc
+            ? await ensureAccountScopedPrivateConversation({
+                wechatAccountId: acc,
+                characterId: c.characterId,
+                appSessionPlayerIdentityId: sid,
+              })
+            : resolvePrivateWeChatStorageConversationKey(c.characterId, null, sid)
+          const recent = await personaDb.listWeChatChatMessagesRecent({ conversationKey: k, limit: 1 })
+          const ts = recent[recent.length - 1]?.timestamp ?? 0
+          if (ts >= bestTs) {
+            bestTs = ts
+            bestKey = k
+          }
+        }
+        const row = await buildOne(bestKey, 'persona', c.remarkName, c.avatarUrl, c.characterId)
         return row
       }),
     )
@@ -3984,7 +4121,13 @@ function WeChatAppInner({ onBack }: Props) {
     const groups = await personaDb.listGroupChatsForPlayerIdentity(pid)
     const groupRowsData: Array<MessagesThreadRow & { sortTs: number }> = await Promise.all(
       groups.map(async (g) => {
-        const conversationKey = wechatGroupConversationKey(g.id, pid)
+        const conversationKey = acc
+          ? await ensureAccountScopedGroupConversation({
+              wechatAccountId: acc,
+              groupId: g.id,
+              appSessionPlayerIdentityId: pid,
+            })
+          : resolveGroupWeChatStorageConversationKey(g.id, null, pid)
         const peerCharacterId = wechatGroupPeerCharacterId(g.id)
         const st = settingsByKey.get(conversationKey) ?? null
         const isPinned = st?.isPinned ?? false
@@ -4033,7 +4176,7 @@ function WeChatAppInner({ onBack }: Props) {
       return rest
     })
     setMessageThreads(merged)
-  }, [playerIdentityId, state.wechatPersonaContacts])
+  }, [currentAccountId, playerIdentityId, state.wechatPersonaContacts])
 
   useEffect(() => {
     void refreshMessageThreadsMeta()
@@ -4050,12 +4193,41 @@ function WeChatAppInner({ onBack }: Props) {
     return () => window.removeEventListener('wechat-storage-changed', onStorage)
   }, [refreshMessageThreadsMeta])
 
-  const activeConversationKey = useMemo(() => {
+  const [activeConversationKey, setActiveConversationKey] = useState<string | null>(null)
+  useEffect(() => {
+    let cancelled = false
     const layer = wxDockChat
-    if (!layer || !chatRouteIdentityId || !activeConversationCharacterId) return null
-    if (layer.kind === 'group') return wechatGroupConversationKey(layer.groupId, chatRouteIdentityId)
-    return wechatConversationKey(activeConversationCharacterId, chatRouteIdentityId)
-  }, [wxDockChat, chatRouteIdentityId, activeConversationCharacterId])
+    const acc = currentAccountId?.trim()
+    const pid = playerIdentityId?.trim()
+    if (!layer || !pid || !activeConversationCharacterId) {
+      if (!cancelled) setActiveConversationKey(null)
+      return
+    }
+    void (async () => {
+      if (layer.kind === 'group') {
+        const key = acc
+          ? await ensureAccountScopedGroupConversation({
+              wechatAccountId: acc,
+              groupId: layer.groupId,
+              appSessionPlayerIdentityId: pid,
+            })
+          : resolveGroupWeChatStorageConversationKey(layer.groupId, null, pid)
+        if (!cancelled) setActiveConversationKey(key)
+        return
+      }
+      const key = acc
+        ? await ensureAccountScopedPrivateConversation({
+            wechatAccountId: acc,
+            characterId: activeConversationCharacterId,
+            appSessionPlayerIdentityId: pid,
+          })
+        : resolvePrivateWeChatStorageConversationKey(activeConversationCharacterId, null, pid)
+      if (!cancelled) setActiveConversationKey(key)
+    })()
+    return () => {
+      cancelled = true
+    }
+  }, [wxDockChat, currentAccountId, playerIdentityId, activeConversationCharacterId])
 
   // 转发：选择聊天页当前待转发消息（单条/多条）
   const [forwardPendingMessages, setForwardPendingMessages] = useState<WeChatChatMessage[] | null>(null)
@@ -4404,6 +4576,8 @@ function WeChatAppInner({ onBack }: Props) {
     route.name === 'new-friends-persona' ||
     route.name === 'contacts-group-chats' ||
     route.name === 'player-identities' ||
+    route.name === 'switch-account' ||
+    route.name === 'switch-account-register' ||
     route.name === 'wallet-cards' ||
     route.name === 'wallet-transactions' ||
     route.name === 'wallet-affection-cards' ||
@@ -4420,6 +4594,9 @@ function WeChatAppInner({ onBack }: Props) {
     route.name === 'red-packet-history' ||
     route.name === 'lumi-transfer' ||
     route.name === 'transfer-detail' ||
+    route.name === 'add-friend' ||
+    route.name === 'add-friend-stranger' ||
+    route.name === 'add-friend-request-form' ||
     wxGlobalNav != null ||
     (route.name === 'tabs' && route.tab === 'discover' && discoverMomentsOpen) ||
     (route.name === 'chat' && chatSettingsOpen) ||
@@ -4457,18 +4634,23 @@ function WeChatAppInner({ onBack }: Props) {
     const pid = playerIdentityId.trim()
     if (!pid) return
     void (async () => {
-      const rows = await personaDb.listFriendRequests({ playerIdentityId: pid, pendingOnly: true })
+      const rows = await listFriendRequestsForWechatAccount(currentAccountId, { pendingOnly: true })
       await Promise.all(
         rows.map(async (r) => {
-          const ch = await personaDb.getCharacter(r.characterId)
-          const ck = resolvePrivateWeChatConversationKey(r.characterId, ch, playerIdentityId)
+          if (r.outcomeUnread) await personaDb.clearFriendRequestOutcomeUnread(r.id)
+          const requestPid = r.playerIdentityId.trim() || pid
+          const ck = await resolveAccountScopedPrivateConversationKey({
+            wechatAccountId: currentAccountId,
+            characterId: r.characterId,
+            appSessionPlayerIdentityId: requestPid,
+          })
           return personaDb.markWeChatConversationReadToLatest(ck)
         }),
       )
       emitWeChatStorageChanged()
       await refreshPendingNewFriendRequests()
     })()
-  }, [playerIdentityId, refreshPendingNewFriendRequests])
+  }, [currentAccountId, playerIdentityId, refreshPendingNewFriendRequests])
 
   const buildFriendRequestAiReply = useCallback(
     async (params: {
@@ -4477,14 +4659,26 @@ function WeChatAppInner({ onBack }: Props) {
       replyBias?: string
       /** 本地累计删除次数（含本轮）；缺省则不注入「第几次删」偏向 */
       contactDeletionCount?: number
+      /** 裁决/私聊用：好友申请绑定的微信身份（优先于 App 当前身份） */
+      sessionPlayerIdentityId?: string
     }) => {
       const character = await personaDb.getCharacter(params.characterId)
       if (!character) throw new Error('角色不存在')
-      const pid = playerIdentityId?.trim() || ''
-      const playerIdentity =
-        pid && pid !== '__none__'
-          ? await personaDb.getPlayerIdentity(pid)
-          : await personaDb.getCurrentIdentity()
+      const pid =
+        params.sessionPlayerIdentityId?.trim() || playerIdentityId?.trim() || ''
+      const sessionPid = pid && pid !== '__none__' ? pid : '__none__'
+      /** 好友申请栏一律不注入玩家身份卡，避免模型凭档案认出申请人。 */
+      const friendRequestHomeOnly = true
+      const bundle = await loadAccountsBundle()
+      const accounts = bundle?.accounts ?? []
+      const altWechatLine = isSecondaryWechatAccountInBundle(bundle, currentAccountId)
+      const currentAcc = currentAccountId
+        ? accounts.find((a) => a.accountId === currentAccountId)
+        : undefined
+      const altAccountProbeBlock = currentAcc
+        ? buildAltWechatStrangerContactPromptBlock(currentAcc)
+        : ''
+      const playerIdentity = null
       let worldBackgroundPrompt: string | undefined
       if (character.worldBackgroundEnabled !== false && character.worldBackgroundId?.trim()) {
         const wbg = await personaDb.getWorldBackground(character.worldBackgroundId.trim())
@@ -4495,14 +4689,43 @@ function WeChatAppInner({ onBack }: Props) {
         from: m.sender === 'user' ? 'self' : 'other',
         text: m.content,
       }))
-      const convKey = resolvePrivateWeChatConversationKey(character.id, character, playerIdentityId)
-      const sessionPid = resolvePrivateChatSessionPlayerIdentityId(character, playerIdentityId)
+      const convKey = await resolveAccountScopedPrivateConversationKey({
+        wechatAccountId: currentAccountId,
+        characterId: character.id,
+        appSessionPlayerIdentityId: sessionPid,
+      })
       const ordinalBias =
         typeof params.contactDeletionCount === 'number' && params.contactDeletionCount > 0
           ? buildFriendRequestDeletionOrdinalBias(params.contactDeletionCount)
           : ''
-      const mergedExtra = [params.replyBias, ordinalBias].filter(Boolean).join('\n\n')
+      const nonPrimarySession = isNonPrimaryBindingSession(character, sessionPid)
+      const nonPrimaryBindingBias = nonPrimarySession
+        ? await buildFriendRequestNonPrimaryBindingBias({
+            characterId: character.id,
+            sessionPlayerIdentityId: sessionPid,
+            wechatHomeDisplayName: state.profile.displayName?.trim() || '朋友',
+          })
+        : ''
+      const firstUserVerify = params.messages.find((m) => m.sender === 'user')?.content?.trim()
+      const verificationVerbatimBias = firstUserVerify
+        ? [
+            '【对方验证原文·勿曲解】',
+            firstUserVerify,
+            '解读：句中「我是…」=申请人验证里的自称，**不是**档案主绑定真名，**不等于**可用微信主页昵称直呼；「顾社长/某某推的」=推荐人介绍。**禁止**认定申请人就是顾社长/社长/档案主绑定玩家本人。',
+          ].join('\n')
+        : ''
+      const mergedExtra = [
+        FRIEND_REQUEST_APPLICANT_UNKNOWN_BIAS,
+        params.replyBias,
+        ordinalBias,
+        nonPrimaryBindingBias,
+        altAccountProbeBlock,
+        verificationVerbatimBias,
+      ]
+        .filter(Boolean)
+        .join('\n\n')
       const replyBiasFull = buildFriendRequestReplyBias({ messages: params.messages, extraBias: mergedExtra })
+      const friendRequestAdjudication = /friend_request_response|系统裁决/.test(replyBiasFull)
       const pack = await buildFriendRequestPrivatePromptPack({
         characterId: character.id,
         conversationKey: convKey,
@@ -4510,31 +4733,55 @@ function WeChatAppInner({ onBack }: Props) {
         apiConfig,
         transcript,
         biasTextForMemoryHaystack: replyBiasFull,
+        crossAccountContext: currentAccountId
+          ? { currentAccountId, allAccounts: accounts }
+          : undefined,
       })
-      const peerDisplayName =
-        playerIdentity?.wechatNickname?.trim() ||
-        playerIdentity?.name?.trim() ||
-        state.profile.displayName?.trim() ||
-        '朋友'
+      const wechatHome = {
+        displayName: state.profile.displayName?.trim() || '',
+        signature: state.profile.signature?.trim() || '',
+      }
+      const isMeetChar = isMeetSyncedCharacter(character.id, character.worldBooks ?? [])
+      const useHomeOnly = friendRequestHomeOnly || isMeetChar
+      const peerDisplayName = wechatHome.displayName || '朋友'
+      let meetWechatContinuityBlock: string | undefined
+      if (isMeetChar && !altWechatLine) {
+        const meetSnap = await loadMeetUserProfileSnapshotFromKv(character.id)
+        meetWechatContinuityBlock = buildMeetWechatPrivateChatContinuityBlock({
+          meetSnapshot: meetSnap,
+          wechatProfile: wechatHome,
+          forFriendRequest: true,
+        })
+      }
       const friendReqWbIds = [character.id?.trim()].filter(Boolean) as string[]
+      const worldBookBinding = await resolveWorldBookUserBinding(character)
       const ai = await requestWeChatPeerReplyBubbles({
         apiConfig,
         character,
-        playerIdentity,
+        playerIdentity: useHomeOnly ? null : playerIdentity,
         playerDisplayName: peerDisplayName,
+        wechatHomeProfile: useHomeOnly ? wechatHome : undefined,
+        meetWechatContinuityBlock: meetWechatContinuityBlock,
         transcript,
         promptMode: 'persona',
         longTermMemoryNotes: pack.memory || undefined,
         worldBackgroundPrompt,
         offlineDatingPlotsContext: pack.offlineDatingPlotsContext || undefined,
+        meetEncounterMemoriesContext: pack.meetEncounterMemoriesContext || undefined,
+        unsummarizedMeetNotes: pack.unsMeet || undefined,
         recentGroupChatsReference: pack.recentGroupChatsReference || undefined,
         unsummarizedPrivateNotes: pack.unsPrivate || undefined,
         unsummarizedGroupNotes: pack.unsGroup || undefined,
         replyBias: replyBiasFull,
-        includeThinkingChain: true,
+        includeThinkingChain: !friendRequestAdjudication,
+        friendRequestAdjudication,
+        altAccountProbeBlock: altAccountProbeBlock || undefined,
         currentTimeMs: getCurrentTimeMs(),
         chatMemberIds: friendReqWbIds,
         globalWechatPlate: 'private_chat',
+        nonPrimarySpeakerLine: nonPrimarySession || useHomeOnly,
+        worldBookPlayerIdentity: worldBookBinding?.row ?? null,
+        worldBookUserLineLabel: worldBookBinding?.lineLabel,
       })
       if (ai.worldBookPatches?.length) {
         try {
@@ -4555,68 +4802,324 @@ function WeChatAppInner({ onBack }: Props) {
         bubbles: ai.bubbles.filter((x) => String(x || '').trim().length > 0),
         nickname: character.remark?.trim() || character.wechatNickname?.trim() || character.name || '对方',
         avatar: character.avatarUrl?.trim() || '',
+        rawText: ai.rawText,
       }
     },
-    [apiConfig, getCurrentTimeMs, playerIdentityId, state.profile.displayName],
+    [apiConfig, currentAccountId, getCurrentTimeMs, playerIdentityId, state.profile.displayName, state.profile.signature],
   )
 
   const resolveNewFriendRequest = useCallback(
-    (requestId: string, action: 'accepted' | 'declined') => {
-      void (async () => {
-        const target = pendingNewFriendRequests.find((x) => x.id === requestId)
-        const frRow = await personaDb.getFriendRequestById(requestId)
-        await personaDb.setFriendRequestStatus(requestId, action)
-        if (action === 'accepted' && target?.characterId) {
-          const ch = await personaDb.getCharacter(target.characterId)
-          if (ch) {
-            replaceWeChatPersonaContacts([ch.id], [
-              {
-                id: `persona-${ch.id}`,
-                characterId: ch.id,
-                remarkName: (ch.remark?.trim() || ch.wechatNickname?.trim() || ch.name || target.nickname || '未命名').slice(0, 64),
-                avatarUrl: ch.avatarUrl?.trim() || undefined,
-                isStarred: !!ch.isStarred,
-              },
-            ])
-            /**
-             * 与 ChatRoom 同一会话键。
-             * 删除联系人（尤其「告知对方」软删）时旧气泡仍在 IndexedDB，仅靠 uiOnlyHiddenBeforeTimestamp 隐藏；
-             * 若此处「清空 UI 隐藏」，会把回收站归档对应的旧记录一并露出。
-             * 因此同意好友后：**保留**隐藏分割线在本轮「验证阶段」起点之前（verificationEpochMs − 1），
-             * 聊天室只默认展示本轮验证以来的消息；更早的记录仍只能从回收站手动恢复（快照 uiClearOnly）。
-             */
-            const convKey = resolvePrivateWeChatConversationKey(target.characterId, ch, playerIdentityId)
-            const sessionPid = resolvePrivateChatSessionPlayerIdentityId(ch, playerIdentityId)
-            const epochMs =
-              frRow?.verificationEpochMs ??
-              frRow?.createdAt ??
-              target.requestTimeMs ??
-              0
-            const keepHideBeforeTimestamp =
-              typeof epochMs === 'number' && Number.isFinite(epochMs) && epochMs > 0 ? Math.max(0, epochMs - 1) : null
-
+    async (requestId: string, action: 'accepted' | 'declined'): Promise<number | undefined> => {
+      const target = pendingNewFriendRequests.find((x) => x.id === requestId)
+      const frRow = await personaDb.getFriendRequestById(requestId)
+      const characterId = target?.targetCharId?.trim() || target?.characterId?.trim() || frRow?.characterId?.trim()
+      const userOutgoing =
+        !!frRow && isUserInitiatedFriendRequestSource(frRow.source)
+      await personaDb.setFriendRequestStatus(
+        requestId,
+        action,
+        action === 'accepted'
+          ? { outcomeUnread: false }
+          : action === 'declined' && userOutgoing
+            ? { outcomeUnread: true }
+            : undefined,
+      )
+      let acceptedAtMs: number | undefined
+      let meetHideBefore: number | null = null
+      if (action === 'accepted' && characterId) {
+        const canonId = (await resolveCanonicalCharacterId(characterId)) || characterId.trim()
+        const ch = await personaDb.getCharacter(canonId)
+        if (ch) {
+          const pid =
+            resolveOutgoingFriendRequestPlayerIdentityId(ch, frRow?.playerIdentityId) ||
+            playerIdentityId?.trim() ||
+            ''
+          const requestPid = frRow?.playerIdentityId?.trim() || pid
+          const appSessionPid = playerIdentityId?.trim() || requestPid
+          if (requestPid && requestPid !== '__none__') {
+            if (userOutgoing) {
+              await linkCharacterPlayerIdentityFromAcceptedFriendRequest(
+                canonId,
+                requestPid,
+                currentAccountId,
+              )
+            }
+            const isMeetChar = isMeetSyncedCharacter(canonId, ch.worldBooks ?? [])
+            const needMeetSync = await shouldSyncMeetEncounterToWechat({
+              characterId: canonId,
+              friendRequestSource: frRow?.source,
+            })
+            if (needMeetSync) {
+              const meetSync = await syncMeetEncounterToWechatAfterFriendLinked({
+                apiConfig,
+                characterId: canonId,
+                playerIdentityId: requestPid,
+                friendRequestSource: frRow?.source,
+                verificationEpochMs: frRow?.verificationEpochMs ?? frRow?.createdAt,
+              })
+              meetHideBefore = resolveUiHideBeforeForMeetImport({
+                verificationEpochMs: frRow?.verificationEpochMs ?? frRow?.createdAt ?? Date.now(),
+                meetEarliestTs: meetSync.meetEarliestTs,
+              })
+            } else if (isMeetChar) {
+              await ensureMeetVol10EpilogueIfNeeded({
+                apiConfig,
+                characterId: canonId,
+                playerIdentityId: requestPid,
+                verificationEpochMs: frRow?.verificationEpochMs ?? frRow?.createdAt,
+                requireWechatLink: false,
+              }).catch(() => {
+                // 不阻断加好友
+              })
+            }
+          }
+          acceptedAtMs = Date.now()
+          const acceptedRemark =
+            frRow?.contactRemarkAlias?.trim() ||
+            (userOutgoing ? target?.nickname?.trim() : '') ||
+            ''
+          let chForContact = ch
+          const acceptAcc = currentAccountId?.trim()
+          if (acceptAcc && !ch.wechatAccountId?.trim()) {
+            chForContact = stampWechatAccountOwner(
+              { ...ch, updatedAt: Date.now() },
+              acceptAcc,
+            )
+            await personaDb.upsertCharacter(chForContact)
+          }
+          const contactEntry = contactEntryFromCharacter(chForContact, {
+            remarkName: acceptedRemark || undefined,
+          })
+          await appendPersonaContactsForCurrentAccount([contactEntry])
+          /**
+           * 与 ChatRoom 同一会话键。
+           * 删除联系人（尤其「告知对方」软删）时旧气泡仍在 IndexedDB，仅靠 uiOnlyHiddenBeforeTimestamp 隐藏；
+           * 若此处「清空 UI 隐藏」，会把回收站归档对应的旧记录一并露出。
+           * 因此同意好友后：**保留**隐藏分割线在本轮「验证阶段」起点之前（verificationEpochMs − 1），
+           * 聊天室只默认展示本轮验证以来的消息；更早的记录仍只能从回收站手动恢复（快照 uiClearOnly）。
+           */
+          const sessionPid = requestPid || '__none__'
+          const epochMs = frRow?.verificationEpochMs ?? frRow?.createdAt ?? target?.requestTimeMs ?? 0
+          const keepHideBeforeTimestamp =
+            meetHideBefore != null
+              ? meetHideBefore
+              : typeof epochMs === 'number' && Number.isFinite(epochMs) && epochMs > 0
+                ? Math.max(0, epochMs - 1)
+                : null
+          const settingsPatch = {
+            peerCharacterId: canonId,
+            ...(keepHideBeforeTimestamp != null
+              ? { uiOnlyHiddenBeforeTimestamp: keepHideBeforeTimestamp }
+              : { clearUiOnlyHiddenBeforeTimestamp: true }),
+            hiddenFromMessageList: false,
+            friendRequestAcceptedAtMs: acceptedAtMs,
+          } as const
+          const sessionIds = new Set<string>([sessionPid])
+          if (appSessionPid && appSessionPid !== '__none__') sessionIds.add(appSessionPid)
+          for (const sid of sessionIds) {
+            const convKey = await resolveAccountScopedPrivateConversationKey({
+              wechatAccountId: currentAccountId,
+              characterId: canonId,
+              appSessionPlayerIdentityId: sid,
+            })
             await personaDb.upsertChatConversationSettings({
               conversationKey: convKey,
-              peerCharacterId: target.characterId,
-              playerIdentityId: sessionPid,
-              ...(keepHideBeforeTimestamp != null
-                ? { uiOnlyHiddenBeforeTimestamp: keepHideBeforeTimestamp }
-                : { clearUiOnlyHiddenBeforeTimestamp: true }),
-              hiddenFromMessageList: false,
-              friendRequestAcceptedAtMs: Date.now(),
+              playerIdentityId: sid,
+              ...settingsPatch,
             })
           }
         }
-        emitWeChatStorageChanged()
-        await refreshPendingNewFriendRequests()
-      })()
+      }
+      emitWeChatStorageChanged()
+      await refreshPendingNewFriendRequests()
+      await refreshMessageThreadsMeta()
+      return acceptedAtMs
     },
-    [pendingNewFriendRequests, playerIdentityId, refreshPendingNewFriendRequests, replaceWeChatPersonaContacts],
+    [
+      apiConfig,
+      appendPersonaContactsForCurrentAccount,
+      pendingNewFriendRequests,
+      currentAccountId,
+      playerIdentityId,
+      refreshPendingNewFriendRequests,
+      refreshMessageThreadsMeta,
+    ],
   )
 
   const replyingFriendRequestIdsRef = useRef<Set<string>>(new Set())
   const [replyingFriendRequestIds, setReplyingFriendRequestIds] = useState<string[]>([])
+  const [tempChatReplyingIds, setTempChatReplyingIds] = useState<string[]>([])
   const replyWatchdogTimersRef = useRef<Record<string, number>>({})
+  const adjudicateInFlightRef = useRef<Map<string, Promise<void>>>(new Map())
+  const autoAdjudicateRetryCountRef = useRef<Record<string, number>>({})
+  const AUTO_ADJUDICATE_MAX_RETRIES = 4
+  const ADJUDICATE_IN_FLIGHT_MAX_MS = 120_000
+
+  const clearFriendRequestAdjudicationUiState = useCallback((requestId: string) => {
+    const id = requestId.trim()
+    if (!id) return
+    adjudicateInFlightRef.current.delete(id)
+    replyingFriendRequestIdsRef.current.delete(id)
+    setReplyingFriendRequestIds((prev) => prev.filter((x) => x !== id))
+    delete autoAdjudicateRetryCountRef.current[id]
+    if (replyWatchdogTimersRef.current[id]) {
+      window.clearTimeout(replyWatchdogTimersRef.current[id])
+      delete replyWatchdogTimersRef.current[id]
+    }
+  }, [])
+
+  useEffect(() => {
+    const onReset = (ev: Event) => {
+      const id = (ev as CustomEvent<FriendRequestAdjudicationResetDetail>).detail?.requestId?.trim()
+      if (id) clearFriendRequestAdjudicationUiState(id)
+    }
+    window.addEventListener(FRIEND_REQUEST_ADJUDICATION_RESET_EVENT, onReset)
+    return () => window.removeEventListener(FRIEND_REQUEST_ADJUDICATION_RESET_EVENT, onReset)
+  }, [clearFriendRequestAdjudicationUiState])
+
+  const adjudicateFriendRequestAsCharacter = useCallback(
+    async (requestId: string, opts?: { force?: boolean }) => {
+      if (opts?.force) clearFriendRequestAdjudicationUiState(requestId)
+
+      const existing = adjudicateInFlightRef.current.get(requestId)
+      if (existing && !opts?.force) {
+        await Promise.race([
+          existing,
+          new Promise<void>((resolve) => window.setTimeout(resolve, ADJUDICATE_IN_FLIGHT_MAX_MS)),
+        ]).catch(() => undefined)
+        if (adjudicateInFlightRef.current.get(requestId) === existing) return
+      }
+
+      const job = (async () => {
+        const frRow = await personaDb.getFriendRequestById(requestId)
+        const chRow = frRow ? await personaDb.getCharacter(frRow.characterId) : null
+        const pid =
+          resolveOutgoingFriendRequestPlayerIdentityId(chRow, frRow?.playerIdentityId) ||
+          playerIdentityId?.trim() ||
+          ''
+        replyingFriendRequestIdsRef.current.add(requestId)
+        setReplyingFriendRequestIds((prev) => (prev.includes(requestId) ? prev : [...prev, requestId]))
+        try {
+          if (!pid || pid === '__none__') {
+            window.alert('请先选择微信身份后再等待对方回复。')
+            return
+          }
+          if (frRow) {
+            await personaDb.upsertFriendRequest({ ...frRow, adjudicationLastError: '' })
+          }
+          let adjudicateThrew = false
+          try {
+          const decision = await runCharacterFriendRequestAdjudication({
+            requestId,
+            playerIdentityId: pid,
+            wechatAccountId: currentAccountId,
+            wechatHomeProfile: {
+              displayName: state.profile.displayName?.trim() || '',
+              signature: state.profile.signature?.trim() || '',
+            },
+            buildFriendRequestAiReply,
+            applyResolution: (id, action) => resolveNewFriendRequest(id, action),
+          })
+          await refreshPendingNewFriendRequests()
+          if (decision == null && frRow?.status === 'pending') {
+            const refreshed = await personaDb.getFriendRequestById(requestId)
+            if (refreshed?.status !== 'pending') return
+            const msgs = await loadFriendRequestMessagesForAdjudication({
+              requestId,
+              characterId: refreshed.characterId,
+              playerIdentityId: pid,
+              wechatAccountId: currentAccountId,
+              verificationEpochMs: refreshed.verificationEpochMs ?? refreshed.createdAt ?? Date.now(),
+              maxTimestampMs: refreshed.adjudicationCutoffMs ?? refreshed.verificationEpochMs,
+            })
+            const hasChar = msgs.some((m) => m.sender === 'character')
+            const hint = hasChar
+              ? FRIEND_REQUEST_ADJUDICATION_INCOMPLETE_ERROR
+              : '对方暂未回复，请检查 API 配置后在本页重试。'
+            if (!refreshed.adjudicationLastError?.trim()) {
+              await personaDb.upsertFriendRequest({ ...refreshed, adjudicationLastError: hint })
+              await refreshPendingNewFriendRequests()
+            }
+          }
+          } catch (e) {
+            adjudicateThrew = true
+            console.warn('[friend-request] adjudicate failed', e)
+            const friendly = formatFriendRequestApiError(e)
+            const latest = (await personaDb.getFriendRequestById(requestId)) ?? frRow
+            if (latest) {
+              await personaDb.upsertFriendRequest({ ...latest, adjudicationLastError: friendly })
+            }
+            await refreshPendingNewFriendRequests()
+          } finally {
+            if (!adjudicateThrew) {
+              const latest = await personaDb.getFriendRequestById(requestId)
+              if (
+                latest?.adjudicationLastError?.trim() &&
+                latest.status !== 'pending'
+              ) {
+                await personaDb.upsertFriendRequest({ ...latest, adjudicationLastError: '' })
+              }
+            }
+          }
+        } finally {
+          clearFriendRequestAdjudicationUiState(requestId)
+        }
+      })()
+
+      adjudicateInFlightRef.current.set(requestId, job)
+      registerFriendRequestAdjudicationJob(requestId, job)
+      try {
+        await job
+      } finally {
+        if (adjudicateInFlightRef.current.get(requestId) === job) {
+          adjudicateInFlightRef.current.delete(requestId)
+        }
+      }
+    },
+    [
+      buildFriendRequestAiReply,
+      clearFriendRequestAdjudicationUiState,
+      currentAccountId,
+      playerIdentityId,
+      refreshPendingNewFriendRequests,
+      resolveNewFriendRequest,
+    ],
+  )
+
+  /** 裁决进行中：轮询刷新验证页气泡（异步 AI + 写入间隔期间也更新 UI） */
+  useEffect(() => {
+    if (!replyingFriendRequestIds.length) return
+    const tick = () => void refreshPendingNewFriendRequests()
+    tick()
+    const timer = window.setInterval(tick, 500)
+    return () => window.clearInterval(timer)
+  }, [replyingFriendRequestIds, refreshPendingNewFriendRequests])
+
+  /** 补跑未裁决的用户主动申请（发送后中断、或模型未输出裁决 XML 仅回复口语） */
+  useEffect(() => {
+    if (playerIdentityId === null) return
+    for (const req of pendingNewFriendRequests) {
+      if (req.status !== 'pending') continue
+      if (!(req.direction === 'outbound' || req.userInitiated)) continue
+      if (replyingFriendRequestIdsRef.current.has(req.id)) continue
+      if (isFriendRequestAdjudicationInFlight(req.id)) continue
+      const hasChar = req.messages.some((m) => m.sender === 'character')
+      const err = req.adjudicationLastError?.trim() ?? ''
+      const retryCount = autoAdjudicateRetryCountRef.current[req.id] ?? 0
+      const needsDecisionRetry =
+        hasChar &&
+        !!err &&
+        (err.includes('accept/decline') || err.includes('裁决')) &&
+        retryCount < AUTO_ADJUDICATE_MAX_RETRIES
+      if (!needsDecisionRetry) continue
+      autoAdjudicateRetryCountRef.current[req.id] = retryCount + 1
+      const delayMs = 1500 + retryCount * 2000
+      window.setTimeout(() => {
+        if (isFriendRequestAdjudicationInFlight(req.id)) return
+        void adjudicateFriendRequestAsCharacter(req.id)
+      }, delayMs)
+    }
+  }, [adjudicateFriendRequestAsCharacter, pendingNewFriendRequests, playerIdentityId])
 
   const sendNewFriendRequestMessage = useCallback(
     async (requestId: string, replyText: string) => {
@@ -4624,11 +5127,18 @@ function WeChatAppInner({ onBack }: Props) {
       if (!target) return
       if (!target.characterId) return
       if (playerIdentityId === null) return
-      const pid = playerIdentityId.trim()
-      if (!pid) return
-      const ch = await personaDb.getCharacter(target.characterId)
-      const sessionPid = resolvePrivateChatSessionPlayerIdentityId(ch, playerIdentityId)
-      const convKey = resolvePrivateWeChatConversationKey(target.characterId, ch, playerIdentityId)
+      const frRow = await personaDb.getFriendRequestById(requestId)
+      const chRow = frRow ? await personaDb.getCharacter(frRow.characterId) : null
+      const sessionPid =
+        resolveOutgoingFriendRequestPlayerIdentityId(chRow, frRow?.playerIdentityId) ||
+        frRow?.playerIdentityId?.trim() ||
+        playerIdentityId.trim()
+      if (!sessionPid || sessionPid === '__none__') return
+      const convKey = await resolveAccountScopedPrivateConversationKey({
+        wechatAccountId: currentAccountId,
+        characterId: target.characterId,
+        appSessionPlayerIdentityId: sessionPid,
+      })
       const nowMs = Date.now()
       const userText = sanitizeFriendRequestPlainText(replyText)
       if (!userText) return
@@ -4646,24 +5156,71 @@ function WeChatAppInner({ onBack }: Props) {
       emitWeChatStorageChanged()
       await refreshPendingNewFriendRequests()
     },
-    [pendingNewFriendRequests, playerIdentityId, refreshPendingNewFriendRequests],
+    [currentAccountId, pendingNewFriendRequests, playerIdentityId, refreshPendingNewFriendRequests],
+  )
+
+  const sendFriendRequestTempChatMessage = useCallback(
+    async (requestId: string, text: string) => {
+      const target = pendingNewFriendRequests.find((x) => x.id === requestId)
+      const charId = target?.targetCharId?.trim() || target?.characterId?.trim()
+      if (!target || !charId || target.status !== 'declined') return
+      const userText = sanitizeFriendRequestPlainText(text)
+      if (!userText) return
+
+      const now = Date.now()
+      await appendFriendRequestTempChatMessage(requestId, {
+        sender: 'user',
+        text: userText,
+        time: now,
+      })
+      await refreshPendingNewFriendRequests()
+
+      setTempChatReplyingIds((prev) => (prev.includes(requestId) ? prev : [...prev, requestId]))
+      try {
+        const frRow = await personaDb.getFriendRequestById(requestId)
+        const thread = frRow ? tempChatThreadFromRow(frRow) : [...(target.tempChatThread ?? []), { sender: 'user' as const, text: userText, time: now }]
+        await runFriendRequestTempChatReply({
+          requestId,
+          characterId: charId,
+          tempThread: thread,
+          buildFriendRequestAiReply,
+          applyAccept: (id) => resolveNewFriendRequest(id, 'accepted'),
+        })
+      } catch (e) {
+        console.warn('[friend-request] temp chat failed', e)
+      } finally {
+        setTempChatReplyingIds((prev) => prev.filter((x) => x !== requestId))
+        await refreshPendingNewFriendRequests()
+      }
+    },
+    [
+      buildFriendRequestAiReply,
+      pendingNewFriendRequests,
+      refreshPendingNewFriendRequests,
+      resolveNewFriendRequest,
+    ],
   )
 
   const triggerNewFriendRequestReply = useCallback(
     (requestId: string) => {
-      if (replyingFriendRequestIdsRef.current.has(requestId)) return
-      replyingFriendRequestIdsRef.current.add(requestId)
-      setReplyingFriendRequestIds((prev) => (prev.includes(requestId) ? prev : [...prev, requestId]))
-      if (replyWatchdogTimersRef.current[requestId]) window.clearTimeout(replyWatchdogTimersRef.current[requestId])
-      replyWatchdogTimersRef.current[requestId] = window.setTimeout(() => {
-        replyingFriendRequestIdsRef.current.delete(requestId)
-        setReplyingFriendRequestIds((prev) => prev.filter((id) => id !== requestId))
-        delete replyWatchdogTimersRef.current[requestId]
-      }, 25000)
       void (async () => {
+        const frMetaEarly = await personaDb.getFriendRequestById(requestId)
+        if (frMetaEarly && isUserInitiatedFriendRequestSource(frMetaEarly.source)) {
+          await adjudicateFriendRequestAsCharacter(requestId)
+          return
+        }
+        if (replyingFriendRequestIdsRef.current.has(requestId)) return
+        replyingFriendRequestIdsRef.current.add(requestId)
+        setReplyingFriendRequestIds((prev) => (prev.includes(requestId) ? prev : [...prev, requestId]))
+        if (replyWatchdogTimersRef.current[requestId]) window.clearTimeout(replyWatchdogTimersRef.current[requestId])
+        replyWatchdogTimersRef.current[requestId] = window.setTimeout(() => {
+          replyingFriendRequestIdsRef.current.delete(requestId)
+          setReplyingFriendRequestIds((prev) => prev.filter((id) => id !== requestId))
+          delete replyWatchdogTimersRef.current[requestId]
+        }, 25000)
         try {
           let target = pendingNewFriendRequests.find((x) => x.id === requestId) ?? null
-          const frMeta = await personaDb.getFriendRequestById(requestId)
+          const frMeta = frMetaEarly ?? (await personaDb.getFriendRequestById(requestId))
           if (!target) {
             const row = frMeta
             if (!row) return
@@ -4680,11 +5237,17 @@ function WeChatAppInner({ onBack }: Props) {
           }
           if (!target.characterId) return
           if (playerIdentityId === null) return
-          const pid = playerIdentityId.trim()
-          if (!pid) return
-          const chRow = await personaDb.getCharacter(target.characterId)
-          const sessionPid = resolvePrivateChatSessionPlayerIdentityId(chRow, playerIdentityId)
-          const convKey = resolvePrivateWeChatConversationKey(target.characterId, chRow, playerIdentityId)
+          const chRow = frMeta ? await personaDb.getCharacter(frMeta.characterId) : null
+          const sessionPid =
+            resolveOutgoingFriendRequestPlayerIdentityId(chRow, frMeta?.playerIdentityId) ||
+            frMeta?.playerIdentityId?.trim() ||
+            playerIdentityId.trim()
+          if (!sessionPid || sessionPid === '__none__') return
+          const convKey = await resolveAccountScopedPrivateConversationKey({
+            wechatAccountId: currentAccountId,
+            characterId: target.characterId,
+            appSessionPlayerIdentityId: sessionPid,
+          })
           const verificationEpochRaw = frMeta
             ? (frMeta.verificationEpochMs ?? frMeta.createdAt)
             : target.requestTimeMs
@@ -4742,11 +5305,27 @@ function WeChatAppInner({ onBack }: Props) {
             roundTranscript.push({ from: 'other', text: seg })
           }
           try {
-            const memParsed = await requestWeChatMemorySummary({ apiConfig, transcript: roundTranscript })
+            const memParsed = await requestWeChatMemorySummary({
+              apiConfig,
+              transcript: roundTranscript,
+              peerCharacterId: target.characterId,
+            })
             let memText = memParsed.content.trim()
+            let frUserBindings: import('./newFriendsPersona/types').WorldBookUserPlaceholderBinding[] | undefined
             if (memText) {
               try {
-                memText = (await sanitizePrivateMemorySummaryBody(memText, target.characterId)).trim().slice(0, 2000)
+                const frMemSource = parseWechatAccountPrivateConversationKey(convKey)
+                const frUserBindCtx = await resolveMemoryUserInsertContextFromSource(
+                  frMemSource?.wechatAccountId,
+                  sessionPid,
+                )
+                const sanitized = await sanitizePrivateMemorySummaryBody(
+                  memText,
+                  target.characterId,
+                  frUserBindCtx,
+                )
+                memText = sanitized.content.trim().slice(0, 2000)
+                frUserBindings = sanitized.userPlaceholderBindings
               } catch {
                 /* 保持模型原文 */
               }
@@ -4762,6 +5341,7 @@ function WeChatAppInner({ onBack }: Props) {
                 memoryTriggerEmotionNeed: memParsed.memoryTriggerEmotionNeed,
                 memorySupplementKeywords: memParsed.memorySupplementKeywords,
               })
+              const frMemSource2 = parseWechatAccountPrivateConversationKey(convKey)
               await personaDb.upsertCharacterMemory({
                 id: uid('mem'),
                 characterId: target.characterId,
@@ -4769,6 +5349,13 @@ function WeChatAppInner({ onBack }: Props) {
                 createdAt: now,
                 updatedAt: now,
                 isAutoGenerated: true,
+                ...(frUserBindings?.length ? { userPlaceholderBindings: frUserBindings } : {}),
+                ...(frMemSource2
+                  ? {
+                      sourceWechatAccountId: frMemSource2.wechatAccountId,
+                      sourceSessionPlayerIdentityId: frMemSource2.sessionPlayerId,
+                    }
+                  : {}),
                 memoryTriggerMode: triggerMode,
                 memoryTriggerCategory: memParsed.memoryTriggerCategory,
                 memoryTriggerPrecise: memParsed.memoryTriggerPrecise,
@@ -4792,7 +5379,14 @@ function WeChatAppInner({ onBack }: Props) {
         }
       })()
     },
-    [apiConfig, buildFriendRequestAiReply, pendingNewFriendRequests, playerIdentityId, refreshPendingNewFriendRequests],
+    [
+      adjudicateFriendRequestAsCharacter,
+      apiConfig,
+      buildFriendRequestAiReply,
+      pendingNewFriendRequests,
+      playerIdentityId,
+      refreshPendingNewFriendRequests,
+    ],
   )
 
   return (
@@ -4813,6 +5407,7 @@ function WeChatAppInner({ onBack }: Props) {
         style={wechatPageBackdropStyle}
       />
       <div className="relative z-[1] flex min-h-0 flex-1 flex-col">
+      <WeChatWelcomeRevealLayer slot="header" className="shrink-0">
       {hideTabChrome || hideWeChatHeader ? null : (
         <Header
           title={route.name === 'chat' && chatPeerContact ? chatPeerContact.remarkName : title}
@@ -4904,7 +5499,7 @@ function WeChatAppInner({ onBack }: Props) {
                         className="flex w-full px-4 py-3 text-left text-[15px] text-[#111827] active:bg-[#F9FAFB]"
                         onClick={() => {
                           setMessagesPlusMenuOpen(false)
-                          window.alert('添加朋友功能预留')
+                          setRoute({ name: 'add-friend' })
                         }}
                       >
                         添加朋友
@@ -4924,7 +5519,9 @@ function WeChatAppInner({ onBack }: Props) {
           titleTrailingInteractive={route.name === 'chat' && chatHeaderBusyOn}
         />
       )}
+      </WeChatWelcomeRevealLayer>
 
+      <WeChatWelcomeRevealLayer slot="body" className="flex min-h-0 flex-1 flex-col">
       <AnimatePresence>
         {busyDetailOpen && chatHeaderBusyOn ? (
           <motion.div
@@ -4979,14 +5576,14 @@ function WeChatAppInner({ onBack }: Props) {
             }
             aria-hidden={route.name !== 'chat'}
           >
-            {chatRouteIdentityId === null ? (
+            {playerIdentityId === null ? (
               route.name === 'chat' ? (
-                <div
+                <motion.div
                   className="flex flex-1 items-center justify-center px-4 text-[14px]"
                   style={{ color: 'var(--wx-text-muted)' }}
                 >
                   正在加载…
-                </div>
+                </motion.div>
               ) : null
             ) : (
               <ChatRoom
@@ -5007,7 +5604,8 @@ function WeChatAppInner({ onBack }: Props) {
                 roomType={wxDockChat.kind === 'group' ? 'group' : 'private'}
                 groupId={wxDockChat.kind === 'group' ? wxDockChat.groupId : null}
                 conversationCharacterId={activeConversationCharacterId ?? ''}
-                playerIdentityId={chatRouteIdentityId}
+                playerIdentityId={chatRouteIdentityId ?? playerIdentityId ?? '__none__'}
+                promptPlayerIdentityId={chatRouteIdentityId ?? playerIdentityId}
                 scrollToMessageId={pendingScrollToMessageId}
                 onScrollToMessageConsumed={clearPendingScrollToMessage}
                 onRequestForwardMessage={(msg) => {
@@ -5061,6 +5659,7 @@ function WeChatAppInner({ onBack }: Props) {
               : 'relative z-[1] flex min-h-0 flex-1 flex-col'
           }
           aria-hidden={route.name === 'chat'}
+          key={accountSwitchRevision}
         >
         <AnimatePresence mode="wait" initial={false}>
           {route.name === 'tabs' ? (
@@ -5341,6 +5940,59 @@ function WeChatAppInner({ onBack }: Props) {
                 }}
               />
             </motion.div>
+          ) : route.name === 'add-friend' ||
+            route.name === 'add-friend-stranger' ||
+            route.name === 'add-friend-request-form' ? (
+            <motion.div
+              key={
+                route.name === 'add-friend'
+                  ? 'add-friend'
+                  : route.name === 'add-friend-stranger'
+                    ? `add-friend-stranger-${route.characterId}`
+                    : `add-friend-request-${route.characterId}`
+              }
+              className="flex h-full min-h-0 flex-1 flex-col bg-white"
+              {...(disableTransitions
+                ? { initial: false, animate: { x: 0 }, exit: { x: 0 }, transition: { duration: 0 } }
+                : {
+                    initial: { x: '100%' },
+                    animate: { x: 0 },
+                    exit: { x: '100%' },
+                    transition: { duration: 0.28, ease: [0.22, 1, 0.36, 1] as const },
+                  })}
+            >
+              {route.name === 'add-friend' ? (
+                <AddFriendPage
+                  onBack={() => setRoute({ name: 'tabs', tab: 'messages' })}
+                  onPickCharacter={(characterId) => setRoute({ name: 'add-friend-stranger', characterId })}
+                />
+              ) : route.name === 'add-friend-stranger' ? (
+                <StrangerProfilePage
+                  characterId={route.characterId}
+                  onBack={() => setRoute({ name: 'add-friend' })}
+                  onRequestAdd={() =>
+                    setRoute({ name: 'add-friend-request-form', characterId: route.characterId })
+                  }
+                />
+              ) : (
+                <FriendRequestForm
+                  characterId={route.characterId}
+                  playerIdentityId={playerIdentityId}
+                  playerDisplayName={state.profile.displayName?.trim() || '我'}
+                  onBack={() => setRoute({ name: 'add-friend-stranger', characterId: route.characterId })}
+                  onSent={(requestId) => {
+                    setPendingOpenFriendRequestId(requestId)
+                    void refreshPendingNewFriendRequests().then(() => {
+                      setRoute({ name: 'new-friends-persona', source: 'contacts' })
+                    })
+                    /** 后台异步裁决，不阻塞切页与其它操作 */
+                    void adjudicateFriendRequestAsCharacter(requestId).then(() =>
+                      refreshPendingNewFriendRequests(),
+                    )
+                  }}
+                />
+              )}
+            </motion.div>
           ) : route.name === 'contact-profile' ? (
             <div key="contact-profile" className="flex h-full min-h-0 flex-1 flex-col">
               <ContactProfileCardScreen
@@ -5399,6 +6051,7 @@ function WeChatAppInner({ onBack }: Props) {
                 contacts={memoryManageContacts ?? []}
                 playerIdentityId={playerIdentityId}
                 playerDisplayName={state.profile.displayName || '我'}
+                currentWechatAccountId={currentAccountId}
                 onBack={() => setRoute({ name: 'tabs', tab: 'profile' })}
               />
             </motion.div>
@@ -5410,6 +6063,25 @@ function WeChatAppInner({ onBack }: Props) {
                   void characterId
                   setRoute({ name: 'new-friends-persona', source: 'profile' })
                 }}
+              />
+            </motion.div>
+          ) : route.name === 'switch-account' ? (
+            <motion.div key="switch-account" className="flex h-full min-h-0 flex-col" {...pageProps}>
+              <SwitchAccountPage
+                onBack={() => setRoute({ name: 'tabs', tab: 'profile' })}
+                onAddAccount={() => setRoute({ name: 'switch-account-register' })}
+                onSwitched={() => {
+                  setRoute({ name: 'tabs', tab: 'messages' })
+                  void refreshMessageThreadsMeta()
+                }}
+              />
+            </motion.div>
+          ) : route.name === 'switch-account-register' ? (
+            <motion.div key="switch-account-register" className="flex h-full min-h-0 flex-col" {...pageProps}>
+              <WeChatRegistration
+                mode="add-account"
+                onBack={() => setRoute({ name: 'switch-account' })}
+                onAccountAdded={() => setRoute({ name: 'switch-account' })}
               />
             </motion.div>
           ) : route.name === 'wallet-cards' ? (
@@ -5479,12 +6151,21 @@ function WeChatAppInner({ onBack }: Props) {
             >
               <NewFriendsPersonaApp
                 initialEditCharacterId={route.name === 'new-friends-persona' ? route.editCharacterId : undefined}
+                initialActiveRequestId={
+                  route.name === 'new-friends-persona' ? (pendingOpenFriendRequestId ?? undefined) : undefined
+                }
+                onInitialActiveRequestConsumed={() => setPendingOpenFriendRequestId(null)}
                 pendingRequests={pendingNewFriendRequests}
                 onMarkRequestsRead={markNewFriendRequestsRead}
                 onResolveRequest={resolveNewFriendRequest}
                 onReplyRequest={sendNewFriendRequestMessage}
                 onTriggerReplyRequest={triggerNewFriendRequestReply}
+                onRetryAdjudication={(requestId) =>
+                  void adjudicateFriendRequestAsCharacter(requestId, { force: true })
+                }
                 replyingRequestIds={replyingFriendRequestIds}
+                onSendTempChat={sendFriendRequestTempChatMessage}
+                tempChatReplyingIds={tempChatReplyingIds}
                 entrySource={route.name === 'new-friends-persona' ? route.source : undefined}
                 onBack={() => {
                   if (route.name === 'new-friends-persona' && route.returnToChat) {
@@ -5586,9 +6267,12 @@ function WeChatAppInner({ onBack }: Props) {
                     /** 先于一切 await：否则任一步抛错或耗时过长都会一直停在资料设置/删除向导 */
                     setRoute({ name: 'tabs', tab: 'contacts' })
                     try {
-                      const chForConv = await personaDb.getCharacter(characterId)
-                      const sessionPid = resolvePrivateChatSessionPlayerIdentityId(chForConv, playerIdentityId)
-                      const convKey = resolvePrivateWeChatConversationKey(characterId, chForConv, playerIdentityId)
+                      const sessionPid = appPid || '__none__'
+                      const convKey = await resolveAccountScopedPrivateConversationKey({
+                        wechatAccountId: currentAccountId,
+                        characterId,
+                        appSessionPlayerIdentityId: sessionPid,
+                      })
 
                       removeWeChatPersonaContactsByCharacterIds([characterId])
                       if (!notifyPeer) {
@@ -5778,7 +6462,19 @@ function WeChatAppInner({ onBack }: Props) {
                   }}
                   onSwitchAccount={() => {
                     setWxGlobalNav(null)
-                    setRoute({ name: 'player-identities' })
+                    setRoute({ name: 'switch-account' })
+                  }}
+                />
+              ) : wxGlobalNav.screen === 'account-security' ? (
+                <AccountSecurityPage
+                  onBack={() => setWxGlobalNav({ screen: 'root' })}
+                  onAccountErased={({ remainingAccounts }) => {
+                    setWxGlobalNav(null)
+                    if (remainingAccounts > 0) {
+                      setRoute({ name: 'switch-account' })
+                    } else {
+                      setRoute({ name: 'tabs', tab: 'messages' })
+                    }
                   }}
                 />
               ) : wxGlobalNav.screen === 'danmaku' ? (
@@ -5949,7 +6645,9 @@ function WeChatAppInner({ onBack }: Props) {
           ) : null}
         </AnimatePresence>
       </div>
+      </WeChatWelcomeRevealLayer>
 
+      <WeChatWelcomeRevealLayer slot="tabbar" className="shrink-0">
       {route.name === 'tabs' && !hideTabChrome ? (
         <TabBar
           active={activeTab}
@@ -5958,6 +6656,7 @@ function WeChatAppInner({ onBack }: Props) {
           contactsUnreadCount={newFriendsUnreadCount}
         />
       ) : null}
+      </WeChatWelcomeRevealLayer>
 
       <ThemePanel
         open={themeOpen}
@@ -5975,6 +6674,7 @@ function WeChatAppInner({ onBack }: Props) {
       />
       <MemoryTraceModal open={memoryTraceOpen} onClose={() => setMemoryTraceOpen(false)} data={memoryTraceSnapshot} />
       <WorldBookAfterPatchNoticeHost />
+      <MeetVol10EpilogueNoticeHost />
 
       <AnimatePresence>
         {consoleOpen ? (
@@ -5988,10 +6688,14 @@ function WeChatAppInner({ onBack }: Props) {
 
 export function WeChatApp({ onBack }: Props) {
   return (
-    <ChatThemeProvider>
-      <WeChatConsoleProvider>
-        <WeChatAppInner onBack={onBack} />
-      </WeChatConsoleProvider>
-    </ChatThemeProvider>
+    <WechatStoreProvider>
+      <ChatThemeProvider>
+        <WeChatConsoleProvider>
+          <WeChatAuthGuard onBack={onBack}>
+            <WeChatAppInner onBack={onBack} />
+          </WeChatAuthGuard>
+        </WeChatConsoleProvider>
+      </ChatThemeProvider>
+    </WechatStoreProvider>
   )
 }

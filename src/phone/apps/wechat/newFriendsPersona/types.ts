@@ -7,6 +7,16 @@ export type WorldBookPriority = 'before' | 'after'
 /** 历史存档字段；已全部改用正文占位符 {{char}}/{{user}}，读库时保留兼容 */
 export type WorldBookPronounGuide = 'default' | 'user_as_i' | 'third_person'
 
+/** 世界书正文 `{{user}}` 按出现顺序对应的绑定（界面只显示 {{user}}，账号/身份藏此处）。 */
+export type WorldBookUserPlaceholderBinding = {
+  wechatAccountId: string
+  playerIdentityId: string
+  /** 缓存：微信号 · 扮演「…」 */
+  lineLabel?: string
+  /** 缓存：展示名，预览/注入用 */
+  displayName?: string
+}
+
 export type WorldBookItem = {
   id: string
   name: string
@@ -16,6 +26,8 @@ export type WorldBookItem = {
   content: string
   updatedAt: number
   collapsed?: boolean
+  /** 与正文中从左到右每个 `{{user}}` 一一对应 */
+  userPlaceholderBindings?: WorldBookUserPlaceholderBinding[]
   /** @deprecated 已废弃；请用正文中的 {{char}} / {{user}} */
   pronounGuide?: WorldBookPronounGuide
 }
@@ -62,6 +74,12 @@ export type ScheduleTable = {
   updatedAt: number
 }
 
+/** 角色关联的玩家扮演身份及其归属微信账号（多号分线） */
+export type PlayerIdentityLinkMeta = {
+  playerIdentityId: string
+  wechatAccountId: string
+}
+
 export type Character = {
   id: string
   createdAt: number
@@ -95,8 +113,14 @@ export type Character = {
   worldBackgroundId?: string
   /** 世界背景是否启用到 AI 提示词（关闭时不注入世界背景） */
   worldBackgroundEnabled?: boolean
+  /** 归属的微信账号 id（多账号隔离；仅在该账号下可见/可选用） */
+  wechatAccountId?: string
   /** 创建该角色时选择的玩家身份 id（来自 playerIdentities 表） */
   playerIdentityId?: string
+  /** 额外关联的玩家身份（多马甲扮演 / 小号加好友后绑定） */
+  linkedPlayerIdentityIds?: string[]
+  /** 各关联马甲归属的微信账号 id（与 linkedPlayerIdentityIds 对应，供提示词/UI） */
+  playerIdentityLinkMeta?: PlayerIdentityLinkMeta[]
   /** 若存在：该角色为「人脉生成」的 NPC，归属此主角 id */
   generatedForCharacterId?: string
   /** NPC 展示：兴趣（约 3 个） */
@@ -340,8 +364,8 @@ export type GroupChatRow = {
   memberIds?: string[]
 }
 
-/** 长期记忆来源：私聊会话 vs 群聊提炼 vs 从绑定主角线下剧情同步提炼的「关联记忆」 */
-export type CharacterMemoryScope = 'private' | 'group' | 'linked'
+/** 长期记忆来源：私聊 / 群聊 / 约会关联 / 遇见临时邂逅 */
+export type CharacterMemoryScope = 'private' | 'group' | 'linked' | 'meet'
 
 /** 记忆注入方式：始终进参考 vs 仅关键词命中时注入 */
 export type CharacterMemoryTriggerMode = 'always' | 'keyword'
@@ -381,6 +405,12 @@ export type CharacterMemory = {
    * 逗号/分号/换行分隔均可入库时解析。
    */
   memoryKeywords?: string[]
+  /** 自动总结来源：写入时所在的微信账号（多号分线） */
+  sourceWechatAccountId?: string
+  /** 自动总结来源：写入时会话扮演身份 id */
+  sourceSessionPlayerIdentityId?: string
+  /** 与正文中从左到右每个 `{{user}}` 一一对应（同世界书；总结绑定来源线） */
+  userPlaceholderBindings?: WorldBookUserPlaceholderBinding[]
   /** OpenAI 兼容 embedding，用于向量语义召回（与关键词并存） */
   memoryEmbedding?: number[]
   /** 与 `memoryEmbedding` 对应的 `buildMemoryEmbedText` 内容哈希，正文或触发词变更后需重算向量 */
@@ -408,6 +438,11 @@ export type MemorySettingsRow = {
    */
   datingPlotSummaryCursorByCharacterId?: Record<string, number>
   /**
+   * 各角色「遇见 App 临时会话」消息：最近一次自动总结覆盖到的时间戳（闭区间右端）。
+   * 与私聊/约会游标独立；加好友导入微信后通常推进至会话最大 ts，避免与已入库 `[遇见]` 记忆重复总结。
+   */
+  meetSummaryCursorTimestampByCharacterId?: Record<string, number>
+  /**
    * 是否把合并自动总结里的「关联记忆」（人脉 NPC 的 `[关联线下]` 条目）写入数据库。
    * 显式 `false` 关闭；缺省为开启。关闭后仍可与约会/合并总结同一请求生成正文，仅不落库关联条。
    */
@@ -421,6 +456,11 @@ export type MemorySettingsRow = {
    * 长期记忆向量语义召回：显式 `false` 关闭；缺省为开启（仍需聊天 API 里配置有效 url+key 才会实际请求 embedding）。
    */
   memoryVectorRecallEnabled?: boolean
+  /**
+   * 是否启用向量召回专用 API（地址/密钥）；显式 `false` 时仅用聊天主接口。
+   * 若本地曾保存过专用 url/key 且无显式 `false`，读取时兼容为 `true`。
+   */
+  memoryEmbeddingUseDedicatedApi?: boolean
   /** 覆盖默认 `text-embedding-3-small`（须与当前 API 兼容） */
   memoryEmbeddingModelId?: string
   /**
@@ -433,6 +473,8 @@ export type MemorySettingsRow = {
    * 可与 `memoryEmbeddingApiUrl` 组合：只填其一则另一项回落到主配置。
    */
   memoryEmbeddingApiKey?: string
+  /** 外部向量库集合 / 命名空间（UI：记忆切片簇） */
+  memoryVectorCollection?: string
 }
 
 /** 微信私聊持久化消息（IndexedDB `chatMessages`） */

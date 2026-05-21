@@ -151,10 +151,24 @@ export function pickMemoriesByVectorSimilarityScored(params: {
   return scoreMemoriesByVectorSimilarity(params).map(({ m, sim }) => ({ memory: m, score: sim }))
 }
 
+export type MemoryPromptLineScope = {
+  wechatAccountId: string
+  sessionPlayerIdentityId: string
+}
+
+export type MemoryPromptInjectionBucket = 'own' | 'linked'
+
 export type MemoryVectorRecallOpts = {
   apiConfig: Pick<ApiConfig, 'apiUrl' | 'apiKey'> | null
   embeddingModelId?: string
   disableVector?: boolean
+  /** 多号分线：长期记忆按来源微信线分组注入 */
+  lineScope?: MemoryPromptLineScope | null
+  /**
+   * own：角色私聊自有长期记忆（默认，不含 memoryScope=linked）
+   * linked：线下关联记忆（约会总结写入人脉 NPC 的 `[关联线下]` 条目）
+   */
+  memoryBucket?: MemoryPromptInjectionBucket
 }
 
 export function isMemoryVectorRecallEnabled(settings: MemorySettingsRow, opts?: MemoryVectorRecallOpts | null): boolean {

@@ -1454,7 +1454,10 @@ export function DatingProvider({ children }: { children: ReactNode }) {
         offlinePlotsHay.slice(0, 3600),
         recentHaystack,
       ])
-      const longTermMemory = await personaDb.formatCharacterMemoriesForPromptByRelevance(cid, hay, {
+      const { formatCharacterMemoriesForPromptInjection } = await import(
+        '../memory/formatCharacterMemoriesForPromptInjection'
+      )
+      const longTermMemory = await formatCharacterMemoriesForPromptInjection(cid, hay, {
         apiConfig: apiConfig?.apiUrl?.trim() && apiConfig?.apiKey?.trim() ? apiConfig : null,
       })
 

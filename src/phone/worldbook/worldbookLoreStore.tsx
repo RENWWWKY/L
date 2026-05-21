@@ -160,6 +160,18 @@ export function removeLoreEntry(id: string) {
   schedulePersist()
 }
 
+/** 微信深度注销：清空档案室内存并删除持久化键（由 {@link LUMI_LORE_ARCHIVE_KV_KEY} 承载） */
+export function resetWorldbookLoreArchiveAfterWeChatErase(): void {
+  snap = { entries: [], hydrated: true }
+  emit()
+  void personaDb.deletePhoneKv(LUMI_LORE_ARCHIVE_KV_KEY).catch(() => {})
+  try {
+    localStorage.removeItem(LUMI_LORE_ARCHIVE_KV_KEY)
+  } catch {
+    // ignore
+  }
+}
+
 export function WorldbookLoreProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     let cancelled = false

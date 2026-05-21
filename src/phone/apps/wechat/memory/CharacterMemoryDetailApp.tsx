@@ -13,6 +13,7 @@ import {
 import { MemoryManualKeywordEditor } from './MemoryManualKeywordEditor'
 import { MemoryTriggerModeBadge } from './MemoryTriggerModeBadge'
 import { uid } from '../newFriendsPersona/utils'
+import { reconcileMemoryUserPlaceholdersOnSave } from '../memoryUserPlaceholderBindings'
 import { WECHAT_LUMI_PEER_CHARACTER_ID } from '../wechatConversationKey'
 import { MemoryContentWithSourceBadgesFromRow } from './memoryContentExpanded'
 
@@ -104,6 +105,11 @@ export function CharacterMemoryDetailApp({
 
   const [editOpen, setEditOpen] = useState(false)
   const [editDraft, setEditDraft] = useState('')
+  const [editUserBindings, setEditUserBindings] = useState<
+    import('../newFriendsPersona/types').WorldBookUserPlaceholderBinding[] | undefined
+  >(undefined)
+  const [editSourceAcc, setEditSourceAcc] = useState<string | undefined>(undefined)
+  const [editSourceSid, setEditSourceSid] = useState<string | undefined>(undefined)
   const [editTriggerMode, setEditTriggerMode] = useState<CharacterMemoryTriggerMode>('keyword')
   const [editKeywords, setEditKeywords] = useState<string[]>([])
   const [editKwEditorKey, setEditKwEditorKey] = useState(0)
@@ -126,6 +132,9 @@ export function CharacterMemoryDetailApp({
     memoryScope: previewRowForDraft?.memoryScope === 'linked' ? 'linked' : 'private',
     linkedFromCharacterId: previewRowForDraft?.linkedFromCharacterId,
     involvedCharIds: previewRowForDraft?.involvedCharIds,
+    userPlaceholderBindings: editUserBindings ?? previewRowForDraft?.userPlaceholderBindings,
+    sourceWechatAccountId: editSourceAcc ?? previewRowForDraft?.sourceWechatAccountId,
+    sourceSessionPlayerIdentityId: editSourceSid ?? previewRowForDraft?.sourceSessionPlayerIdentityId,
   })
 
   const reload = useCallback(async (options?: { silent?: boolean }) => {
@@ -166,6 +175,9 @@ export function CharacterMemoryDetailApp({
   const openAdd = () => {
     setEditingId(null)
     setEditDraft('')
+    setEditUserBindings(undefined)
+    setEditSourceAcc(undefined)
+    setEditSourceSid(undefined)
     setEditTriggerMode('keyword')
     setEditKeywords([])
     setEditKwEditorKey((k) => k + 1)
@@ -175,6 +187,9 @@ export function CharacterMemoryDetailApp({
   const openEdit = (m: CharacterMemory) => {
     setEditingId(m.id)
     setEditDraft(m.content)
+    setEditUserBindings(m.userPlaceholderBindings)
+    setEditSourceAcc(m.sourceWechatAccountId)
+    setEditSourceSid(m.sourceSessionPlayerIdentityId)
     setEditTriggerMode(m.memoryTriggerMode === 'always' ? 'always' : 'keyword')
     setEditKeywords(flattenMemoryTriggerKeywords(m))
     setEditKwEditorKey((k) => k + 1)
@@ -182,8 +197,17 @@ export function CharacterMemoryDetailApp({
   }
 
   const saveEdit = async () => {
-    const text = editDraft.trim()
+    let text = editDraft.trim()
     if (!text) return
+    const reconciled = await reconcileMemoryUserPlaceholdersOnSave({
+      content: text,
+      userPlaceholderBindings: editUserBindings,
+      sourceWechatAccountId: editSourceAcc ?? (editingId ? list.find((x) => x.id === editingId)?.sourceWechatAccountId : undefined),
+      sourceSessionPlayerIdentityId:
+        editSourceSid ?? (editingId ? list.find((x) => x.id === editingId)?.sourceSessionPlayerIdentityId : undefined),
+    })
+    text = reconciled.content
+    const nextBindings = reconciled.userPlaceholderBindings
     const now = Date.now()
     const mode: CharacterMemoryTriggerMode = editTriggerMode === 'always' ? 'always' : 'keyword'
     const normalized = [...new Set(editKeywords.map((x) => x.replace(/\s+/g, ' ').trim()).filter(Boolean))]
@@ -194,6 +218,7 @@ export function CharacterMemoryDetailApp({
       await personaDb.upsertCharacterMemory({
         ...prev,
         content: text,
+        ...(nextBindings.length ? { userPlaceholderBindings: nextBindings } : {}),
         memoryTriggerMode: mode,
         memoryTriggerCategory: undefined,
         memoryTriggerPrecise: undefined,
@@ -207,6 +232,7 @@ export function CharacterMemoryDetailApp({
         id: uid('mem'),
         characterId,
         content: text,
+        ...(nextBindings.length ? { userPlaceholderBindings: nextBindings } : {}),
         memoryTriggerMode: mode,
         memoryTriggerCategory: undefined,
         memoryTriggerPrecise: undefined,

@@ -758,8 +758,11 @@ function DatingStoryPageInner({ onBackToSelect }: Props) {
           : null
       const transcript = buildTranscriptFromDatingPlots()
       const hay = buildMemoryRelevanceHaystack(transcript.map((t) => t.text))
+      const { formatCharacterMemoriesForPromptInjection } = await import(
+        '../memory/formatCharacterMemoriesForPromptInjection'
+      )
       const memoryNotes = (
-        await personaDb.formatCharacterMemoriesForPromptByRelevance(cid, hay, {
+        await formatCharacterMemoriesForPromptInjection(cid, hay, {
           apiConfig: apiConfig?.apiUrl?.trim() && apiConfig?.apiKey?.trim() ? apiConfig : null,
         })
       ).trim() || undefined

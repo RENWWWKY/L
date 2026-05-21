@@ -12,6 +12,12 @@ export const WECHAT_GROUP_BOT_CHARACTER_ID = '__wx_group_bot__'
 
 const GROUP_CONV_PREFIX = 'wxgrp:'
 
+/** 私聊 IndexedDB 键：按微信马甲隔离（`wxapriv:{accountId}::{characterId}::{sessionPid}`） */
+export const WX_ACCOUNT_PRIVATE_CONV_PREFIX = 'wxapriv:'
+
+/** 群聊 IndexedDB 键：按微信马甲隔离（`wxagrp:{accountId}::{groupId}::{sessionPid}`） */
+export const WX_ACCOUNT_GROUP_CONV_PREFIX = 'wxagrp:'
+
 /** IndexedDB 群聊长期记忆行的占位 characterId 前缀（与真实角色 id 区分） */
 const GROUP_MEMORY_BUCKET_PREFIX = '__wx_grp_mem__::'
 
@@ -31,6 +37,113 @@ export function wechatConversationKey(characterId: string, playerIdentityId: str
   return `${characterId}::${pid}`
 }
 
+export function isWechatAccountPrivateConversationKey(conversationKey: string): boolean {
+  return conversationKey.trim().startsWith(WX_ACCOUNT_PRIVATE_CONV_PREFIX)
+}
+
+export function wechatAccountPrivateConversationKey(
+  wechatAccountId: string,
+  characterId: string,
+  appSessionPlayerIdentityId: string,
+): string {
+  const acc = wechatAccountId.trim()
+  const cid = characterId.trim()
+  const pid = appSessionPlayerIdentityId.trim() || '__none__'
+  return `${WX_ACCOUNT_PRIVATE_CONV_PREFIX}${acc}::${cid}::${pid}`
+}
+
+/** 会话键是否属于指定微信马甲（仅 `wxapriv:` / `wxagrp:` 前缀键；无马甲旧键返回 false）。 */
+export function conversationKeyBelongsToWechatAccount(
+  conversationKey: string,
+  wechatAccountId: string,
+): boolean {
+  const k = conversationKey.trim()
+  const acc = wechatAccountId.trim()
+  if (!k || !acc) return false
+  const priv = parseWechatAccountPrivateConversationKey(k)
+  if (priv) return priv.wechatAccountId === acc
+  const grp = parseWechatAccountGroupConversationKey(k)
+  if (grp) return grp.wechatAccountId === acc
+  return false
+}
+
+export function parseWechatAccountPrivateConversationKey(conversationKey: string): {
+  wechatAccountId: string
+  characterId: string
+  sessionPlayerId: string
+} | null {
+  const k = conversationKey.trim()
+  if (!isWechatAccountPrivateConversationKey(k)) return null
+  const rest = k.slice(WX_ACCOUNT_PRIVATE_CONV_PREFIX.length)
+  const parts = rest.split('::')
+  if (parts.length < 3) return null
+  const sessionPlayerId = (parts.pop() || '__none__').trim() || '__none__'
+  const characterId = (parts.pop() || '').trim()
+  const wechatAccountId = parts.join('::').trim()
+  if (!wechatAccountId || !characterId) return null
+  return { wechatAccountId, characterId, sessionPlayerId }
+}
+
+export function isWechatAccountGroupConversationKey(conversationKey: string): boolean {
+  return conversationKey.trim().startsWith(WX_ACCOUNT_GROUP_CONV_PREFIX)
+}
+
+export function wechatAccountGroupConversationKey(
+  wechatAccountId: string,
+  groupId: string,
+  appSessionPlayerIdentityId: string,
+): string {
+  const acc = wechatAccountId.trim()
+  const gid = groupId.trim()
+  const pid = appSessionPlayerIdentityId.trim() || '__none__'
+  return `${WX_ACCOUNT_GROUP_CONV_PREFIX}${acc}::${gid}::${pid}`
+}
+
+export function parseWechatAccountGroupConversationKey(conversationKey: string): {
+  wechatAccountId: string
+  groupId: string
+  sessionPlayerId: string
+} | null {
+  const k = conversationKey.trim()
+  if (!isWechatAccountGroupConversationKey(k)) return null
+  const rest = k.slice(WX_ACCOUNT_GROUP_CONV_PREFIX.length)
+  const parts = rest.split('::')
+  if (parts.length < 3) return null
+  const sessionPlayerId = (parts.pop() || '__none__').trim() || '__none__'
+  const groupId = (parts.pop() || '').trim()
+  const wechatAccountId = parts.join('::').trim()
+  if (!wechatAccountId || !groupId) return null
+  return { wechatAccountId, groupId, sessionPlayerId }
+}
+
+/**
+ * 私聊消息/会话设置存储键：仅按「当前马甲 + 本号会话身份」，**不**使用角色全局绑定身份，
+ * 避免大号/小号聊天记录互相串线。AI 提示词仍用 {@link resolvePrivateChatSessionPlayerIdentityId}。
+ */
+export function resolvePrivateWeChatStorageConversationKey(
+  characterId: string,
+  wechatAccountId: string | null | undefined,
+  appSessionPlayerIdentityId: string | null | undefined,
+): string {
+  const cid = characterId.trim()
+  const pid = appSessionPlayerIdentityId?.trim() || '__none__'
+  const acc = wechatAccountId?.trim()
+  if (acc && cid) return wechatAccountPrivateConversationKey(acc, cid, pid)
+  return wechatConversationKey(cid, pid)
+}
+
+export function resolveGroupWeChatStorageConversationKey(
+  groupId: string,
+  wechatAccountId: string | null | undefined,
+  appSessionPlayerIdentityId: string | null | undefined,
+): string {
+  const gid = groupId.trim()
+  const pid = appSessionPlayerIdentityId?.trim() || '__none__'
+  const acc = wechatAccountId?.trim()
+  if (acc && gid) return wechatAccountGroupConversationKey(acc, gid, pid)
+  return wechatGroupConversationKey(gid, pid)
+}
+
 /**
  * 从私聊 `conversationKey`（`characterId::sessionPlayerId`）拆出两端；群聊键返回 null。
  * `characterId` 中若含 `::` 则按**最后一次** `::` 分割（与 {@link wechatConversationKey} 拼接规则一致）。
@@ -41,6 +154,10 @@ export function parsePrivateWeChatConversationCharacterAndSession(conversationKe
 } | null {
   const k = conversationKey.trim()
   if (!k || isWechatGroupConversationKey(k)) return null
+  const scoped = parseWechatAccountPrivateConversationKey(k)
+  if (scoped) {
+    return { characterId: scoped.characterId, sessionPlayerId: scoped.sessionPlayerId }
+  }
   const idx = k.lastIndexOf('::')
   if (idx <= 0) return null
   const characterId = k.slice(0, idx).trim()
@@ -49,26 +166,22 @@ export function parsePrivateWeChatConversationCharacterAndSession(conversationKe
   return { characterId, sessionPlayerId }
 }
 
-/**
- * 私聊在 IndexedDB 中使用的身份段：与 ChatRoom 的 `chatRouteIdentityId` 一致——
- * 优先角色表绑定的 `playerIdentityId`，否则为当前 App 选用身份；皆无则为 `__none__`。
- */
-export function resolvePrivateChatSessionPlayerIdentityId(
-  characterRow: { playerIdentityId?: string } | null | undefined,
-  appPlayerIdentityId: string | null | undefined,
-): string {
-  const bound = characterRow?.playerIdentityId?.trim()
-  if (bound) return bound
-  const app = appPlayerIdentityId?.trim()
-  if (app) return app
-  return '__none__'
-}
+export { resolvePrivateChatSessionPlayerIdentityId } from './wechatCharacterPlayerIdentity'
 
+/** @deprecated 存储请用 {@link resolvePrivateWeChatStorageConversationKey}；此函数保留给未传马甲的旧调用。 */
 export function resolvePrivateWeChatConversationKey(
   characterId: string,
   characterRow: { playerIdentityId?: string } | null | undefined,
   appPlayerIdentityId: string | null | undefined,
+  wechatAccountId?: string | null,
 ): string {
+  if (wechatAccountId?.trim()) {
+    return resolvePrivateWeChatStorageConversationKey(
+      characterId,
+      wechatAccountId,
+      appPlayerIdentityId,
+    )
+  }
   const sid = resolvePrivateChatSessionPlayerIdentityId(characterRow, appPlayerIdentityId)
   return wechatConversationKey(characterId.trim(), sid)
 }
@@ -93,7 +206,8 @@ export function wechatGroupConversationKey(groupId: string, playerIdentityId: st
 }
 
 export function isWechatGroupConversationKey(conversationKey: string): boolean {
-  return conversationKey.trim().startsWith(GROUP_CONV_PREFIX)
+  const k = conversationKey.trim()
+  return k.startsWith(GROUP_CONV_PREFIX) || k.startsWith(WX_ACCOUNT_GROUP_CONV_PREFIX)
 }
 
 export function parseGroupIdFromConversationKey(conversationKey: string): string | null {

@@ -1,10 +1,23 @@
 import { AnimatePresence, motion } from 'framer-motion'
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState, type CSSProperties } from 'react'
 
-import type { FriendRequest } from './NewFriendsList'
+import type { FriendRequest } from './friendRequestTypes'
 import { formatWeChatChatTimestamp, shouldRenderWeChatTimestamp } from '../time/wechatTimeUtils'
 
 type CeremonyState = null | 'accepted' | 'declined'
+
+function verificationBubbleStyle(fromCharacter: boolean): CSSProperties {
+  return {
+    backgroundColor: fromCharacter
+      ? 'var(--wx-other-bubble-bg, #ffffff)'
+      : 'var(--wx-self-bubble-bg, #d9f7d9)',
+    color: fromCharacter ? 'var(--wx-other-bubble-text, #2f2f2f)' : 'var(--wx-self-bubble-text, #1a1a1a)',
+    borderRadius: fromCharacter
+      ? 'var(--wx-other-bubble-radius, 18px)'
+      : 'var(--wx-self-bubble-radius, 18px)',
+    boxShadow: '0 1px 4px rgba(0,0,0,0.06)',
+  }
+}
 
 export function RequestDetail({
   request,
@@ -14,6 +27,8 @@ export function RequestDetail({
   isReplying = false,
   onAccept,
   onDecline,
+  userInitiated = false,
+  onRetryAdjudication,
 }: {
   request: FriendRequest
   onBack: () => void
@@ -22,6 +37,9 @@ export function RequestDetail({
   isReplying?: boolean
   onAccept: () => void
   onDecline: () => void
+  /** 用户主动添加：由对方（角色）裁决，不展示「同意/拒绝」按钮 */
+  userInitiated?: boolean
+  onRetryAdjudication?: () => void
 }) {
   const [draft, setDraft] = useState('')
   const [ceremony, setCeremony] = useState<CeremonyState>(null)
@@ -30,10 +48,10 @@ export function RequestDetail({
   const [visibleCount, setVisibleCount] = useState(request.messages.length)
   const scrollRef = useRef<HTMLDivElement | null>(null)
   const pending = request.status === 'pending'
+  const userInitiatedWaiting = userInitiated && pending
 
   const lastMsg = request.messages[request.messages.length - 1]
   const canTriggerByMessages = !!lastMsg && lastMsg.sender === 'user'
-
   useEffect(() => {
     if (canTriggerByMessages) return
     setCanTriggerReply(false)
@@ -81,9 +99,13 @@ export function RequestDetail({
       if (!el) return
       el.scrollTop = el.scrollHeight
     })
-  }, [request.id])
+  }, [request.id, request.messages.length])
 
   useEffect(() => {
+    if (userInitiatedWaiting) {
+      setVisibleCount(request.messages.length)
+      return
+    }
     if (visibleCount > request.messages.length) {
       setVisibleCount(request.messages.length)
       return
@@ -93,7 +115,7 @@ export function RequestDetail({
       setVisibleCount((v) => Math.min(v + 1, request.messages.length))
     }, 160)
     return () => window.clearTimeout(timer)
-  }, [request.messages.length, visibleCount])
+  }, [request.messages.length, visibleCount, isReplying, userInitiatedWaiting, request.messages])
 
   useEffect(() => {
     const el = scrollRef.current
@@ -129,15 +151,12 @@ export function RequestDetail({
       transition={{ duration: 0.28, ease: [0.22, 1, 0.36, 1] }}
       className="relative flex h-full min-h-0 flex-col overflow-x-hidden touch-pan-y overscroll-x-none bg-transparent"
     >
-      <div className="border-b border-[#ececee]/90 bg-white/78 px-4 pb-4 pt-6 text-center backdrop-blur-sm">
-        <div
-          className="mx-auto h-[78px] w-[78px] overflow-hidden rounded-full border bg-white shadow-[0_6px_26px_rgba(0,0,0,0.08)]"
-          style={{ borderColor: '#e6e6e8' }}
-        >
+      <div className="border-b border-[#EBEBEB] bg-white px-4 pb-4 pt-6 text-center">
+        <div className="mx-auto h-[78px] w-[78px] overflow-hidden rounded-full border border-[#E0E0E0] bg-[#F5F5F5]">
           {request.avatar?.trim() ? <img src={request.avatar} alt="" className="h-full w-full object-cover" /> : null}
         </div>
-        <p className="mt-3 text-[17px] font-semibold text-[#17181b]">{request.nickname}</p>
-        <p className="mt-1 text-[12px] text-[#8e9097]">{request.source}</p>
+        <p className="mt-3 text-[17px] font-medium text-[#111111]">{request.nickname}</p>
+        <p className="mt-1 text-[12px] text-[#8A8A8A]">{request.source}</p>
       </div>
 
       <div
@@ -154,8 +173,8 @@ export function RequestDetail({
                 <div key={item.id} className="mt-4">
                   <div className="flex justify-center">
                     <span
-                      className="rounded-full bg-[#f2f2f2] px-3 py-1 text-[12px]"
-                      style={{ color: '#999999', lineHeight: 1.1 }}
+                      className="rounded-full bg-[#F0F0F0] px-3 py-1 text-[12px] text-[#8A8A8A]"
+                      style={{ lineHeight: 1.1 }}
                     >
                       {left ? <span style={{ fontFamily: 'var(--wx-font)' }}>{left}&nbsp;</span> : null}
                       <span
@@ -177,22 +196,22 @@ export function RequestDetail({
             return (
               <div key={item.id} className="mt-3 space-y-2">
                 <div className={fromCharacter ? 'mr-8' : 'ml-8 flex flex-col items-end'}>
-                  <div
-                    className={`inline-block max-w-full whitespace-pre-wrap break-words rounded-xl px-3 py-2 text-[13px] leading-6 ${
-                      fromCharacter
-                        ? 'bg-gray-50 text-[#34363d] italic'
-                        : 'border border-[#D4AF37]/30 bg-white text-[#1f2127]'
-                    }`}
+                  <motion.div
+                    className="inline-block max-w-full whitespace-pre-wrap break-words px-3.5 py-2.5 text-[14px] leading-[1.55]"
+                    style={verificationBubbleStyle(fromCharacter)}
                   >
                     {item.content}
-                  </div>
+                  </motion.div>
                 </div>
               </div>
             )
           })}
           {isReplying && visibleMessages[visibleMessages.length - 1]?.sender === 'user' ? (
             <div className="mr-8">
-              <div className="inline-flex items-center gap-1 rounded-xl bg-gray-50 px-3 py-2 text-[#8a8d95]">
+              <motion.div
+                className="inline-flex items-center gap-1 px-3.5 py-2.5"
+                style={verificationBubbleStyle(true)}
+              >
                 {[0, 1, 2].map((i) => (
                   <span
                     key={`typing-dot-${i}`}
@@ -200,14 +219,36 @@ export function RequestDetail({
                     style={{ animationDelay: `${i * 0.15}s` }}
                   />
                 ))}
-              </div>
+              </motion.div>
             </div>
           ) : null}
         </div>
       </div>
 
       {pending && !ceremony ? (
-        <div className="absolute inset-x-0 bottom-0 z-[15] border-t border-[#ececee]/90 bg-white/72 px-4 pb-[max(14px,env(safe-area-inset-bottom,0px))] pt-3 backdrop-blur-sm">
+        <div className="absolute inset-x-0 bottom-0 z-[15] border-t border-[#EBEBEB] bg-white px-4 pb-[max(14px,env(safe-area-inset-bottom,0px))] pt-3">
+          {userInitiatedWaiting ? (
+            <div className="space-y-3">
+              {request.adjudicationLastError?.trim() ? (
+                <p className="text-center text-[12px] leading-relaxed text-[#c45c5c]">{request.adjudicationLastError}</p>
+              ) : null}
+              <p className="text-center text-[12px] leading-relaxed text-[#8A8A8A]">
+                {isReplying
+                  ? '对方正在处理你的申请…'
+                  : '你已发送申请，请在本页等待对方回应；对方同意后将自动加入通讯录。等待期间无需操作，也不会改变对方的回复内容。'}
+              </p>
+              {request.adjudicationLastError?.trim() && onRetryAdjudication && !isReplying ? (
+                <button
+                  type="button"
+                  className="mx-auto block rounded-[10px] border border-[#576b95] px-4 py-2 text-[13px] font-medium text-[#576b95] active:bg-[#f5f7fa]"
+                  onClick={() => onRetryAdjudication()}
+                >
+                  重新请求对方处理
+                </button>
+              ) : null}
+            </div>
+          ) : (
+            <>
             <div className="flex items-center gap-2">
               <input
                 value={draft}
@@ -219,11 +260,11 @@ export function RequestDetail({
                   runSendOrTrigger()
                 }}
                 placeholder="输入验证回复..."
-                className="h-10 min-w-0 flex-1 rounded-xl border border-[#e6e6ea] bg-[#fcfcfd] px-3 text-[13px] text-[#1f2127] outline-none placeholder:text-[#a5a7ad]"
+                className="h-10 min-w-0 flex-1 rounded-[10px] border border-[#E0E0E0] bg-white px-3 text-[13px] text-[#111111] outline-none placeholder:text-[#B0B0B0] focus:border-[#111111]"
               />
               <button
                 type="button"
-                className="h-10 rounded-xl border border-[#dedee2] bg-white px-3 text-[12px] text-[#23252a] disabled:opacity-50"
+                className="h-10 shrink-0 rounded-[10px] border border-[#111111] bg-[#111111] px-3 text-[12px] font-medium text-white disabled:border-[#E0E0E0] disabled:bg-[#F0F0F0] disabled:text-[#B0B0B0]"
                 disabled={replySending || isReplying || (!draft.trim() && !(canTriggerReply || canTriggerByMessages))}
                 onClick={runSendOrTrigger}
               >
@@ -231,27 +272,35 @@ export function RequestDetail({
               </button>
             </div>
             {isReplying ? (
-              <p className="mt-2 text-[11px] text-[#9ea1a8]">对方正在输入...</p>
+              <p className="mt-2 text-[11px] text-[#8A8A8A]">对方正在输入...</p>
             ) : null}
 
             <div className="mt-3 grid grid-cols-2 gap-2">
               <button
                 type="button"
-                className="h-11 rounded-xl bg-[#f2f2f4] text-[14px] font-medium text-[#3b3d44] transition-colors duration-200 hover:text-[#7a3131]"
+                className="h-11 rounded-[10px] border border-[#E0E0E0] bg-white text-[14px] font-medium text-[#111111] active:bg-[#F5F5F5]"
                 onClick={() => runDecision('declined')}
               >
                 拒绝
               </button>
               <button
                 type="button"
-                className="h-11 rounded-xl bg-black text-[14px] font-semibold text-[#f2e4b5] transition-colors duration-200 hover:bg-[#111]"
+                className="h-11 rounded-[10px] bg-[#111111] text-[14px] font-medium text-white active:opacity-90"
                 onClick={() => runDecision('accepted')}
               >
                 同意
               </button>
             </div>
-          </div>
-        ) : null}
+            </>
+          )}
+        </div>
+      ) : null}
+
+      {request.status === 'declined' && userInitiated ? (
+        <div className="absolute inset-x-0 bottom-0 z-[15] border-t border-[#EBEBEB] bg-white px-4 py-4 pb-[max(14px,env(safe-area-inset-bottom,0px))]">
+          <p className="text-center text-[12px] leading-relaxed text-[#8A8A8A]">对方未通过你的好友申请</p>
+        </div>
+      ) : null}
 
       <AnimatePresence>
         {ceremony ? (
@@ -259,18 +308,23 @@ export function RequestDetail({
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
-            className="pointer-events-none absolute inset-0 z-[30] flex items-center justify-center bg-white/60"
+            className="pointer-events-none absolute inset-0 z-[30] flex items-center justify-center bg-white/75"
           >
             <motion.div
               initial={{ scale: 0.88, opacity: 0 }}
               animate={{ scale: 1, opacity: 1 }}
               exit={{ scale: 0.95, opacity: 0 }}
               transition={{ type: 'spring', stiffness: 300, damping: 20 }}
-              className="rounded-2xl border bg-white px-5 py-4 text-center shadow-[0_14px_42px_rgba(0,0,0,0.15)]"
-              style={{ borderColor: '#e3e3e6' }}
+              className="rounded-[14px] border border-[#111111] bg-white px-5 py-4 text-center shadow-[0_12px_40px_rgba(0,0,0,0.1)]"
             >
-              <p className="text-[14px] font-semibold text-[#1d1f23]">
-                {ceremony === 'accepted' ? '已添加至通讯录' : '已拒绝该申请'}
+              <p className="text-[14px] font-medium text-[#111111]">
+                {ceremony === 'accepted'
+                  ? userInitiated
+                    ? '对方已通过你的好友申请'
+                    : '已添加至通讯录'
+                  : userInitiated
+                    ? '对方暂未通过你的申请'
+                    : '已拒绝该申请'}
               </p>
             </motion.div>
           </motion.div>

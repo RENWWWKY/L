@@ -11,8 +11,11 @@ export function resolveEmbeddingApiCredentials(
   settings: MemorySettingsRow,
   chatFallback: Pick<ApiConfig, 'apiUrl' | 'apiKey'> | null | undefined,
 ): { apiUrl: string; apiKey: string } | null {
-  const url = (settings.memoryEmbeddingApiUrl?.trim() || chatFallback?.apiUrl?.trim() || '').trim()
-  const key = (settings.memoryEmbeddingApiKey?.trim() || chatFallback?.apiKey?.trim() || '').trim()
+  const useDedicated = settings.memoryEmbeddingUseDedicatedApi === true
+  const dedicatedUrl = useDedicated ? settings.memoryEmbeddingApiUrl?.trim() : ''
+  const dedicatedKey = useDedicated ? settings.memoryEmbeddingApiKey?.trim() : ''
+  const url = (dedicatedUrl || chatFallback?.apiUrl?.trim() || '').trim()
+  const key = (dedicatedKey || chatFallback?.apiKey?.trim() || '').trim()
   if (!url || !key) return null
   return { apiUrl: url, apiKey: key }
 }

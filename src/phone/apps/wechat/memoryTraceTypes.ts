@@ -29,6 +29,14 @@ export type MemoryTraceWorldBookAfterChat = {
   modelOmittedPatchBlock: boolean
 }
 
+/** 相对当前私聊会话：记忆/摘录来自哪条微信线+扮演马甲 */
+export type MemoryTraceLineRelation = 'current' | 'other' | 'unlabeled'
+
+export type MemoryTraceLineScopedMeta = {
+  sourceLineLabel: string
+  lineRelation: MemoryTraceLineRelation
+}
+
 /** 思维溯源：一轮模型回复所加载的上下文矩阵（与注入逻辑对齐） */
 export type MemoryTraceData = {
   lastReply: string
@@ -52,11 +60,27 @@ export type MemoryTraceData = {
     recentContext: {
       activeSessionMessages: number
       unsummarizedOfflinePlots: Array<{ date: string; snippet: string }>
-      unsummarizedChats: Array<{ type: 'private' | 'group'; source: string; snippet: string }>
+      unsummarizedChats: Array<{
+        type: 'private' | 'group'
+        source: string
+        snippet: string
+        sourceLineLabel?: string
+        lineRelation?: MemoryTraceLineRelation
+      }>
     }
     deepMemory: {
-      keywordHits: Array<{ keyword: string; content: string }>
-      vectorRetrievals: Array<{ relevanceScore: number; content: string }>
+      keywordHits: Array<{
+        keyword: string
+        content: string
+        sourceLineLabel?: string
+        lineRelation?: MemoryTraceLineRelation
+      }>
+      vectorRetrievals: Array<{
+        relevanceScore: number
+        content: string
+        sourceLineLabel?: string
+        lineRelation?: MemoryTraceLineRelation
+      }>
     }
   }
 }
@@ -120,7 +144,16 @@ export function parseMemoryTraceData(raw: unknown): MemoryTraceData | null {
       if (!x || typeof x !== 'object') continue
       const u = x as Record<string, unknown>
       const typ = u.type === 'group' ? 'group' : 'private'
-      unsummarizedChats.push({ type: typ, source: asStr(u.source), snippet: asStr(u.snippet) })
+      const relRaw = u.lineRelation
+      const lineRelation: MemoryTraceLineRelation | undefined =
+        relRaw === 'current' || relRaw === 'other' || relRaw === 'unlabeled' ? relRaw : undefined
+      unsummarizedChats.push({
+        type: typ,
+        source: asStr(u.source),
+        snippet: asStr(u.snippet),
+        sourceLineLabel: asStr(u.sourceLineLabel) || undefined,
+        lineRelation,
+      })
     }
   }
 
@@ -132,7 +165,15 @@ export function parseMemoryTraceData(raw: unknown): MemoryTraceData | null {
     for (const x of dmo.keywordHits) {
       if (!x || typeof x !== 'object') continue
       const k = x as Record<string, unknown>
-      keywordHits.push({ keyword: asStr(k.keyword), content: asStr(k.content) })
+      const kRel = k.lineRelation
+      const kLineRel: MemoryTraceLineRelation | undefined =
+        kRel === 'current' || kRel === 'other' || kRel === 'unlabeled' ? kRel : undefined
+      keywordHits.push({
+        keyword: asStr(k.keyword),
+        content: asStr(k.content),
+        sourceLineLabel: asStr(k.sourceLineLabel) || undefined,
+        lineRelation: kLineRel,
+      })
     }
   }
   const vectorRetrievals: MemoryTraceData['contextMatrix']['deepMemory']['vectorRetrievals'] = []
@@ -141,7 +182,15 @@ export function parseMemoryTraceData(raw: unknown): MemoryTraceData | null {
       if (!x || typeof x !== 'object') continue
       const v = x as Record<string, unknown>
       const relevanceScore = asNum(v.relevanceScore, 0)
-      vectorRetrievals.push({ relevanceScore, content: asStr(v.content) })
+      const vRel = v.lineRelation
+      const vLineRel: MemoryTraceLineRelation | undefined =
+        vRel === 'current' || vRel === 'other' || vRel === 'unlabeled' ? vRel : undefined
+      vectorRetrievals.push({
+        relevanceScore,
+        content: asStr(v.content),
+        sourceLineLabel: asStr(v.sourceLineLabel) || undefined,
+        lineRelation: vLineRel,
+      })
     }
   }
 

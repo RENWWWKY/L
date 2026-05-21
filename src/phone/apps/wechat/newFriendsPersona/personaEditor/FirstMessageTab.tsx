@@ -25,7 +25,7 @@ export function FirstMessageTab({
   return (
     <section className="rounded-[14px] border border-neutral-200/90 bg-white px-3 pb-6 pt-5 shadow-[0_1px_2px_rgba(0,0,0,0.04)]">
       <header className="mb-5 border-b border-neutral-100 pb-4">
-        <p className="text-[9px] font-semibold uppercase tracking-[0.28em] text-neutral-400">02 CHAT · 首句预览</p>
+        <p className="text-[9px] font-semibold uppercase tracking-[0.28em] text-neutral-400">03 CHAT · 首句预览</p>
         <h2 className="mt-2 text-[17px] font-semibold tracking-tight text-[#1C1C1E]">开场白</h2>
         <p className="mt-1 text-[11px] font-light leading-relaxed text-neutral-500">
           无历史消息进入聊天时按行发送；上方为所见即所得的会话预览。

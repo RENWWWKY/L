@@ -9,6 +9,12 @@ export type MeetReplyEvaluation = {
   swapInstruction: string
   /** 模型侧确认可完成互换（可选） */
   swapConfirm: boolean
+  /** 主动邀请用户进行交换真心话双盲仪式 */
+  proactiveTruthMirror: boolean
+  /**
+   * 已缔结且用户要求由角色先加微信：本轮角色口头答应后，客户端写入「新的朋友」验证。
+   */
+  charFriendRequest: boolean
 }
 
 function parseBoolish(s: string | undefined): boolean {
@@ -31,12 +37,16 @@ export function parseEvaluationInner(inner: string): MeetReplyEvaluation {
   const proactiveSwap = parseBoolish(parseInnerTag(inner, 'proactive_swap'))
   const swapConfirm = parseBoolish(parseInnerTag(inner, 'swap_confirm'))
   const swapInstruction = parseInnerTag(inner, 'swap_instruction').slice(0, 280)
+  const proactiveTruthMirror = parseBoolish(parseInnerTag(inner, 'proactive_truth_mirror'))
+  const charFriendRequest = parseBoolish(parseInnerTag(inner, 'char_friend_request'))
 
   return {
     affectionChange,
     proactiveSwap,
     swapInstruction,
     swapConfirm,
+    proactiveTruthMirror,
+    charFriendRequest,
   }
 }
 

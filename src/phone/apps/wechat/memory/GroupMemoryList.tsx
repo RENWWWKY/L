@@ -6,6 +6,7 @@ import { Pressable } from '../../../components/Pressable'
 import { personaDb } from '../newFriendsPersona/idb'
 import type { CharacterMemory, CharacterMemoryTriggerMode, GroupChatRow } from '../newFriendsPersona/types'
 import { uid } from '../newFriendsPersona/utils'
+import { reconcileMemoryUserPlaceholdersOnSave } from '../memoryUserPlaceholderBindings'
 import {
   groupMemoryBucketCharacterId,
   parseGroupIdFromMemoryBucketCharacterId,
@@ -192,13 +193,22 @@ export function GroupMemoryList({
     const t = editDraft.trim()
     if (!t) return
     const flags = parseMemorySourcePrefix(editRow.content)
-    const content = composeMemoryWithSourcePrefix(flags, t).slice(0, 4000)
+    const reconciled = await reconcileMemoryUserPlaceholdersOnSave({
+      content: t,
+      userPlaceholderBindings: editRow.userPlaceholderBindings,
+      sourceWechatAccountId: editRow.sourceWechatAccountId,
+      sourceSessionPlayerIdentityId: editRow.sourceSessionPlayerIdentityId,
+    })
+    const content = composeMemoryWithSourcePrefix(flags, reconciled.content).slice(0, 4000)
     const mode: CharacterMemoryTriggerMode = editTriggerMode === 'always' ? 'always' : 'keyword'
     const normalized = [...new Set(editKeywords.map((x) => x.replace(/\s+/g, ' ').trim()).filter(Boolean))]
     const kws = normalized.length ? normalized : undefined
     await personaDb.upsertCharacterMemory({
       ...editRow,
       content,
+      ...(reconciled.userPlaceholderBindings.length
+        ? { userPlaceholderBindings: reconciled.userPlaceholderBindings }
+        : {}),
       memoryTriggerMode: mode,
       memoryTriggerCategory: undefined,
       memoryTriggerPrecise: undefined,
@@ -238,6 +248,9 @@ export function GroupMemoryList({
     characterId: editRow?.characterId ?? null,
     memoryScope: 'group',
     involvedCharIds: editRow?.involvedCharIds,
+    userPlaceholderBindings: editRow?.userPlaceholderBindings,
+    sourceWechatAccountId: editRow?.sourceWechatAccountId,
+    sourceSessionPlayerIdentityId: editRow?.sourceSessionPlayerIdentityId,
   })
 
   const saveAdd = async () => {

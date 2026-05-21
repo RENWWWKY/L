@@ -20,7 +20,7 @@ export function WorldbookTab({
   return (
     <div className="relative overflow-hidden rounded-[14px] border border-neutral-200/90 bg-[#FAFAFA] shadow-[0_1px_2px_rgba(0,0,0,0.04)]">
       <header className="border-b border-neutral-100/90 bg-white/80 px-4 py-4 backdrop-blur-sm">
-        <p className="text-[9px] font-semibold uppercase tracking-[0.28em] text-neutral-400">04 LORE · 叙事书架</p>
+        <p className="text-[9px] font-semibold uppercase tracking-[0.28em] text-neutral-400">05 LORE · 叙事书架</p>
         <h2 className="mt-2 text-[17px] font-semibold tracking-tight text-[#1C1C1E]">世界书</h2>
         <p className="mt-1 text-[11px] font-light text-neutral-500">每卷设定左侧铂金装帧线由下列卡片隐喻呈现。</p>
       </header>

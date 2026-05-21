@@ -1,3 +1,4 @@
+import { buildEncounterOrientationCriteriaBlock } from './meetOrientationMatch'
 import type { MeetMatchIntention, MeetOrientationPreference, RadarFilters } from './meetTypes'
 
 /** 与 `MeetOrientationPreference` 一一对应，供筛选 UI / AI 提示 / 迁移白名单复用 */
@@ -45,8 +46,6 @@ export const MEET_ORIENTATION_HELP_ZH: Record<MeetOrientationPreference, string>
     '在**所有相关方知情同意**的前提下，认同或实践开放关系、多伴侣（道德非一夫一妻制，ENM）等结构。勾选仅表示筛选相容设定；**绝不**等同于隐瞒或欺骗。',
 }
 
-const ORI_LABEL = MEET_ORIENTATION_LABEL_ZH
-
 const INTENT_LABEL: Record<MeetMatchIntention, string> = {
   romance: '寻找浪漫',
   platonic: '纯粹友谊',
@@ -75,10 +74,7 @@ export function buildEncounterAiCriteriaBlock(filters: RadarFilters): string {
     filters.meetIntentions.length > 0 ? filters.meetIntentions : legacyPurposeToMeetIntentions(filters.purpose)
   const intentZh = intents.map((k) => INTENT_LABEL[k]).join('；')
 
-  const oriBlock =
-    filters.orientationPreferences.length > 0
-      ? `【性取向匹配】生成角色的对外取向设定（nickname 旁 orientation 字段及人设自述）须与用户勾选相容，用户接受类型为：${filters.orientationPreferences.map((k) => ORI_LABEL[k]).join('、')}（满足其一即可）。`
-      : `【性取向匹配】用户未限定取向标签；你可自由设定合法合规的取向表述。`
+  const oriBlock = buildEncounterOrientationCriteriaBlock(filters)
 
   const kw = filters.keywords.trim()
   const vibe = kw ? `【氛围关键词】${kw}` : ''

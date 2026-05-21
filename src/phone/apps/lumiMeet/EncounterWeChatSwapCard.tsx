@@ -10,19 +10,17 @@ export function EncounterWeChatSwapCard({ payload }: { payload: MeetChatSwapCard
           background: 'color-mix(in oklab, white 88%, transparent)',
         }}
       >
-        <p className="meet-caption-en font-mono text-[10px] uppercase tracking-[0.28em] text-gray-400">
-          CONNECTION ESTABLISHED
-        </p>
-        <p className="mt-1 text-[12px] font-light tracking-wide text-[#5c574f]">已建立深度联络</p>
+        <p className="text-[15px] font-medium tracking-[0.08em] text-[#3d3a34]">已建立深度联络</p>
+        <p className="mt-1 text-[11px] font-light tracking-wide text-[#8a8478]">双方微信号已互换备案</p>
 
-        <div className="mt-5 grid grid-cols-2 gap-4 text-left font-mono text-[10px] leading-snug text-gray-600">
+        <div className="mt-5 grid grid-cols-2 gap-4 text-left text-[11px] leading-snug text-[#5c574f]">
           <div>
-            <div className="text-[9px] uppercase tracking-wider text-gray-400">His ID</div>
-            <div className="mt-0.5 break-all text-[11px] text-[#3d3a34]">{payload.charWechatId}</div>
+            <div className="text-[10px] tracking-[0.06em] text-[#b8b4ae]">对方微信号</div>
+            <div className="mt-0.5 break-all font-mono text-[12px] text-[#3d3a34]">{payload.charWechatId}</div>
           </div>
           <div>
-            <div className="text-[9px] uppercase tracking-wider text-gray-400">Your ID</div>
-            <div className="mt-0.5 break-all text-[11px] text-[#3d3a34]">{payload.userWechatId}</div>
+            <div className="text-[10px] tracking-[0.06em] text-[#b8b4ae]">你的微信号</div>
+            <div className="mt-0.5 break-all font-mono text-[12px] text-[#3d3a34]">{payload.userWechatId}</div>
           </div>
         </div>
 

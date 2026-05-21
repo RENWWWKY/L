@@ -18,3 +18,10 @@ export function computeMeetNpcStaggerDelayMs(text: string): number {
 export async function yieldToPaint(): Promise<void> {
   await new Promise<void>((r) => requestAnimationFrame(() => r()))
 }
+
+/** 最后一条口语气泡露出后，再露出契约/真心话等富交互卡片的间隔 */
+export function computeMeetRichFollowUpDelayMs(lastBubbleText: string | undefined): number {
+  const t = String(lastBubbleText ?? '').trim()
+  if (!t) return 480
+  return Math.min(1100, Math.max(380, Math.round(computeMeetNpcStaggerDelayMs(t) * 0.9)))
+}

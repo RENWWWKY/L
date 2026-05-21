@@ -123,29 +123,33 @@ export function ContactProfileSettingsScreen({
 
       <AnimatePresence>
         {remarkOpen ? (
-          <ModalMask onClose={tryCloseRemarkSheet}>
+          <ModalMask center onClose={tryCloseRemarkSheet}>
             <motion.div
-              initial={disableTransitions ? false : { y: '100%' }}
-              animate={{ y: 0 }}
-              exit={disableTransitions ? { y: 0 } : { y: '100%' }}
-              transition={disableTransitions ? { duration: 0 } : { duration: 0.25, ease: [0.22, 1, 0.36, 1] }}
-              className="rounded-t-[18px] bg-white px-4 pb-[max(16px,env(safe-area-inset-bottom,0px))] pt-4"
+              initial={disableTransitions ? false : { opacity: 0, scale: 0.96 }}
+              animate={{ opacity: 1, scale: 1 }}
+              exit={disableTransitions ? { opacity: 1, scale: 1 } : { opacity: 0, scale: 0.96 }}
+              transition={disableTransitions ? { duration: 0 } : { duration: 0.18 }}
+              className="w-[min(100vw-2rem,340px)] overflow-hidden rounded-[14px] bg-white"
             >
-              <div className="pb-3 text-center text-[17px] font-medium text-black">设置备注</div>
-              <div className="rounded-[12px] bg-[#f5f5f5] px-3 py-3">
-                <input
-                  autoFocus
-                  value={remarkDraft}
-                  onChange={(e) => setRemarkDraft(e.target.value.slice(0, 64))}
-                  placeholder="请输入备注"
-                  className="w-full bg-transparent text-[16px] text-black outline-none placeholder:text-[#a3a3a3]"
-                />
+              <div className="px-5 pb-4 pt-5 text-center">
+                <div className="text-[17px] font-medium text-black">设置备注</div>
               </div>
-              <div className="mt-4 flex gap-3">
-                <BottomActionButton label="取消" onClick={tryCloseRemarkSheet} />
-                <BottomActionButton
+              <div className="px-5 pb-4">
+                <div className="rounded-[12px] bg-[#f5f5f5] px-3 py-3">
+                  <input
+                    autoFocus
+                    value={remarkDraft}
+                    onChange={(e) => setRemarkDraft(e.target.value.slice(0, 64))}
+                    placeholder="请输入备注"
+                    className="w-full bg-transparent text-center text-[16px] text-black outline-none placeholder:text-[#a3a3a3]"
+                  />
+                </div>
+              </div>
+              <div className="flex border-t border-[#e5e5e5]">
+                <DialogButton label="取消" onClick={tryCloseRemarkSheet} />
+                <div className="w-px bg-[#e5e5e5]" aria-hidden />
+                <DialogButton
                   label="确定"
-                  primary
                   onClick={() => {
                     void updateContact({ remark: remarkDraft.trim() })
                     setRemarkOpen(false)
@@ -160,13 +164,13 @@ export function ContactProfileSettingsScreen({
 
       <AnimatePresence>
         {remarkExitConfirmOpen ? (
-          <ModalMask dark onClose={() => setRemarkExitConfirmOpen(false)}>
+          <ModalMask dark center onClose={() => setRemarkExitConfirmOpen(false)}>
             <motion.div
               initial={disableTransitions ? false : { opacity: 0, scale: 0.96 }}
               animate={{ opacity: 1, scale: 1 }}
               exit={disableTransitions ? { opacity: 1, scale: 1 } : { opacity: 0, scale: 0.96 }}
               transition={disableTransitions ? { duration: 0 } : { duration: 0.18 }}
-              className="mx-8 overflow-hidden rounded-[14px] bg-white"
+              className="w-[min(100vw-2rem,340px)] overflow-hidden rounded-[14px] bg-white"
             >
               <div className="px-5 pb-4 pt-5 text-center">
                 <div className="text-[17px] font-medium text-black">未保存修改</div>
@@ -175,9 +179,10 @@ export function ContactProfileSettingsScreen({
                 </p>
               </div>
               <div className="flex border-t border-[#e5e5e5]">
-                <DialogButton label="取消" onClick={() => setRemarkExitConfirmOpen(false)} />
+                <DialogButton compact label="取消" onClick={() => setRemarkExitConfirmOpen(false)} />
                 <div className="w-px bg-[#e5e5e5]" aria-hidden />
                 <DialogButton
+                  compact
                   label="不保存退出"
                   onClick={() => {
                     setRemarkExitConfirmOpen(false)
@@ -186,6 +191,7 @@ export function ContactProfileSettingsScreen({
                 />
                 <div className="w-px bg-[#e5e5e5]" aria-hidden />
                 <DialogButton
+                  compact
                   label="保存并退出"
                   onClick={() => {
                     void updateContact({ remark: remarkDraft.trim() })
@@ -435,43 +441,25 @@ function ModalMask({
   )
 }
 
-function BottomActionButton({
-  label,
-  onClick,
-  primary = false,
-  danger = false,
-}: {
-  label: string
-  onClick: () => void
-  primary?: boolean
-  danger?: boolean
-}) {
-  const modeClass = primary ? 'bg-black text-white' : danger ? 'bg-[#fff1f0] text-[#ff3b30]' : 'bg-[#f2f2f2] text-black'
-  return (
-    <Pressable
-      type="button"
-      onClick={onClick}
-      className={`flex h-11 flex-1 items-center justify-center rounded-[12px] text-[16px] ${modeClass}`}
-    >
-      {label}
-    </Pressable>
-  )
-}
-
 function DialogButton({
   label,
   onClick,
   danger = false,
+  compact = false,
 }: {
   label: string
   onClick: () => void
   danger?: boolean
+  /** 三按钮横排时略缩小字号，避免挤版 */
+  compact?: boolean
 }) {
   return (
     <Pressable
       type="button"
       onClick={onClick}
-      className={`flex h-12 flex-1 items-center justify-center text-[17px] ${danger ? 'text-[#ff3b30]' : 'text-black'}`}
+      className={`flex h-12 min-w-0 flex-1 items-center justify-center px-1 ${
+        compact ? 'text-[15px]' : 'text-[17px]'
+      } ${danger ? 'text-[#ff3b30]' : 'text-black'}`}
     >
       {label}
     </Pressable>

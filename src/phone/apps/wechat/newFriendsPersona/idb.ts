@@ -36,6 +36,7 @@ import type {
   WeChatGlobalSettingsRow,
   WeChatMessageSearchIndexRow,
   WorldBackground,
+  WorldBookUserPlaceholderBinding,
 } from './types'
 import { buildCharacterFullTrashArchive, type PersonaDbTrashSource } from '../../recycleBin/archiveCharacterDeletion'
 import { INDEXED_TRASH_RETENTION_MS, emitIndexedTrashChanged } from '../../recycleBin/recycleBinEvents'
@@ -60,6 +61,13 @@ import {
   resolveMemoryEmbeddingModelId,
   type MemoryVectorRecallOpts,
 } from '../memory/memoryVectorRecall'
+import { isCharacterLinkedMemory, isCharacterOwnPrivateMemory } from '../memory/memoryCharacterScope'
+import {
+  formatMemorySourceLineLabelFromMemory,
+  formatPrivateMemoriesPromptWithLineScope,
+  resolveMemoryLineRelation,
+  type MemoryLineRelation,
+} from '../wechatMemoryLineScope'
 import { parseGroupRobotTriggerWordInput } from '../groupChatUtils'
 import { formatWeChatMessageListTimestamp as formatWeChatMessageListTimestampFn } from './chatMessageTimestampFormat'
 import { emptyWorldBackgroundSettings, formatTimelineEventDate } from './types'
@@ -70,14 +78,18 @@ import {
   WECHAT_GROUP_USER_CHAR_ID,
   WECHAT_LUMI_PEER_CHARACTER_ID,
   groupMemoryBucketCharacterId,
+  isWechatAccountPrivateConversationKey,
   isWechatGroupConversationKey,
   parseGroupIdFromConversationKey,
   parseGroupIdFromGroupPeerCharacterId,
   parsePrivateWeChatConversationCharacterAndSession,
+  parseWechatAccountPrivateConversationKey,
+  conversationKeyBelongsToWechatAccount,
   wechatConversationKey,
   wechatGroupConversationKey,
   wechatGroupPeerCharacterId,
 } from '../wechatConversationKey'
+import { preserveCharacterBoundPlayerIdentity } from '../wechatCharacterPlayerIdentity'
 import { formatWeChatMessagesTabPreviewFromStoredMessageContent } from '../wechatThreadPreviewText'
 import { maybeNotifyWeChatCharacterMessage } from '../wechatSystemNotify'
 import { getWeChatBuiltInNotifySoundMeta, playWeChatNotifySound } from '../wechatNotifySound'
@@ -88,7 +100,24 @@ import {
   type ChatTheme,
   normalizeChatTheme,
 } from '../chatTheme/types'
-import { expandLinkedMemoryPlaceholders, resolveCharUserNamesForPrompt } from '../charUserPlaceholders'
+import {
+  expandLinkedMemoryPlaceholders,
+  expandScopedWorldBookUserPlaceholdersInText,
+  resolveCharUserNamesForPrompt,
+} from '../charUserPlaceholders'
+import {
+  clearWeChatAccountLegacyLocalStorage,
+  emitWeChatAccountDeepErased,
+  shouldErasePhoneKvKeyForWeChatAccount,
+} from '../wechatAccountDeepErase'
+import {
+  registerGlobalWechatCharacter,
+  resolveCanonicalCharacterId,
+  resolveCanonicalCharacterIdByWechatId,
+  unregisterGlobalWechatCharacterForCharacterId,
+} from '../wechatGlobalCharacterRegistry'
+import { characterBelongsToWechatAccount, stampWechatAccountOwner } from '../wechatAccountScope'
+import { WECHAT_USER_PROFILE_KV_KEY, WECHAT_USER_PROFILE_KV_KEY_LEGACY } from '../wechatProfileTypes'
 
 const DB_NAME = 'wechat-personas-v1'
 const DB_VERSION = 25
@@ -448,6 +477,22 @@ function normalizeGroupPsycheRow(input: unknown): GroupPsycheRow | null {
   }
 }
 
+function normalizeWorldBookUserPlaceholderBinding(input: unknown): WorldBookUserPlaceholderBinding | null {
+  const r = input as Record<string, unknown>
+  if (!r || typeof r !== 'object') return null
+  const wechatAccountId = typeof r.wechatAccountId === 'string' ? r.wechatAccountId.trim() : ''
+  const playerIdentityId = typeof r.playerIdentityId === 'string' ? r.playerIdentityId.trim() : ''
+  if (!wechatAccountId || !playerIdentityId || playerIdentityId === '__none__') return null
+  const lineLabel = typeof r.lineLabel === 'string' ? r.lineLabel.trim() : undefined
+  const displayName = typeof r.displayName === 'string' ? r.displayName.trim() : undefined
+  return {
+    wechatAccountId,
+    playerIdentityId,
+    ...(lineLabel ? { lineLabel } : {}),
+    ...(displayName ? { displayName } : {}),
+  }
+}
+
 function normalizeCharacter(input: unknown): Stored {
   const now = Date.now()
   const c = (input ?? {}) as Partial<Stored>
@@ -483,6 +528,11 @@ function normalizeCharacter(input: unknown): Stored {
                 : i.pronounGuide === 'mixed_explicit'
                   ? 'default'
                   : undefined,
+            userPlaceholderBindings: Array.isArray(i.userPlaceholderBindings)
+              ? (i.userPlaceholderBindings as unknown[])
+                  .map(normalizeWorldBookUserPlaceholderBinding)
+                  .filter((x): x is WorldBookUserPlaceholderBinding => !!x)
+              : undefined,
           }
         })
       return {
@@ -626,7 +676,27 @@ function normalizeCharacter(input: unknown): Stored {
     wechatRegion: typeof raw.wechatRegion === 'string' ? (raw.wechatRegion as string) : '',
     momentsCoverUrl: typeof raw.momentsCoverUrl === 'string' ? (raw.momentsCoverUrl as string) : '',
     worldBooks,
+    wechatAccountId: typeof raw.wechatAccountId === 'string' ? (raw.wechatAccountId as string).trim() : undefined,
     playerIdentityId: typeof raw.playerIdentityId === 'string' ? (raw.playerIdentityId as string) : undefined,
+    linkedPlayerIdentityIds: Array.isArray(raw.linkedPlayerIdentityIds)
+      ? (raw.linkedPlayerIdentityIds as unknown[])
+          .filter((x): x is string => typeof x === 'string')
+          .map((x) => x.trim())
+          .filter((x) => x && x !== '__none__')
+      : undefined,
+    playerIdentityLinkMeta: Array.isArray(raw.playerIdentityLinkMeta)
+      ? (raw.playerIdentityLinkMeta as unknown[])
+          .map((x) => {
+            const o = x as { playerIdentityId?: unknown; wechatAccountId?: unknown }
+            const playerIdentityId =
+              typeof o.playerIdentityId === 'string' ? o.playerIdentityId.trim() : ''
+            const wechatAccountId =
+              typeof o.wechatAccountId === 'string' ? o.wechatAccountId.trim() : ''
+            if (!playerIdentityId || !wechatAccountId || playerIdentityId === '__none__') return null
+            return { playerIdentityId, wechatAccountId }
+          })
+          .filter((x): x is { playerIdentityId: string; wechatAccountId: string } => x != null)
+      : undefined,
     generatedForCharacterId:
       typeof raw.generatedForCharacterId === 'string' ? (raw.generatedForCharacterId as string) : undefined,
     interests: Array.isArray(raw.interests)
@@ -1229,7 +1299,9 @@ function normalizeCharacterMemory(input: unknown): CharacterMemory | null {
   const now = Date.now()
   const scopeRaw = m.memoryScope
   const memoryScope: CharacterMemory['memoryScope'] =
-    scopeRaw === 'group' || scopeRaw === 'private' || scopeRaw === 'linked' ? scopeRaw : undefined
+    scopeRaw === 'group' || scopeRaw === 'private' || scopeRaw === 'linked' || scopeRaw === 'meet'
+      ? scopeRaw
+      : undefined
   const linkedFromRaw = (m as { linkedFromCharacterId?: unknown }).linkedFromCharacterId
   const linkedFromCharacterId =
     typeof linkedFromRaw === 'string' && linkedFromRaw.trim()
@@ -1292,6 +1364,21 @@ function normalizeCharacterMemory(input: unknown): CharacterMemory | null {
     typeof datingPlotRaw === 'string' && datingPlotRaw.trim()
       ? datingPlotRaw.trim().slice(0, 256)
       : undefined
+  const srcAccRaw = (m as { sourceWechatAccountId?: unknown }).sourceWechatAccountId
+  const sourceWechatAccountId =
+    typeof srcAccRaw === 'string' && srcAccRaw.trim() ? srcAccRaw.trim().slice(0, 128) : undefined
+  const srcSidRaw = (m as { sourceSessionPlayerIdentityId?: unknown }).sourceSessionPlayerIdentityId
+  const sourceSessionPlayerIdentityId =
+    typeof srcSidRaw === 'string' && srcSidRaw.trim()
+      ? srcSidRaw.trim().slice(0, 128)
+      : undefined
+  const userPlaceholderBindings = Array.isArray(
+    (m as { userPlaceholderBindings?: unknown }).userPlaceholderBindings,
+  )
+    ? ((m as { userPlaceholderBindings: unknown[] }).userPlaceholderBindings as unknown[])
+        .map(normalizeWorldBookUserPlaceholderBinding)
+        .filter((x): x is WorldBookUserPlaceholderBinding => !!x)
+    : undefined
   return {
     id: m.id,
     characterId: m.characterId,
@@ -1309,6 +1396,9 @@ function normalizeCharacterMemory(input: unknown): CharacterMemory | null {
     memoryTriggerPrecise: preSan,
     memoryTriggerEmotionNeed: emoSan,
     memoryKeywords,
+    ...(sourceWechatAccountId ? { sourceWechatAccountId } : {}),
+    ...(sourceSessionPlayerIdentityId ? { sourceSessionPlayerIdentityId } : {}),
+    ...(userPlaceholderBindings?.length ? { userPlaceholderBindings } : {}),
     memoryEmbedding,
     memoryEmbeddingHash,
   }
@@ -1348,6 +1438,17 @@ function normalizeMemorySettingsRow(input: unknown): MemorySettingsRow {
       }
     }
   }
+  const meetCursorRaw = r.meetSummaryCursorTimestampByCharacterId
+  const meetSummaryCursorTimestampByCharacterId: Record<string, number> = {}
+  if (meetCursorRaw && typeof meetCursorRaw === 'object' && !Array.isArray(meetCursorRaw)) {
+    for (const [k, v] of Object.entries(meetCursorRaw as Record<string, unknown>)) {
+      const kk = k.trim()
+      if (!kk) continue
+      if (typeof v === 'number' && Number.isFinite(v) && v >= 0) {
+        meetSummaryCursorTimestampByCharacterId[kk] = Math.floor(v)
+      }
+    }
+  }
   const modeRaw = (r as { autoSummaryDefaultMemoryTriggerMode?: unknown }).autoSummaryDefaultMemoryTriggerMode
   const autoSummaryDefaultMemoryTriggerMode: MemorySettingsRow['autoSummaryDefaultMemoryTriggerMode'] =
     modeRaw === 'always' || modeRaw === 'keyword' ? modeRaw : undefined
@@ -1363,6 +1464,18 @@ function normalizeMemorySettingsRow(input: unknown): MemorySettingsRow {
   const memEmbedKeyRaw = (r as { memoryEmbeddingApiKey?: unknown }).memoryEmbeddingApiKey
   const memoryEmbeddingApiKey: MemorySettingsRow['memoryEmbeddingApiKey'] =
     typeof memEmbedKeyRaw === 'string' && memEmbedKeyRaw.trim() ? memEmbedKeyRaw.trim().slice(0, 2048) : undefined
+  const memDedicatedRaw = (r as { memoryEmbeddingUseDedicatedApi?: unknown }).memoryEmbeddingUseDedicatedApi
+  const memoryEmbeddingUseDedicatedApi: MemorySettingsRow['memoryEmbeddingUseDedicatedApi'] =
+    memDedicatedRaw === true
+      ? true
+      : memDedicatedRaw === false
+        ? false
+        : memoryEmbeddingApiUrl?.trim() || memoryEmbeddingApiKey?.trim()
+          ? true
+          : undefined
+  const memCollRaw = (r as { memoryVectorCollection?: unknown }).memoryVectorCollection
+  const memoryVectorCollection: MemorySettingsRow['memoryVectorCollection'] =
+    typeof memCollRaw === 'string' && memCollRaw.trim() ? memCollRaw.trim().slice(0, 128) : undefined
   const linkedMemRaw = (r as { linkedMemoryAutoSummaryEnabled?: unknown }).linkedMemoryAutoSummaryEnabled
   const linkedMemoryAutoSummaryEnabled: MemorySettingsRow['linkedMemoryAutoSummaryEnabled'] =
     linkedMemRaw === false ? false : linkedMemRaw === true ? true : undefined
@@ -1377,15 +1490,21 @@ function normalizeMemorySettingsRow(input: unknown): MemorySettingsRow {
     linkedMemoryAutoSummaryEnabled,
     datingAutoSummaryEnabled,
     memoryVectorRecallEnabled,
+    memoryEmbeddingUseDedicatedApi,
     memoryEmbeddingModelId,
     memoryEmbeddingApiUrl,
     memoryEmbeddingApiKey,
+    memoryVectorCollection,
     aiRoundCountByConversation:
       Object.keys(aiRoundCountByConversation).length > 0 ? aiRoundCountByConversation : undefined,
     summaryCursorTimestampByConversation:
       Object.keys(summaryCursorTimestampByConversation).length > 0 ? summaryCursorTimestampByConversation : undefined,
     datingPlotSummaryCursorByCharacterId:
       Object.keys(datingPlotSummaryCursorByCharacterId).length > 0 ? datingPlotSummaryCursorByCharacterId : undefined,
+    meetSummaryCursorTimestampByCharacterId:
+      Object.keys(meetSummaryCursorTimestampByCharacterId).length > 0
+        ? meetSummaryCursorTimestampByCharacterId
+        : undefined,
   }
 }
 
@@ -1434,6 +1553,31 @@ export type FriendRequestRow = {
    * 缺省时回退为 {@link createdAt}。
    */
   verificationEpochMs?: number
+  /**
+   * 用户主动申请：裁决模型时仅读取 timestamp ≤ 该值的验证消息，避免等待期间用户追加内容影响输出。
+   */
+  adjudicationCutoffMs?: number
+  /** 用户主动申请被拒后，在「新的朋友」列表展示红点，直至用户点开该条 */
+  outcomeUnread?: boolean
+  /** 最近一次后台裁决失败时的可读原因（展示在列表/详情，可重试） */
+  adjudicationLastError?: string
+  /** 被拒后的临时会话（与验证会话消息表独立） */
+  tempChatThread?: Array<{ sender: 'user' | 'character'; text: string; time: number }>
+  /** 关联的遇见邂逅 npc/角色 id（同一 characterId 时用于假面/微信身份对照） */
+  meetLinkedNpcId?: string
+  /** 发送申请时冻结的遇见对外档案（可与 vol11 匹配快照不同） */
+  meetUserProfileAtRequest?: {
+    capturedAt: number
+    displayName: string
+    intent: string
+    bio: string
+    orientation: string
+    meetIntentionsPublic: string[]
+  }
+  /**
+   * 用户主动添加时填写的通讯录备注（仅用于写入当前微信马甲 personaContacts，不写 Character.remark）。
+   */
+  contactRemarkAlias?: string
 }
 
 function normalizeFriendRequestRow(input: unknown): FriendRequestRow | null {
@@ -1457,6 +1601,57 @@ function normalizeFriendRequestRow(input: unknown): FriendRequestRow | null {
     typeof verificationEpochMsRaw === 'number' && Number.isFinite(verificationEpochMsRaw) && verificationEpochMsRaw > 0
       ? verificationEpochMsRaw
       : undefined
+  const adjudicationCutoffMsRaw = (r as { adjudicationCutoffMs?: unknown }).adjudicationCutoffMs
+  const adjudicationCutoffMs =
+    typeof adjudicationCutoffMsRaw === 'number' && Number.isFinite(adjudicationCutoffMsRaw) && adjudicationCutoffMsRaw > 0
+      ? adjudicationCutoffMsRaw
+      : undefined
+  const outcomeUnreadRaw = (r as { outcomeUnread?: unknown }).outcomeUnread
+  const outcomeUnread = outcomeUnreadRaw === true ? true : outcomeUnreadRaw === false ? false : undefined
+  const adjudicationLastErrorRaw = (r as { adjudicationLastError?: unknown }).adjudicationLastError
+  const adjudicationLastError =
+    typeof adjudicationLastErrorRaw === 'string' && adjudicationLastErrorRaw.trim()
+      ? adjudicationLastErrorRaw.trim().slice(0, 500)
+      : undefined
+  const tempChatRaw = (r as { tempChatThread?: unknown }).tempChatThread
+  const tempChatThread = Array.isArray(tempChatRaw)
+    ? tempChatRaw
+        .map((m) => {
+          const item = m as { sender?: unknown; text?: unknown; time?: unknown }
+          const sender = item.sender === 'user' || item.sender === 'character' ? item.sender : null
+          const text = typeof item.text === 'string' ? item.text.trim().slice(0, 500) : ''
+          const time = typeof item.time === 'number' && Number.isFinite(item.time) ? item.time : 0
+          if (!sender || !text) return null
+          return { sender, text, time }
+        })
+        .filter((x): x is { sender: 'user' | 'character'; text: string; time: number } => !!x)
+        .slice(0, 80)
+    : undefined
+  const meetLinkedNpcIdRaw = (r as { meetLinkedNpcId?: unknown }).meetLinkedNpcId
+  const meetLinkedNpcId =
+    typeof meetLinkedNpcIdRaw === 'string' && meetLinkedNpcIdRaw.trim() ? meetLinkedNpcIdRaw.trim() : undefined
+  const contactRemarkAliasRaw = (r as { contactRemarkAlias?: unknown }).contactRemarkAlias
+  const contactRemarkAlias =
+    typeof contactRemarkAliasRaw === 'string' && contactRemarkAliasRaw.trim()
+      ? contactRemarkAliasRaw.trim().slice(0, 64)
+      : undefined
+  const meetProfileRaw = (r as { meetUserProfileAtRequest?: unknown }).meetUserProfileAtRequest
+  let meetUserProfileAtRequest: FriendRequestRow['meetUserProfileAtRequest']
+  if (meetProfileRaw && typeof meetProfileRaw === 'object') {
+    const p = meetProfileRaw as FriendRequestRow['meetUserProfileAtRequest']
+    const capturedAt = typeof p?.capturedAt === 'number' && Number.isFinite(p.capturedAt) ? p.capturedAt : now
+    const intentions = Array.isArray(p?.meetIntentionsPublic)
+      ? p!.meetIntentionsPublic.filter((x): x is string => typeof x === 'string').slice(0, 8)
+      : []
+    meetUserProfileAtRequest = {
+      capturedAt,
+      displayName: typeof p?.displayName === 'string' ? p.displayName.trim().slice(0, 64) : '',
+      intent: typeof p?.intent === 'string' ? p.intent.trim().slice(0, 120) : '',
+      bio: typeof p?.bio === 'string' ? p.bio.trim().slice(0, 800) : '',
+      orientation: typeof p?.orientation === 'string' ? p.orientation.trim().slice(0, 80) : '',
+      meetIntentionsPublic: intentions,
+    }
+  }
   return {
     id,
     characterId,
@@ -1466,6 +1661,13 @@ function normalizeFriendRequestRow(input: unknown): FriendRequestRow | null {
     createdAt,
     updatedAt,
     ...(verificationEpochMs ? { verificationEpochMs } : {}),
+    ...(adjudicationCutoffMs ? { adjudicationCutoffMs } : {}),
+    ...(outcomeUnread === true ? { outcomeUnread: true } : outcomeUnread === false ? { outcomeUnread: false } : {}),
+    ...(adjudicationLastError ? { adjudicationLastError } : {}),
+    ...(tempChatThread?.length ? { tempChatThread } : {}),
+    ...(meetLinkedNpcId ? { meetLinkedNpcId } : {}),
+    ...(meetUserProfileAtRequest ? { meetUserProfileAtRequest } : {}),
+    ...(contactRemarkAlias ? { contactRemarkAlias } : {}),
   }
 }
 
@@ -1799,6 +2001,64 @@ export class PersonaDb {
     return { rootCharacterId: row.rootCharacterId, links, updatedAt: typeof row.updatedAt === 'number' ? row.updatedAt : now }
   }
 
+  /**
+   * 将会话下全部消息与 chatConversationSettings 迁到新 conversationKey（马甲隔离迁移用）。
+   * @returns 迁移的消息条数
+   */
+  async rekeyWeChatConversation(params: {
+    fromConversationKey: string
+    toConversationKey: string
+    sessionPlayerIdentityId: string
+  }): Promise<number> {
+    const from = params.fromConversationKey.trim()
+    const to = params.toConversationKey.trim()
+    const pid = params.sessionPlayerIdentityId.trim() || '__none__'
+    if (!from || !to || from === to) return 0
+
+    const msgs = await this.listWeChatChatMessagesByConversationKey(from)
+    if (!msgs.length) return 0
+
+    const db = await openDb()
+    if (!db.objectStoreNames.contains(CHAT_MSG_STORE)) {
+      db.close()
+      return 0
+    }
+    const tx = db.transaction(CHAT_MSG_STORE, 'readwrite')
+    const store = tx.objectStore(CHAT_MSG_STORE)
+    for (const m of msgs) {
+      const next = normalizeWeChatChatMessage({
+        ...m,
+        conversationKey: to,
+        playerIdentityId: pid,
+      })
+      if (next) store.put(next)
+    }
+    await txDone(tx)
+    const hasConvSettings = db.objectStoreNames.contains(CHAT_CONV_SETTINGS_STORE)
+    db.close()
+
+    if (hasConvSettings) {
+      const prev = await this.getChatConversationSettings(from)
+      if (prev) {
+        const db2 = await openDb()
+        const tx2 = db2.transaction(CHAT_CONV_SETTINGS_STORE, 'readwrite')
+        const css = tx2.objectStore(CHAT_CONV_SETTINGS_STORE)
+        css.delete(from)
+        css.put({
+          ...prev,
+          conversationKey: to,
+          playerIdentityId: pid,
+          updatedAt: Date.now(),
+        })
+        await txDone(tx2)
+        db2.close()
+      }
+    }
+
+    emitWeChatStorageChanged()
+    return msgs.length
+  }
+
   async listWeChatChatMessagesByConversationKey(conversationKey: string): Promise<WeChatChatMessage[]> {
     const k = conversationKey.trim()
     if (!k) return []
@@ -1822,9 +2082,37 @@ export class PersonaDb {
       .sort((a, b) => a.timestamp - b.timestamp)
   }
 
+  /** 扫描全部聊天消息，收集去重后的 conversationKey（马甲隔离迁移用）。 */
+  async listDistinctWeChatConversationKeysFromMessages(): Promise<string[]> {
+    const db = await openDb()
+    if (!db.objectStoreNames.contains(CHAT_MSG_STORE)) {
+      db.close()
+      return []
+    }
+    const tx = db.transaction(CHAT_MSG_STORE, 'readonly')
+    const store = tx.objectStore(CHAT_MSG_STORE)
+    const all = await new Promise<unknown[]>((resolve, reject) => {
+      const r = store.getAll()
+      r.onsuccess = () => resolve((r.result as unknown[]) ?? [])
+      r.onerror = () => reject(r.error ?? new Error('listDistinctWeChatConversationKeysFromMessages'))
+    })
+    await txDone(tx)
+    db.close()
+    const keys = new Set<string>()
+    for (const raw of all) {
+      const m = normalizeWeChatChatMessage(raw)
+      const k = m?.conversationKey?.trim()
+      if (k) keys.add(k)
+    }
+    return [...keys]
+  }
+
   // -------- player identity --------
 
-  async listPlayerIdentities(): Promise<PlayerIdentity[]> {
+  /**
+   * @param wechatAccountId 传入则仅返回该微信账号下的身份；不传则返回全部（内部迁移/清理用）
+   */
+  async listPlayerIdentities(wechatAccountId?: string): Promise<PlayerIdentity[]> {
     const db = await openDb()
     const tx = db.transaction(IDENTITY_STORE, 'readonly')
     const store = tx.objectStore(IDENTITY_STORE)
@@ -1835,7 +2123,10 @@ export class PersonaDb {
     })
     await txDone(tx)
     db.close()
-    return res.map(normalizeCharacter).sort((a, b) => (b.updatedAt ?? 0) - (a.updatedAt ?? 0))
+    const all = res.map(normalizeCharacter).sort((a, b) => (b.updatedAt ?? 0) - (a.updatedAt ?? 0))
+    const acc = wechatAccountId?.trim()
+    if (!acc) return all
+    return all.filter((row) => row.wechatAccountId?.trim() === acc)
   }
 
   async getPlayerIdentity(id: string): Promise<PlayerIdentity | null> {
@@ -1850,6 +2141,20 @@ export class PersonaDb {
     await txDone(tx)
     db.close()
     return res ? normalizeCharacter(res) : null
+  }
+
+  /** 读取玩家身份；若指定微信账号且归属不一致则返回 null（防多账号串读） */
+  async getPlayerIdentityForWechatAccount(
+    id: string,
+    wechatAccountId?: string | null,
+  ): Promise<PlayerIdentity | null> {
+    const row = await this.getPlayerIdentity(id)
+    if (!row) return null
+    const acc = wechatAccountId?.trim()
+    if (!acc) return row
+    const owner = row.wechatAccountId?.trim()
+    if (!owner || owner !== acc) return null
+    return row
   }
 
   async upsertPlayerIdentity(identity: PlayerIdentity): Promise<void> {
@@ -1969,7 +2274,10 @@ export class PersonaDb {
         })
         for (const raw of all) {
           const m = normalizeWeChatChatMessage(raw)
-          if (!m || m.playerIdentityId !== fromPid) continue
+          if (!m) continue
+          const parsedPriv = parsePrivateWeChatConversationCharacterAndSession(m.conversationKey)
+          const sessionInKey = parsedPriv?.sessionPlayerId ?? m.playerIdentityId
+          if (sessionInKey !== fromPid && m.playerIdentityId !== fromPid) continue
           /** 群聊 NPC 气泡的 characterId 是真实角色 id，会话键须沿用原 wxgrp 键，禁止误用 wechatConversationKey(角色, …) 变成私聊键 */
           const oldCk = m.conversationKey.trim()
           const nextCk = (() => {
@@ -2132,11 +2440,97 @@ export class PersonaDb {
     return all.filter((c) => c.generatedForCharacterId === mainCharacterId)
   }
 
-  async getCharacter(id: string): Promise<Stored | null> {
+  async listCharactersForWechatAccount(wechatAccountId: string): Promise<Stored[]> {
+    const acc = wechatAccountId.trim()
+    if (!acc) return []
+    const all = await this.listCharacters()
+    return all.filter((c) => c.wechatAccountId?.trim() === acc)
+  }
+
+  async listRootCharactersForWechatAccount(wechatAccountId: string): Promise<Stored[]> {
+    const rows = await this.listCharactersForWechatAccount(wechatAccountId)
+    return rows.filter((c) => !c.generatedForCharacterId)
+  }
+
+  async listNpcsForWechatAccount(mainCharacterId: string, wechatAccountId: string): Promise<Stored[]> {
+    const root = mainCharacterId.trim()
+    const acc = wechatAccountId.trim()
+    if (!root || !acc) return []
+    return (await this.listCharactersForWechatAccount(acc)).filter((c) => c.generatedForCharacterId === root)
+  }
+
+  /** 主账号首次启动：为无 wechatAccountId 的历史人设补归属（不复制数据） */
+  async attachOrphanCharactersToWechatAccount(wechatAccountId: string): Promise<void> {
+    const acc = wechatAccountId.trim()
+    if (!acc) return
+    const all = await this.listCharacters()
+    for (const row of all) {
+      if (row.wechatAccountId?.trim()) continue
+      await this.upsertCharacter(stampWechatAccountOwner(row, acc))
+    }
+  }
+
+  /** 按各马甲通讯录引用为无归属旧人设补 wechatAccountId；未被任何通讯录引用时回落 bundle 首账号 */
+  async attachOrphanCharactersByContactOwnership(bundle: {
+    accounts: { accountId: string; personaContacts: { characterId: string }[] }[]
+  }): Promise<void> {
+    const ownerByChar = new Map<string, string>()
+    for (const acc of bundle.accounts) {
+      const aid = acc.accountId.trim()
+      if (!aid) continue
+      for (const c of acc.personaContacts) {
+        const cid = c.characterId.trim()
+        if (cid) ownerByChar.set(cid, aid)
+      }
+    }
+    const fallback = bundle.accounts[0]?.accountId?.trim()
+    const all = await this.listCharacters()
+    for (const row of all) {
+      if (row.wechatAccountId?.trim()) continue
+      const owner = ownerByChar.get(row.id) || fallback
+      if (!owner) continue
+      await this.upsertCharacter(stampWechatAccountOwner(row, owner))
+    }
+  }
+
+  /** 将挂在别名角色 id 上的长期记忆迁到全局 canonical（跨马甲共享记忆） */
+  async migrateCharacterMemoriesAliasToCanonical(aliasToCanonical: Record<string, string>): Promise<number> {
+    let moved = 0
+    for (const [from, to] of Object.entries(aliasToCanonical)) {
+      const src = from.trim()
+      const dst = to.trim()
+      if (!src || !dst || src === dst) continue
+      const mems = await this.listCharacterMemoriesForCharacter(src)
+      for (const m of mems) {
+        await this.upsertCharacterMemory({ ...m, characterId: dst, updatedAt: Date.now() })
+        moved++
+      }
+    }
+    return moved
+  }
+
+  async deleteCharactersForWechatAccount(
+    wechatAccountId: string,
+    opts?: { preserveCanonicalCharacterIds?: ReadonlySet<string> },
+  ): Promise<void> {
+    const acc = wechatAccountId.trim()
+    if (!acc) return
+    const preserve = opts?.preserveCanonicalCharacterIds ?? new Set<string>()
+    const roots = await this.listRootCharactersForWechatAccount(acc)
+    for (const root of roots) {
+      const canonical = await resolveCanonicalCharacterId(root.id)
+      if (preserve.has(canonical)) continue
+      await this.deleteCharacter(root.id)
+      await unregisterGlobalWechatCharacterForCharacterId(canonical)
+    }
+  }
+
+  /** 读取 IndexedDB 原始行，不跟随全局微信号 canonical 重定向 */
+  async getCharacterWithoutCanonicalRedirect(id: string): Promise<Stored | null> {
     const db = await openDb()
     const tx = db.transaction(STORE, 'readonly')
     const store = tx.objectStore(STORE)
-    const req = store.get(id)
+    const req = store.get(id.trim())
     const res = await new Promise<Stored | null>((resolve, reject) => {
       req.onsuccess = () => resolve((req.result as Stored) ?? null)
       req.onerror = () => reject(req.error ?? new Error('get failed'))
@@ -2146,10 +2540,85 @@ export class PersonaDb {
     return res ? normalizeCharacter(res) : null
   }
 
+  async getCharacter(id: string): Promise<Stored | null> {
+    const canonicalId = await resolveCanonicalCharacterId(id)
+    return await this.getCharacterWithoutCanonicalRedirect(canonicalId)
+  }
+
+  /**
+   * 本账号可见的主角人设：自建 + 通讯录已添加的全局角色（共享微信号人设/长期记忆）。
+   */
+  async listRootCharactersAccessibleToWechatAccount(
+    wechatAccountId: string,
+    linkedCharacterIds: string[] = [],
+  ): Promise<Stored[]> {
+    const acc = wechatAccountId.trim()
+    if (!acc) return []
+    const owned = await this.listRootCharactersForWechatAccount(acc)
+    const seen = new Set(owned.map((c) => c.id))
+    const out = [...owned]
+
+    for (const rawId of linkedCharacterIds) {
+      const canonical = await resolveCanonicalCharacterId(rawId)
+      if (!canonical || seen.has(canonical)) continue
+      const ch = await this.getCharacterWithoutCanonicalRedirect(canonical)
+      if (!ch || ch.generatedForCharacterId) continue
+      seen.add(ch.id)
+      out.push(ch)
+    }
+
+    return out.sort((a, b) => (b.updatedAt ?? 0) - (a.updatedAt ?? 0))
+  }
+
+  async listNpcsForAccessibleRoot(
+    mainCharacterId: string,
+    wechatAccountId: string,
+    linkedCharacterIds: string[] = [],
+  ): Promise<Stored[]> {
+    const root = mainCharacterId.trim()
+    const acc = wechatAccountId.trim()
+    if (!root || !acc) return []
+    const rootRow = await this.getCharacter(root)
+    if (!rootRow) return []
+    const linked = new Set(linkedCharacterIds.map((x) => x.trim()))
+    const canAccess =
+      characterBelongsToWechatAccount(rootRow, acc) || linked.has(root) || linked.has(rootRow.id)
+    if (!canAccess) return []
+    return this.listNpcsFor(root)
+  }
+
   async upsertCharacter(c: Stored): Promise<void> {
+    let next = normalizeCharacter(c)
+    const prior = await this.getCharacterWithoutCanonicalRedirect(next.id)
+    if (prior) {
+      next = preserveCharacterBoundPlayerIdentity(prior, next)
+    }
+    const wx = next.wechatId?.trim()
+    if (wx) {
+      const { canonicalCharacterId, mergedAlias } = await registerGlobalWechatCharacter(
+        wx,
+        next.id,
+        next.wechatAccountId,
+      )
+      if (mergedAlias && canonicalCharacterId !== next.id) {
+        const existing = await this.getCharacterWithoutCanonicalRedirect(canonicalCharacterId)
+        if (existing) {
+          next = normalizeCharacter({
+            ...existing,
+            ...next,
+            id: canonicalCharacterId,
+            wechatAccountId: existing.wechatAccountId ?? next.wechatAccountId,
+          })
+          next = preserveCharacterBoundPlayerIdentity(existing, next)
+        } else {
+          next = { ...next, id: canonicalCharacterId }
+        }
+      }
+    }
+
     const db = await openDb()
     const tx = db.transaction(STORE, 'readwrite')
-    tx.objectStore(STORE).put(normalizeCharacter(c))
+    tx.objectStore(STORE).put(next)
     await txDone(tx)
     db.close()
   }
@@ -2295,12 +2764,13 @@ export class PersonaDb {
   }
 
   async deleteCharacter(id: string): Promise<void> {
+    const deleteId = await resolveCanonicalCharacterId(id)
     if (!this.isIndexedTrashSuspended()) {
-      const snap = await buildCharacterFullTrashArchive(this as unknown as PersonaDbTrashSource, id)
+      const snap = await buildCharacterFullTrashArchive(this as unknown as PersonaDbTrashSource, deleteId)
       if (snap) await this.appendIndexedTrashEntry(snap)
     }
-    const npcs = await this.listNpcsFor(id)
-    const idsToRemove = new Set<string>([id, ...npcs.map((n) => n.id)])
+    const npcs = await this.listNpcsFor(deleteId)
+    const idsToRemove = new Set<string>([deleteId, ...npcs.map((n) => n.id)])
     await this.purgeGroupChatsTouchingDeletedCharacterIds(idsToRemove)
     const db = await openDb()
     const stores: string[] = [STORE, REL_STORE]
@@ -2366,11 +2836,11 @@ export class PersonaDb {
         gReq.onerror = () => reject(gReq.error ?? new Error('graphView getAll'))
       })
       for (const row of rows) {
-        if (row.rootCharacterId === id || idsToRemove.has(row.perspectiveCharacterId)) gv.delete(row.id)
+        if (row.rootCharacterId === deleteId || idsToRemove.has(row.perspectiveCharacterId)) gv.delete(row.id)
       }
     }
     if (db.objectStoreNames.contains(PLAYER_LINKS_STORE)) {
-      tx.objectStore(PLAYER_LINKS_STORE).delete(id)
+      tx.objectStore(PLAYER_LINKS_STORE).delete(deleteId)
     }
     if (db.objectStoreNames.contains(CHAT_CONV_SETTINGS_STORE)) {
       const css = tx.objectStore(CHAT_CONV_SETTINGS_STORE)
@@ -2392,6 +2862,7 @@ export class PersonaDb {
     }
     await txDone(tx)
     db.close()
+    await unregisterGlobalWechatCharacterForCharacterId(deleteId)
     emitWeChatStorageChanged()
   }
 
@@ -2718,6 +3189,76 @@ export class PersonaDb {
       db.close()
       emitWeChatStorageChanged()
     })
+  }
+
+  /**
+   * 仅删除指定微信马甲下该角色的聊天与对应会话设置（`wxapriv:` / `wxagrp:` 键）。
+   * 不删人设本体、长期记忆、关系网。
+   */
+  async deleteWeChatScopedDataForCharactersOnWechatAccount(
+    characterIds: string[],
+    wechatAccountId: string,
+  ): Promise<void> {
+    const acc = wechatAccountId.trim()
+    if (!acc || !characterIds.length) return
+
+    const idSet = new Set<string>()
+    for (const raw of characterIds) {
+      const id = raw.trim()
+      if (id) idSet.add(id)
+    }
+    if (!idSet.size) return
+
+    const db = await openDb()
+    const stores: string[] = []
+    if (db.objectStoreNames.contains(CHAT_MSG_STORE)) stores.push(CHAT_MSG_STORE)
+    if (db.objectStoreNames.contains(CHAT_CONV_SETTINGS_STORE)) stores.push(CHAT_CONV_SETTINGS_STORE)
+    if (!stores.length) {
+      db.close()
+      return
+    }
+
+    const tx = db.transaction(stores, 'readwrite')
+
+    if (db.objectStoreNames.contains(CHAT_MSG_STORE)) {
+      const cms = tx.objectStore(CHAT_MSG_STORE)
+      const mReq = cms.getAll()
+      const allMsgs = await new Promise<WeChatChatMessage[]>((resolve, reject) => {
+        mReq.onsuccess = () => {
+          const raw = (mReq.result as unknown[]) ?? []
+          resolve(
+            raw
+              .map((x) => normalizeWeChatChatMessage(x))
+              .filter((x): x is WeChatChatMessage => !!x),
+          )
+        }
+        mReq.onerror = () => reject(mReq.error ?? new Error('chatMessages getAll'))
+      })
+      for (const msg of allMsgs) {
+        if (!idSet.has(msg.characterId)) continue
+        if (!conversationKeyBelongsToWechatAccount(msg.conversationKey, acc)) continue
+        cms.delete(msg.id)
+      }
+    }
+
+    if (db.objectStoreNames.contains(CHAT_CONV_SETTINGS_STORE)) {
+      const css = tx.objectStore(CHAT_CONV_SETTINGS_STORE)
+      const csReq = css.getAll()
+      const allCs = await new Promise<unknown[]>((resolve, reject) => {
+        csReq.onsuccess = () => resolve((csReq.result as unknown[]) ?? [])
+        csReq.onerror = () => reject(csReq.error ?? new Error('chatConversationSettings getAll'))
+      })
+      for (const raw of allCs) {
+        const row = normalizeChatConversationSettingsRow(raw)
+        if (!row || !idSet.has(row.peerCharacterId)) continue
+        if (!conversationKeyBelongsToWechatAccount(row.conversationKey, acc)) continue
+        css.delete(row.conversationKey)
+      }
+    }
+
+    await txDone(tx)
+    db.close()
+    emitWeChatStorageChanged()
   }
 
   async listAllRelationships(): Promise<Relationship[]> {
@@ -3343,6 +3884,72 @@ export class PersonaDb {
     return out
   }
 
+  /**
+   * 启动时从私聊记录恢复通讯录：收集指定会话身份下出现过消息的对端角色 id（去重）。
+   * 单次全表扫描，仅应在启动/迁移路径调用。
+   */
+  async listPrivateChatPeerCharacterIdsForSessions(sessionPlayerIdentityIds: string[]): Promise<string[]> {
+    return this.listPrivateChatPeerCharacterIdsForWechatAccount('', sessionPlayerIdentityIds, {
+      includeLegacyKeys: true,
+    })
+  }
+
+  /**
+   * 按微信马甲 + 会话身份收集私聊对端角色 id。
+   * `wechatAccountId` 为空时等同全表 legacy 扫描（仅迁移/单账号用）。
+   */
+  async listPrivateChatPeerCharacterIdsForWechatAccount(
+    wechatAccountId: string,
+    sessionPlayerIdentityIds: string[],
+    opts?: { includeLegacyKeys?: boolean },
+  ): Promise<string[]> {
+    const acc = wechatAccountId.trim()
+    const wanted = new Set(
+      sessionPlayerIdentityIds.map((id) => (id.trim() || '__none__')).filter(Boolean),
+    )
+    if (!wanted.size) return []
+    const includeLegacy = opts?.includeLegacyKeys !== false
+
+    const db = await openDb()
+    if (!db.objectStoreNames.contains(CHAT_MSG_STORE)) {
+      db.close()
+      return []
+    }
+    const tx = db.transaction(CHAT_MSG_STORE, 'readonly')
+    const req = tx.objectStore(CHAT_MSG_STORE).getAll()
+    const raw = await new Promise<unknown[]>((resolve, reject) => {
+      req.onsuccess = () => resolve((req.result as unknown[]) ?? [])
+      req.onerror = () => reject(req.error ?? new Error('listPrivateChatPeerCharacterIdsForWechatAccount'))
+    })
+    await txDone(tx)
+    db.close()
+
+    const peers = new Set<string>()
+    for (const x of raw) {
+      const m = normalizeWeChatChatMessage(x)
+      if (!m) continue
+      const key = m.conversationKey?.trim()
+      if (!key || isWechatGroupConversationKey(key)) continue
+
+      const scoped = parseWechatAccountPrivateConversationKey(key)
+      if (scoped) {
+        if (acc && scoped.wechatAccountId !== acc) continue
+        if (!wanted.has(scoped.sessionPlayerId)) continue
+        const peer = scoped.characterId.trim()
+        if (peer) peers.add(peer)
+        continue
+      }
+
+      if (acc && !includeLegacy) continue
+
+      const parsed = parsePrivateWeChatConversationCharacterAndSession(key)
+      if (!parsed || !wanted.has(parsed.sessionPlayerId)) continue
+      const peer = parsed.characterId.trim()
+      if (peer) peers.add(peer)
+    }
+    return [...peers]
+  }
+
   /** 日历：最早一条时间戳 + 有消息的本地日期键（YYYY-MM-DD），单次游标扫描 */
   async getWeChatConversationCalendarMeta(conversationKey: string, nowMs = Date.now()): Promise<{
     minTimestamp: number | null
@@ -3794,6 +4401,18 @@ export class PersonaDb {
   }): Promise<FriendRequestRow[]> {
     const pid = params.playerIdentityId.trim()
     if (!pid) return []
+    return this.listFriendRequestsForPlayerIdentityIds([pid], {
+      pendingOnly: params.pendingOnly,
+    })
+  }
+
+  /** 同一微信马甲下多聊天身份：合并查询「新的朋友」记录（按 id 去重）。 */
+  async listFriendRequestsForPlayerIdentityIds(
+    playerIdentityIds: Iterable<string>,
+    opts?: { pendingOnly?: boolean },
+  ): Promise<FriendRequestRow[]> {
+    const ids = [...new Set([...playerIdentityIds].map((x) => x.trim()).filter((x) => x && x !== '__none__'))]
+    if (!ids.length) return []
     const db = await openDb()
     if (!db.objectStoreNames.contains(FRIEND_REQUEST_STORE)) {
       db.close()
@@ -3802,18 +4421,27 @@ export class PersonaDb {
     const tx = db.transaction(FRIEND_REQUEST_STORE, 'readonly')
     const store = tx.objectStore(FRIEND_REQUEST_STORE)
     const idx = store.index('playerIdentityId')
-    const req = idx.getAll(IDBKeyRange.only(pid))
-    const raw = await new Promise<unknown[]>((resolve, reject) => {
-      req.onsuccess = () => resolve((req.result as unknown[]) ?? [])
-      req.onerror = () => reject(req.error ?? new Error('friendRequests getAll'))
-    })
+    const rawChunks = await Promise.all(
+      ids.map(
+        (pid) =>
+          new Promise<unknown[]>((resolve, reject) => {
+            const req = idx.getAll(IDBKeyRange.only(pid))
+            req.onsuccess = () => resolve((req.result as unknown[]) ?? [])
+            req.onerror = () => reject(req.error ?? new Error('friendRequests getAll'))
+          }),
+      ),
+    )
     await txDone(tx)
     db.close()
-    const rows = raw
-      .map((x) => normalizeFriendRequestRow(x))
-      .filter((x): x is FriendRequestRow => !!x)
-      .sort((a, b) => b.updatedAt - a.updatedAt)
-    const pendingOnly = params.pendingOnly ?? true
+    const byId = new Map<string, FriendRequestRow>()
+    for (const raw of rawChunks) {
+      for (const x of raw) {
+        const row = normalizeFriendRequestRow(x)
+        if (row) byId.set(row.id, row)
+      }
+    }
+    const rows = [...byId.values()].sort((a, b) => b.updatedAt - a.updatedAt)
+    const pendingOnly = opts?.pendingOnly ?? true
     return pendingOnly ? rows.filter((r) => r.status === 'pending') : rows
   }
 
@@ -3852,12 +4480,38 @@ export class PersonaDb {
     return normalized
   }
 
-  async setFriendRequestStatus(requestId: string, status: FriendRequestRow['status']): Promise<void> {
+  async setFriendRequestStatus(
+    requestId: string,
+    status: FriendRequestRow['status'],
+    patch?: Partial<Pick<FriendRequestRow, 'outcomeUnread' | 'adjudicationCutoffMs' | 'adjudicationLastError'>>,
+  ): Promise<void> {
     const id = requestId.trim()
     if (!id) return
     const existing = await this.getFriendRequestById(id)
     if (!existing) return
-    await this.upsertFriendRequest({ ...existing, status, updatedAt: Date.now() })
+    await this.upsertFriendRequest({
+      ...existing,
+      ...patch,
+      status,
+      updatedAt: Date.now(),
+      ...(patch?.outcomeUnread === false ? { outcomeUnread: false } : {}),
+    })
+  }
+
+  async clearFriendRequestOutcomeUnread(requestId: string): Promise<void> {
+    const id = requestId.trim()
+    if (!id) return
+    const existing = await this.getFriendRequestById(id)
+    if (!existing?.outcomeUnread) return
+    await this.upsertFriendRequest({ ...existing, outcomeUnread: false, updatedAt: Date.now() })
+  }
+
+  /** 进入「新的朋友」时批量清除被拒结果红点 */
+  async clearFriendRequestOutcomeUnreadForIdentity(playerIdentityId: string): Promise<void> {
+    const pid = playerIdentityId.trim()
+    if (!pid) return
+    const rows = await this.listFriendRequests({ playerIdentityId: pid, pendingOnly: false })
+    await Promise.all(rows.filter((r) => r.outcomeUnread).map((r) => this.clearFriendRequestOutcomeUnread(r.id)))
   }
 
   async deleteFriendRequestById(requestId: string): Promise<void> {
@@ -4119,6 +4773,25 @@ export class PersonaDb {
     const map = { ...(settings.datingPlotSummaryCursorByCharacterId ?? {}) }
     map[id] = Math.floor(timestamp)
     await this.putMemorySettings({ datingPlotSummaryCursorByCharacterId: map }, { emit: false })
+  }
+
+  /** 遇见临时会话：读取上次自动总结覆盖到的消息时间戳 */
+  async getMeetSummaryCursorTimestamp(characterId: string): Promise<number | null> {
+    const id = characterId.trim()
+    if (!id) return null
+    const settings = await this.getMemorySettings()
+    const ts = settings.meetSummaryCursorTimestampByCharacterId?.[id]
+    return typeof ts === 'number' && Number.isFinite(ts) && ts >= 0 ? ts : null
+  }
+
+  /** 遇见临时会话：写入自动总结游标（最近一次已总结到的消息时间戳闭区间右端） */
+  async setMeetSummaryCursorTimestamp(characterId: string, timestamp: number): Promise<void> {
+    const id = characterId.trim()
+    if (!id || !Number.isFinite(timestamp) || timestamp < 0) return
+    const settings = await this.getMemorySettings()
+    const map = { ...(settings.meetSummaryCursorTimestampByCharacterId ?? {}) }
+    map[id] = Math.floor(timestamp)
+    await this.putMemorySettings({ meetSummaryCursorTimestampByCharacterId: map }, { emit: false })
   }
 
   async listCharacterMemoriesForCharacter(characterId: string): Promise<CharacterMemory[]> {
@@ -4484,8 +5157,28 @@ export class PersonaDb {
 
     const ownerIdMap: Record<string, string> = { [owner]: baseNames.charName }
 
-    return memories.map((m) => {
-      const raw = m.content.trim()
+    const { expandWorldBookItemUserPlaceholders } = await import('../worldBookUserPlaceholderBindings')
+    const { alignCharacterMemoryUserPlaceholders, memoryNeedsUserPlaceholderAlignment } =
+      await import('../memoryUserPlaceholderBindings')
+
+    const expandedMemories = await Promise.all(
+      memories.map(async (m) => {
+        let raw = String(m.content ?? '').trim()
+        if (!raw.includes('{{user')) {
+          return { m, raw }
+        }
+        let bindings = m.userPlaceholderBindings
+        if (memoryNeedsUserPlaceholderAlignment(m)) {
+          const aligned = await alignCharacterMemoryUserPlaceholders(m)
+          raw = aligned.content
+          bindings = aligned.userPlaceholderBindings
+        }
+        raw = await expandWorldBookItemUserPlaceholders(raw, bindings)
+        return { m, raw }
+      }),
+    )
+
+    return expandedMemories.map(({ m, raw }) => {
       if (!raw.includes('{{')) return raw
       const lr = (m.linkedFromCharacterId || '').trim()
       let archiveCharName: string | undefined
@@ -4523,6 +5216,9 @@ export class PersonaDb {
     memoryScope?: CharacterMemoryScope
     linkedFromCharacterId?: string | null
     involvedCharIds?: string[] | null
+    userPlaceholderBindings?: import('./types').WorldBookUserPlaceholderBinding[] | null
+    sourceWechatAccountId?: string | null
+    sourceSessionPlayerIdentityId?: string | null
   }): Promise<string> {
     const cid = params.characterId.trim()
     const raw = String(params.content ?? '').trim()
@@ -4543,6 +5239,9 @@ export class PersonaDb {
     const now = Date.now()
     const scope = params.memoryScope ?? 'private'
     const lr = params.linkedFromCharacterId?.trim()
+    const srcAcc = params.sourceWechatAccountId?.trim()
+    const srcSid = params.sourceSessionPlayerIdentityId?.trim()
+    const wbBindings = params.userPlaceholderBindings ?? undefined
     const synthetic: CharacterMemory = {
       id: '__draft-preview__',
       characterId: cid,
@@ -4553,6 +5252,9 @@ export class PersonaDb {
       memoryScope: scope,
       ...(lr && scope === 'linked' ? { linkedFromCharacterId: lr } : {}),
       ...(params.involvedCharIds?.length ? { involvedCharIds: [...params.involvedCharIds] } : {}),
+      ...(srcAcc ? { sourceWechatAccountId: srcAcc } : {}),
+      ...(srcSid ? { sourceSessionPlayerIdentityId: srcSid } : {}),
+      ...(wbBindings?.length ? { userPlaceholderBindings: wbBindings } : {}),
     }
     const [out] = await this.expandMemoryListContentForPrompt([synthetic], expandOwnerId)
     return (out ?? raw).trim()
@@ -4562,10 +5264,30 @@ export class PersonaDb {
    * 人设编辑页（简介、世界书条目等）：与记忆条目相同的占位符展开规则，供 UI「发给模型的预览」。
    * `characterId` 须为 IndexedDB 中的人设 id（根人设或 NPC）。
    */
-  async expandCharacterFieldPlaceholderPreview(content: string, characterId: string): Promise<string> {
+  async expandCharacterFieldPlaceholderPreview(
+    content: string,
+    characterId: string,
+    opts?: { worldBookUserPlaceholderBindings?: import('./types').WorldBookUserPlaceholderBinding[] },
+  ): Promise<string> {
+    const cid = characterId.trim()
+    let raw = String(content ?? '')
+    const wbBindings = opts?.worldBookUserPlaceholderBindings
+    if (raw.includes('{{user') || (wbBindings?.length ?? 0) > 0) {
+      const { expandWorldBookItemUserPlaceholders } = await import('../worldBookUserPlaceholderBindings')
+      raw = await expandWorldBookItemUserPlaceholders(raw, wbBindings)
+    }
+    if (!raw.includes('{{')) return raw
+    const hasBareUser = /\{\{user\}\}/.test(raw) || /\{\{user:/.test(raw)
+    if ((wbBindings?.length ?? 0) > 0 && !hasBareUser) {
+      return this.expandMemoryDraftForPromptPreview({
+        content: raw,
+        characterId: cid,
+        memoryScope: 'private',
+      })
+    }
     return this.expandMemoryDraftForPromptPreview({
-      content: String(content ?? ''),
-      characterId: characterId.trim(),
+      content: raw,
+      characterId: cid,
       memoryScope: 'private',
     })
   }
@@ -4576,7 +5298,7 @@ export class PersonaDb {
     if (!cid) return ''
 
     const privRaw = await this.listCharacterMemoriesForCharacter(cid)
-    const privateList = privRaw.filter((m) => m.memoryScope !== 'group').sort((a, b) => a.createdAt - b.createdAt)
+    const privateList = privRaw.filter(isCharacterOwnPrivateMemory).sort((a, b) => a.createdAt - b.createdAt)
 
     const groupList = await this.listGroupMemoriesInvolvingCharacter(cid)
 
@@ -4632,10 +5354,14 @@ export class PersonaDb {
       .toLowerCase()
 
     const memorySettings = await this.getMemorySettings()
+    const bucket = opts?.memoryBucket ?? 'own'
 
     const privRaw = await this.listCharacterMemoriesForCharacter(cid)
-    const privateList = privRaw.filter((m) => m.memoryScope !== 'group')
-    const groupList = await this.listGroupMemoriesInvolvingCharacter(cid)
+    const privateList =
+      bucket === 'linked'
+        ? privRaw.filter(isCharacterLinkedMemory)
+        : privRaw.filter(isCharacterOwnPrivateMemory)
+    const groupList = bucket === 'own' ? await this.listGroupMemoriesInvolvingCharacter(cid) : []
 
     const alwaysPrivate = privateList
       .filter((m) => isMemoryAlwaysTrigger(m))
@@ -4673,7 +5399,10 @@ export class PersonaDb {
             })
             const privFresh = await this.listCharacterMemoriesForCharacter(cid)
             const groupFresh = await this.listGroupMemoriesInvolvingCharacter(cid)
-            const privCandidates = privFresh.filter((m) => m.memoryScope !== 'group')
+            const privCandidates =
+              bucket === 'linked'
+                ? privFresh.filter(isCharacterLinkedMemory)
+                : privFresh.filter(isCharacterOwnPrivateMemory)
 
             const exclP = new Set<string>([...alwaysPrivate, ...taggedPrivateHits].map((m) => m.id))
             vecExtraPrivate = pickMemoriesByVectorSimilarity({
@@ -4733,13 +5462,37 @@ export class PersonaDb {
     const privateContentsPick = await this.expandMemoryListContentForPrompt(privatePick, cid)
     const groupContentsPick = await this.expandMemoryListContentForPrompt(groupPick, cid)
 
+    const vectorTail = vectorUsed
+      ? '以上含「始终触发」、关键词命中、向量语义召回及无触发词兜底。请按情境自然使用，勿机械复读。'
+      : '以上含「始终触发」记忆、关键词命中项与少量无触发配置的旧数据兜底。请按情境自然使用，勿机械复读。'
+
+    const lineScope = opts?.lineScope ?? null
     const chunks: string[] = []
     if (privatePick.length) {
-      chunks.push(
-        `【与该角色的私聊长期记忆（关键词与向量语义筛选 + 少量无标签兜底）】\n${privatePick
-          .map((_, i) => `${i + 1}. ${privateContentsPick[i]}`)
-          .join('\n')}`,
-      )
+      if (bucket === 'linked') {
+        chunks.push(
+          `【与该人脉角色的线下关联长期记忆（来自绑定主角约会剧情；与私聊自有记忆分轨注入）】\n${privatePick
+            .map((_, i) => `${i + 1}. ${privateContentsPick[i]}`)
+            .join('\n')}`,
+        )
+      } else if (lineScope?.wechatAccountId?.trim()) {
+        const scopedBody = await formatPrivateMemoriesPromptWithLineScope({
+          memories: privatePick,
+          contents: privateContentsPick,
+          scope: {
+            wechatAccountId: lineScope.wechatAccountId.trim(),
+            sessionPlayerIdentityId: lineScope.sessionPlayerIdentityId.trim() || '__none__',
+          },
+          vectorTail,
+        })
+        if (scopedBody.trim()) chunks.push(scopedBody)
+      } else {
+        chunks.push(
+          `【与该角色的私聊长期记忆（关键词与向量语义筛选 + 少量无标签兜底）】\n${privatePick
+            .map((_, i) => `${i + 1}. ${privateContentsPick[i]}`)
+            .join('\n')}`,
+        )
+      }
     }
     if (groupPick.length) {
       chunks.push(
@@ -4754,10 +5507,13 @@ export class PersonaDb {
     }
     if (!chunks.length) return ''
     const body = chunks.join('\n\n')
-    const tail = vectorUsed
-      ? '以上含「始终触发」、关键词命中、向量语义召回及无触发词兜底。请按情境自然使用，勿机械复读。'
-      : '以上含「始终触发」记忆、关键词命中项与少量无触发配置的旧数据兜底。请按情境自然使用，勿机械复读。'
-    return `${body}\n\n（${tail}）`
+    if (bucket === 'linked') {
+      return `${body}\n\n（${vectorTail}）`
+    }
+    if (lineScope?.wechatAccountId?.trim() && privatePick.length) {
+      return body
+    }
+    return `${body}\n\n（${vectorTail}）`
   }
 
   /**
@@ -4768,8 +5524,18 @@ export class PersonaDb {
     relevanceText: string,
     opts?: MemoryVectorRecallOpts | null,
   ): Promise<{
-    keywordHits: Array<{ keyword: string; content: string }>
-    vectorRetrievals: Array<{ relevanceScore: number; content: string }>
+    keywordHits: Array<{
+      keyword: string
+      content: string
+      sourceLineLabel: string
+      lineRelation: MemoryLineRelation
+    }>
+    vectorRetrievals: Array<{
+      relevanceScore: number
+      content: string
+      sourceLineLabel: string
+      lineRelation: MemoryLineRelation
+    }>
   }> {
     const cid = characterId.trim()
     if (!cid) return { keywordHits: [], vectorRetrievals: [] }
@@ -4779,10 +5545,14 @@ export class PersonaDb {
       .toLowerCase()
 
     const memorySettings = await this.getMemorySettings()
+    const bucket = opts?.memoryBucket ?? 'own'
 
     const privRaw = await this.listCharacterMemoriesForCharacter(cid)
-    const privateList = privRaw.filter((m) => m.memoryScope !== 'group')
-    const groupList = await this.listGroupMemoriesInvolvingCharacter(cid)
+    const privateList =
+      bucket === 'linked'
+        ? privRaw.filter(isCharacterLinkedMemory)
+        : privRaw.filter(isCharacterOwnPrivateMemory)
+    const groupList = bucket === 'own' ? await this.listGroupMemoriesInvolvingCharacter(cid) : []
 
     const alwaysPrivate = privateList
       .filter((m) => isMemoryAlwaysTrigger(m))
@@ -4823,12 +5593,32 @@ export class PersonaDb {
       kwMemoriesOrdered.push(m)
     }
     const kwExpanded = await this.expandMemoryListContentForPrompt(kwMemoriesOrdered, cid)
-    const keywordHits: Array<{ keyword: string; content: string }> = kwMemoriesOrdered.map((m, i) => ({
-      keyword: labelForMemory(m),
-      content: kwExpanded[i] ?? m.content.trim(),
-    }))
+    const lineScope = opts?.lineScope ?? null
+    const enrichTraceMeta = async (m: CharacterMemory) => {
+      let sourceLineLabel = await formatMemorySourceLineLabelFromMemory(m)
+      if (m.memoryScope === 'group' && m.groupId?.trim()) {
+        const g = await this.getGroupChat(m.groupId.trim())
+        sourceLineLabel = `群聊 · ${g?.name?.trim() || m.groupId.trim()}`
+      }
+      return {
+        sourceLineLabel,
+        lineRelation: resolveMemoryLineRelation(m, lineScope),
+      }
+    }
+    const keywordHits = await Promise.all(
+      kwMemoriesOrdered.map(async (m, i) => ({
+        keyword: labelForMemory(m),
+        content: kwExpanded[i] ?? m.content.trim(),
+        ...(await enrichTraceMeta(m)),
+      })),
+    )
 
-    const vectorRetrievals: Array<{ relevanceScore: number; content: string }> = []
+    const vectorRetrievals: Array<{
+      relevanceScore: number
+      content: string
+      sourceLineLabel: string
+      lineRelation: MemoryLineRelation
+    }> = []
     const embedCred = resolveEmbeddingApiCredentials(memorySettings, opts?.apiConfig ?? null)
     if (opts && isMemoryVectorRecallEnabled(memorySettings, opts) && embedCred) {
       const rawHay = String(relevanceText || '').trim()
@@ -4847,7 +5637,10 @@ export class PersonaDb {
             })
             const privFresh = await this.listCharacterMemoriesForCharacter(cid)
             const groupFresh = await this.listGroupMemoriesInvolvingCharacter(cid)
-            const privCandidates = privFresh.filter((m) => m.memoryScope !== 'group')
+            const privCandidates =
+              bucket === 'linked'
+                ? privFresh.filter(isCharacterLinkedMemory)
+                : privFresh.filter(isCharacterOwnPrivateMemory)
 
             const exclP = new Set<string>([...alwaysPrivate, ...taggedPrivateHits].map((m) => m.id))
             const scoredP = pickMemoriesByVectorSimilarityScored({
@@ -4881,12 +5674,14 @@ export class PersonaDb {
               vectorRetrievals.push({
                 relevanceScore: score,
                 content: vecExpById.get(memory.id) ?? memory.content.trim(),
+                ...(await enrichTraceMeta(memory)),
               })
             }
             for (const { memory, score } of scoredG) {
               vectorRetrievals.push({
                 relevanceScore: score,
                 content: vecExpById.get(memory.id) ?? memory.content.trim(),
+                ...(await enrichTraceMeta(memory)),
               })
             }
           }
@@ -6156,6 +6951,188 @@ export class PersonaDb {
   /** 仅移除当前用户并清空会话（仍保留群与他人数据可供扩展；此处等同删除会话记录） */
   async leaveGroupChat(groupId: string, playerIdentityId: string): Promise<void> {
     await this.deleteGroupChat(groupId, playerIdentityId)
+  }
+
+  /**
+   * 多账号场景：仅抹除指定微信马甲的会话/身份数据，保留其他马甲与世界底座。
+   */
+  async eraseWeChatBundleAccount(params: {
+    wechatAccountId: string
+    sessionIdentityIds: string[]
+    preserveCanonicalCharacterIds?: ReadonlySet<string>
+  }): Promise<void> {
+    const acc = params.wechatAccountId.trim()
+    if (!acc) return
+
+    const identityIdSet = new Set<string>()
+    for (const raw of params.sessionIdentityIds) {
+      const id = raw.trim()
+      if (id) identityIdSet.add(id)
+    }
+
+    const ownedIdentities = await this.listPlayerIdentities(acc)
+    for (const row of ownedIdentities) identityIdSet.add(row.id)
+
+    const identityIds = [...identityIdSet]
+    const preserve = params.preserveCanonicalCharacterIds
+
+    if (!identityIds.length) {
+      await this.deleteCharactersForWechatAccount(acc, { preserveCanonicalCharacterIds: preserve })
+      return
+    }
+
+    const pidSet = new Set(identityIds)
+
+    await this.deletePhoneKv(`wechat-imported-bundle-archives-v1:${acc}`)
+
+    await this.runWithIndexedTrashSuspended(async () => {
+      await this.deleteCharactersForWechatAccount(acc, { preserveCanonicalCharacterIds: preserve })
+      for (const pid of identityIds) {
+        const groups = await this.listGroupChatsForPlayerIdentity(pid)
+        for (const g of groups) {
+          await this.deleteGroupChat(g.id, pid)
+        }
+        const friendRows = await this.listFriendRequests({ playerIdentityId: pid, pendingOnly: false })
+        for (const fr of friendRows) await this.deleteFriendRequestById(fr.id)
+      }
+
+      const db = await openDb()
+      try {
+        if (db.objectStoreNames.contains(CHAT_MSG_STORE)) {
+          const tx = db.transaction(CHAT_MSG_STORE, 'readwrite')
+          const store = tx.objectStore(CHAT_MSG_STORE)
+          const all = await new Promise<unknown[]>((resolve, reject) => {
+            const r = store.getAll()
+            r.onsuccess = () => resolve((r.result as unknown[]) ?? [])
+            r.onerror = () => reject(r.error ?? new Error('eraseWeChatBundleAccount: messages'))
+          })
+          for (const raw of all) {
+            const m = normalizeWeChatChatMessage(raw)
+            if (!m || !pidSet.has(m.playerIdentityId.trim())) continue
+            store.delete(m.id)
+          }
+          await txDone(tx)
+        }
+
+        if (db.objectStoreNames.contains(CHAT_CONV_SETTINGS_STORE)) {
+          const tx = db.transaction(CHAT_CONV_SETTINGS_STORE, 'readwrite')
+          const store = tx.objectStore(CHAT_CONV_SETTINGS_STORE)
+          const all = await new Promise<ChatConversationSettingsRow[]>((resolve, reject) => {
+            const r = store.getAll()
+            r.onsuccess = () => resolve((r.result as ChatConversationSettingsRow[]) ?? [])
+            r.onerror = () => reject(r.error ?? new Error('eraseWeChatBundleAccount: conv settings'))
+          })
+          for (const row of all) {
+            const ck = String(row.conversationKey ?? '').trim()
+            if (!ck) continue
+            if (isWechatGroupConversationKey(ck)) {
+              if (identityIds.some((pid) => ck.endsWith(`::${pid}`))) store.delete(ck)
+              continue
+            }
+            const parsed = parsePrivateWeChatConversationCharacterAndSession(ck)
+            if (parsed && pidSet.has(parsed.sessionPlayerId)) store.delete(ck)
+          }
+          await txDone(tx)
+        }
+      } finally {
+        db.close()
+      }
+
+      for (const row of ownedIdentities) {
+        await this.deletePlayerIdentity(row.id)
+      }
+      for (const pid of identityIds) {
+        if (!pid.startsWith('wx-slot-')) continue
+        const slot = await this.getPlayerIdentity(pid)
+        if (slot) await this.deletePlayerIdentity(pid)
+      }
+    })
+
+    emitWeChatStorageChanged()
+  }
+
+  /**
+   * 深度注销：抹除本机当前微信账号相关的全部 IndexedDB 业务数据（人设、聊天、玩家身份、记忆、群聊、回收站等），
+   * 并清理 phoneKv 中微信域键值。不删除手机全局主题 / API 配置（`lumi-phone-custom-v3` 等）。
+   */
+  async eraseWeChatAccountCompletely(): Promise<void> {
+    await this.runWithIndexedTrashSuspended(async () => {
+      const db = await openDb()
+      const storesToClear = [
+        STORE,
+        IDENTITY_STORE,
+        REL_STORE,
+        GRAPH_VIEW_STORE,
+        PLAYER_LINKS_STORE,
+        CONFIG_STORE,
+        CHAT_MSG_STORE,
+        MEMORY_SETTINGS_STORE,
+        CHARACTER_MEMORIES_STORE,
+        CHAT_THEME_STORE,
+        CHAT_CONV_SETTINGS_STORE,
+        GROUP_CHATS_STORE,
+        FRIEND_REQUEST_STORE,
+        GLOBAL_SETTINGS_STORE,
+        CHARACTER_DANMAKU_STORE,
+        CHARACTER_NOTIFY_STORE,
+        CHARACTER_BUSY_STORE,
+        CHARACTER_TIME_STORE,
+        FAVORITES_STORE,
+        HEART_WHISPER_STORE,
+        GROUP_PSYCHE_STORE,
+        INDEXED_TRASH_STORE,
+        WORLD_BG_STORE,
+      ] as const
+
+      const phoneKeysToDelete: string[] = []
+      if (db.objectStoreNames.contains(PHONE_KV_STORE)) {
+        const readTx = db.transaction(PHONE_KV_STORE, 'readonly')
+        const store = readTx.objectStore(PHONE_KV_STORE)
+        const rows = await new Promise<{ key: string }[]>((resolve, reject) => {
+          const req = store.getAll()
+          req.onsuccess = () => {
+            const raw = (req.result as { key?: string }[]) ?? []
+            resolve(raw.map((r) => ({ key: String(r.key ?? '').trim() })).filter((r) => r.key))
+          }
+          req.onerror = () => reject(req.error ?? new Error('eraseWeChatAccount: list phoneKv'))
+        })
+        await txDone(readTx)
+        for (const row of rows) {
+          if (shouldErasePhoneKvKeyForWeChatAccount(row.key)) phoneKeysToDelete.push(row.key)
+        }
+        for (const k of [WECHAT_USER_PROFILE_KV_KEY, WECHAT_USER_PROFILE_KV_KEY_LEGACY]) {
+          if (!phoneKeysToDelete.includes(k)) phoneKeysToDelete.push(k)
+        }
+      }
+
+      const txStores = [
+        ...storesToClear.filter((n) => db.objectStoreNames.contains(n)),
+        ...(phoneKeysToDelete.length && db.objectStoreNames.contains(PHONE_KV_STORE) ? [PHONE_KV_STORE] : []),
+      ]
+      if (txStores.length) {
+        const tx = db.transaction(txStores, 'readwrite')
+        for (const name of storesToClear) {
+          if (!db.objectStoreNames.contains(name)) continue
+          tx.objectStore(name).clear()
+        }
+        if (phoneKeysToDelete.length && db.objectStoreNames.contains(PHONE_KV_STORE)) {
+          const pk = tx.objectStore(PHONE_KV_STORE)
+          for (const k of phoneKeysToDelete) pk.delete(k)
+        }
+        if (db.objectStoreNames.contains(WORLD_BG_STORE)) {
+          const wbs = tx.objectStore(WORLD_BG_STORE)
+          for (const w of buildPresetWorldBackgrounds()) {
+            wbs.put(normalizeWorldBackground(w))
+          }
+        }
+        await txDone(tx)
+      }
+      db.close()
+    })
+
+    clearWeChatAccountLegacyLocalStorage()
+    emitWeChatStorageChanged()
+    emitWeChatAccountDeepErased()
   }
 }
 

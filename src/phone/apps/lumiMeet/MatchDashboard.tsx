@@ -1,5 +1,5 @@
 import { AnimatePresence, motion } from 'framer-motion'
-import { BookMarked, ChevronRight, Heart, Info, SlidersHorizontal, X } from 'lucide-react'
+import { ChevronRight, Heart, Info, SlidersHorizontal, X } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { useCustomization } from '../../CustomizationContext'
@@ -7,6 +7,7 @@ import { useCurrentApiConfig } from '../api/ApiSettingsContext'
 import { buildMeetAvatarExclusion, MEET_REUNION_COOLDOWN_MS, MEET_REUNION_ROLL_P } from './constants'
 import {
   buildMeetNpcDigestForModel,
+  buildMeetNpcProfileMetaLine,
   buildMeetNpcVitalsSubtitle,
   expandMeetPersonaPlaintext,
   resolveMeetCharUserNames,
@@ -16,11 +17,19 @@ import {
   aiJudgeMutualSpark,
   aiMeetPostMatchOpeningLines,
   MeetEncounterGenerationError,
+  scrubMeetNpcWechatLeaks,
 } from './lumiMeetAi'
 import { getLumiMeetPortalTarget } from './lumiMeetPortal'
-import { MEET_ORIENTATION_HELP_ZH, MEET_ORIENTATION_OPTIONS, meetIntentionsToPurpose } from './meetMatchCriteria'
+import {
+  MEET_ORIENTATION_HELP_ZH,
+  MEET_ORIENTATION_LABEL_ZH,
+  MEET_ORIENTATION_OPTIONS,
+  meetIntentionsToPurpose,
+} from './meetMatchCriteria'
+import { npcMatchesOrientationPreferences } from './meetOrientationMatch'
+import { resolveMeetDualPersonaDirective } from './meetMaskTruthPrompt'
+import { resolveMeetPublicDisplayName } from './meetPublicProfileDisplay'
 import { MeetAgeRangeSlider } from './MeetAgeRangeSlider'
-import { MeetWorldbookShelfModal } from './MeetWorldbookShelfModal'
 import type {
   EncounterNPC,
   MeetMatchIntention,
@@ -30,8 +39,17 @@ import type {
 import { personaDb } from '../wechat/newFriendsPersona/idb'
 import { listReunionEligibleMissed, pickRandom } from './radarPool'
 import { computeMeetNpcStaggerDelayMs, sleep, yieldToPaint } from './lumiMeetChatReveal'
-import { ResonanceRings } from './ResonanceRings'
+import { MEET_THREADS_CARD_EMERGE_DELAY_S, ThreadsOfDestiny } from './ThreadsOfDestiny'
 import { useLumiMeetStore } from './LumiMeetStore'
+import { applyMeetUserProfileVol11AtMatch, captureMeetUserProfileSnapshot } from './meetUserProfileSnapshot'
+import { upsertMeetNpcAsCharacter } from './syncMeetNpcToWechat'
+import {
+  assessMeetBindingGap,
+  assessMeetBindingGapSync,
+  dispatchGoMeetProfileContact,
+  type MeetBindingGap,
+} from './meetBindingReadiness'
+import { MeetBindingGuideModal } from './MeetBindingGuideModal'
 
 const INTENT_OPTS: { id: MeetMatchIntention; zh: string; en: string }[] = [
   { id: 'romance', zh: '寻找浪漫', en: 'Romance' },
@@ -61,7 +79,7 @@ function PlatinumTick() {
   )
 }
 
-export function MatchDashboard() {
+export function MatchDashboard({ sparkActionsCoachPreview = false }: { sparkActionsCoachPreview?: boolean }) {
   const apiConfig = useCurrentApiConfig('chatCard')
   const apiConfigRef = useRef(apiConfig)
   apiConfigRef.current = apiConfig
@@ -79,14 +97,30 @@ export function MatchDashboard() {
     setRadarSparkInProgress,
     setRadarPendingCard,
     getPersistedSnapshot,
+    noteDestinyEncounterOutcome,
   } = useLumiMeetStore()
   const filters = state.radarFilters
   const profile = state.meetProfile
   const profileRef = useRef(profile)
   profileRef.current = profile
   const profileSparkKey = useMemo(
-    () => [profile.displayName, profile.intent, profile.orientation, profile.bio].join('\x1e'),
-    [profile.displayName, profile.intent, profile.orientation, profile.bio],
+    () =>
+      [
+        profile.displayName,
+        profile.intent,
+        profile.orientation,
+        profile.bio,
+        profile.baseWeChatIdentityId,
+        profile.meetIntentionsPublic.join(','),
+      ].join('\x1e'),
+    [
+      profile.displayName,
+      profile.intent,
+      profile.orientation,
+      profile.bio,
+      profile.baseWeChatIdentityId,
+      profile.meetIntentionsPublic,
+    ],
   )
 
   const sparkPrecheckRef = useRef<SparkPrecheckSlot>({
@@ -100,7 +134,6 @@ export function MatchDashboard() {
   const [filterDraft, setFilterDraft] = useState<RadarFilters>(filters)
   const [sparkBurst, setSparkBurst] = useState(false)
   const [sparkDenied, setSparkDenied] = useState(false)
-  const [worldbookOpen, setWorldbookOpen] = useState(false)
   const [radarGenMessage, setRadarGenMessage] = useState<string | null>(null)
   const [orientationHelpOpen, setOrientationHelpOpen] = useState(false)
 
@@ -125,21 +158,30 @@ export function MatchDashboard() {
     return () => window.clearTimeout(t)
   }, [flushRadarRevealToCard, pendingReveal?.npc.id])
 
+  const filterOriSummary = useMemo(() => {
+    const p = filters.orientationPreferences
+    if (!p.length) return '性取向：不限'
+    return `性取向：${p.map((k) => MEET_ORIENTATION_LABEL_ZH[k]).join('、')}`
+  }, [filters.orientationPreferences])
+
   const canStartNewSearch =
     !scanning &&
     !judging &&
     !pendingReveal &&
     card?.status !== 'orbiting'
 
+  const bindingGapSync = useMemo(
+    () => assessMeetBindingGapSync(profile),
+    [profile.contactWechatId, profile.baseWeChatIdentityId],
+  )
+  const [bindGuideOpen, setBindGuideOpen] = useState(false)
+  const [bindGuideGap, setBindGuideGap] = useState<MeetBindingGap>(null)
+
   useEffect(() => {
     if (!sparkBurst) return
     const tt = window.setTimeout(() => setSparkBurst(false), 2200)
     return () => window.clearTimeout(tt)
   }, [sparkBurst])
-
-  useEffect(() => {
-    if (!card) setWorldbookOpen(false)
-  }, [card])
 
   useEffect(() => {
     setSparkDenied(false)
@@ -165,10 +207,12 @@ export function MatchDashboard() {
     let openingLines: string[] = []
     if (ok) {
       try {
+        const dual = await resolveMeetDualPersonaDirective(userProfile)
         openingLines = await aiMeetPostMatchOpeningLines({
           apiConfig: apiConfigRef.current,
           npc,
           userProfile,
+          dualPersonaDirective: dual,
         })
       } catch {
         openingLines = []
@@ -227,7 +271,12 @@ export function MatchDashboard() {
   )
 
   const radarCardSnippet = useMemo(() => snippetForNpc(card), [card, snippetForNpc])
+  const cardMetaLine = useMemo(() => (card ? buildMeetNpcProfileMetaLine(card) : ''), [card])
   const cardVitalsLine = useMemo(() => (card ? buildMeetNpcVitalsSubtitle(card) : null), [card])
+  const revealMetaLine = useMemo(
+    () => (pendingReveal ? buildMeetNpcProfileMetaLine(pendingReveal.npc) : ''),
+    [pendingReveal],
+  )
   const revealVitalsLine = useMemo(
     () => (pendingReveal ? buildMeetNpcVitalsSubtitle(pendingReveal.npc) : null),
     [pendingReveal],
@@ -239,21 +288,32 @@ export function MatchDashboard() {
       const snap = getPersistedSnapshot()
       const now = Date.now()
       const mp = snap.meetProfile
-      const hint = `${mp.displayName || '匿名'}｜${mp.intent}｜${mp.orientation}｜${mp.bio}`.slice(0, 900)
+      const hint = `${resolveMeetPublicDisplayName(mp)}｜${mp.intent}｜${mp.orientation}｜${mp.bio}`.slice(0, 520)
+      const dual = await resolveMeetDualPersonaDirective(mp)
 
       const eligible = listReunionEligibleMissed(snap.npcs, now, MEET_REUNION_COOLDOWN_MS)
       const reunionPick =
         eligible.length > 0 && Math.random() < MEET_REUNION_ROLL_P ? pickRandom(eligible) : null
 
       if (reunionPick) {
-        const refreshed: EncounterNPC = {
-          ...reunionPick,
-          lastEncounterTime: now,
-          mutualSpark:
-            typeof reunionPick.mutualSpark === 'boolean' ? reunionPick.mutualSpark : Math.random() > 0.35,
+        const prefs = snap.radarFilters.orientationPreferences
+        const reunionMatchesOri =
+          !prefs.length ||
+          npcMatchesOrientationPreferences(
+            reunionPick.orientation,
+            prefs,
+            reunionPick.comprehensivePersona?.psyche?.orientationOrigin,
+          )
+        if (reunionMatchesOri) {
+          const refreshed: EncounterNPC = {
+            ...reunionPick,
+            lastEncounterTime: now,
+            mutualSpark:
+              typeof reunionPick.mutualSpark === 'boolean' ? reunionPick.mutualSpark : Math.random() > 0.35,
+          }
+          upsertNpc(refreshed)
+          return { npc: refreshed, isReunionEcho: true }
         }
-        upsertNpc(refreshed)
-        return { npc: refreshed, isReunionEcho: true }
       }
 
       const cfg = apiConfigRef.current
@@ -276,6 +336,7 @@ export function MatchDashboard() {
           filters: snap.radarFilters,
           profileHint: hint,
           meetProfile: mp,
+          dualPersonaDirective: dual,
           avatarExclusion,
         })
       } catch (e) {
@@ -314,14 +375,26 @@ export function MatchDashboard() {
     })
   }, [getPersistedSnapshot, phoneCustom.wechatPersonaContacts, requestRadarSearch, upsertNpc])
 
+  const tryStartEncounter = useCallback(async () => {
+    if (!canStartNewSearch) return
+    const gap = await assessMeetBindingGap(profileRef.current)
+    if (gap) {
+      setBindGuideGap(gap)
+      setBindGuideOpen(true)
+      return
+    }
+    runEncounter()
+  }, [canStartNewSearch, runEncounter])
+
   const onMiss = useCallback(() => {
     if (card) {
+      noteDestinyEncounterOutcome(card.id, 'miss')
       upsertNpc({ ...card, status: 'missed', lastEncounterTime: Date.now() })
     }
     dismissRadarPending()
     setSparkBurst(false)
     setSparkDenied(false)
-  }, [card, dismissRadarPending, upsertNpc])
+  }, [card, dismissRadarPending, noteDestinyEncounterOutcome, upsertNpc])
 
   const onSpark = useCallback(async () => {
     if (!card) return
@@ -346,16 +419,28 @@ export function MatchDashboard() {
       await sleep(Math.max(0, SPARK_BUTTON_MIN_MS - (Date.now() - tClick)))
 
       if (r.ok) {
+        noteDestinyEncounterOutcome(card.id, isReunionEcho ? 'reconnected' : 'resonated', {
+          reunion: isReunionEcho,
+        })
+        const meetSnap = captureMeetUserProfileSnapshot(profileRef.current)
         const matched: EncounterNPC = {
           ...card,
           status: 'matched',
           lastEncounterTime: Date.now(),
+          meetUserProfileAtMatch: meetSnap,
         }
         upsertNpc(matched)
+        const wx =
+          matched.wechatId?.trim() ||
+          `meet_${matched.id.replace(/^meet_/, '').slice(0, 16)}_${Math.random().toString(36).slice(2, 6)}`
+        await upsertMeetNpcAsCharacter(matched, wx, {
+          bindPlayerIdentityId: profileRef.current.baseWeChatIdentityId,
+        })
+        await applyMeetUserProfileVol11AtMatch(matched, profileRef.current)
         setRadarPendingCard(matched, false)
         setSparkBurst(true)
         bumpIntimacy(card.id, 24)
-        const openingLines = r.openingLines
+        const openingLines = scrubMeetNpcWechatLeaks(r.openingLines, 'none', card.wechatId)
         for (let i = 0; i < openingLines.length; i++) {
           const line = openingLines[i]!
           if (i > 0) await sleep(computeMeetNpcStaggerDelayMs(openingLines[i - 1]!))
@@ -364,6 +449,7 @@ export function MatchDashboard() {
           await yieldToPaint()
         }
       } else {
+        noteDestinyEncounterOutcome(card.id, 'miss')
         const missed: EncounterNPC = { ...card, status: 'missed', lastEncounterTime: Date.now() }
         upsertNpc(missed)
         setRadarPendingCard(missed)
@@ -375,6 +461,9 @@ export function MatchDashboard() {
   }, [
     bumpIntimacy,
     card,
+    isReunionEcho,
+    noteDestinyEncounterOutcome,
+    profile,
     profileSparkKey,
     pushChatMessage,
     runSparkPrecheckForNpc,
@@ -428,16 +517,17 @@ export function MatchDashboard() {
       <div className="shrink-0 px-5 text-center">
         <h2 className="font-elegant-serif text-[1.2rem] font-medium tracking-[0.14em] text-[#2c2a26]">共鸣星轨</h2>
         <p className="meet-caption-en mt-1 text-[10px] uppercase tracking-[0.42em] text-[#b8b5ad]">
-          Resonance Rings · Match
+          Threads of Destiny · Match
         </p>
       </div>
 
       <div className="relative flex min-h-0 flex-1 flex-col items-center justify-center px-4">
-        <ResonanceRings scanning={scanning} revealBurst={!!pendingReveal} size={248} />
+        <ThreadsOfDestiny scanning={scanning} revealBurst={!!pendingReveal} size={248} />
 
         <motion.button
           type="button"
           layout
+          data-meet-app-coach="match-filters"
           onClick={() => setDrawer(true)}
           className="group mt-10 flex max-w-full items-center gap-2.5 rounded-2xl border border-transparent bg-transparent px-3 py-2.5 transition-colors duration-200 hover:border-black/[0.06] hover:bg-white/70 active:scale-[0.99]"
           aria-label="打开筛选偏好"
@@ -448,6 +538,7 @@ export function MatchDashboard() {
           <span className="min-w-0 flex flex-1 flex-col items-start text-left sm:flex-row sm:items-baseline sm:gap-2">
             <span className="font-elegant-serif text-[12px] font-light tracking-[0.06em] text-[#3d3a34]">筛选偏好</span>
             <span className="meet-caption-en text-[10px] text-[#a39e96]">Preferences</span>
+            <span className="mt-0.5 w-full text-[10px] leading-snug text-[#9a9590] sm:mt-0 sm:w-auto">{filterOriSummary}</span>
           </span>
           <ChevronRight
             className="size-4 shrink-0 text-[#c9c4bc] transition-transform duration-200 group-hover:translate-x-0.5 group-hover:text-[#b8973a]"
@@ -459,8 +550,9 @@ export function MatchDashboard() {
         <motion.button
           type="button"
           layout
+          data-meet-app-coach="match-search"
           disabled={!canStartNewSearch}
-          onClick={runEncounter}
+          onClick={() => void tryStartEncounter()}
           className="meet-btn-primary mt-6 flex w-[min(300px,100%)] items-center justify-center gap-2 py-3.5 disabled:opacity-45"
         >
           {scanning ? (
@@ -475,6 +567,19 @@ export function MatchDashboard() {
             </>
           )}
         </motion.button>
+
+        {bindingGapSync ? (
+          <p className="meet-caption-en mt-3 max-w-[min(300px,100%)] text-center text-[9px] leading-relaxed tracking-[0.06em] text-[#9a8f7a]">
+            开始寻觅前请先在「我的 → 联络绑定」选定微信账号与玩家身份。
+            <button
+              type="button"
+              className="ml-1 underline underline-offset-2 hover:text-[#b8973a]"
+              onClick={() => dispatchGoMeetProfileContact()}
+            >
+              去绑定
+            </button>
+          </p>
+        ) : null}
 
         {!apiConfig?.apiUrl?.trim() || !apiConfig?.apiKey?.trim() ? (
           <p className="meet-caption-en mt-3 max-w-[min(300px,100%)] text-center text-[9px] leading-relaxed tracking-[0.1em] text-[#b0aaa4]">
@@ -499,6 +604,33 @@ export function MatchDashboard() {
           </p>
         ) : null}
       </div>
+
+      {sparkActionsCoachPreview ? (
+        <div
+          className="pointer-events-none fixed inset-x-0 z-[281] flex justify-center px-4"
+          style={{ bottom: 'max(76px, calc(env(safe-area-inset-bottom, 0px) + 64px))' }}
+          aria-hidden
+        >
+          <div
+            data-meet-app-coach="match-spark-actions"
+            className="w-full max-w-sm rounded-t-[20px] border border-black/[0.07] bg-[#fdfcfa] px-4 pb-4 pt-3 shadow-[0_-16px_48px_rgba(35,30,24,0.14)]"
+          >
+            <p className="meet-caption-en text-center text-[9px] uppercase tracking-[0.28em] text-[#b8b5ad]">
+              示意 · 匹配成功后的档案浮层
+            </p>
+            <div className="mt-3 flex gap-3">
+              <div className="meet-btn-secondary flex flex-1 items-center justify-center gap-2 py-3.5 text-[13px] text-[#5c574f]">
+                <X className="size-4 opacity-60" strokeWidth={1.5} aria-hidden />
+                错过
+              </div>
+              <div className="meet-btn-primary flex flex-1 items-center justify-center gap-2 py-3.5 text-[13px]">
+                <Heart className="size-4 fill-current opacity-90" strokeWidth={1.5} aria-hidden />
+                心动
+              </div>
+            </div>
+          </div>
+        </div>
+      ) : null}
 
       <AnimatePresence>
         {sparkBurst ? (
@@ -534,7 +666,11 @@ export function MatchDashboard() {
             <motion.div
               initial={{ y: 20, opacity: 0, filter: 'blur(12px)' }}
               animate={{ y: 0, opacity: 1, filter: 'blur(0px)' }}
-              transition={{ duration: 0.52, ease: [0.22, 1, 0.36, 1] }}
+              transition={{
+                delay: MEET_THREADS_CARD_EMERGE_DELAY_S,
+                duration: 0.55,
+                ease: [0.22, 1, 0.36, 1],
+              }}
               className="w-full max-w-[300px] rounded-[20px] border border-white/70 bg-white/55 px-6 py-7 shadow-[0_28px_80px_rgba(28,24,18,0.08)] backdrop-blur-xl"
               style={{ borderColor: 'rgba(212, 175, 55, 0.22)' }}
             >
@@ -552,9 +688,7 @@ export function MatchDashboard() {
                   {pendingReveal.npc.generationSource === 'offline' ? (
                     <p className="meet-caption-en mt-0.5 text-[9px] tracking-[0.08em] text-[#c9a96e]">本地示例 · 非模型</p>
                   ) : null}
-                  <p className="meet-caption-en mt-1 text-[10px] text-[#b8b5ad]">
-                    {pendingReveal.npc.gender} · {pendingReveal.npc.orientation}
-                  </p>
+                  <p className="meet-caption-en mt-1 text-[10px] text-[#b8b5ad]">{revealMetaLine}</p>
                   {revealVitalsLine ? (
                     <p className="meet-caption-en mt-1.5 text-[9px] tracking-[0.06em] text-[#c4bfb8]">
                       {revealVitalsLine}
@@ -625,9 +759,7 @@ export function MatchDashboard() {
                         {card.generationSource === 'offline' ? (
                           <p className="meet-caption-en mt-0.5 text-[9px] tracking-[0.08em] text-[#c9a96e]">本地示例 · 非模型</p>
                         ) : null}
-                        <p className="meet-caption-en mt-1 text-[10px] text-[#b8b5ad]">
-                          {card.gender} · {card.orientation}
-                        </p>
+                        <p className="meet-caption-en mt-1 text-[10px] text-[#b8b5ad]">{cardMetaLine}</p>
                         {cardVitalsLine ? (
                           <p className="meet-caption-en mt-1.5 text-[9px] tracking-[0.06em] text-[#c4bfb8]">
                             {cardVitalsLine}
@@ -642,19 +774,7 @@ export function MatchDashboard() {
                         </p>
                       ) : null}
                       {card.comprehensivePersona ? (
-                        <>
-                          <p className="font-dossier-serif text-[13px] leading-loose text-[#4a4740]">{radarCardSnippet}</p>
-                          <button
-                            type="button"
-                            onClick={() => setWorldbookOpen(true)}
-                            className="meet-platinum-pill mt-4 flex w-full items-center justify-center gap-2 border py-2.5 text-[12px] font-light text-[#5c534c]"
-                            style={{ borderColor: 'rgba(212, 175, 55, 0.35)' }}
-                          >
-                            <BookMarked className="size-3.5 opacity-70" strokeWidth={1.25} />
-                            <span>世界书</span>
-                            <span className="opacity-40">｜分册与条目</span>
-                          </button>
-                        </>
+                        <p className="font-dossier-serif text-[13px] leading-loose text-[#4a4740]">{radarCardSnippet}</p>
                       ) : (
                         <p className="meet-resonance-quote text-[13px] leading-[1.8] text-[#5b574f]">{radarCardSnippet}</p>
                       )}
@@ -707,7 +827,7 @@ export function MatchDashboard() {
                         onClick={() => {
                           dismissRadarPending()
                           setSparkDenied(false)
-                          window.setTimeout(() => runEncounter(), 0)
+                          window.setTimeout(() => void tryStartEncounter(), 0)
                         }}
                         className="meet-btn-primary w-full py-3.5 text-[13px]"
                       >
@@ -744,7 +864,7 @@ export function MatchDashboard() {
                   animate={{ opacity: 1 }}
                   exit={{ opacity: 0 }}
                   transition={{ duration: 0.22 }}
-                  onClick={() => setDrawer(false)}
+                  onClick={() => commitFilters()}
                 >
                   <motion.div
                     layout
@@ -771,6 +891,9 @@ export function MatchDashboard() {
                     </h3>
                     <p className="meet-caption-en mt-1 text-center text-[11px] tracking-[0.12em] text-[#7a736b]">
                       寻觅法则
+                    </p>
+                    <p className="mt-2 text-center text-[10px] leading-relaxed text-[#9a9590]">
+                      点空白处或「确认」保存；已选性取向将用于本次生成
                     </p>
                   </header>
 
@@ -989,17 +1112,15 @@ export function MatchDashboard() {
           )
         : null}
 
-      {card?.comprehensivePersona ? (
-        <MeetWorldbookShelfModal
-          open={worldbookOpen}
-          onClose={() => setWorldbookOpen(false)}
-          npcId={card.id}
-          nickname={card.nickname}
-          avatarUrl={card.avatarUrl}
-          dossier={card.comprehensivePersona}
-          meetProfile={profile}
-        />
-      ) : null}
+      <MeetBindingGuideModal
+        open={bindGuideOpen}
+        gap={bindGuideGap}
+        onClose={() => {
+          setBindGuideOpen(false)
+          setBindGuideGap(null)
+        }}
+      />
+
     </div>
   )
 }

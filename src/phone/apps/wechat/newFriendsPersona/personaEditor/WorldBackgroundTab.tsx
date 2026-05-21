@@ -19,7 +19,7 @@ export function WorldBackgroundTab({
   return (
     <section className="rounded-[14px] border border-neutral-200/90 bg-white px-4 pb-8 pt-5 shadow-[0_1px_2px_rgba(0,0,0,0.04)]">
       <header className="mb-6 border-b border-neutral-100 pb-4">
-        <p className="text-[9px] font-semibold uppercase tracking-[0.28em] text-neutral-400">07 WORLD · 叙事场域</p>
+        <p className="text-[9px] font-semibold uppercase tracking-[0.28em] text-neutral-400">08 WORLD · 叙事场域</p>
         <h2 className="mt-2 text-[17px] font-semibold tracking-tight text-[#1C1C1E]">世界背景</h2>
       </header>
 

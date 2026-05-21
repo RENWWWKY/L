@@ -6,6 +6,7 @@ import type {
   WorldBackground,
 } from './types'
 import { emitWeChatStorageChanged, personaDb } from './idb'
+import { stampWechatAccountOwner } from '../wechatAccountScope'
 import { DEFAULT_WORLD_BACKGROUND_ID } from './worldBackgroundConstants'
 import { uid } from './utils'
 import { migrateLegacyRootPublicUrl } from '../../../../publicAssetUrl'
@@ -28,6 +29,84 @@ export type CharacterBundleV5 = {
   worldBackground: WorldBackground | null
   networkGraphViews: NetworkGraphViewRecord[]
   playerNetworkLinks: PlayerNetworkLink[]
+}
+
+export const WECHAT_IMPORTED_BUNDLE_ARCHIVES_KV_PREFIX = 'wechat-imported-bundle-archives-v1:'
+
+export type ImportedCharacterBundleArchive = {
+  id: string
+  wechatAccountId: string
+  playerIdentityId: string
+  playerIdentityName: string
+  rootCharacterId: string
+  importedAt: number
+  bundle: CharacterBundleV5
+}
+
+export function importedBundleArchivesKvKey(wechatAccountId: string): string {
+  return `${WECHAT_IMPORTED_BUNDLE_ARCHIVES_KV_PREFIX}${wechatAccountId.trim()}`
+}
+
+function normalizeImportedBundleArchive(raw: unknown): ImportedCharacterBundleArchive | null {
+  if (!raw || typeof raw !== 'object') return null
+  const o = raw as Record<string, unknown>
+  const id = typeof o.id === 'string' ? o.id.trim() : ''
+  const wechatAccountId = typeof o.wechatAccountId === 'string' ? o.wechatAccountId.trim() : ''
+  const playerIdentityId = typeof o.playerIdentityId === 'string' ? o.playerIdentityId.trim() : ''
+  const rootCharacterId = typeof o.rootCharacterId === 'string' ? o.rootCharacterId.trim() : ''
+  const importedAt = typeof o.importedAt === 'number' && Number.isFinite(o.importedAt) ? o.importedAt : 0
+  const bundle = o.bundle
+  if (!id || !wechatAccountId || !playerIdentityId || !rootCharacterId || !bundle || typeof bundle !== 'object') {
+    return null
+  }
+  return {
+    id,
+    wechatAccountId,
+    playerIdentityId,
+    playerIdentityName:
+      typeof o.playerIdentityName === 'string' ? o.playerIdentityName.trim() : '未命名身份',
+    rootCharacterId,
+    importedAt: importedAt || Date.now(),
+    bundle: bundle as CharacterBundleV5,
+  }
+}
+
+export async function listImportedCharacterBundleArchives(
+  wechatAccountId: string,
+): Promise<ImportedCharacterBundleArchive[]> {
+  const acc = wechatAccountId.trim()
+  if (!acc) return []
+  const raw = await personaDb.getPhoneKv(importedBundleArchivesKvKey(acc))
+  if (!Array.isArray(raw)) return []
+  return raw
+    .map(normalizeImportedBundleArchive)
+    .filter((x): x is ImportedCharacterBundleArchive => !!x)
+    .sort((a, b) => b.importedAt - a.importedAt)
+}
+
+async function appendImportedCharacterBundleArchive(
+  entry: Omit<ImportedCharacterBundleArchive, 'id' | 'importedAt'> & { id?: string; importedAt?: number },
+): Promise<ImportedCharacterBundleArchive> {
+  const acc = entry.wechatAccountId.trim()
+  if (!acc) throw new Error('wechatAccountId required')
+  const row: ImportedCharacterBundleArchive = {
+    id: entry.id?.trim() || `wx-imp-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+    wechatAccountId: acc,
+    playerIdentityId: entry.playerIdentityId.trim(),
+    playerIdentityName: entry.playerIdentityName.trim() || '未命名身份',
+    rootCharacterId: entry.rootCharacterId.trim(),
+    importedAt: entry.importedAt ?? Date.now(),
+    bundle: entry.bundle,
+  }
+  const prev = await listImportedCharacterBundleArchives(acc)
+  await personaDb.setPhoneKv(importedBundleArchivesKvKey(acc), [row, ...prev].slice(0, 48))
+  return row
+}
+
+export async function deleteImportedCharacterBundleArchivesForAccount(wechatAccountId: string): Promise<void> {
+  const acc = wechatAccountId.trim()
+  if (!acc) return
+  await personaDb.deletePhoneKv(importedBundleArchivesKvKey(acc))
 }
 
 function isRecord(x: unknown): x is Record<string, unknown> {
@@ -335,9 +414,21 @@ export function parseCharacterImportFile(parsed: unknown): CharacterBundleV5[] |
   return single ? [single] : null
 }
 
+function stampBundleCharactersForAccount(
+  ch: Character,
+  wechatAccountId: string,
+  importPlayerIdentityId: string | undefined,
+): Character {
+  return stampWechatAccountOwner(
+    applyPlayerIdentityBindingForImport(ch, importPlayerIdentityId),
+    wechatAccountId,
+  )
+}
+
 function cloneBundleWithNewIds(
   bundle: CharacterBundleV5,
   importPlayerIdentityId: string | undefined,
+  wechatAccountId: string,
 ): {
   main: Character
   npcs: Character[]
@@ -377,7 +468,7 @@ function cloneBundleWithNewIds(
     newWbId = bundle.mainCharacter.worldBackgroundId?.trim() || DEFAULT_WORLD_BACKGROUND_ID
   }
 
-  const main: Character = applyPlayerIdentityBindingForImport(
+  const main: Character = stampBundleCharactersForAccount(
     {
       ...bundle.mainCharacter,
       id: newRootId,
@@ -386,11 +477,12 @@ function cloneBundleWithNewIds(
       createdAt: Date.now(),
       updatedAt: Date.now(),
     },
+    wechatAccountId,
     importPlayerIdentityId,
   )
 
   const npcs: Character[] = bundle.npcs.map((n) =>
-    applyPlayerIdentityBindingForImport(
+    stampBundleCharactersForAccount(
       {
         ...n,
         id: mapId(n.id),
@@ -399,6 +491,7 @@ function cloneBundleWithNewIds(
         createdAt: n.createdAt || Date.now(),
         updatedAt: Date.now(),
       },
+      wechatAccountId,
       importPlayerIdentityId,
     ),
   )
@@ -479,8 +572,13 @@ function cloneBundleWithNewIds(
 export async function importCharacterBundle(
   bundle: CharacterBundleV5,
   mode: 'new' | 'overwrite',
+  opts: { wechatAccountId: string },
 ): Promise<{ rootId: string; mode: 'new' | 'overwrite' }> {
   bundle = migrateBundlePublicUrls(bundle)
+  const wechatAccountId = opts.wechatAccountId.trim()
+  if (!wechatAccountId) {
+    throw new Error('请先登录微信账号后再导入人设包。')
+  }
   const cliqueOld = new Set([bundle.rootCharacterId, ...bundle.npcs.map((n) => n.id)])
   const importPlayerIdentityId = await getImportTargetPlayerIdentityId()
   if (!importPlayerIdentityId) {
@@ -488,9 +586,11 @@ export async function importCharacterBundle(
       '请先在「我的身份」中创建身份，并确保已设为当前使用（新建角色人设时在弹窗里选择身份也会写入当前身份）。未设置当前玩家身份时不能导入人设包，以免无法正确绑定。',
     )
   }
+  const identity = await personaDb.getPlayerIdentity(importPlayerIdentityId, wechatAccountId)
+  const playerIdentityName = (identity?.name || '').trim() || '未命名身份'
 
   if (mode === 'new') {
-    const cloned = cloneBundleWithNewIds(bundle, importPlayerIdentityId)
+    const cloned = cloneBundleWithNewIds(bundle, importPlayerIdentityId, wechatAccountId)
     if (cloned.worldBackground) {
       await personaDb.upsertWorldBackground(cloned.worldBackground)
     }
@@ -498,9 +598,23 @@ export async function importCharacterBundle(
     for (const n of cloned.npcs) await personaDb.upsertCharacter(n)
     await personaDb.bulkPutRelationships(cloned.relationships)
     for (const g of cloned.graphs) await personaDb.putNetworkGraphView(g)
-    await personaDb.putPlayerNetworkLinks(cloned.newRootId, cloned.links)
+    const mainAfter = await personaDb.getCharacter(cloned.main.id)
+    const rootId = mainAfter?.id ?? cloned.newRootId
+    await personaDb.putPlayerNetworkLinks(rootId, cloned.links)
+    await appendImportedCharacterBundleArchive({
+      wechatAccountId,
+      playerIdentityId: importPlayerIdentityId,
+      playerIdentityName,
+      rootCharacterId: rootId,
+      bundle,
+    })
     emitWeChatStorageChanged()
-    return { rootId: cloned.newRootId, mode: 'new' }
+    return { rootId, mode: 'new' }
+  }
+
+  const existingMain = await personaDb.getCharacter(bundle.rootCharacterId)
+  if (existingMain?.wechatAccountId?.trim() && existingMain.wechatAccountId.trim() !== wechatAccountId) {
+    throw new Error('该人设包归属其他微信账号，无法在本账号下覆盖写入。请使用「导入为新副本」。')
   }
 
   // overwrite：先清掉该人脉圈内的关系、身份绑定边与画布，再整体写回
@@ -512,14 +626,26 @@ export async function importCharacterBundle(
     await personaDb.upsertWorldBackground(bundle.worldBackground)
   }
 
-  await personaDb.upsertCharacter(applyPlayerIdentityBindingForImport(bundle.mainCharacter, importPlayerIdentityId))
+  await personaDb.upsertCharacter(
+    stampBundleCharactersForAccount(bundle.mainCharacter, wechatAccountId, importPlayerIdentityId),
+  )
   for (const n of bundle.npcs) {
-    await personaDb.upsertCharacter(applyPlayerIdentityBindingForImport(n, importPlayerIdentityId))
+    await personaDb.upsertCharacter(
+      stampBundleCharactersForAccount(n, wechatAccountId, importPlayerIdentityId),
+    )
   }
   await personaDb.bulkPutRelationships(bundle.relationships.filter((r) => !r.isPlayerIdentity))
   for (const g of bundle.networkGraphViews) await personaDb.putNetworkGraphView(g)
   await personaDb.putPlayerNetworkLinks(bundle.rootCharacterId, bundle.playerNetworkLinks)
   await personaDb.replaceWeChatChatMessagesByCharacterIds([...cliqueOld], [])
+
+  await appendImportedCharacterBundleArchive({
+    wechatAccountId,
+    playerIdentityId: importPlayerIdentityId,
+    playerIdentityName,
+    rootCharacterId: bundle.rootCharacterId,
+    bundle,
+  })
 
   emitWeChatStorageChanged()
   return { rootId: bundle.rootCharacterId, mode: 'overwrite' }

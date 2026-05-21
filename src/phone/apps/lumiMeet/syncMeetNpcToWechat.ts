@@ -6,9 +6,17 @@ import {
   buildMeetPersonaFallbackWorldBook,
   buildMeetVol10WorldBook,
   extractMeetVol10EpiloguePayload,
+  hasMeetVol10GraduatedEpilogue,
   isMeetSyncedWorldBookId,
+  isMeetTruthMirrorWorldBookId,
 } from './meetNineDimensionWorldBooks'
+import {
+  buildMeetVol11UserMeetProfileWorldBook,
+  loadMeetUserProfileSnapshotFromKv,
+} from './meetUserProfileSnapshot'
 import type { EncounterNPC } from './meetTypes'
+import { removeMeetLoreEntriesForNpcIds } from './meetClearEncounterData'
+import { consolidateMeetCharacterWorldBooks } from './meetWorldbookConsolidate'
 import { formatMeetEpilogueImpressionForStorage } from './meetPersonaWorldbookSync'
 import {
   deriveMeetMottoFromPersona,
@@ -35,7 +43,9 @@ export async function patchMeetCharacterVol10Epilogue(params: {
   rawLore: string
 }): Promise<void> {
   const ch = await personaDb.getCharacter(params.characterId)
-  if (!ch) return
+  if (!ch) {
+    throw new Error(`[遇见同步] 未在人设库找到角色，无法写入 vol10 尾声延展：${params.characterId}`)
+  }
   const now = Date.now()
   const rn = (params.charRealName ?? ch.name ?? params.nickname).trim()
   const { title, body } = formatMeetEpilogueImpressionForStorage({
@@ -46,38 +56,75 @@ export async function patchMeetCharacterVol10Epilogue(params: {
   })
   const vol10 = buildMeetVol10WorldBook(params.characterId, params.nickname, rn, now, { itemName: title, content: body })
   const rest = (ch.worldBooks ?? []).filter((w) => w.id !== vol10.id)
-  await personaDb.upsertCharacter({ ...ch, worldBooks: [...rest, vol10], updatedAt: now })
+  const worldBooks = consolidateMeetCharacterWorldBooks(params.characterId, [...rest, vol10])
+  await personaDb.upsertCharacter({ ...ch, worldBooks, updatedAt: now })
   emitWeChatStorageChanged()
 }
 
 /**
- * 将「遇见」NPC 写入人设库并可用于镜像微信；须在 UI 层再调用 `replaceWeChatPersonaContacts` 注入通讯录。
+ * 将「遇见」NPC 写入人设库（含可搜索的 wechatId），供微信「添加朋友」等能力使用。
+ * 写入通讯录须由用户通过好友验证后，或 UI 层显式调用 `replaceWeChatPersonaContacts`。
  */
-export async function upsertMeetNpcAsCharacter(npc: EncounterNPC, wechatId: string): Promise<Character> {
-  const identities = await personaDb.listPlayerIdentities()
-  const rawPid = identities[0]?.id?.trim()
-  const playerIdentityId = rawPid && rawPid !== '__none__' ? rawPid : undefined
+export async function upsertMeetNpcAsCharacter(
+  npc: EncounterNPC,
+  wechatId: string,
+  opts?: { bindPlayerIdentityId?: string; ownerWechatAccountId?: string },
+): Promise<Character> {
+  const { resolveMeetWeChatPlayerIdentityId } = await import('./meetResolveWeChatPlayerIdentityId')
+  const { loadMeetPersisted } = await import('./meetPersistLoad')
+  const bound = opts?.bindPlayerIdentityId?.trim()
+  let playerIdentityId: string | undefined
+  if (bound && bound !== '__none__') {
+    playerIdentityId = bound
+  } else {
+    const meet = await loadMeetPersisted()
+    const resolved = await resolveMeetWeChatPlayerIdentityId(meet?.meetProfile.baseWeChatIdentityId)
+    if (resolved) playerIdentityId = resolved
+    else {
+      const identities = await personaDb.listPlayerIdentities()
+      const rawPid = identities[0]?.id?.trim()
+      playerIdentityId = rawPid && rawPid !== '__none__' ? rawPid : undefined
+    }
+  }
 
   const now = Date.now()
   const existing = await personaDb.getCharacter(npc.id)
   const existingBooks = existing?.worldBooks ?? []
-  const prevEpilogue = extractMeetVol10EpiloguePayload(npc.id, existingBooks)
+  const prevEpilogue = hasMeetVol10GraduatedEpilogue(npc.id, existingBooks)
+    ? extractMeetVol10EpiloguePayload(npc.id, existingBooks)
+    : null
 
   const base = npc.comprehensivePersona?.base
   const legalName = (npc.realName ?? base?.realName)?.trim() || npc.nickname
 
-  const meetBooks: WorldBook[] = npc.comprehensivePersona
-    ? buildMeetNineDimensionWorldBooks(npc.id, npc.nickname, npc.comprehensivePersona, now, prevEpilogue)
-    : [
-        ...buildMeetPersonaFallbackWorldBook(npc.id, npc.nickname, npc.persona, now),
-        buildMeetVol10WorldBook(npc.id, npc.nickname, legalName, now, prevEpilogue),
-      ]
-
-  /** 移除旧版单册与遇见同步分册（vol01–vol10），再追加当前生成的遇见分册，保留用户自建世界书 */
-  const mergedWorldBooks: WorldBook[] = [
-    ...existingBooks.filter((w) => !isMeetSyncedWorldBookId(npc.id, w.id)),
-    ...meetBooks,
+  const profileSnap =
+    npc.meetUserProfileAtMatch ?? (await loadMeetUserProfileSnapshotFromKv(npc.id))
+  const vol11 = buildMeetVol11UserMeetProfileWorldBook(
+    npc.id,
+    npc.nickname,
+    legalName,
+    profileSnap,
+    now,
+  )
+  const meetBooks: WorldBook[] = [
+    ...(npc.comprehensivePersona
+      ? buildMeetNineDimensionWorldBooks(npc.id, npc.nickname, npc.comprehensivePersona, now, prevEpilogue)
+      : [
+          ...buildMeetPersonaFallbackWorldBook(npc.id, npc.nickname, npc.persona, now),
+          buildMeetVol10WorldBook(npc.id, npc.nickname, legalName, now, prevEpilogue),
+        ]),
+    ...vol11,
   ]
+
+  /** 移除旧版单册与遇见同步分册（vol01–vol11），再追加当前生成的遇见分册；保留 vol12 真心话与用户自建世界书 */
+  const preservedTruth = existingBooks.filter((w) => isMeetTruthMirrorWorldBookId(npc.id, w.id))
+  const mergedWorldBooks = consolidateMeetCharacterWorldBooks(npc.id, [
+    ...existingBooks.filter(
+      (w) => !isMeetSyncedWorldBookId(npc.id, w.id) && !isMeetTruthMirrorWorldBookId(npc.id, w.id),
+    ),
+    ...meetBooks,
+    ...preservedTruth,
+  ])
 
   const birthdayRaw = npc.birthdayMD ?? base?.birthdayMD ?? '06-15'
   const birthdayMD = normalizeBirthdayMD(birthdayRaw)
@@ -141,9 +188,11 @@ export async function upsertMeetNpcAsCharacter(npc: EncounterNPC, wechatId: stri
     playerIdentityId,
     remark: npc.nickname,
     worldBackgroundEnabled: true,
+    wechatAccountId: opts?.ownerWechatAccountId?.trim() || existing?.wechatAccountId,
   }
 
   await personaDb.upsertCharacter(ch)
+  removeMeetLoreEntriesForNpcIds([npc.id])
   emitWeChatStorageChanged()
   return ch
 }

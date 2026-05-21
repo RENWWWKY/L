@@ -1,6 +1,6 @@
 import { AnimatePresence, motion } from 'framer-motion'
-import { BookOpen, ChevronDown, Trash2 } from 'lucide-react'
-import { useEffect, useMemo, useState } from 'react'
+import { BookOpen, ChevronDown, Link2, Trash2 } from 'lucide-react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { ApiConfig } from '../../api/types'
 import { generateWorldBookItemContent } from './ai'
 import { LoreEntryEditorSheet } from './LoreEntryEditorSheet'
@@ -8,7 +8,25 @@ import { PlatinumSwitch } from './PlatinumSwitch'
 import type { Character, PlayerIdentity, WorldBook, WorldBookItem } from './types'
 import { formatWorldBookItemLineForPrompt } from './worldBookPronounGuide'
 import { uid } from './utils'
+import { useWechatStore } from '../useWechatStore'
+import { loadAccountsBundle, resolveAccountSessionIdentityId } from '../wechatAccountPersistence'
+import {
+  resolveWorldBookUserInsertContext,
+  type WorldBookUserInsertContext,
+} from '../charUserPlaceholders'
+import {
+  alignCharacterWorldBookUserPlaceholders,
+  normalizeWorldBookItemUserPlaceholders,
+  summarizeWorldBookUserPlaceholdersOnCharacter,
+} from '../worldBookUserPlaceholderBindings'
 import { WorldBookItemGenLengthModal } from './WorldBookItemGenLengthModal'
+import {
+  consolidateMeetCharacterWorldBooks,
+  meetWorldbooksNeedConsolidation,
+} from '../../lumiMeet/meetWorldbookConsolidate'
+import { ensureMeetVol10EpilogueIfNeeded, hasMeetCharacterWechatLinked } from '../../lumiMeet/meetEpilogueAfterContactsSync'
+import { hasMeetVol10GraduatedEpilogue } from '../../lumiMeet/meetNineDimensionWorldBooks'
+import { isMeetSyncedCharacter } from '../../lumiMeet/meetUserProfileSnapshot'
 import { personaDb } from './idb'
 
 const BG_PAGE = 'linear-gradient(180deg, #fafaf9 0%, #f5f5f4 48%, #f4f4f5 100%)'
@@ -35,10 +53,45 @@ export function WorldBooksEditor({
   const [generatingKey, setGeneratingKey] = useState<string>('')
   const [wbItemGenPicker, setWbItemGenPicker] = useState<null | { wbId: string; itemId: string }>(null)
   const [archiveGuideOpen, setArchiveGuideOpen] = useState(false)
+  const [alignUserBusy, setAlignUserBusy] = useState(false)
+  const [alignUserToast, setAlignUserToast] = useState<string | null>(null)
+  const meetVol10BackfillAttemptedRef = useRef(false)
 
   const [networkPeersForInsert, setNetworkPeersForInsert] = useState<
     { id: string; label: string; role: 'archive_root' | 'network_npc' }[]
   >([])
+  const { currentAccountId } = useWechatStore()
+  const [worldBookUserInsertContext, setWorldBookUserInsertContext] =
+    useState<WorldBookUserInsertContext | null>(null)
+
+  useEffect(() => {
+    if (forPlayerIdentity) {
+      void resolveWorldBookUserInsertContext({ playerIdentityRow: identityContext ?? null }).then(
+        setWorldBookUserInsertContext,
+      )
+      return
+    }
+    void (async () => {
+      const acc = currentAccountId?.trim()
+      let sessionPid = ''
+      if (acc) {
+        const bundle = await loadAccountsBundle()
+        const row = bundle?.accounts.find((a) => a.accountId === acc)
+        if (row) sessionPid = resolveAccountSessionIdentityId(row)
+      }
+      const ctx = await resolveWorldBookUserInsertContext({
+        wechatAccountId: acc,
+        playerIdentityId: sessionPid || character.playerIdentityId,
+      })
+      setWorldBookUserInsertContext(ctx)
+    })()
+  }, [
+    forPlayerIdentity,
+    identityContext,
+    currentAccountId,
+    character.id,
+    character.playerIdentityId,
+  ])
 
   useEffect(() => {
     if (forPlayerIdentity) {
@@ -79,6 +132,89 @@ export function WorldBooksEditor({
   }, [forPlayerIdentity, character.id, character.generatedForCharacterId])
 
   const worldBooks = character.worldBooks ?? []
+
+  const userPlaceholderSummary = useMemo(
+    () => summarizeWorldBookUserPlaceholdersOnCharacter(character),
+    [character.worldBooks],
+  )
+
+  const runAlignUserPlaceholders = useCallback(() => {
+    if (alignUserBusy || userPlaceholderSummary.slotCount === 0) return
+    if (!worldBookUserInsertContext) {
+      setAlignUserToast('请先在当前微信账号下选择扮演身份，再执行对齐')
+      window.setTimeout(() => setAlignUserToast(null), 3200)
+      return
+    }
+    setAlignUserBusy(true)
+    setAlignUserToast(null)
+    void (async () => {
+      try {
+        const ctx = worldBookUserInsertContext
+        const next = await alignCharacterWorldBookUserPlaceholders(character, { fallback: ctx })
+        if (!next) {
+          setAlignUserToast('未发现需要对齐的内容（旧式长表达式已处理且各槽位均已绑定）')
+          return
+        }
+        onChange(next)
+        const isIdentity = forPlayerIdentity || !!character.isPlayerIdentity
+        if (isIdentity) await personaDb.upsertPlayerIdentity(next)
+        else await personaDb.upsertCharacter(next)
+
+        const after = summarizeWorldBookUserPlaceholdersOnCharacter(next)
+        const unbound = Math.max(0, after.slotCount - after.boundCount)
+        const who = ctx.displayName || ctx.lineLabel || '当前身份'
+        setAlignUserToast(
+          unbound > 0
+            ? `已处理 ${after.itemCount} 条条目；未绑定槽位已尽量绑到「${who}」，仍有 ${unbound} 处需在各账号下点「玩家」插入`
+            : `已对齐 ${after.itemCount} 条条目：未绑定的 {{user}} 已绑到当前账号「${who}」（共 ${after.slotCount} 处；已有绑定未改动）`,
+        )
+      } catch {
+        setAlignUserToast('对齐失败，请稍后重试')
+      } finally {
+        setAlignUserBusy(false)
+        window.setTimeout(() => setAlignUserToast(null), 4200)
+      }
+    })()
+  }, [
+    alignUserBusy,
+    character,
+    forPlayerIdentity,
+    onChange,
+    userPlaceholderSummary.slotCount,
+    worldBookUserInsertContext,
+  ])
+
+  useEffect(() => {
+    const cid = character.id.trim()
+    if (!cid) return
+    if (!meetWorldbooksNeedConsolidation(cid, worldBooks)) return
+    const next = consolidateMeetCharacterWorldBooks(cid, worldBooks)
+    onChange({ ...character, worldBooks: next, updatedAt: Date.now() })
+  }, [character.id])
+
+  /** 遇见角色已加微信但 vol10 仍为占位稿：打开人设世界书时自动补写结业初印象 */
+  useEffect(() => {
+    if (forPlayerIdentity || meetVol10BackfillAttemptedRef.current) return
+    const cid = character.id.trim()
+    if (!cid || !isMeetSyncedCharacter(cid, worldBooks)) return
+    if (hasMeetVol10GraduatedEpilogue(cid, worldBooks)) return
+    meetVol10BackfillAttemptedRef.current = true
+    let cancelled = false
+    void (async () => {
+      try {
+        if (!(await hasMeetCharacterWechatLinked(cid))) return
+        const written = await ensureMeetVol10EpilogueIfNeeded({ apiConfig, characterId: cid })
+        if (!written || cancelled) return
+        const fresh = await personaDb.getCharacter(cid)
+        if (fresh) onChange(fresh)
+      } catch {
+        // ignore
+      }
+    })()
+    return () => {
+      cancelled = true
+    }
+  }, [apiConfig, character.id, forPlayerIdentity, onChange, worldBooks])
 
   const setWorldBooks = (next: WorldBook[]) => {
     onChange({ ...character, worldBooks: next, updatedAt: Date.now() })
@@ -176,16 +312,39 @@ export function WorldBooksEditor({
         <p className="text-[11px] font-medium uppercase tracking-[0.28em] text-stone-400">Lore Archive</p>
         <div className="mt-2 flex items-start justify-between gap-3">
           <h2 className="min-w-0 flex-1 text-[20px] font-semibold tracking-tight text-stone-900">世界书档案室</h2>
-          <button
-            type="button"
-            onClick={() => setArchiveGuideOpen((v) => !v)}
-            className="group flex shrink-0 items-center gap-1 rounded-full border border-stone-200/90 bg-white/80 px-3 py-1.5 text-[12px] font-medium text-stone-600 shadow-sm backdrop-blur-sm transition hover:border-stone-300 hover:bg-white active:scale-[0.98]"
-            aria-expanded={archiveGuideOpen}
-          >
-            <BookOpen className="size-3.5 text-stone-500 group-hover:text-stone-700" strokeWidth={2} />
-            编辑说明
-          </button>
+          <div className="flex shrink-0 flex-wrap items-center justify-end gap-2">
+            <button
+              type="button"
+              disabled={alignUserBusy || userPlaceholderSummary.slotCount === 0}
+              onClick={runAlignUserPlaceholders}
+              title={
+                userPlaceholderSummary.slotCount === 0
+                  ? '当前档案世界书中没有 {{user}} 表达式'
+                  : worldBookUserInsertContext
+                    ? `未绑定的 {{user}} 将绑到当前账号「${worldBookUserInsertContext.displayName}」；已有绑定不变；旧式长表达式按原文迁出`
+                    : '请先在当前微信账号下选择扮演身份'
+              }
+              className="flex items-center gap-1 rounded-full border border-stone-200/90 bg-white/80 px-3 py-1.5 text-[12px] font-medium text-stone-600 shadow-sm backdrop-blur-sm transition hover:border-stone-300 hover:bg-white active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-45"
+            >
+              <Link2 className="size-3.5 text-stone-500" strokeWidth={2} />
+              {alignUserBusy ? '对齐中…' : '对齐 {{user}}'}
+            </button>
+            <button
+              type="button"
+              onClick={() => setArchiveGuideOpen((v) => !v)}
+              className="group flex items-center gap-1 rounded-full border border-stone-200/90 bg-white/80 px-3 py-1.5 text-[12px] font-medium text-stone-600 shadow-sm backdrop-blur-sm transition hover:border-stone-300 hover:bg-white active:scale-[0.98]"
+              aria-expanded={archiveGuideOpen}
+            >
+              <BookOpen className="size-3.5 text-stone-500 group-hover:text-stone-700" strokeWidth={2} />
+              编辑说明
+            </button>
+          </div>
         </div>
+        {alignUserToast ? (
+          <p className="mt-3 rounded-xl border border-stone-200/90 bg-white/95 px-3 py-2 text-[12px] leading-relaxed text-stone-600 shadow-sm">
+            {alignUserToast}
+          </p>
+        ) : null}
         <p className="mt-2 max-w-[min(100%,22rem)] text-[13px] leading-relaxed text-stone-500">
           {forPlayerIdentity
             ? '刻画玩家本人侧设定；与通讯录人设档案无关。'
@@ -213,10 +372,14 @@ export function WorldBooksEditor({
                       正文里可以用{' '}
                       <code className="rounded bg-stone-100 px-1 py-0.5 text-[12px] text-stone-700">{`{{char}}`}</code> /{' '}
                       <code className="rounded bg-stone-100 px-1 py-0.5 text-[12px] text-stone-700">{`{{user}}`}</code>
-                      ，预览里会换成当前称呼，不用自己手打全名。
+                      （插入时会<strong className="text-stone-800">绑定当时选中的微信账号与扮演身份</strong>；换账号再插会绑定新身份；预览按绑定展开真名）。
                     </li>
                     <li>想删掉一整段占位符时，光标挪到那段里（或紧挨在段尾后面）按一次退格或 Delete，整段表达式会一块儿删掉，不用慢慢抠字母。</li>
                     <li>关掉某一卷或某一条的开关，那一段就不会混进提示词里。</li>
+                    <li>
+                      右上角<strong className="text-stone-800">{'「对齐 {{user}}」'}</strong>
+                      ：未绑定的槽位绑到<strong className="text-stone-800">当前微信账号与扮演身份</strong>；已有绑定不变；旧式长表达式按原文迁出。
+                    </li>
                   </ul>
                 ) : (
                   <ul className="list-disc space-y-2 pl-4 marker:text-stone-400">
@@ -233,7 +396,9 @@ export function WorldBooksEditor({
                       <code className="rounded bg-stone-100 px-1 py-0.5 text-[12px] text-stone-700">{`{{char}}`}</code>{' '}
                       = 当前档案这位人设的名字；{' '}
                       <code className="rounded bg-stone-100 px-1 py-0.5 text-[12px] text-stone-700">{`{{user}}`}</code>{' '}
-                      = 绑定的玩家身份名字。抽屉里点「快捷插入」会直接塞进原文式子，保存后预览会替换成真名。
+                      = 绑定的玩家身份（<strong className="text-stone-800">按插入时的账号·身份锁定</strong>，不会随聊天窗口切换）；正文只显示{' '}
+                      <code className="rounded bg-stone-100 px-1 py-0.5 text-[12px] text-stone-700">{`{{user}}`}</code>
+                      ，账号与身份记在条目元数据里，预览与对话注入按绑定展开真名。
                     </li>
                     <li>
                       同一条人脉里<strong className="text-stone-800">其他人</strong>用{' '}
@@ -242,6 +407,13 @@ export function WorldBooksEditor({
                     </li>
                     <li>要删占位符同上：光标放在这段里或紧贴在整段末尾后面，按一次退格或 Delete，整段表达式一起没。</li>
                     <li>某一卷或某一条关掉开关，那一段就不会进提示词，放心试错。</li>
+                    <li>
+                      右上角<strong className="text-stone-800">{'「对齐 {{user}}」'}</strong>
+                      ：未绑定的 <code className="rounded bg-stone-100 px-1 text-[12px]">{`{{user}}`}</code>{' '}
+                      绑到<strong className="text-stone-800">当前登录账号的扮演身份</strong>；旧式{' '}
+                      <code className="rounded bg-stone-100 px-1 text-[12px]">{`{{user:…}}`}</code>{' '}
+                      按原文迁出；<strong className="text-stone-800">已绑好的槽位不会改</strong>。多账号请切换后再点一次对齐。
+                    </li>
                   </ul>
                 )}
               </div>
@@ -391,6 +563,7 @@ export function WorldBooksEditor({
           canUseAi={canUseAi}
           generating={generatingKey === `${sheetEntry.wbId}::${sheetEntry.itemId}`}
           onOpenAiLengthModal={() => setWbItemGenPicker({ wbId: sheetEntry.wbId, itemId: sheetEntry.itemId })}
+          worldBookUserInsertContext={worldBookUserInsertContext}
         />
       ) : null}
 
@@ -419,7 +592,11 @@ export function WorldBooksEditor({
                 worldBackgroundPrompt: worldBackgroundPrompt.trim() || undefined,
                 linkedNpcsContext: linkedNpcsContext.trim() || undefined,
               })
-              updateItem(p.wbId, p.itemId, { content: text })
+              const sync = normalizeWorldBookItemUserPlaceholders(text, item.userPlaceholderBindings, null)
+              updateItem(p.wbId, p.itemId, {
+                content: sync.content,
+                userPlaceholderBindings: sync.bindings,
+              })
             } finally {
               setGeneratingKey('')
             }

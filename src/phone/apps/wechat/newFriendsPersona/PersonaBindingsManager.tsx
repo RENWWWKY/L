@@ -1,6 +1,10 @@
 import { ArrowLeft, ChevronDown } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { personaDb } from './idb'
+import { loadAccountsBundle } from '../wechatAccountPersistence'
+import { useWechatStore } from '../useWechatStore'
+import { stampWechatAccountOwner } from '../wechatAccountScope'
+import { mergeCharacterPlayerIdentityLink, preserveCharacterBoundPlayerIdentity } from '../wechatCharacterPlayerIdentity'
 import type { Character, PlayerIdentity, Relationship } from './types'
 import { uid } from './utils'
 
@@ -81,12 +85,17 @@ export function PersonaBindingsManager({
 
   const [bindIdentityId, setBindIdentityId] = useState('')
   const [bindCharId, setBindCharId] = useState('')
+  const { currentAccountId } = useWechatStore()
 
   const load = useCallback(async () => {
     setLoading(true)
+    const acc = currentAccountId?.trim()
+    const bundle = await loadAccountsBundle()
+    const linked =
+      bundle?.accounts.find((a) => a.accountId === acc)?.personaContacts.map((c) => c.characterId) ?? []
     const [r, idents, rels] = await Promise.all([
-      personaDb.listRootCharacters(),
-      personaDb.listPlayerIdentities(),
+      acc ? personaDb.listRootCharactersAccessibleToWechatAccount(acc, linked) : Promise.resolve([]),
+      personaDb.listPlayerIdentities(acc ?? undefined),
       personaDb.listAllRelationships(),
     ])
     setRoots(r)
@@ -99,7 +108,7 @@ export function PersonaBindingsManager({
       return idents[0]?.id ?? ''
     })
     setLoading(false)
-  }, [])
+  }, [currentAccountId])
 
   useEffect(() => {
     void load()
@@ -189,7 +198,19 @@ export function PersonaBindingsManager({
     })
     const full = await personaDb.getCharacter(bindCharId)
     if (full) {
-      await personaDb.upsertCharacter({ ...full, playerIdentityId: bindIdentityId, updatedAt: Date.now() })
+      const linkAcc =
+        iden.wechatAccountId?.trim() || currentAccountId?.trim() || undefined
+      const linkPatch = mergeCharacterPlayerIdentityLink(full, bindIdentityId, linkAcc)
+      await personaDb.upsertCharacter(
+        stampWechatAccountOwner(
+          preserveCharacterBoundPlayerIdentity(full, {
+            ...full,
+            ...linkPatch,
+            updatedAt: Date.now(),
+          }),
+          currentAccountId,
+        ),
+      )
     }
     await load()
     onSaved()

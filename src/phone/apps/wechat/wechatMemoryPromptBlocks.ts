@@ -1,6 +1,7 @@
 import { stripWechatGroupEventNoticePrefix } from './groupChatEventNotice'
 import { findGroupMember } from './groupChatUtils'
 import type { GroupChatRow, WeChatChatMessage } from './newFriendsPersona/types'
+import { isMeetImportedWeChatMessageId } from '../lumiMeet/meetMemoryConstants'
 import { personaDb } from './newFriendsPersona/idb'
 import {
   parseGroupIdFromConversationKey,
@@ -117,6 +118,7 @@ export async function formatUnsummarizedPrivateChatBlock(params: {
   if (!rows.length) return ''
   const lines: string[] = []
   for (const m of rows) {
+    if (isMeetImportedWeChatMessageId(m.id)) continue
     const line = formatPrivateLineUnsummarized(m)
     if (line) lines.push(line)
   }

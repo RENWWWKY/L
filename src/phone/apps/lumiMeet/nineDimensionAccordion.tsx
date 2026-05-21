@@ -25,7 +25,11 @@ export const MEET_SYNC_WORLD_BOOK_VOLUME_TITLES: readonly { volKey: `vol${string
   { volKey: 'vol08', bookTitle: '08 DETAILS | 日常侧写' },
   { volKey: 'vol09', bookTitle: '09 ARC | 隐藏弧光' },
   /** 人设库内独立分册：条目 priority=after，与微信「人设 · 世界书」尾声延展分栏同源 */
-  { volKey: 'vol10', bookTitle: '10 ATTITUDE | 尾声延展 · 对用户的当前态度' },
+  { volKey: 'vol10', bookTitle: '10 ATTITUDE | 尾声延展' },
+  /** 匹配成功时见到的 {{user}} 遇见对外档案（假面快照；与微信身份可不一致） */
+  { volKey: 'vol11', bookTitle: '11 MEET MASK | 遇见对外档案快照' },
+  /** 临时会话「交换真心话」双盲归档（仅该角色人设世界书，不进全局档案室） */
+  { volKey: 'vol12', bookTitle: '12 TRUTH | 交换真心话纪要' },
 ] as const
 
 type FieldRowProps = { labelEn: string; labelZh: string; body: ReactNode }
@@ -248,21 +252,43 @@ export function buildNineDimensionSections(dossier: ComprehensivePersona): Secti
 
 export function NineDimensionAccordion({
   dossier,
-  initialOpenId = '01-base',
+  initialOpenId = '',
+  intimacyScore,
 }: {
   dossier: ComprehensivePersona
+  /** 默认 `''`：全部分册折叠，由用户点击展开 */
   initialOpenId?: string
+  /** 0–100：临时会话好感；低于阈值的分册内容以「LOCKED」遮罩，满 100 或未传视为全解 */
+  intimacyScore?: number
 }) {
   const [activeId, setActiveId] = useState<string>(initialOpenId)
   const toggle = useCallback((id: string) => {
     setActiveId((prev) => (prev === id ? '' : id))
   }, [])
   const sections = useMemo(() => buildNineDimensionSections(dossier), [dossier])
+  const gate = typeof intimacyScore === 'number' ? Math.max(0, Math.min(100, Math.round(intimacyScore))) : 100
+
+  const minFor = useCallback((id: string) => {
+    const map: Record<string, number> = {
+      '01-base': 0,
+      '02-core': 18,
+      '03-psyche': 32,
+      '04-abilities': 12,
+      '05-desire': 55,
+      '06-social': 25,
+      '07-contrast': 62,
+      '08-details': 20,
+      '09-arc': 78,
+    }
+    return map[id] ?? 0
+  }, [])
 
   return (
     <div className="mx-auto w-full max-w-lg space-y-2">
       {sections.map((sec) => {
         const isOpen = activeId === sec.id
+        const need = minFor(sec.id)
+        const locked = gate < need
         return (
           <div
             key={sec.id}
@@ -285,7 +311,9 @@ export function NineDimensionAccordion({
                 <span className="mx-2 text-[10px] text-[#d4d0c8]">|</span>
                 <span className="text-[13px] font-medium text-[#3d3a34]">{sec.titleZh}</span>
               </span>
-              <span className="meet-caption-en shrink-0 text-[9px] text-[#c9c5be]">{isOpen ? '−' : '+'}</span>
+              <span className="meet-caption-en shrink-0 text-[9px] text-[#c9c5be]">
+                {locked ? `LOCK · ${need}` : isOpen ? '−' : '+'}
+              </span>
             </button>
             <AnimatePresence initial={false}>
               {isOpen ? (
@@ -297,7 +325,19 @@ export function NineDimensionAccordion({
                   transition={{ type: 'spring', stiffness: 220, damping: 32, mass: 0.85 }}
                   className="overflow-hidden border-t border-black/[0.04]"
                 >
-                  <div className="px-4 py-2">{sec.content}</div>
+                  <div className="relative px-4 py-2">
+                    <div className={locked ? 'pointer-events-none select-none blur-[5px]' : ''}>{sec.content}</div>
+                    {locked ? (
+                      <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 bg-white/75 px-4 text-center backdrop-blur-[2px]">
+                        <p className="meet-caption-en text-[9px] uppercase tracking-[0.28em] text-[#b8973a]">
+                          Classified · 未解锁
+                        </p>
+                        <p className="font-mono text-[10px] uppercase tracking-[0.14em] text-[#6e6860]">
+                          Req. Resonance {need}+ · 需共鸣 {need}+
+                        </p>
+                      </div>
+                    ) : null}
+                  </div>
                 </motion.div>
               ) : null}
             </AnimatePresence>
