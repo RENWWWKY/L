@@ -269,6 +269,7 @@ export function PrivateMemoryList({ contacts }: { contacts: WeChatContactRow[] }
           hasGroupChatTag: false,
           hasOfflineTag: false,
           hasLinkedOfflineTag: true,
+          hasMeetTag: false,
         },
         t,
       ).slice(0, 4000)

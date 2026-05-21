@@ -50,7 +50,7 @@ export function DestinyArchiveMemoriesPanel({
   memoryEntries,
   npc,
   meetProfile,
-  intimacyScore = 0,
+  intimacyScore: _intimacyScore = 0,
   onSaveMemoryEntry,
   onDeleteMemoryEntry,
   onOpenWorldbook,

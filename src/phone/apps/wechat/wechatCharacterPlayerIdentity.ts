@@ -149,7 +149,7 @@ export async function resolveActivePrivateChatSessionPlayerIdentityId(params: {
     for (const lid of getCharacterLinkedPlayerIdentityIds(ch)) {
       if (!lid || lid === '__none__') continue
       const row = await personaDb.getPlayerIdentity(lid)
-      if (identityBelongsToWechatAccount(row, acc)) candidates.add(lid)
+      if (row && identityBelongsToWechatAccount(row, acc)) candidates.add(lid)
     }
 
     let bestSid = app
@@ -388,7 +388,7 @@ export async function repairCharacterSlotPrimaryBindingFromLinked(characterId: s
   for (const lid of getCharacterLinkedPlayerIdentityIds(ch)) {
     if (isWechatAccountSessionSlotIdentityId(lid)) continue
     const row = await personaDb.getPlayerIdentity(lid)
-    if (!identityHasDisplayName(row)) continue
+    if (!row || !identityHasDisplayName(row)) continue
     if (primaryAccId && identityBelongsToWechatAccount(row, primaryAccId)) {
       promoteId = lid
       break

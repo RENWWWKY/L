@@ -100,10 +100,9 @@ export async function runFriendRequestTempChatReply(
     .slice(0, 4)
 
   const now = Date.now()
-  let row = await personaDb.getFriendRequestById(params.requestId)
   for (let i = 0; i < replyLines.length; i += 1) {
     const text = replyLines[i]!
-    row = await appendFriendRequestTempChatMessage(params.requestId, {
+    await appendFriendRequestTempChatMessage(params.requestId, {
       sender: 'character',
       text,
       time: now + 1 + i * 120,

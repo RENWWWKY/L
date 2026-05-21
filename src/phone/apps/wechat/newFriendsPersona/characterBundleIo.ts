@@ -586,7 +586,7 @@ export async function importCharacterBundle(
       '请先在「我的身份」中创建身份，并确保已设为当前使用（新建角色人设时在弹窗里选择身份也会写入当前身份）。未设置当前玩家身份时不能导入人设包，以免无法正确绑定。',
     )
   }
-  const identity = await personaDb.getPlayerIdentity(importPlayerIdentityId, wechatAccountId)
+  const identity = await personaDb.getPlayerIdentity(importPlayerIdentityId)
   const playerIdentityName = (identity?.name || '').trim() || '未命名身份'
 
   if (mode === 'new') {

@@ -216,7 +216,7 @@ export async function filterPersonaContactsToWechatAccount(
   primaryWechatAccountId?: string | null,
 ): Promise<WeChatPersonaContact[]> {
   const acc = wechatAccountId.trim()
-  const primary = primaryWechatAccountId?.trim() || acc
+  void primaryWechatAccountId
   if (!acc) return contacts.map((c) => ({ ...c }))
 
   const linkedCanon = new Set<string>()

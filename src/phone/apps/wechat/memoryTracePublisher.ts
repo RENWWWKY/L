@@ -2,7 +2,7 @@ import type { ApiConfig } from '../api/types'
 import { buildWorldbookContext } from '../../worldbook/buildWorldbookContext'
 import { getWorldbookLoreEntriesSnapshot } from '../../worldbook/worldbookLoreStore'
 import type { GlobalWechatPlate } from '../../worldbook/globalWorldBookTypes'
-import type { Character, PlayerIdentity } from './newFriendsPersona/types'
+import type { Character } from './newFriendsPersona/types'
 import { personaDb } from './newFriendsPersona/idb'
 import {
   expandCharUserPlaceholders,

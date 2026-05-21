@@ -3,13 +3,16 @@ import { BookOpen } from 'lucide-react'
 export function MemoryTutorialButton({
   onClick,
   compact,
-  'data-memory-coach': coachTarget,
+  coachTarget,
+  'data-memory-coach': dataMemoryCoach,
 }: {
   onClick: () => void
   compact?: boolean
+  /** @deprecated 使用 coachTarget */
   'data-memory-coach'?: string
+  coachTarget?: string
 }) {
-  const coachAttr = coachTarget?.trim()
+  const coachAttr = (coachTarget ?? dataMemoryCoach)?.trim()
   return (
     <button
       type="button"

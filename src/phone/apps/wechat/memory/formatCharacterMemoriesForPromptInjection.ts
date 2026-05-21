@@ -9,13 +9,14 @@ export async function formatCharacterMemoriesForPromptInjection(
 ): Promise<string> {
   const cid = characterId.trim()
   if (!cid) return ''
+  const recallOpts = { ...opts, apiConfig: opts?.apiConfig ?? null }
   const [ownMem, linkedMem] = await Promise.all([
     personaDb.formatCharacterMemoriesForPromptByRelevance(cid, relevanceText, {
-      ...opts,
+      ...recallOpts,
       memoryBucket: 'own',
     }),
     personaDb.formatCharacterMemoriesForPromptByRelevance(cid, relevanceText, {
-      ...opts,
+      ...recallOpts,
       memoryBucket: 'linked',
     }),
   ])
@@ -30,13 +31,14 @@ export async function getCharacterMemoryRelevanceTraceForPromptInjection(
 ) {
   const cid = characterId.trim()
   if (!cid) return { keywordHits: [], vectorRetrievals: [] }
+  const recallOpts = { ...opts, apiConfig: opts?.apiConfig ?? null }
   const [own, linked] = await Promise.all([
     personaDb.getCharacterMemoryRelevanceTraceByRelevance(cid, relevanceText, {
-      ...opts,
+      ...recallOpts,
       memoryBucket: 'own',
     }),
     personaDb.getCharacterMemoryRelevanceTraceByRelevance(cid, relevanceText, {
-      ...opts,
+      ...recallOpts,
       memoryBucket: 'linked',
     }),
   ])

@@ -117,6 +117,8 @@ export type Character = {
   wechatAccountId?: string
   /** 创建该角色时选择的玩家身份 id（来自 playerIdentities 表） */
   playerIdentityId?: string
+  /** IndexedDB 归一化：玩家身份行在 characters 表中的标记 */
+  isPlayerIdentity?: boolean
   /** 额外关联的玩家身份（多马甲扮演 / 小号加好友后绑定） */
   linkedPlayerIdentityIds?: string[]
   /** 各关联马甲归属的微信账号 id（与 linkedPlayerIdentityIds 对应，供提示词/UI） */

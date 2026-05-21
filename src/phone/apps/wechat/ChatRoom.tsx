@@ -39,7 +39,6 @@ import { loadMeetEncounterMemoriesPromptBlock } from '../lumiMeet/meetWechatSync
 import { formatCharacterMemoriesForPromptInjection } from './memory/formatCharacterMemoriesForPromptInjection'
 import { emitWeChatStorageChanged, personaDb } from './newFriendsPersona/idb'
 import {
-  buildAltWechatStrangerContactPromptBlock,
   shouldTreatWechatLineAsStrangerContact,
   wrapStrangerContactLongTermMemoryBlock,
 } from './wechatAltAccountPrompt'
@@ -129,8 +128,6 @@ import {
   parseGroupIdFromGroupPeerCharacterId,
   resolveGroupWeChatStorageConversationKey,
   resolvePrivateWeChatStorageConversationKey,
-  wechatConversationKey,
-  wechatGroupConversationKey,
 } from './wechatConversationKey'
 import { ensureAccountScopedGroupConversation, ensureAccountScopedPrivateConversation } from './wechatAccountPrivateChatStorage'
 import {
@@ -1651,7 +1648,7 @@ export function ChatRoom({
   /** 当前微信马甲下的会话身份 id（存 IndexedDB 用，勿传角色全局绑定身份） */
   playerIdentityId,
   /** 注入模型 / 记忆用的身份 id；缺省时私聊会回退为「角色绑定 ∪ 会话身份」 */
-  promptPlayerIdentityId = null,
+  promptPlayerIdentityId: _promptPlayerIdentityId = null,
   /** 玩家头像（与「我」页资料一致），用于己方聊天气泡 */
   playerAvatarUrl,
   /** 对方在微信通讯录中的头像 URL；缺省时（角色私聊）会尝试从人设库读取 */
@@ -1768,7 +1765,6 @@ export function ChatRoom({
   )
 
   useEffect(() => {
-    let cancelled = false
     const acc = currentAccountId?.trim()
     const pid = playerIdentityId.trim() || '__none__'
     void (async () => {
@@ -1794,12 +1790,8 @@ export function ChatRoom({
         console.warn('[wechat] account-scoped conversation migrate failed:', err)
       }
     })()
-    return () => {
-      cancelled = true
-    }
   }, [conversationCharacterId, currentAccountId, groupId, playerIdentityId, roomType])
 
-  const effectivePromptPlayerIdentityId = promptPlayerIdentityId?.trim() || playerIdentityId.trim()
   /** 与 UI 当前会话一致；异步 hydrate 结束前若已切会话则丢弃结果，避免错写/空窗 */
   const conversationKeyLiveRef = useRef(conversationKey)
   conversationKeyLiveRef.current = conversationKey

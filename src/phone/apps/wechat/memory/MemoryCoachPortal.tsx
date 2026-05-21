@@ -269,7 +269,9 @@ export function MemoryCoachPortal({
             className="absolute inset-0 h-full w-full cursor-default border-0 bg-transparent p-0"
             aria-label="跳过引导"
             onClick={onSkip}
-          />
+          >
+            <span className="sr-only">跳过引导</span>
+          </Pressable>
 
           {showHole && hole ? (
             <motion.div

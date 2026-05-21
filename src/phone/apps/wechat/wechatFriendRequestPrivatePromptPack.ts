@@ -3,7 +3,6 @@ import type { ChatTranscriptTurn } from './wechatChatAi'
 import { formatUnsummarizedMeetChatBlock } from '../lumiMeet/meetMemoryPromptBlocks'
 import { isMeetSyncedCharacter } from '../lumiMeet/meetUserProfileSnapshot'
 import { loadMeetEncounterMemoriesPromptBlock } from '../lumiMeet/meetWechatSyncOnFriendLinked'
-import { loadOfflineDatingPlotsPromptBlock } from './dating/loadOfflineDatingPlotsForWechatPrompt'
 import { personaDb } from './newFriendsPersona/idb'
 import { WECHAT_LUMI_PEER_CHARACTER_ID } from './wechatConversationKey'
 import {

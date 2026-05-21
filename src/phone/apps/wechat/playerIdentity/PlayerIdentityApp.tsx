@@ -21,11 +21,7 @@ import {
 import { isLargeMbtiAvatar, resolveMbtiImageUrl } from '../newFriendsPersona/mbtiProfileUi'
 import { useWechatStore } from '../useWechatStore'
 import { resolveCanonicalCharacterId } from '../wechatGlobalCharacterRegistry'
-import {
-  characterBelongsToWechatAccount,
-  identityBelongsToWechatAccount,
-  stampWechatAccountOwner,
-} from '../wechatAccountScope'
+import { identityBelongsToWechatAccount, stampWechatAccountOwner } from '../wechatAccountScope'
 
 const COLORS = {
   bg: '#f5f5f5',
@@ -351,7 +347,7 @@ export function PlayerIdentityApp({
                           existing &&
                           !identityBelongsToWechatAccount(existing, currentAccountId)
                         ) {
-                          normalized = { ...normalized, id: uid() }
+                          normalized = { ...normalized, id: uid('pi') }
                         }
                         await personaDb.upsertPlayerIdentity(
                           stampWechatAccountOwner(normalized, currentAccountId),

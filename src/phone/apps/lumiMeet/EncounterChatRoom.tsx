@@ -732,7 +732,9 @@ export function EncounterChatRoom({ npc, onBack }: { npc: EncounterNPC; onBack: 
           truthMirrorCeremonyOpen: truthMirrorOpenRef.current,
           pendingUserImage,
           injectUserProfileAvatarVision: injectAvatar && !!avatarPayload,
-          userProfileAvatarImage: avatarPayload,
+          userProfileAvatarImage: avatarPayload
+            ? { base64: avatarPayload.base64, type: avatarPayload.mime }
+            : null,
         })
         rawReplies = aiOut.replies
         rawEvaluation = aiOut.evaluation

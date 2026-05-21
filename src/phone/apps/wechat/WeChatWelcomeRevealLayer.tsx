@@ -21,7 +21,7 @@ export function WeChatWelcomeRevealLayer({
   }
 
   return (
-    <motion.div className={className} initial={false} {...motionProps}>
+    <motion.div className={className} {...motionProps} initial={false}>
       {children}
     </motion.div>
   )

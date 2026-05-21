@@ -30,7 +30,6 @@ import {
   parseWechatAccountPrivateConversationKey,
   resolvePrivateChatSessionPlayerIdentityId,
   resolvePrivateWeChatStorageConversationKey,
-  wechatConversationKey,
   WECHAT_GROUP_BOT_CHARACTER_ID,
   WECHAT_GROUP_USER_CHAR_ID,
 } from './wechatConversationKey'

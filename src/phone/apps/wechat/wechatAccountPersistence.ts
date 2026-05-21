@@ -49,7 +49,7 @@ export async function saveAccountsBundle(bundle: WechatAccountsBundle): Promise<
  * 不调用 upsertPlayerIdentity，不会出现在「我的身份 / 身份创建」列表。
  */
 export function allocateWechatAccountIdentitySlot(): string {
-  return `wx-slot-${uid()}`
+  return `wx-slot-${uid('wx')}`
 }
 
 export async function migrateLegacyProfileToBundle(

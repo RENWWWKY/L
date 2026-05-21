@@ -115,7 +115,7 @@ export async function sanitizeUnifiedPrimaryMemoryBody(
     pushCharRules(ordered, n, `{{id:${nid}}}`)
   }
   const content = applyRules(text, mergeRules(ordered))
-  return attachMemoryUserPlaceholderBindings({ content, userPlaceholderBindings: [] }, userBindCtx)
+  return attachMemoryUserPlaceholderBindings({ content, userPlaceholderBindings: [] }, userBindCtx ?? null)
 }
 
 /** 关联记忆 linked：挂在人脉 NPC，存档根为 linkedFrom */
@@ -160,7 +160,7 @@ export async function sanitizeUnifiedLinkedMemoryBody(
     pushCharRules(ordered, await personaDb.getCharacter(peer), `{{id:${peer}}}`)
   }
   const content = applyRules(text, mergeRules(ordered))
-  return attachMemoryUserPlaceholderBindings({ content, userPlaceholderBindings: [] }, userBindCtx)
+  return attachMemoryUserPlaceholderBindings({ content, userPlaceholderBindings: [] }, userBindCtx ?? null)
 }
 
 /** 群聊总结：他人一律 {{id:…}}，玩家 {{user}} */
@@ -214,7 +214,7 @@ export async function sanitizeGroupMemorySummaryBody(
     pushCharRules(ordered, ch, `{{id:${cid}}}`)
   }
   const content = applyRules(text, mergeRules(ordered))
-  return attachMemoryUserPlaceholderBindings({ content, userPlaceholderBindings: [] }, userBindCtx)
+  return attachMemoryUserPlaceholderBindings({ content, userPlaceholderBindings: [] }, userBindCtx ?? null)
 }
 
 /** 仅私聊摘录总结（如好友申请）：玩家 + 对方人设 */
@@ -237,5 +237,5 @@ export async function sanitizePrivateMemorySummaryBody(
   }
   pushCharRules(ordered, await personaDb.getCharacter(peer), '{{char}}')
   const content = applyRules(text, mergeRules(ordered))
-  return attachMemoryUserPlaceholderBindings({ content, userPlaceholderBindings: [] }, userBindCtx)
+  return attachMemoryUserPlaceholderBindings({ content, userPlaceholderBindings: [] }, userBindCtx ?? null)
 }

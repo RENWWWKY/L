@@ -1,5 +1,5 @@
 import { AnimatePresence, motion } from 'framer-motion'
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import { AppPlaceholderScreen } from './components/AppPlaceholderScreen'
 import { CustomizeScreen } from './components/CustomizeScreen'
 import { EntryNoticeModal } from './components/EntryNoticeModal'

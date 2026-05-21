@@ -254,7 +254,6 @@ export function buildWechatWorldBookUserPlaceholderDirective(params: {
   /** 当前窗口发言人展示名（微信昵称或当前扮演档名） */
   currentWindowSpeakerLabel: string
 }): string {
-  const c = String(params.charName || '').trim() || '对方'
   const anchor = String(params.worldBookUserLineLabel || '').trim() || params.primaryUserName
   const u = String(params.primaryUserName || '').trim() || '用户'
   const cur = String(params.currentWindowSpeakerLabel || '').trim() || '当前联系人'

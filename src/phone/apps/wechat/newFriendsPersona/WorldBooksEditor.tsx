@@ -66,7 +66,10 @@ export function WorldBooksEditor({
 
   useEffect(() => {
     if (forPlayerIdentity) {
-      void resolveWorldBookUserInsertContext({ playerIdentityRow: identityContext ?? null }).then(
+      void resolveWorldBookUserInsertContext({
+        wechatAccountId: currentAccountId,
+        playerIdentityRow: identityContext ?? null,
+      }).then(
         setWorldBookUserInsertContext,
       )
       return

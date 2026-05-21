@@ -9,8 +9,6 @@ import {
 import {
   isWechatAccountGroupConversationKey,
   isWechatAccountPrivateConversationKey,
-  isWechatGroupConversationKey,
-  parseGroupIdFromConversationKey,
   parsePrivateWeChatConversationCharacterAndSession,
   parseWechatAccountGroupConversationKey,
   parseWechatAccountPrivateConversationKey,

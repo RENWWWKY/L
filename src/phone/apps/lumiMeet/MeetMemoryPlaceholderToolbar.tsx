@@ -47,7 +47,7 @@ export function MeetMemoryPlaceholderToolbar({
     draft: value,
     characterId,
     npc,
-    meetProfile,
+    profile: meetProfile,
   })
   const showPreview = value.includes('{{')
 

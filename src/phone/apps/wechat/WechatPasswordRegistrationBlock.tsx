@@ -86,7 +86,7 @@ function InsetPasswordField({
           autoCapitalize="off"
           autoCorrect="off"
           spellCheck={false}
-          inputMode="latin"
+          inputMode="text"
           enterKeyHint="done"
           data-1p-ignore
           data-lpignore="true"

@@ -54,7 +54,6 @@ import {
   buildWechatTranscriptSpeakerAttributionLine,
   buildWechatWorldBookUserPlaceholderDirective,
   expandLinkedMemoryPlaceholders,
-  expandScopedWorldBookUserPlaceholdersInText,
   expandSystemPromptPlaceholders,
   resolveCharUserNamesForPrompt,
 } from './charUserPlaceholders'

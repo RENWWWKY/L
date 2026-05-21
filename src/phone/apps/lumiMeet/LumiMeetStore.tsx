@@ -67,10 +67,15 @@ type Ctx = {
       content: string
       kind?: MeetChatMessage['kind']
       swapCard?: MeetChatMessage['swapCard']
-      replyTo?: MeetChatMessage['replyTo']
+      musicShare?: MeetChatMessage['musicShare']
+      echoReveal?: MeetChatMessage['echoReveal']
+      truthMirrorRecord?: MeetChatMessage['truthMirrorRecord']
+      meetContractStatus?: MeetChatMessage['meetContractStatus']
+      meetContractCharRequest?: MeetChatMessage['meetContractCharRequest']
       meetTruthMirrorCharRequest?: MeetChatMessage['meetTruthMirrorCharRequest']
       meetTruthMirrorUserResponse?: MeetChatMessage['meetTruthMirrorUserResponse']
-      truthMirrorRecord?: MeetChatMessage['truthMirrorRecord']
+      replyTo?: MeetChatMessage['replyTo']
+      images?: MeetChatMessage['images']
     },
   ) => string
   /** 从临时会话移除一条消息（如长按撤回己方气泡） */
@@ -317,6 +322,7 @@ export function LumiMeetProvider({ children }: { children: ReactNode }) {
         meetTruthMirrorCharRequest?: MeetChatMessage['meetTruthMirrorCharRequest']
         meetTruthMirrorUserResponse?: MeetChatMessage['meetTruthMirrorUserResponse']
         replyTo?: MeetChatMessage['replyTo']
+        images?: MeetChatMessage['images']
       },
     ) => {
       const id = `m-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
@@ -341,6 +347,7 @@ export function LumiMeetProvider({ children }: { children: ReactNode }) {
           ...(msg.meetTruthMirrorUserResponse
             ? { meetTruthMirrorUserResponse: msg.meetTruthMirrorUserResponse }
             : {}),
+          ...(msg.images?.length ? { images: msg.images } : {}),
         }
         return {
           ...s,

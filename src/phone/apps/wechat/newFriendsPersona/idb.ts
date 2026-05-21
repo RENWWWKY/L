@@ -78,7 +78,6 @@ import {
   WECHAT_GROUP_USER_CHAR_ID,
   WECHAT_LUMI_PEER_CHARACTER_ID,
   groupMemoryBucketCharacterId,
-  isWechatAccountPrivateConversationKey,
   isWechatGroupConversationKey,
   parseGroupIdFromConversationKey,
   parseGroupIdFromGroupPeerCharacterId,
@@ -102,7 +101,6 @@ import {
 } from '../chatTheme/types'
 import {
   expandLinkedMemoryPlaceholders,
-  expandScopedWorldBookUserPlaceholdersInText,
   resolveCharUserNamesForPrompt,
 } from '../charUserPlaceholders'
 import {
@@ -113,7 +111,6 @@ import {
 import {
   registerGlobalWechatCharacter,
   resolveCanonicalCharacterId,
-  resolveCanonicalCharacterIdByWechatId,
   unregisterGlobalWechatCharacterForCharacterId,
 } from '../wechatGlobalCharacterRegistry'
 import { characterBelongsToWechatAccount, stampWechatAccountOwner } from '../wechatAccountScope'

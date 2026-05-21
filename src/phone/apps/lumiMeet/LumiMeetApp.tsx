@@ -18,7 +18,6 @@ import type { MeetTab } from './meetAppTabs'
 import { MeetAppCoachPortal } from './MeetAppCoach'
 import { MeetAppTutorialModalPortal } from './MeetAppTutorialModal'
 import {
-  MEET_APP_COACH_STEPS,
   MEET_APP_OPEN_TUTORIAL_EVENT,
   MEET_APP_START_COACH_EVENT,
   MEET_APP_COACH_TARGET_ATTR,

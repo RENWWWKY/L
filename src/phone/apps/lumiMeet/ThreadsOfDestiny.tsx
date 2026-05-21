@@ -31,7 +31,12 @@ const DOT_GRAY_B = { cx: 176, cy: 92 }
 const DOT_GOLD_A = { cx: 14, cy: 152 }
 const DOT_GOLD_B = { cx: 26, cy: 138 }
 
-const WANDER_MIRROR = { duration: 4, repeat: Number.POSITIVE_INFINITY, repeatType: 'mirror' as const, ease: 'easeInOut' }
+const WANDER_MIRROR = {
+  duration: 4,
+  repeat: Number.POSITIVE_INFINITY,
+  repeatType: 'mirror' as const,
+  ease: 'easeInOut' as const,
+}
 
 export function ThreadsOfDestiny({ scanning, revealBurst, size = 248 }: Props) {
   const [phase, setPhase] = useState<TrailPhase>('idle')

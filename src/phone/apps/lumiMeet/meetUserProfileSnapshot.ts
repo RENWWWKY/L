@@ -55,7 +55,7 @@ export function formatMeetUserProfileSnapshotForWorldbook(
 function mkVol11Item(
   npcId: string,
   nickname: string,
-  realName: string,
+  _realName: string,
   content: string,
   now: number,
 ): WorldBookItem {

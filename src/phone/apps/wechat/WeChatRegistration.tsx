@@ -455,7 +455,7 @@ export function WeChatRegistration({ onBack, mode = 'initial', onAccountAdded }:
   )
 }
 
-function UnderlineField({
+export function UnderlineField({
   labelEn,
   labelZh,
   value,

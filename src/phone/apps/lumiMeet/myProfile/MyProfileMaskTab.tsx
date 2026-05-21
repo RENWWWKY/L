@@ -12,7 +12,7 @@ type Props = {
   onAvatarFile: (e: ChangeEvent<HTMLInputElement>) => void
 }
 
-export function MyProfileMaskTab({ profile, setMeetProfile, avatarInputRef, onPickAvatar, onAvatarFile }: Props) {
+export function MyProfileMaskTab({ profile, setMeetProfile, avatarInputRef: _avatarInputRef, onPickAvatar, onAvatarFile: _onAvatarFile }: Props) {
   const toggleIntention = useCallback(
     (id: MeetMatchIntention) => {
       const cur = profile.meetIntentionsPublic

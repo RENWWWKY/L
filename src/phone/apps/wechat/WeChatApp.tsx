@@ -86,7 +86,6 @@ import {
   resolvePrivateWeChatStorageConversationKey,
   parseWechatAccountPrivateConversationKey,
   wechatConversationKey,
-  wechatGroupConversationKey,
   wechatGroupPeerCharacterId,
 } from './wechatConversationKey'
 import {
@@ -3610,7 +3609,7 @@ function WeChatAppInner({ onBack }: Props) {
   const { consoleOpen, closeConsole } = useWeChatConsole()
   const { accountSwitchRevision, currentAccountId, accounts, appendPersonaContactsForCurrentAccount } =
     useWechatStore()
-  const { state, wechatThemeStyle, setProfile, replaceWeChatPersonaContacts, removeWeChatPersonaContactsByCharacterIds } = useCustomization()
+  const { state, wechatThemeStyle, setProfile, removeWeChatPersonaContactsByCharacterIds } = useCustomization()
   const disableTransitions = state.ui.disablePageTransitions
   const pageProps = buildPageProps(disableTransitions)
   const apiConfig = useCurrentApiConfig('chatCard')
@@ -5224,18 +5223,15 @@ function WeChatAppInner({ onBack }: Props) {
           if (!target) {
             const row = frMeta
             if (!row) return
-            target = {
-              id: row.id,
-              avatar: '',
+            target = await mapFriendRequestRowToUi({
+              row,
               nickname: '对方',
-              source: row.source,
-              status: row.status,
+              avatar: '',
               messages: [],
-              characterId: row.characterId,
-              requestTimeMs: row.createdAt,
-            }
+              unread: false,
+            })
           }
-          if (!target.characterId) return
+          if (!target || !target.characterId) return
           if (playerIdentityId === null) return
           const chRow = frMeta ? await personaDb.getCharacter(frMeta.characterId) : null
           const sessionPid =
@@ -6051,7 +6047,7 @@ function WeChatAppInner({ onBack }: Props) {
                 contacts={memoryManageContacts ?? []}
                 playerIdentityId={playerIdentityId}
                 playerDisplayName={state.profile.displayName || '我'}
-                currentWechatAccountId={currentAccountId}
+                currentWechatAccountId={currentAccountId ?? undefined}
                 onBack={() => setRoute({ name: 'tabs', tab: 'profile' })}
               />
             </motion.div>
@@ -6291,7 +6287,7 @@ function WeChatAppInner({ onBack }: Props) {
                         let avatar = avatarUrlSeed
                         let firstMessage = ''
                         try {
-                          const ch = chForConv
+                          const ch = await personaDb.getCharacter(characterId)
                           if (ch) {
                             nick = ch.remark?.trim() || ch.wechatNickname?.trim() || ch.name || nick
                             avatar = ch.avatarUrl?.trim() || avatar
