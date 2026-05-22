@@ -79,12 +79,15 @@ type Props = {
 
 /** 表单收束后写入档案，交由 AuthGuard 播放欢迎无缝转场 */
 const SUBMIT_COLLAPSE_MS = 520 as const
+/** 底部固定「确认创建」栏占用，滚动时预留可见区 */
+const REG_FORM_FOOTER_RESERVE_PX = 120
 
 export function WeChatRegistration({ onBack, mode = 'initial', onAccountAdded }: Props) {
   const { completeRegistration, addAccountFromRegistration } = useWechatStore()
   const fileInputId = useId()
   const scrollRef = useRef<HTMLDivElement>(null)
   const submitTimerRef = useRef<number | null>(null)
+  const scrollLockRef = useRef(false)
 
   const [avatarUrl, setAvatarUrl] = useState(getDefaultWechatRegistrationAvatar)
   const [avatarUrlDraft, setAvatarUrlDraft] = useState('')
@@ -116,12 +119,57 @@ export function WeChatRegistration({ onBack, mode = 'initial', onAccountAdded }:
     }
   }, [])
 
+  /**
+   * 仅在表单容器内做最小滚动：用 visualViewport 算可见区，避免 iOS 因超大 scroll-padding
+   * 把密码框顶出屏幕，也避免与系统键盘抢滚动导致抖动。
+   */
   const scrollFieldIntoView = useCallback((el: HTMLElement | null) => {
-    if (!el) return
+    const container = scrollRef.current
+    if (!el || !container || scrollLockRef.current) return
+    scrollLockRef.current = true
     window.requestAnimationFrame(() => {
-      el.scrollIntoView({ block: 'center', behavior: 'smooth' })
+      try {
+        const vv = window.visualViewport
+        const padTop = 12
+        const padBottom = 12 + REG_FORM_FOOTER_RESERVE_PX
+        const visibleTop = (vv?.offsetTop ?? 0) + padTop
+        const visibleBottom =
+          (vv?.offsetTop ?? 0) + (vv?.height ?? window.innerHeight) - padBottom
+        const eRect = el.getBoundingClientRect()
+        if (eRect.bottom > visibleBottom) {
+          container.scrollTop += eRect.bottom - visibleBottom
+        } else if (eRect.top < visibleTop) {
+          container.scrollTop = Math.max(0, container.scrollTop - (visibleTop - eRect.top))
+        }
+      } finally {
+        window.setTimeout(() => {
+          scrollLockRef.current = false
+        }, 150)
+      }
     })
   }, [])
+
+  /** 键盘高度变化后再做一次最小校正（避免首帧把密码框顶出视口） */
+  useEffect(() => {
+    const vv = window.visualViewport
+    if (!vv) return
+    let timer: number | null = null
+    const onResize = () => {
+      const container = scrollRef.current
+      const active = document.activeElement
+      if (!container || !(active instanceof HTMLElement) || !container.contains(active)) return
+      if (timer != null) window.clearTimeout(timer)
+      timer = window.setTimeout(() => {
+        timer = null
+        scrollFieldIntoView(active)
+      }, 80)
+    }
+    vv.addEventListener('resize', onResize)
+    return () => {
+      vv.removeEventListener('resize', onResize)
+      if (timer != null) window.clearTimeout(timer)
+    }
+  }, [scrollFieldIntoView])
 
   const onPickFile = useCallback((e: ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0]
@@ -226,8 +274,11 @@ export function WeChatRegistration({ onBack, mode = 'initial', onAccountAdded }:
           >
             <motion.div
               ref={scrollRef}
-              className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-6 pb-36 pt-[max(5rem,env(safe-area-inset-top,0px))] [scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden"
-              style={{ WebkitOverflowScrolling: 'touch' }}
+              className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-6 pb-36 pt-[max(5rem,env(safe-area-inset-top,0px))] [scrollbar-width:none] [-ms-overflow-style:none] [overflow-anchor:none] [&::-webkit-scrollbar]:hidden"
+              style={{
+                WebkitOverflowScrolling: 'touch',
+                scrollPaddingBottom: 'calc(9rem + env(safe-area-inset-bottom, 0px))',
+              }}
             >
               <motion.header
                 className="text-center"

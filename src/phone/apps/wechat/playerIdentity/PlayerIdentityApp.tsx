@@ -5,6 +5,8 @@ import { useCurrentApiConfig } from '../../api/ApiSettingsContext'
 import { personaDb } from '../newFriendsPersona/idb'
 import { DEFAULT_WORLD_BACKGROUND_ID } from '../newFriendsPersona/worldBackgroundConstants'
 import { formatWorldBackgroundForPrompt } from '../newFriendsPersona/worldBackgroundFormat'
+import { canonicalPublicImagePath } from '../../../../publicAssetUrl'
+import { repairCharacterAvatarForBundleImport, resolveCharacterAvatarUrl } from '../../../utils/characterAvatarUrl'
 import type { PlayerIdentity, Relationship } from '../newFriendsPersona/types'
 import { daysInMonth, formatMD, randomChineseName, uid, zodiacFromMD } from '../newFriendsPersona/utils'
 import { InlineDropdown } from '../newFriendsPersona/InlineDropdown'
@@ -244,7 +246,9 @@ function normalizeImportedIdentity(input: unknown): PlayerIdentity | null {
     mbti: typeof r.mbti === 'string' ? r.mbti : '',
     bio: typeof r.bio === 'string' ? r.bio : '',
     motto: typeof r.motto === 'string' ? r.motto : '',
-    avatarUrl: typeof r.avatarUrl === 'string' ? r.avatarUrl : '',
+    avatarUrl: repairCharacterAvatarForBundleImport({
+      avatarUrl: typeof r.avatarUrl === 'string' ? r.avatarUrl : '',
+    }),
     worldBooks,
     interests,
     painPoints: pains,
@@ -411,11 +415,11 @@ export function PlayerIdentityApp({
                         className="h-[50px] w-[50px] shrink-0 overflow-hidden rounded-full border"
                         style={{ borderColor: COLORS.border }}
                       >
-                        {it.avatarUrl?.trim() ? (
+                        {resolveCharacterAvatarUrl({ avatarUrl: it.avatarUrl }) ? (
                           <img
-                            src={it.avatarUrl}
+                            src={resolveCharacterAvatarUrl({ avatarUrl: it.avatarUrl })}
                             alt=""
-                            className={`h-full w-full object-contain ${isLargeMbtiAvatar(it.mbti) ? 'scale-100' : 'scale-85'}`}
+                            className="h-full w-full object-cover"
                           />
                         ) : (
                           <div className="flex h-full w-full items-center justify-center" style={{ background: '#ffffff' }}>
@@ -754,13 +758,12 @@ function IdentityEditPage({
   }
 
   const onSave = async () => {
-    const mbtiAvatar = data.mbti?.trim() ? resolveMbtiImageUrl(data.mbti) : ''
     const next: PlayerIdentity = {
       ...data,
       id: identityId,
       updatedAt: Date.now(),
       zodiac: data.birthdayMD?.trim() ? zodiacFromMD(data.birthdayMD) : '',
-      avatarUrl: mbtiAvatar || '',
+      avatarUrl: canonicalPublicImagePath(data.avatarUrl || ''),
       interests: (data.interests ?? []).filter(Boolean),
       painPoints: (data.painPoints ?? []).filter(Boolean),
     }
@@ -1041,6 +1044,26 @@ function IdentityEditPage({
                   <span className="text-[12px]" style={{ color: COLORS.sub }}>
                     MBTI
                   </span>
+                  {data.mbti?.trim() ? (
+                    <div
+                      className="mt-3 flex flex-col items-center gap-2 rounded-xl border bg-white py-4"
+                      style={{ borderColor: COLORS.border }}
+                    >
+                      <p className="text-[11px]" style={{ color: COLORS.sub }}>
+                        人格形象预览
+                      </p>
+                      <div className="flex h-[120px] w-[120px] items-center justify-center overflow-hidden">
+                        <img
+                          src={resolveMbtiImageUrl(data.mbti)}
+                          alt=""
+                          className={`max-h-full max-w-full object-contain ${isLargeMbtiAvatar(data.mbti) ? '' : 'scale-90'}`}
+                          onError={(e) => {
+                            ;(e.currentTarget as HTMLImageElement).style.display = 'none'
+                          }}
+                        />
+                      </div>
+                    </div>
+                  ) : null}
                   <div className="mt-2">
                     <InlineDropdown
                       label="MBTI"

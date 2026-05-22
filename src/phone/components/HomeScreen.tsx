@@ -13,6 +13,7 @@ import { MusicWidget } from './MusicWidget'
 import { PersonalCard } from './PersonalCard'
 import { StatusBar } from './StatusBar'
 import { WheelWidget } from './WheelWidget'
+import { resolvePublicImageUrl } from '../../publicAssetUrl'
 import { useCustomization } from '../CustomizationContext'
 import { useLongPress } from '../hooks/useLongPress'
 
@@ -1296,7 +1297,7 @@ export function HomeScreen({ onOpenApp }: Props) {
       className="relative flex h-full min-h-0 flex-col overflow-hidden"
       style={{
         backgroundColor: hasWallpaper ? 'transparent' : 'var(--phone-bg)',
-        backgroundImage: theme.wallpaperUrl ? `url(${theme.wallpaperUrl})` : 'none',
+        backgroundImage: theme.wallpaperUrl ? `url(${resolvePublicImageUrl(theme.wallpaperUrl)})` : 'none',
         backgroundRepeat: 'no-repeat',
         backgroundPosition: 'center',
         backgroundSize: theme.wallpaperFit === 'contain' ? 'contain' : 'cover',

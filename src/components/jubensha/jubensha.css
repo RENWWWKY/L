@@ -1,0 +1,311 @@
+/** 剧本杀馆 · Classic Library / Dark Academia */
+
+.jbs-hall {
+  --jbs-parchment: #f4f1ea;
+  --jbs-paper: #faf8f5;
+  --jbs-ink: #1a1a1a;
+  --jbs-mahogany: #5c3d2e;
+  --jbs-gilt: #8b6914;
+  --jbs-gilt-light: #b8942d;
+  --jbs-fade-ink: rgba(26, 26, 26, 0.08);
+  --jbs-font-serif: 'Noto Serif SC', 'Cormorant Garamond', 'Songti SC', 'STSong', serif;
+  font-family: var(--jbs-font-serif);
+  color: var(--jbs-ink);
+  background-color: var(--jbs-parchment);
+}
+
+.jbs-font-serif,
+.font-serif {
+  font-family:
+    'Noto Serif SC',
+    'Cormorant Garamond',
+    'Songti SC',
+    'STSong',
+    'Times New Roman',
+    serif;
+  font-feature-settings: 'kern' 1;
+}
+
+.jbs-font-handwriting,
+.font-handwriting {
+  font-family:
+    'Zhi Mang Xing',
+    'Long Cang',
+    'LXGW WenKai',
+    'STKaiti',
+    'KaiTi',
+    cursive;
+}
+
+/** 人物简介等：非系统楷体，偏刻本/活字韵味 */
+.jbs-font-kai-archive {
+  font-family:
+    'LXGW WenKai',
+    'ZCOOL XiaoWei',
+    'Noto Serif SC',
+    serif;
+  font-weight: 400;
+  font-feature-settings: 'kern' 1;
+  letter-spacing: 0.06em;
+}
+
+/** 聊天室气泡 · 规整楷书（见 gameFlow/jbs-kai-fonts.css） */
+.jbs-font-kai {
+  font-weight: 400;
+  letter-spacing: 0.04em;
+}
+
+.jbs-paper-texture {
+  background-color: var(--jbs-paper);
+  background-image:
+    url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='3'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='0.06'/%3E%3C/svg%3E"),
+    linear-gradient(180deg, #faf8f5 0%, #f4f1ea 100%);
+}
+
+.jbs-tab-active {
+  color: var(--jbs-mahogany);
+  border-bottom: 2px solid var(--jbs-gilt);
+}
+
+.jbs-shelf-watermark {
+  color: var(--jbs-fade-ink);
+  font-family: 'Zhi Mang Xing', 'Long Cang', cursive;
+  user-select: none;
+  pointer-events: none;
+}
+
+/* —— 实体书卡片 · CSS 厚度伪造 —— */
+.jbs-book-perspective {
+  perspective: 1000px;
+  perspective-origin: 50% 50%;
+}
+
+.jbs-physical-book {
+  position: relative;
+  transform-style: preserve-3d;
+  transform: rotateY(-12deg);
+  transition: transform 0.4s cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.jbs-physical-book:hover {
+  transform: rotateY(-6deg) translateY(-4px);
+}
+
+.jbs-physical-book-face {
+  position: relative;
+  width: 108px;
+  height: 152px;
+  border-left: 8px solid var(--jbs-mahogany);
+  border-radius: 2px 4px 4px 2px;
+  box-shadow:
+    2px 0 0 #e8e4dc,
+    4px 0 0 #d9d4c8,
+    6px 0 0 #ccc6b8,
+    8px 2px 12px rgba(26, 26, 26, 0.22),
+    0 8px 20px rgba(26, 26, 26, 0.18);
+  overflow: hidden;
+  background: #2a2a2a;
+}
+
+.jbs-physical-book-face::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(
+    135deg,
+    rgba(255, 255, 255, 0.12) 0%,
+    transparent 45%,
+    rgba(0, 0, 0, 0.25) 100%
+  );
+  pointer-events: none;
+}
+
+/** 封面主图：无渐变滤镜，原图展示 */
+.jbs-physical-book-cover::after {
+  display: none;
+}
+
+/* —— 详情翻书 —— */
+.jbs-flip-scene {
+  perspective: 1100px;
+  perspective-origin: 50% 42%;
+}
+
+.jbs-flip-book {
+  position: relative;
+  width: 200px;
+  height: 280px;
+  transform-style: preserve-3d;
+  transform: rotateY(-8deg) rotateX(2deg);
+}
+
+.jbs-flip-inner-page {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  border-radius: 2px 6px 6px 2px;
+  background: linear-gradient(165deg, #fffef9 0%, #f8f4e8 55%, #f0ebe0 100%);
+  box-shadow:
+    inset 0 0 48px rgba(139, 105, 20, 0.06),
+    0 16px 48px rgba(0, 0, 0, 0.35);
+  border: 1px solid rgba(92, 61, 46, 0.15);
+}
+
+/** 翻书内页：模糊预览字（展卷前若隐若现） */
+.jbs-flip-inner-ghost {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  padding: 14px 10px 12px 16px;
+  color: #3d2a22;
+  opacity: 0.72;
+  filter: blur(2.8px);
+  transform: scale(1.02);
+  transition:
+    filter 0.75s ease,
+    opacity 0.75s ease,
+    transform 0.75s ease;
+  pointer-events: none;
+  user-select: none;
+}
+
+.jbs-flip-inner-ghost--open {
+  opacity: 0.88;
+  filter: blur(1.6px);
+  transform: scale(1);
+}
+
+.jbs-flip-inner-ghost-kicker {
+  font-size: 8px;
+  letter-spacing: 0.28em;
+  color: rgba(92, 61, 46, 0.55);
+  margin: 0 0 4px;
+}
+
+.jbs-flip-inner-ghost-title {
+  font-size: 22px;
+  line-height: 1.1;
+  margin: 0;
+  color: #1a1a1a;
+  filter: blur(1.2px);
+}
+
+.jbs-flip-inner-ghost-sub {
+  font-size: 7px;
+  font-style: italic;
+  margin: 4px 0 8px;
+  color: rgba(92, 61, 46, 0.65);
+  line-height: 1.35;
+}
+
+.jbs-flip-inner-ghost-body {
+  flex: 0 1 auto;
+  margin-bottom: 6px;
+}
+
+.jbs-flip-inner-ghost-line {
+  font-size: 7.5px;
+  line-height: 1.55;
+  margin: 0 0 3px;
+  color: rgba(26, 26, 26, 0.72);
+  text-align: justify;
+}
+
+.jbs-flip-inner-ghost-roles {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.jbs-flip-inner-ghost-roles .jbs-flip-inner-ghost-line {
+  font-size: 7px;
+  margin-bottom: 2px;
+}
+
+.jbs-flip-inner-ghost-fade {
+  font-size: 6.5px;
+  font-style: italic;
+  text-align: center;
+  margin: 8px 0 0;
+  color: rgba(92, 61, 46, 0.45);
+  letter-spacing: 0.12em;
+}
+
+.jbs-flip-cover-wrap {
+  position: absolute;
+  inset: 0;
+  transform-style: preserve-3d;
+  transform-origin: left center;
+}
+
+.jbs-flip-cover-face {
+  position: absolute;
+  inset: 0;
+  backface-visibility: hidden;
+  -webkit-backface-visibility: hidden;
+  border-left: 10px solid var(--jbs-mahogany);
+  border-radius: 2px 6px 6px 2px;
+  box-shadow:
+    3px 0 0 #e0dbd0,
+    6px 0 0 #ccc6b8,
+    0 12px 32px rgba(0, 0, 0, 0.4);
+  overflow: hidden;
+}
+
+.jbs-flip-cover-photo {
+  background: #1a1a1a;
+}
+
+.jbs-hide-scrollbar {
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+.jbs-hide-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+
+/** 标题栏 / 顶栏：避开刘海与状态栏 */
+.jbs-safe-header {
+  padding-top: max(12px, env(safe-area-inset-top, 0px));
+}
+
+.jbs-safe-top {
+  top: max(12px, env(safe-area-inset-top, 0px));
+}
+
+.jbs-marginalia-rule {
+  background: linear-gradient(90deg, transparent, rgba(92, 61, 46, 0.2), transparent);
+  height: 1px;
+}
+
+.jbs-drop-cap {
+  font-size: 3.4em;
+  line-height: 0.78;
+  font-weight: 400;
+  padding-right: 0.06em;
+}
+
+.jbs-detail-page {
+  background-color: var(--jbs-parchment);
+}
+
+.jbs-detail-action-bar {
+  background: linear-gradient(
+    to top,
+    #f4f1ea 0%,
+    rgba(244, 241, 234, 0.97) 45%,
+    rgba(244, 241, 234, 0) 100%
+  );
+}
+
+.jbs-wax-seal-btn {
+  background: linear-gradient(165deg, #722f37 0%, #5c242c 55%, #3d181f 100%);
+  box-shadow:
+    0 4px 14px rgba(114, 47, 55, 0.45),
+    inset 0 1px 0 rgba(255, 255, 255, 0.12);
+  transition: transform 0.15s ease;
+}
+
+.jbs-wax-seal-btn:active {
+  transform: scale(0.98);
+}

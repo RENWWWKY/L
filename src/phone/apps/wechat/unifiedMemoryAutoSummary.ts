@@ -10,6 +10,10 @@ import { splitDatingAssistantOutput } from './dating/plotCoT'
 import { extractVnVoiceParamsBlock } from './dating/vnVoiceParamsStrip'
 import { findGroupMember } from './groupChatUtils'
 import { buildNpcLinkedOfflineExcerptUserBlock } from './memory/linkedOfflineExcerptsForAutoSummary'
+import {
+  listAllLinkedMemoryEligibleCharacters,
+} from './memory/linkedMemoryEligiblePeers'
+import { plotBodyMentionsCharacter } from './dating/offlineDatingArchiveResolve'
 import { personaDb, pullPhoneKvWithLocalStorageLegacy } from './newFriendsPersona/idb'
 import type {
   Character,
@@ -284,7 +288,7 @@ export function latestAiPlotBodyFromSnapshot(plots: DatingPlotSnapshotItem[]): s
   return ''
 }
 
-/** 本轮线下是否可能出现需写 linked 的人脉 NPC（摘录 allowed 集或正文提及均可）。 */
+/** 本轮线下是否可能出现需写 linked 的可关联角色（人脉 NPC / 已绑定主角；摘录或正文提及均可）。 */
 export async function datingTurnMayNeedLinkedMemoryWrite(
   gather: UnifiedMemoryGatherResult,
   plotsSnapshotAfterAi: DatingPlotSnapshotItem[],
@@ -295,18 +299,18 @@ export async function datingTurnMayNeedLinkedMemoryWrite(
   const latestBody = latestAiPlotBodyFromSnapshot(plotsSnapshotAfterAi)
   if (!latestBody.trim()) return false
   try {
-    const npcs = await personaDb.listNpcsFor(owner)
+    const { all: eligible } = await listAllLinkedMemoryEligibleCharacters(owner)
     const peer = gather.characterId.trim()
-    const others = npcs.filter((n) => {
+    const others = eligible.filter((n) => {
       const id = String(n.id || '').trim()
       return id && id !== peer
     })
     if (!others.length) return false
-    for (const npc of others) {
-      const toks = collectCharacterMentionSearchTokens(npc as Character)
-      if (offlinePlotBodyRelevantToNpcForLinkedExcerpt(latestBody, npc as Character, toks)) return true
+    for (const row of others) {
+      const toks = collectCharacterMentionSearchTokens(row)
+      if (offlinePlotBodyRelevantToNpcForLinkedExcerpt(latestBody, row, toks)) return true
     }
-    /** 有人脉且本轮 AI 正文足够长时仍尝试补救（部分模型不写 NPC 真名，避免关联记忆永不触发） */
+    /** 有可关联角色且本轮 AI 正文足够长时仍尝试补救（部分模型不写真名，避免关联记忆永不触发） */
     if (latestBody.length >= 48) return true
   } catch {
     return false
@@ -423,8 +427,12 @@ export async function applyUnifiedMemoryFromParsedSummary(
     }
   }
   const allowedNpc = gather.npcLinked.allowedNpcIds
-  const networkRows = await personaDb.listNpcsFor(linkedOwnerId)
-  const networkNpcIdSet = new Set(networkRows.map((n) => n.id.trim()).filter(Boolean))
+  const { allIds: networkEligibleIdSet, all: networkEligibleRows, boundProtagonists } =
+    await listAllLinkedMemoryEligibleCharacters(linkedOwnerId)
+  const boundProtagonistIdSet = new Set(
+    boundProtagonists.map((p) => p.id.trim()).filter((id) => id && id !== cid),
+  )
+  const latestAiPlotBody = latestAiPlotBodyFromSnapshot(opts.offlinePlotsForCursorAdvance)
   /** 用于摘录漏检时：线下 + 人脉摘录 + 线上未总结摘录 是否出现该 NPC 可检索称呼 */
   const onlineMentionBits = gather.onlineTranscript
     .map((t) => String(t.text || '').trim())
@@ -440,12 +448,16 @@ export async function applyUnifiedMemoryFromParsedSummary(
     if (seenNpc.has(id)) continue
     if (id === cid) continue
 
-    let accept = networkNpcIdSet.has(id)
+    let accept = networkEligibleIdSet.has(id)
     if (!accept && allowedNpc.has(id)) accept = true
-    if (!accept && networkNpcIdSet.has(id) && offlineMentionCorpus.length > 0) {
-      const npcRow = networkRows.find((n) => n.id.trim() === id) as Character | undefined
-      const toks = collectCharacterMentionSearchTokens(npcRow ?? null)
+    const peerRow = networkEligibleRows.find((n) => n.id.trim() === id) as Character | undefined
+    if (!accept && peerRow && offlineMentionCorpus.length > 0) {
+      const toks = collectCharacterMentionSearchTokens(peerRow)
       if (toks.length > 0 && textMentionsAnyToken(offlineMentionCorpus, toks)) accept = true
+    }
+    if (!accept && boundProtagonistIdSet.has(id) && peerRow) {
+      const corpus = `${latestAiPlotBody}\n${offlineMentionCorpus}`.trim()
+      if (plotBodyMentionsCharacter(peerRow, corpus)) accept = true
     }
     if (!accept) continue
     seenNpc.add(id)

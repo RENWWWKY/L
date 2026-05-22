@@ -1,0 +1,343 @@
+/* 演绎暗室 · 与入局前厅（jbs-gf）同调 */
+@import './jbs-kai-fonts.css';
+
+.jbs-gf-chat-root {
+  color: var(--jbs-gf-ink);
+  background: var(--jbs-gf-bg);
+}
+
+.jbs-gf-chat-root--video {
+  background: transparent;
+}
+
+.jbs-gf-chat-fallback-bg {
+  background:
+    url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='3'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='0.05'/%3E%3C/svg%3E"),
+    linear-gradient(180deg, #faf8f5 0%, #f4f1ea 45%, #ebe6dc 100%);
+}
+
+.jbs-gf-chat-header {
+  background: rgba(255, 255, 255, 0.12);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.22);
+  backdrop-filter: blur(14px);
+  -webkit-backdrop-filter: blur(14px);
+}
+
+.jbs-gf-chat-root--video .jbs-gf-chat-header {
+  color: #fff;
+}
+
+.jbs-gf-chat-root--video .jbs-gf-chat-header .jbs-font-handwriting,
+.jbs-gf-chat-root--video .jbs-gf-chat-step-pill {
+  color: rgba(255, 255, 255, 0.92);
+  text-shadow: 0 1px 8px rgba(0, 0, 0, 0.35);
+}
+
+.jbs-gf-chat-root--video .jbs-gf-chat-icon-btn,
+.jbs-gf-chat-root--video .jbs-gf-chat-bookmark-btn {
+  background: rgba(255, 255, 255, 0.16);
+  border-color: rgba(255, 255, 255, 0.3);
+  color: rgba(255, 255, 255, 0.92);
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.15);
+}
+
+.jbs-gf-chat-root--video .jbs-gf-chat-progress-track {
+  background: rgba(255, 255, 255, 0.2);
+}
+
+.jbs-gf-chat-root--video .jbs-gf-chat-progress-fill {
+  background: rgba(255, 255, 255, 0.55);
+}
+
+.jbs-gf-chat-icon-btn {
+  border: 1px solid rgba(92, 61, 46, 0.28);
+  background: rgba(255, 254, 249, 0.85);
+  color: var(--jbs-gf-mahogany);
+  box-shadow: 0 2px 10px rgba(92, 61, 46, 0.08);
+}
+
+.jbs-gf-chat-bookmark-btn {
+  border: 1px solid rgba(92, 61, 46, 0.28);
+  background: linear-gradient(180deg, #fffef9 0%, #f0ebe0 100%);
+  color: var(--jbs-gf-mahogany);
+  box-shadow: 0 2px 10px rgba(92, 61, 46, 0.1);
+}
+
+.jbs-gf-chat-step-pill {
+  font-family:
+    ui-sans-serif,
+    system-ui,
+    -apple-system,
+    sans-serif;
+  font-weight: 200;
+  letter-spacing: 0.12em;
+  color: rgba(92, 61, 46, 0.55);
+}
+
+.jbs-gf-chat-progress-track {
+  background: rgba(92, 61, 46, 0.12);
+}
+
+.jbs-gf-chat-progress-fill {
+  background: rgba(139, 105, 20, 0.55);
+}
+
+.jbs-gf-chat-glass-surface {
+  background: rgba(255, 255, 255, 0.18);
+  border: 1px solid rgba(255, 255, 255, 0.32);
+  box-shadow:
+    0 0 0 1px rgba(255, 255, 255, 0.08) inset,
+    0 8px 32px rgba(0, 0, 0, 0.12);
+  backdrop-filter: blur(16px) saturate(1.2);
+  -webkit-backdrop-filter: blur(16px) saturate(1.2);
+}
+
+.jbs-gf-chat-dm-tag {
+  padding: 3px 10px;
+  border-radius: 999px;
+  border: 1px solid rgba(255, 255, 255, 0.35);
+  background: rgba(255, 255, 255, 0.14);
+  color: rgba(255, 255, 255, 0.88);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+  text-shadow: 0 1px 6px rgba(0, 0, 0, 0.3);
+}
+
+.jbs-gf-chat-dm-bubble {
+  border-radius: 14px;
+}
+
+.jbs-gf-chat-dm-bubble-text {
+  font-weight: 400;
+  letter-spacing: 0.05em;
+  color: rgba(255, 255, 255, 0.95);
+  text-shadow: 0 1px 10px rgba(0, 0, 0, 0.4);
+}
+
+.jbs-gf-chat-bubble-text {
+  font-weight: 400;
+  letter-spacing: 0.05em;
+}
+
+.jbs-gf-chat-system-line {
+  color: rgba(255, 255, 255, 0.72);
+  text-shadow: 0 1px 8px rgba(0, 0, 0, 0.35);
+}
+
+.jbs-gf-chat-input-bar {
+  background: rgba(255, 255, 255, 0.1);
+  border-top: 1px solid rgba(255, 255, 255, 0.2);
+  backdrop-filter: blur(14px);
+  -webkit-backdrop-filter: blur(14px);
+}
+
+.jbs-gf-chat-input {
+  background: rgba(255, 255, 255, 0.16);
+  border: 1px solid rgba(255, 255, 255, 0.28);
+  color: rgba(255, 255, 255, 0.95);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+}
+
+.jbs-gf-chat-input::placeholder {
+  color: rgba(255, 255, 255, 0.45);
+}
+
+.jbs-gf-chat-input:focus {
+  border-color: rgba(139, 105, 20, 0.45);
+  outline: none;
+}
+
+.jbs-gf-chat-send-btn {
+  border: 1px solid rgba(255, 255, 255, 0.32);
+  background: rgba(255, 255, 255, 0.2);
+  color: rgba(255, 255, 255, 0.92);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+}
+
+.jbs-gf-chat-send-btn:disabled {
+  opacity: 0.4;
+}
+
+.jbs-gf-chat-glass-panel {
+  background: linear-gradient(165deg, #fffef9 0%, #f8f4e8 48%, #f0ebe0 100%);
+  border: 1px solid rgba(92, 61, 46, 0.22);
+  border-radius: 12px;
+  box-shadow:
+    0 0 0 1px rgba(255, 255, 255, 0.65) inset,
+    0 16px 40px rgba(92, 61, 46, 0.14);
+}
+
+.jbs-gf-chat-drawer-scrim {
+  background: rgba(92, 61, 46, 0.22);
+  backdrop-filter: blur(3px);
+  -webkit-backdrop-filter: blur(3px);
+}
+
+.jbs-gf-chat-drawer {
+  background: linear-gradient(165deg, rgba(255, 254, 249, 0.98) 0%, rgba(248, 244, 232, 0.96) 100%);
+  border-left: 1px solid rgba(92, 61, 46, 0.2);
+  box-shadow: -8px 0 32px rgba(92, 61, 46, 0.12);
+}
+
+.jbs-gf-chat-drawer-tab-active {
+  background: rgba(139, 105, 20, 0.14);
+  color: var(--jbs-gf-mahogany);
+}
+
+.jbs-gf-chat-drawer-tab {
+  color: rgba(92, 61, 46, 0.45);
+}
+
+.jbs-gf-chat-drawer-tab:hover {
+  background: rgba(92, 61, 46, 0.06);
+  color: rgba(92, 61, 46, 0.72);
+}
+
+.jbs-gf-chat-parchment {
+  background: linear-gradient(165deg, #fffef9 0%, #f8f4e8 48%, #f0ebe0 100%);
+  border: 1px solid rgba(92, 61, 46, 0.18);
+  box-shadow:
+    0 0 0 1px rgba(255, 255, 255, 0.6) inset,
+    0 8px 24px rgba(92, 61, 46, 0.1);
+}
+
+.jbs-gf-chat-parchment-locked {
+  background: rgba(255, 254, 249, 0.55);
+  border: 1px dashed rgba(92, 61, 46, 0.28);
+}
+
+.jbs-gf-chat-manuscript {
+  background-color: #fffef9;
+  background-image: repeating-linear-gradient(
+    transparent,
+    transparent 31px,
+    rgba(92, 61, 46, 0.12) 31px,
+    rgba(92, 61, 46, 0.12) 32px
+  );
+  box-shadow: inset 0 0 20px rgba(139, 105, 20, 0.04);
+}
+
+.jbs-gf-chat-voice-btn {
+  border: 1px solid rgba(92, 61, 46, 0.28);
+  background: linear-gradient(180deg, #fffef9 0%, #f0ebe0 100%);
+  color: var(--jbs-gf-mahogany);
+  letter-spacing: 0.14em;
+}
+
+.jbs-gf-chat-voice-skip {
+  border: 1px dashed rgba(92, 61, 46, 0.28);
+  color: rgba(92, 61, 46, 0.5);
+}
+
+.jbs-gf-chat-typewriter-cursor {
+  height: 1.05em;
+  background: rgba(114, 47, 55, 0.75);
+  animation: jbs-gf-chat-cursor-blink 1.05s step-end infinite;
+}
+
+@keyframes jbs-gf-chat-cursor-blink {
+  0%,
+  55% {
+    opacity: 1;
+  }
+  56%,
+  100% {
+    opacity: 0;
+  }
+}
+
+.jbs-gf-chat-typewriter-scroll {
+  mask-image: linear-gradient(180deg, transparent 0%, #000 5%, #000 95%, transparent 100%);
+}
+
+/* —— DM 语音开场 · 羊皮纸稿（叠视频仍清晰） —— */
+.jbs-gf-dm-intro-panel {
+  background: linear-gradient(
+    165deg,
+    rgba(255, 254, 249, 0.97) 0%,
+    rgba(248, 244, 232, 0.96) 48%,
+    rgba(240, 235, 224, 0.95) 100%
+  );
+  border: 1px solid rgba(92, 61, 46, 0.28);
+  border-radius: 14px;
+  box-shadow:
+    0 0 0 1px rgba(255, 255, 255, 0.75) inset,
+    0 12px 40px rgba(0, 0, 0, 0.22);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+}
+
+.jbs-gf-dm-intro-tag {
+  padding: 3px 10px;
+  border-radius: 999px;
+  border: 1px solid rgba(139, 105, 20, 0.45);
+  background: rgba(255, 254, 249, 0.95);
+  color: rgba(92, 61, 46, 0.82);
+  font-family:
+    ui-sans-serif,
+    system-ui,
+    -apple-system,
+    sans-serif;
+  font-size: 9px;
+  font-weight: 200;
+  letter-spacing: 0.28em;
+}
+
+.jbs-gf-dm-intro-meta {
+  font-family:
+    'Noto Serif SC',
+    'Cormorant Garamond',
+    'Songti SC',
+    serif;
+  font-size: 9px;
+  font-weight: 200;
+  letter-spacing: 0.14em;
+  color: rgba(92, 61, 46, 0.58);
+}
+
+.jbs-gf-dm-intro-script {
+  font-size: 16px;
+  font-weight: 400;
+  line-height: 1.95;
+  letter-spacing: 0.06em;
+  color: #1a1a1a;
+  text-align: left;
+}
+
+.jbs-gf-dm-intro-hint {
+  font-family:
+    'Noto Serif SC',
+    'Cormorant Garamond',
+    'Songti SC',
+    serif;
+  font-size: 11px;
+  line-height: 1.75;
+  letter-spacing: 0.08em;
+  color: rgba(92, 61, 46, 0.72);
+}
+
+.jbs-gf-dm-intro-cursor {
+  height: 1.05em;
+  background: rgba(114, 47, 55, 0.78);
+  animation: jbs-gf-chat-cursor-blink 1.05s step-end infinite;
+}
+
+.jbs-gf-chat-clue-card-locked {
+  border: 1px dashed rgba(92, 61, 46, 0.28);
+  background: rgba(255, 254, 249, 0.45);
+  color: rgba(92, 61, 46, 0.4);
+}
+
+.jbs-gf-chat-clue-card {
+  border: 1px solid rgba(92, 61, 46, 0.22);
+  background: linear-gradient(165deg, #fffef9 0%, #f4f1ea 100%);
+  box-shadow: 0 6px 18px rgba(92, 61, 46, 0.1);
+}
+
+.jbs-gf-chat-clue-inspector-scrim {
+  background: rgba(92, 61, 46, 0.28);
+  backdrop-filter: blur(4px);
+  -webkit-backdrop-filter: blur(4px);
+}

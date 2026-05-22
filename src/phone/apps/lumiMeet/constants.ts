@@ -1,3 +1,4 @@
+import { migrateLegacyRootPublicUrl } from '../../../publicAssetUrl'
 import type { WeChatBubbleTheme } from '../../types'
 import type { LumiMeetPersistedState, RadarFilters, SquarePostStyle } from './meetTypes'
 
@@ -26,7 +27,7 @@ export function resolveMeetEncounterChatBackgroundUrl(stored?: string | null): s
   if (!t) return resolveMeetDefaultEncounterChatBgUrl()
   const legacyRoot = `/image/${MEET_DEFAULT_ENCOUNTER_CHAT_FILENAME}`
   if (t === legacyRoot) return resolveMeetDefaultEncounterChatBgUrl()
-  return t
+  return migrateLegacyRootPublicUrl(t)
 }
 
 /** @deprecated 请用 resolveMeetDefaultEncounterChatBgUrl；保留别名避免散落字面量 */

@@ -1,0 +1,15 @@
+/* 规整楷书 · 霞鹜文楷（LXGW WenKai），国内 CDN + 避免回退行草/宋体 */
+
+@import url('https://cdn.staticfile.org/lxgw-wenkai-webfont/1.7.0/style.css');
+
+:root {
+  --jbs-font-kai: 'LXGW WenKai', 'LXGW WenKai Screen', 'KaiTi', 'STKaiti', 'Songti SC', serif;
+}
+
+.jbs-font-kai,
+.jbs-gf-dm-intro-script,
+.jbs-gf-chat-dm-bubble-text,
+.jbs-gf-chat-bubble-text {
+  font-family: var(--jbs-font-kai) !important;
+  font-synthesis: none;
+}

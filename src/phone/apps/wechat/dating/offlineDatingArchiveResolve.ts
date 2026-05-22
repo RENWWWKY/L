@@ -66,3 +66,12 @@ export function textMentionsAnyToken(text: string, tokens: string[]): boolean {
   }
   return false
 }
+
+/** 剧情正文是否提及该人设（姓名/昵称或 `{{id:人设UUID}}`） */
+export function plotBodyMentionsCharacter(ch: Character | null, body: string): boolean {
+  const flat = String(body ?? '')
+  if (!flat.trim() || !ch) return false
+  const id = ch.id.trim()
+  if (id && flat.includes(`{{id:${id}}}`)) return true
+  return textMentionsAnyToken(flat, collectCharacterMentionSearchTokens(ch))
+}

@@ -2273,8 +2273,8 @@ export const UNIFIED_MEMORY_LINKED_JSON_RULE = `
   ]
 }
 - primary：写给「当前私聊对象」的一条长期记忆；字段含义与原先单对象 JSON 相同；**content 须用占位符指人**（{{user}} 玩家、{{char}} 当前私聊对象、{{archive_char}} 线下存档主角、{{id:人设UUID}} 其他人脉，规则同 linked）。
-- linked：写给「人脉 NPC」的零或多条；character_id 必须与用户消息【人脉 NPC 线下关联摘录】中出现的 character_id **完全一致**；仅当摘录非「（无）」且某 NPC 确有材料时填写；每名 NPC 至多一条；无则 linked 为 []。
-- linked[].content：**第三人称旁白**；凡写到人**必须**用表达式（入库不替换，注入时由程序替换），**禁止**用汉字直呼玩家、存档主角、本条 NPC 或其他人脉的真名/昵称/「用户」「玩家」「主角」「主要角色」等代称：须 **{{user}}**=玩家（第三人称凡涉玩家一律此式）；**{{char}}**=本条 linked 所属人脉 NPC（与 character_id 同一人）；**{{archive_char}}**=线下剧情存档根人设（**禁止**用「主角」「主要角色」等汉字代替）；**{{id:人设UUID}}**=其他人脉，**id 须与「人脉可关联角色 id 表」反引号内完全一致**（无空格）。**禁止**把摘录「显示名：」或台词里的称呼原样抄入本条 content。仍须写清可核对事实。
+- linked：写给「人脉子角色」或「已绑定主角」的零或多条；character_id **只能**来自用户消息「可关联角色 id 表」反引号内的 id（勿选当前约会对象 id，应写在 primary）。若「线下关联摘录」未含某 id，但分隔符上方剧情正文或摘录中有该角色可核对事实，**仍须**写 linked（约会特则）；仅当确实无事实时不写；每名角色至多一条；无则 linked 为 []。
+- linked[].content：**第三人称旁白**；凡写到人**必须**用表达式（入库不替换，注入时由程序替换），**禁止**用汉字直呼玩家、存档主角、本条角色或其他人脉的真名/昵称/「用户」「玩家」「主角」「主要角色」等代称：须 **{{user}}**=玩家；**{{char}}**=本条 linked 的 character_id 对应角色（人脉 NPC 或另一存档主角）；**{{archive_char}}**=线下剧情存档根人设；**{{id:人设UUID}}**=其他可关联角色，id 须与 id 表一致。**禁止**把摘录「显示名：」或台词里的称呼原样抄入本条 content。
 - 不要在任何 content 字段内添加「[线上]」「[线下]」等标签（程序会加前缀）。
 ${MEMORY_BODY_PLACEHOLDER_INSTRUCTION}
 若模型仍返回旧版「仅顶层 content/category/…」单对象且无 primary 键，调用方会把它当作 primary 并视 linked 为空。`.trim()
@@ -2303,7 +2303,7 @@ export function buildDatingCombinedMemoryUserAppendix(params: {
   npcLinkedExcerptsBlock: string
   /** 当前约会视角人设 id（primary 归属）；勿写入 linked */
   datingPeerCharacterId: string
-  /** 人脉子角色 id 表（反引号内为唯一合法 linked.character_id） */
+  /** 可关联角色 id 表：人脉子角色 + 已绑定主角（反引号内为唯一合法 linked.character_id） */
   eligibleLinkedNpcRoster: string
 }): string {
   const onlineBlock = formatUnifiedMemoryOnlineBlock(params.onlineTranscript, params.peerLabel.trim() || '对方')
@@ -2314,7 +2314,7 @@ export function buildDatingCombinedMemoryUserAppendix(params: {
   if (!npc) npc = '（无）'
   if (npc.length > 11000) npc = `${npc.slice(0, 11000)}\n\n（人脉 NPC 摘录因长度已截断）`
   const peerId = String(params.datingPeerCharacterId || '').trim() || '（当前视角）'
-  const roster = String(params.eligibleLinkedNpcRoster || '').trim() || '（当前无人脉子角色）'
+  const roster = String(params.eligibleLinkedNpcRoster || '').trim() || '（当前无可关联角色）'
 
   return `
 ---------------------
@@ -2325,17 +2325,17 @@ ${DATING_UNIFIED_MEMORY_JSON_DELIMITER}
 ${UNIFIED_MEMORY_LINKED_JSON_RULE}
 
 【约会特则·覆盖上文 JSON 说明里 linked「仅摘录」的硬性限制】
-- linked 的 character_id **只能**使用下方「人脉可关联角色 id 表」反引号内的 id，**禁止**编造 id；**禁止**把当前约会对象 \`${peerId}\` 写进 linked（应写在 primary）。
-- 「人脉 NPC 线下关联摘录」可能为（无）或未含某配角：只要你**分隔符上方**已写出的剧情正文里，该 id 对应角色出现**可核对**的言行或互动，仍须为其写 linked（普通剧情/VN 均可）；无则该项不写。
-- 仍须遵守：禁止材料与正文外臆造；每名 NPC 至多一条 linked。
+- linked 的 character_id **只能**使用下方「可关联角色 id 表」反引号内的 id（人脉子角色或已绑定主角），**禁止**编造 id；**禁止**把当前约会对象 \`${peerId}\` 写进 linked（应写在 primary）。
+- 「线下关联摘录」可能为（无）或未含某角色：只要你**分隔符上方**已写出的剧情正文里，该 id 对应角色出现**可核对**的言行或互动，仍须为其写 linked（普通剧情/VN 均可）；无则该项不写。
+- 仍须遵守：禁止材料与正文外臆造；每名可关联角色至多一条 linked。
 
 【本轮合并长期记忆的语义要求】
 - 你是嵌入在本轮剧情模型里的「长期记忆」子任务：须综合下列「线上 / 已有线下 / 人脉 NPC 摘录」以及**分隔符上方你刚输出的全部剧情正文**（去掉 \`<thinking>…</thinking>\`；VN 标签可保留）提炼事实。
 - primary：**第三人称**；合成线上（若有）+ 游标后已有线下（若有）+ **本轮新正文**；玩家 **{{user}}**、对方 **{{char}}**；**禁止「我」**；不要在 JSON 里写 [私聊][线下] 前缀。
-- linked：除上表摘录外，**必须**结合你刚写的**本轮剧情正文**判断人脉 NPC 是否有可记事实（见「约会特则」）；勿因摘录为（无）就整段 linked 留空——若正文里确有下表 id 之事实，须写 linked。每条 linked 的 content **须为第三人称**，且凡涉玩家、存档主角、本条 NPC、他人脉**一律**写 **{{user}} / {{archive_char}} / {{char}} / {{id:UUID}}**，**禁止**「用户」「玩家」「主角」「主要角色」及材料真名（规则同上方 JSON 与【记忆正文·指称铁律】）。
+- linked：除上表摘录外，**必须**结合你刚写的**本轮剧情正文**判断可关联角色（人脉 NPC 或已绑定主角）是否有可记事实（见「约会特则」）；勿因摘录为（无）就整段 linked 留空——若正文里确有下表 id 之事实，须写 linked。每条 linked 的 content **须为第三人称**，且凡涉玩家、存档主角、本条角色、其它可关联角色**一律**写 **{{user}} / {{archive_char}} / {{char}} / {{id:UUID}}**，**禁止**「用户」「玩家」「主角」「主要角色」及材料真名（规则同上方 JSON 与【记忆正文·指称铁律】）。
 - 若汇总后确实无任何可核对的新事实，primary.content 可为 "" 且 linked=[]。
 
-【人脉可关联角色 id 表】（linked.character_id 仅可从中择一或多；勿选 \`${peerId}\`）
+【可关联角色 id 表】（linked.character_id 仅可从中择一或多；勿选 \`${peerId}\`）
 ${roster}
 
 【线上聊天摘录（未总结）】
@@ -2344,7 +2344,7 @@ ${onlineBlock}
 【线下·游标后已有剧情（不含你本轮将写的正文）】
 ${off}
 
-【人脉 NPC 线下关联摘录】
+【线下关联摘录（人脉子角色 / 已绑定主角）】
 ${npc}
 
 【指称·材料边界】上文「显示名：」、发言者标签、剧情台词里的称呼**仅用于你对号入座是谁**；写入 JSON 的 **primary / linked[].content** 时**不得**复述这些汉字专名，须一律改为占位符（与【记忆正文·指称铁律】一致）。
@@ -2355,7 +2355,7 @@ const UNIFIED_MEMORY_SUMMARY_SYSTEM_WITH_LINKED = `
 你是「长期记忆」提取助手。用户会提供三段正文材料：「线上聊天摘录」「线下约会剧情摘录」「人脉 NPC 线下关联摘录」，任一段可能为「（无）」。
 要求：
 - primary：把「线上」与「线下约会剧情摘录」里**实际发生**的信息合成一条连贯备忘，**全文第三人称**；玩家 **{{user}}**、对方 **{{char}}**；**禁止「我」**；须遵守【记忆正文·指称铁律】；若某一栏为「（无）」，勿编造该栏。
-- linked：仅基于「人脉 NPC 线下关联摘录」中**对应 character_id 的片段**，为各 NPC 各写一条备忘；**全文第三人称**；凡涉玩家、存档主角、本条 NPC、他人脉**必须**分别写 **{{user}}、{{archive_char}}、{{char}}、{{id:人设UUID}}**（与摘录 id 一致），**禁止**「用户」「玩家」「主角」「主要角色」及材料真名；摘录为「（无）」时 linked 必须为 []。
+- linked：综合「人脉子角色 / 已绑定主角 线下关联摘录」与「线下约会剧情摘录」；为 id 表中有可核对事实的角色各写一条（含已绑定主角，不仅 NPC）；**全文第三人称**；指称用 **{{user}}、{{archive_char}}、{{char}}、{{id:人设UUID}}**；摘录为「（无）」时若约会剧情正文仍有该 id 之事实，**仍须**写 linked（约会特则）。
 - 只总结材料中可直接核对的事实；禁止主观心理臆测；禁止材料外剧情。
 - 口语化、具体；primary 正文约 60～200 字；每条 linked 约 40～160 字（信息很少可更短）。
 ${UNIFIED_MEMORY_LINKED_JSON_RULE}
@@ -2427,7 +2427,7 @@ const DATING_LINKED_MEMORY_FALLBACK_SYSTEM = `
 你是「人脉关联长期记忆」提取助手。用户会提供「线下约会剧情摘录」「人脉 NPC 线下关联摘录」与可关联角色 id 表。
 要求：
 - primary.content 必须为 ""（空字符串，不写主角备忘）。
-- linked：综合「线下约会剧情摘录」全文与「人脉 NPC 摘录」；为 id 表中在本段材料里有可核对事实的 NPC 各写一条；**全文第三人称**；指称须 {{user}}/{{char}}/{{archive_char}}/{{id:UUID}}，禁止材料真名与「我」。
+- linked：综合「线下约会剧情摘录」全文与「人脉子角色 / 已绑定主角 摘录」；为 id 表中有可核对事实的角色各写一条（**含已绑定主角**）；**全文第三人称**；指称须 {{user}}/{{char}}/{{archive_char}}/{{id:UUID}}，禁止材料真名与「我」。
 - **约会特则**：即使「人脉 NPC 摘录」为（无），只要「线下约会剧情摘录」中出现该 id 对应角色的可核对言行或互动，仍须写 linked；勿因摘录为（无）就整段 linked 留空。
 - linked.character_id **只能**使用用户给出的 id 表反引号内的 id；禁止编造；**禁止**把当前约会对象 id 写入 linked。
 - 只总结材料中可直接核对的事实；禁止臆造；每条 linked 约 40～160 字。
@@ -2459,7 +2459,7 @@ export async function requestDatingLinkedMemoryFallbackSummary(params: {
   if (!npcBlock) npcBlock = '（无）'
   if (npcBlock.length > 12000) npcBlock = `${npcBlock.slice(0, 12000)}\n\n（人脉 NPC 摘录因长度已截断）`
   const peerId = String(params.datingPeerCharacterId || '').trim() || '（当前视角）'
-  const roster = String(params.eligibleLinkedNpcRoster || '').trim() || '（当前无人脉子角色）'
+  const roster = String(params.eligibleLinkedNpcRoster || '').trim() || '（当前无可关联角色）'
   const genderAppendix = await buildMemorySummaryPeerGenderAppendix(params.peerCharacterId)
   let latestRound = String(params.latestAiPlotBody || '').trim()
   if (latestRound.length > 6000) {
@@ -2474,10 +2474,10 @@ export async function requestDatingLinkedMemoryFallbackSummary(params: {
       role: 'user',
       content:
         `请仅基于下列材料输出 JSON（primary.content 必须为 ""）：\n\n` +
-        `【人脉可关联角色 id 表】（linked.character_id 仅可从中选择；勿选 \`${peerId}\`）\n${roster}\n\n` +
+        `【可关联角色 id 表】（linked.character_id 仅可从中选择；勿选 \`${peerId}\`）\n${roster}\n\n` +
         latestRoundBlock +
         `【线下约会剧情摘录（含本轮）】\n${offlineBlock}\n\n` +
-        `【人脉 NPC 线下关联摘录】\n${npcBlock}\n\n` +
+        `【线下关联摘录（人脉子角色 / 已绑定主角）】\n${npcBlock}\n\n` +
         `【指称】材料真名不得写入 content；须占位符；禁止「我」。${genderAppendix}`,
     },
   ]

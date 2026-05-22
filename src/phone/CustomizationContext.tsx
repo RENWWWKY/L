@@ -755,11 +755,10 @@ export function CustomizationProvider({ children }: { children: ReactNode }) {
     }
 
     const onFocusIn = (e: FocusEvent) => {
-      if (isEditable(e.target)) {
-        keyboardOpen = true
-        if (!lockedVh) lockedVh = readVh()
-        applyVh(lockedVh)
-      }
+      if (!isEditable(e.target)) return
+      keyboardOpen = true
+      if (!lockedVh) lockedVh = readVh()
+      applyVh(lockedVh)
     }
 
     const onFocusOut = () => {
@@ -777,33 +776,41 @@ export function CustomizationProvider({ children }: { children: ReactNode }) {
       if (document.visibilityState === 'visible') onPageShow()
     }
     const forceTop = () => {
-      // 软键盘弹出时浏览器会平移 visualViewport，此时禁止把 window 拉回顶部，否则会盖住正在输入的区域
+      // 软键盘弹出时 visualViewport 会 scroll；与 scrollIntoView / 聚焦抢滚动会形成抖动死循环
       if (keyboardOpen) return
+      if (isEditable(document.activeElement)) return
+      const vv = window.visualViewport
+      if (vv && (vv.offsetTop > 0 || vv.height < window.innerHeight * 0.85)) return
       window.scrollTo(0, 0)
       document.documentElement.scrollTop = 0
       document.body.scrollTop = 0
     }
 
+    const onViewportChange = () => {
+      // 键盘展开动画期间 visualViewport 连续 resize；此时保持 focusin 锁定的 --app-vh，避免与页面抢高
+      if (keyboardOpen) return
+      refresh()
+    }
+
     refresh()
     forceTop()
-    window.addEventListener('resize', refresh)
-    window.visualViewport?.addEventListener('resize', refresh)
+    window.addEventListener('resize', onViewportChange)
+    window.visualViewport?.addEventListener('resize', onViewportChange)
     window.addEventListener('pageshow', onPageShow)
     window.addEventListener('pageshow', forceTop)
     document.addEventListener('visibilitychange', onVisibility)
     document.addEventListener('focusin', onFocusIn, true)
     document.addEventListener('focusout', onFocusOut, true)
-    window.visualViewport?.addEventListener('scroll', forceTop)
+    // 不在 visualViewport scroll 上强制 window 归零：iOS 18 聚焦密码框时会与键盘动画互相抢滚动
 
     return () => {
-      window.removeEventListener('resize', refresh)
-      window.visualViewport?.removeEventListener('resize', refresh)
+      window.removeEventListener('resize', onViewportChange)
+      window.visualViewport?.removeEventListener('resize', onViewportChange)
       window.removeEventListener('pageshow', onPageShow)
       window.removeEventListener('pageshow', forceTop)
       document.removeEventListener('visibilitychange', onVisibility)
       document.removeEventListener('focusin', onFocusIn, true)
       document.removeEventListener('focusout', onFocusOut, true)
-      window.visualViewport?.removeEventListener('scroll', forceTop)
     }
   }, [])
 

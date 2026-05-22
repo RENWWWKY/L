@@ -67,7 +67,15 @@ export function useWechatAsciiFieldInput({
       if (!el || cursor == null) return
       const pos = Math.min(cursor, next.length)
       requestAnimationFrame(() => {
-        el.setSelectionRange(pos, pos)
+        if (document.activeElement !== el) return
+        const start = el.selectionStart ?? 0
+        const end = el.selectionEnd ?? 0
+        if (start === pos && end === pos) return
+        try {
+          el.setSelectionRange(pos, pos)
+        } catch {
+          // iOS 在合成输入或类型切换瞬间可能拒绝设光标
+        }
       })
     },
     [normalize, onChange],
@@ -110,7 +118,12 @@ export function useWechatAsciiFieldInput({
       onChange(next)
       const pos = Math.min(start + normalize(paste).length, next.length)
       requestAnimationFrame(() => {
-        el.setSelectionRange(pos, pos)
+        if (document.activeElement !== el) return
+        try {
+          el.setSelectionRange(pos, pos)
+        } catch {
+          // ignore
+        }
       })
     },
     [normalize, onChange, value],

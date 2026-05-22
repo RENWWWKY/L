@@ -347,7 +347,7 @@ export function MemoryArchivePanel({
           loading={loading}
           emptyHint={
             memoryKind === 'linked'
-              ? '暂无关联记忆。它们来自绑定主角线下约会中对这位人脉角色的摘录，总结逻辑不变；注入时与「角色记忆」分轨。'
+              ? '暂无关联记忆。来自绑定主角线下约会：人脉 NPC 与「管理关系」绑定的其它主角均可各有一条；请在本馆按对应角色筛选查看。'
               : '调整检索词、身份源或角色焦点；也可点右上角「+」新建角色私聊记忆。'
           }
           onEdit={openEdit}

@@ -27,7 +27,7 @@ import {
   isMbtiPersonalityWorldBookName,
   normalizeMbti,
 } from '../mbtiPersonalityWorldBook'
-import { isLargeMbtiAvatar } from './mbtiProfileUi'
+import { resolveCharacterAvatarUrl } from '../../../utils/characterAvatarUrl'
 import { useWechatStore } from '../useWechatStore'
 import {
   backfillCharacterPlayerIdentityLinkMeta,
@@ -369,11 +369,11 @@ function IdentityPickModal({
                   style={{ borderColor: '#e5e5e5', boxShadow: '0 1px 3px rgba(0,0,0,0.05)' }}
                 >
                   <div className="h-[50px] w-[50px] shrink-0 overflow-hidden rounded-full border bg-white" style={{ borderColor: '#e5e5e5' }}>
-                    {it.avatarUrl?.trim() ? (
+                    {resolveCharacterAvatarUrl({ avatarUrl: it.avatarUrl }) ? (
                       <img
-                        src={it.avatarUrl}
+                        src={resolveCharacterAvatarUrl({ avatarUrl: it.avatarUrl })}
                         alt=""
-                        className={`h-full w-full object-contain ${isLargeMbtiAvatar(it.mbti) ? 'scale-100' : 'scale-85'}`}
+                        className="h-full w-full object-cover"
                       />
                     ) : (
                       <div className="flex h-full w-full items-center justify-center bg-white">
@@ -989,9 +989,9 @@ export function NewFriendsPersonaApp({
                       onClick={() => setPage({ name: 'edit', id: c.id, isNew: false })}
                       className="flex min-w-0 flex-1 items-center gap-3 text-left transition-all duration-200 ease-out hover:bg-[#fafafa] rounded-xl px-2 py-2 -mx-2"
                     >
-                      {c.avatarUrl?.trim() ? (
+                      {resolveCharacterAvatarUrl({ avatarUrl: c.avatarUrl }) ? (
                         <img
-                          src={c.avatarUrl}
+                          src={resolveCharacterAvatarUrl({ avatarUrl: c.avatarUrl })}
                           alt=""
                           className="h-12 w-12 rounded-full border object-cover"
                           style={{ borderColor: border }}

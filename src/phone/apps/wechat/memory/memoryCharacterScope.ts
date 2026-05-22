@@ -6,7 +6,7 @@ export function isCharacterOwnPrivateMemory(m: CharacterMemory): boolean {
   return scope !== 'group' && scope !== 'linked'
 }
 
-/** 人脉 NPC 挂在主角约会线下的「关联记忆」 */
+/** 人脉 NPC 或已绑定主角：挂在该角色 id 下的「关联记忆」（linkedFrom = 线下存档主角） */
 export function isCharacterLinkedMemory(m: CharacterMemory): boolean {
   return m.memoryScope === 'linked'
 }

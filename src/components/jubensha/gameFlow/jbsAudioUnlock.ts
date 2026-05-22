@@ -1,0 +1,18 @@
+/** 在用户手势（如「命运盲抽」）时预解锁后续自动播放 */
+let primed = false
+
+export function primeJbsRoomAudio(): void {
+  if (primed || typeof window === 'undefined') return
+  primed = true
+
+  const a = new Audio()
+  a.volume = 0.001
+  // 极短静音 mp3，仅用于占用一次用户手势授权
+  a.src =
+    'data:audio/mp3;base64,SUQzBAAAAAAAI1RTU0UAAAAPAAADTGF2ZjU4Ljc2LjEwMAAAAAAAAAAAAAAA//uQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWGluZwAAAA8AAAACAAABhAC7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7v////////////////////////////////AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA//uQZAAP8AAAfQAAAA0gAAAABAAABpAAAACAAADSAAAAETEFNRTMuMTAwVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVV//uQZB4P8AAAfQAAAA0gAAAABAAABpAAAACAAADSAAAAEVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVV'
+  void a.play().catch(() => {})
+}
+
+export function resetJbsRoomAudioPrimeForTests(): void {
+  primed = false
+}

@@ -5,7 +5,8 @@ import { useCustomization } from '../CustomizationContext'
 import { AppIconTile } from './AppIconTile'
 import { ImageCropperModal } from './ImageCropperModal'
 import { DockStyleSection } from './DockStyleSection'
-import { DEFAULT_CUSTOMIZATION, DEFAULT_WALLPAPER_URL, type AppSlot } from '../types'
+import { migrateLegacyRootPublicUrl, resolvePublicImageUrl } from '../../publicAssetUrl'
+import { DEFAULT_CUSTOMIZATION, DEFAULT_WALLPAPER_PATH, type AppSlot } from '../types'
 
 type Props = {
   onBack: () => void
@@ -467,7 +468,9 @@ export function CustomizeScreen({ onBack }: Props) {
                     aspectRatio: '9 / 19.5',
                     borderColor: theme.border,
                     backgroundColor: theme.surfaceMuted,
-                    backgroundImage: theme.wallpaperUrl ? `url(${theme.wallpaperUrl})` : 'none',
+                    backgroundImage: theme.wallpaperUrl
+                      ? `url(${resolvePublicImageUrl(theme.wallpaperUrl)})`
+                      : 'none',
                     backgroundRepeat: 'no-repeat',
                     backgroundPosition: 'center',
                     backgroundSize: theme.wallpaperFit === 'contain' ? 'contain' : 'cover',
@@ -513,9 +516,13 @@ export function CustomizeScreen({ onBack }: Props) {
                       background: theme.surfaceMuted,
                       color: theme.text,
                     }}
-                    placeholder="https://... / data:image..."
+                    placeholder="https://... / data:image... /image/..."
                     value={theme.wallpaperUrl}
                     onChange={(e) => setTheme({ wallpaperUrl: e.target.value })}
+                    onBlur={(e) => {
+                      const next = migrateLegacyRootPublicUrl(e.target.value)
+                      if (next !== e.target.value) setTheme({ wallpaperUrl: next })
+                    }}
                   />
                 </div>
                 <div>
@@ -551,7 +558,7 @@ export function CustomizeScreen({ onBack }: Props) {
                     本地上传壁纸
                   </Pressable>
                   <Pressable
-                    onClick={() => setTheme({ wallpaperUrl: DEFAULT_WALLPAPER_URL })}
+                    onClick={() => setTheme({ wallpaperUrl: DEFAULT_WALLPAPER_PATH })}
                     className="rounded-[14px] border px-4 py-2.5 text-center text-[12px] font-medium"
                     style={{
                       borderColor: theme.border,

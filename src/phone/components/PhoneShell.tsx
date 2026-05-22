@@ -23,6 +23,14 @@ export function PhoneShell({ children }: Props) {
     if (!el) return
 
     const compute = () => {
+      const active = document.activeElement
+      if (
+        active instanceof HTMLInputElement ||
+        active instanceof HTMLTextAreaElement ||
+        (active instanceof HTMLElement && active.isContentEditable)
+      ) {
+        return
+      }
       const rect = el.getBoundingClientRect()
       const w = Math.max(0, Math.floor(rect.width))
       const h = Math.max(0, Math.floor(rect.height))

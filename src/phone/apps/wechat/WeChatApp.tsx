@@ -5751,6 +5751,7 @@ function WeChatAppInner({ onBack }: Props) {
                   <WeChatDiscoverInstagram
                     onImmersiveViewChange={setDiscoverMomentsOpen}
                     currentUserName={state.profile.displayName || '我'}
+                    personaContacts={state.wechatPersonaContacts}
                   />
                 </div>
               ) : (

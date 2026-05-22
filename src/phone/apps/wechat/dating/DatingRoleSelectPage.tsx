@@ -1,6 +1,7 @@
 import { CalendarHeart, ChevronRight, Clock } from 'lucide-react'
 import { useEffect, useMemo, useState } from 'react'
 import { personaDb } from '../newFriendsPersona/idb'
+import { resolveCharacterAvatarUrl } from '../../../utils/characterAvatarUrl'
 import { useDating } from './DatingContext'
 
 /** 列表副标题：与简介/签名存库一致，展开 {{id:…}} / {{user}} 等为可读名 */
@@ -62,7 +63,7 @@ export function DatingRoleSelectPage({ onEnterStory, onOpenPersonaManager }: Pro
             className="mt-3 flex w-full items-center transition-all duration-200 ease-out hover:opacity-90"
           >
             <img
-              src={lastPlayed.c.avatarUrl}
+              src={resolveCharacterAvatarUrl({ avatarUrl: lastPlayed.c.avatarUrl })}
               alt={lastPlayed.c.realName}
               className="h-[60px] w-[60px] rounded-full border-2 border-stone-200 object-cover"
             />
@@ -94,7 +95,11 @@ export function DatingRoleSelectPage({ onEnterStory, onOpenPersonaManager }: Pro
                 idx !== characters.length - 1 ? 'border-b border-stone-100' : ''
               }`}
             >
-              <img src={c.avatarUrl} alt={c.realName} className="h-[50px] w-[50px] rounded-full border-2 border-stone-200 object-cover" />
+              <img
+                src={resolveCharacterAvatarUrl({ avatarUrl: c.avatarUrl })}
+                alt={c.realName}
+                className="h-[50px] w-[50px] rounded-full border-2 border-stone-200 object-cover"
+              />
               <div className="ml-3 min-w-0">
                 <p className="text-[16px] font-semibold text-[#262626]">{c.realName}</p>
                 <DatingListSignatureLine characterId={c.id} text={c.signature} />

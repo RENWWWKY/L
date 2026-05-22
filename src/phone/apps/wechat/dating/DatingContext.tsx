@@ -12,6 +12,9 @@ import {
 import { personaDb, pullPhoneKvWithLocalStorageLegacy } from '../newFriendsPersona/idb'
 import { resolvePrivateChatSessionPlayerIdentityId, resolvePrivateWeChatConversationKey } from '../wechatConversationKey'
 import { peekPrivateChatGroupAnchorFromDockStaging } from '../wechatPrivateGroupAnchorStaging'
+import { migrateLegacyRootPublicUrl } from '../../../../publicAssetUrl'
+import { repairCharacterAvatarForBundleImport } from '../../../utils/characterAvatarUrl'
+import { buildEligibleLinkedMemoryRosterForDatingAppendix } from '../memory/linkedMemoryEligiblePeers'
 import {
   datingTurnMayNeedLinkedMemoryWrite,
   gatherUnifiedMemoryInputsForDatingTurn,
@@ -128,7 +131,7 @@ const DATING_AI_HISTORY_PER_PLOT_CAP = 12_000
 /** 分支续写上下文（尾部剧情摘录） */
 const DATING_AI_BRANCH_TAIL_MAX = 40_000
 
-/** 约会合并记忆附录：存档主角 id + 可写入 linked 的人脉 NPC（与 personaDb.listNpcsFor 一致） */
+/** 约会合并记忆附录：存档主角 id + 可写入 linked 的人脉 NPC / 已绑定主角 */
 type DatingTurnModelExtras = {
   unifiedMemoryAppendix?: string
   regeneratingWorldBookBaseline?: boolean
@@ -174,38 +177,6 @@ async function buildDatingTurnModelExtras(params: {
   }
 }
 
-async function buildEligibleLinkedNpcRosterForDatingAppendix(
-  plotsArchiveId: string,
-  datingPeerCharacterId: string,
-): Promise<string> {
-  const peer = datingPeerCharacterId.trim()
-  const owner = plotsArchiveId.trim()
-  if (!owner) return '（当前无人脉子角色，linked 一般为 []）'
-  try {
-    let mainLabel = owner.slice(0, 8)
-    try {
-      const mainRow = await personaDb.getCharacter(owner)
-      mainLabel = (mainRow?.name || mainRow?.wechatNickname || '').trim() || mainLabel
-    } catch {
-      /* keep slice */
-    }
-    const header = `- \`${owner}\`：${mainLabel}（线下存档主角；正文用 {{archive_char}}，**勿**将此 id 填入 linked.character_id）`
-    const rows = await personaDb.listNpcsFor(owner)
-    const lines = rows
-      .filter((n) => String(n.id || '').trim() && String(n.id).trim() !== peer)
-      .map((n) => {
-        const nm = (n.name || n.wechatNickname || '').trim() || '未命名'
-        return `- \`${String(n.id).trim()}\`：${nm}`
-      })
-    const body =
-      lines.length > 0
-        ? lines.join('\n')
-        : '（当前无人脉子角色；linked 可为 []；提及存档主角须 {{archive_char}} 而非泛称）'
-    return `${header}\n${body}`
-  } catch {
-    return '（人脉列表读取失败；若无把握请 linked=[]）'
-  }
-}
 
 function stripPlotBodyForPrompt(plot: PlotItem): string {
   const raw = String(plot.content || '').trim()
@@ -428,7 +399,9 @@ function toCharacterInfo(row: Character, remarkName: string): CharacterInfo {
   const tags = [...new Set([...baseTags, ...painPointTags])].slice(0, 8)
   return {
     id: row.id,
-    avatarUrl: row.avatarUrl?.trim() || '',
+    avatarUrl: repairCharacterAvatarForBundleImport({
+      avatarUrl: migrateLegacyRootPublicUrl(row.avatarUrl?.trim() || ''),
+    }),
     realName,
     pinyin: toPinyinLike(realName),
     age: typeof row.age === 'number' && Number.isFinite(row.age) ? row.age : 22,
@@ -464,7 +437,7 @@ function mergeSavedCharacters(baseChars: CharacterInfo[], parsed: unknown | null
       if (typeof cs.gradientFrom === 'string') out.gradientFrom = cs.gradientFrom
       if (typeof cs.gradientTo === 'string') out.gradientTo = cs.gradientTo
       if (typeof cs.gradientAngle === 'number') out.gradientAngle = cs.gradientAngle
-      if (typeof cs.imageUrl === 'string') out.imageUrl = cs.imageUrl
+      if (typeof cs.imageUrl === 'string') out.imageUrl = migrateLegacyRootPublicUrl(cs.imageUrl)
       if (typeof cs.glass === 'boolean') out.glass = cs.glass
       if (typeof cs.glassBlur === 'number') out.glassBlur = cs.glassBlur
       if (typeof cs.bgOpacity === 'number') out.bgOpacity = cs.bgOpacity
@@ -473,7 +446,7 @@ function mergeSavedCharacters(baseChars: CharacterInfo[], parsed: unknown | null
       if (typeof cs.tagGradientFrom === 'string') out.tagGradientFrom = cs.tagGradientFrom
       if (typeof cs.tagGradientTo === 'string') out.tagGradientTo = cs.tagGradientTo
       if (typeof cs.tagGradientAngle === 'number') out.tagGradientAngle = cs.tagGradientAngle
-      if (typeof cs.tagImageUrl === 'string') out.tagImageUrl = cs.tagImageUrl
+      if (typeof cs.tagImageUrl === 'string') out.tagImageUrl = migrateLegacyRootPublicUrl(cs.tagImageUrl)
       if (typeof cs.tagBgOpacity === 'number') out.tagBgOpacity = cs.tagBgOpacity
       if (typeof cs.tagTextColor === 'string') out.tagTextColor = cs.tagTextColor
       if (typeof cs.tagRadius === 'number') out.tagRadius = cs.tagRadius
@@ -490,7 +463,10 @@ function mergeSavedCharacters(baseChars: CharacterInfo[], parsed: unknown | null
       const birthday = /^\d{1,2}-\d{1,2}$/.test(birthdayRaw.trim()) ? birthdayRaw.trim() : base.birthdayMD
       res.push({
         ...base,
-        avatarUrl: typeof saved.avatarUrl === 'string' ? saved.avatarUrl : base.avatarUrl,
+        avatarUrl:
+          typeof saved.avatarUrl === 'string'
+            ? migrateLegacyRootPublicUrl(saved.avatarUrl)
+            : base.avatarUrl,
         realName: typeof saved.realName === 'string' ? saved.realName : base.realName,
         pinyin: typeof saved.pinyin === 'string' ? saved.pinyin : base.pinyin,
         age: typeof saved.age === 'number' ? saved.age : base.age,
@@ -808,7 +784,7 @@ async function finalizeDatingMemoryAfterAiReply(params: {
     linkedOn &&
     (await datingTurnMayNeedLinkedMemoryWrite(gatherForApply, params.plotsSnapshotAfterAi))
   if (linkedNpcNamesWritten.length === 0 && shouldTryLinkedFallback) {
-    const roster = await buildEligibleLinkedNpcRosterForDatingAppendix(
+    const roster = await buildEligibleLinkedMemoryRosterForDatingAppendix(
       gatherForApply.plotsArchiveId,
       params.char.id,
     )

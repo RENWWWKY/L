@@ -12,7 +12,7 @@ const AUTO_DISMISS_MS = 3800
 
 function formatNpcList(names: string[]): string {
   if (names.length <= 2) return names.map((n) => `「${n}」`).join('、')
-  return `「${names[0]}」等 ${names.length} 位人脉`
+  return `「${names[0]}」等 ${names.length} 位关联角色`
 }
 
 type ToastPayload = {

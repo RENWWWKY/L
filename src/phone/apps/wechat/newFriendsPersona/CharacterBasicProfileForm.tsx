@@ -15,6 +15,7 @@ import {
   zodiacZhFromStoredMD,
   normalizeBirthdayMD,
 } from './characterProfilePhysioUtils'
+import { resolveCharacterAvatarUrl } from '../../../utils/characterAvatarUrl'
 import { isLargeMbtiAvatar, resolveMbtiImageUrl } from './mbtiProfileUi'
 import { DEFAULT_WORLD_BACKGROUND_ID } from './worldBackgroundConstants'
 import { formatWorldBackgroundForPrompt } from './worldBackgroundFormat'
@@ -312,8 +313,12 @@ export function CharacterBasicProfileForm({
             onClick={() => setAvatarSheet(true)}
             className="relative flex size-24 shrink-0 items-center justify-center rounded-full border border-neutral-200 bg-white shadow-sm transition-colors active:bg-neutral-50"
           >
-            {form.avatarUrl?.trim() ? (
-              <img src={form.avatarUrl} alt="" className="size-full rounded-full object-cover" />
+            {resolveCharacterAvatarUrl({ avatarUrl: form.avatarUrl }) ? (
+              <img
+                src={resolveCharacterAvatarUrl({ avatarUrl: form.avatarUrl })}
+                alt=""
+                className="size-full rounded-full object-cover"
+              />
             ) : (
               <User className="size-10 text-neutral-300" strokeWidth={1.25} />
             )}

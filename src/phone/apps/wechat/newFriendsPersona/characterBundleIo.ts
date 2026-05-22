@@ -9,7 +9,8 @@ import { emitWeChatStorageChanged, personaDb } from './idb'
 import { stampWechatAccountOwner } from '../wechatAccountScope'
 import { DEFAULT_WORLD_BACKGROUND_ID } from './worldBackgroundConstants'
 import { uid } from './utils'
-import { migrateLegacyRootPublicUrl } from '../../../../publicAssetUrl'
+import { canonicalPublicImagePath, migrateLegacyRootPublicUrl } from '../../../../publicAssetUrl'
+import { repairCharacterAvatarForBundleImport } from '../../../utils/characterAvatarUrl'
 
 export const CHARACTER_BUNDLE_KIND = 'lumi-phone-character-bundle' as const
 export const CHARACTER_BUNDLE_VERSION = 5 as const
@@ -127,9 +128,13 @@ function bundleKindMatches(kind: unknown, expected: string): boolean {
 
 function migrateCharacterPublicUrls(input: Character): Character {
   const out: Character = { ...input }
-  if (typeof out.avatarUrl === 'string') out.avatarUrl = migrateLegacyRootPublicUrl(out.avatarUrl)
-  if (typeof out.momentsCoverUrl === 'string') out.momentsCoverUrl = migrateLegacyRootPublicUrl(out.momentsCoverUrl)
-  if (typeof out.chatBackground === 'string') out.chatBackground = migrateLegacyRootPublicUrl(out.chatBackground)
+  out.avatarUrl = repairCharacterAvatarForBundleImport(out)
+  if (typeof out.momentsCoverUrl === 'string') {
+    out.momentsCoverUrl = canonicalPublicImagePath(out.momentsCoverUrl)
+  }
+  if (typeof out.chatBackground === 'string') {
+    out.chatBackground = canonicalPublicImagePath(out.chatBackground)
+  }
   return out
 }
 
@@ -348,8 +353,10 @@ export async function buildCharacterExportBundle(data: Character): Promise<Chara
     version: CHARACTER_BUNDLE_VERSION,
     exportedAt: Date.now(),
     rootCharacterId: rootId,
-    mainCharacter: stripExportedPlayerIdentityBinding(main),
-    npcs: npcs.map(stripExportedPlayerIdentityBinding),
+    mainCharacter: migrateCharacterPublicUrls(stripExportedPlayerIdentityBinding(main)),
+    npcs: npcs.map((n) =>
+      migrateCharacterPublicUrls(stripExportedPlayerIdentityBinding(n.id === data.id ? { ...data } : { ...n })),
+    ),
     relationships,
     worldBackground,
     networkGraphViews,

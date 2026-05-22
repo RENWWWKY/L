@@ -350,15 +350,19 @@ export type CustomizationState = {
   gestureEffects: GestureEffectsSettings
 }
 
-export const DEFAULT_WALLPAPER_URL = publicAssetUrl('/image/手机壁纸1.png')
+/** 存库用规范路径；展示时用 {@link resolvePublicImageUrl} */
+export const DEFAULT_WALLPAPER_PATH = '/image/手机壁纸1.png'
+export const DEFAULT_WALLPAPER_URL = publicAssetUrl(DEFAULT_WALLPAPER_PATH)
 /** 主屏桌面图标格数量（4×4 桌面区内的 4×2 图标带） */
 export const DESKTOP_LAYOUT_SLOT_COUNT = 8
 
 /** 微信「信息」列表与聊天会话页默认背景图（放在 `public/image/`，经 {@link publicAssetUrl} 带 base） */
-export const DEFAULT_WECHAT_CHAT_WALLPAPER_URL = publicAssetUrl('/image/聊天壁纸默认1.jpg')
+export const DEFAULT_WECHAT_CHAT_WALLPAPER_PATH = '/image/聊天壁纸默认1.jpg'
+export const DEFAULT_WECHAT_CHAT_WALLPAPER_URL = publicAssetUrl(DEFAULT_WECHAT_CHAT_WALLPAPER_PATH)
 
 /** 个人名片默认头像 URL（与 {@link DEFAULT_CUSTOMIZATION} 中 profile 一致，供查手机等模块复用） */
-export const DEFAULT_PUBLIC_AVATAR_URL = publicAssetUrl('/image/个人名片默认头像1.png')
+export const DEFAULT_PUBLIC_AVATAR_PATH = '/image/个人名片默认头像1.png'
+export const DEFAULT_PUBLIC_AVATAR_URL = publicAssetUrl(DEFAULT_PUBLIC_AVATAR_PATH)
 
 /** 个人名片页上半身背景图 */
 export const DEFAULT_PERSONAL_CARD_BG_URL = publicAssetUrl('/image/个人名片背景图1.png')
@@ -393,7 +397,7 @@ export const DEFAULT_APP_PAGE_STYLE: AppPageStyle = {
 export const DEFAULT_CUSTOMIZATION: CustomizationState = {
   theme: {
     background: '#f2f2f4',
-    wallpaperUrl: DEFAULT_WALLPAPER_URL,
+    wallpaperUrl: DEFAULT_WALLPAPER_PATH,
     wallpaperFit: 'cover',
     surface: '#ffffff',
     surfaceMuted: '#fafafa',

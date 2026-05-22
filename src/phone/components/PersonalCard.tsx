@@ -1,3 +1,4 @@
+import { resolvePublicImageUrl } from '../../publicAssetUrl'
 import { useCustomization } from '../CustomizationContext'
 import { DEFAULT_PERSONAL_CARD_BG_URL } from '../types'
 
@@ -65,7 +66,7 @@ export function PersonalCard() {
           >
             {profile.avatarImageUrl ? (
               <img
-                src={profile.avatarImageUrl}
+                src={resolvePublicImageUrl(profile.avatarImageUrl)}
                 alt=""
                 className="h-full w-full object-cover"
               />

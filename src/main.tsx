@@ -3,8 +3,15 @@ import { createRoot } from 'react-dom/client'
 import './index.css'
 import App from './App.tsx'
 
-/** 键盘覆盖内容而不是挤压 viewport（支持的浏览器生效） */
-if ('virtualKeyboard' in navigator) {
+/**
+ * 键盘覆盖内容而不是挤压 viewport（Chromium 等）。
+ * iOS WebKit 不支持 VirtualKeyboard API，强行设置会与 visualViewport 滚动抢布局。
+ */
+if (
+  'virtualKeyboard' in navigator &&
+  !/iPad|iPhone|iPod/.test(navigator.userAgent) &&
+  !(navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1)
+) {
   ;(navigator as Navigator & { virtualKeyboard?: { overlaysContent: boolean } }).virtualKeyboard!.overlaysContent = true
 }
 

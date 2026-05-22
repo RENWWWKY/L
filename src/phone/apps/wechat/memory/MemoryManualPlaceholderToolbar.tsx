@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState, type RefObject } from 'react'
 import type { WorldBookUserInsertContext } from '../charUserPlaceholders'
 import { personaDb } from '../newFriendsPersona/idb'
+import { listRelationshipBoundProtagonistPeers } from './linkedMemoryEligiblePeers'
 import type {
   Character,
   CharacterMemoryScope,
@@ -83,6 +84,17 @@ async function loadPrivateLinkedManualPlaceholderRoster(anchor: string): Promise
     if (!nid || nid === rootId) continue
     const nm = String(n.name ?? n.wechatNickname ?? '').trim() || nid.slice(0, 8)
     pushId(nid, nm, '人脉 NPC')
+  }
+
+  try {
+    const bound = await listRelationshipBoundProtagonistPeers(rootId)
+    for (const p of bound) {
+      const pid = p.id.trim()
+      const nm = String(p.name ?? p.wechatNickname ?? '').trim() || pid.slice(0, 8)
+      pushId(pid, nm, '已绑定主角')
+    }
+  } catch {
+    /* ignore */
   }
 
   return items

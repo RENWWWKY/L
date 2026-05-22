@@ -16,6 +16,7 @@ import {
 import { WECHAT_GROUP_BOT_CHARACTER_ID, WECHAT_GROUP_USER_CHAR_ID } from '../wechatConversationKey'
 import { normalizeMemorySummaryBodyAfterModel } from './memorySummaryContentNormalize'
 import { repairMemorySummaryBodyFromModel } from './memorySummarySchemaLeakRepair'
+import { listAllLinkedMemoryEligibleCharacters } from './linkedMemoryEligiblePeers'
 
 const MIN_TOKEN_LEN = 2
 
@@ -114,13 +115,13 @@ export async function sanitizeUnifiedPrimaryMemoryBody(
   if (arch && arch !== peer) {
     pushCharRules(ordered, await personaDb.getCharacter(arch), '{{archive_char}}')
   }
-  let npcs: Character[] = []
+  let eligiblePeers: Character[] = []
   try {
-    npcs = await personaDb.listNpcsFor(arch)
+    eligiblePeers = (await listAllLinkedMemoryEligibleCharacters(arch)).all
   } catch {
-    npcs = []
+    eligiblePeers = []
   }
-  for (const n of npcs) {
+  for (const n of eligiblePeers) {
     const nid = n.id.trim()
     if (!nid || nid === peer) continue
     pushCharRules(ordered, n, `{{id:${nid}}}`)
@@ -170,13 +171,13 @@ export async function sanitizeUnifiedLinkedMemoryBody(
   pushCharRules(ordered, await personaDb.getCharacter(npc), '{{char}}')
   if (arch) pushCharRules(ordered, await personaDb.getCharacter(arch), '{{archive_char}}')
 
-  let npcs: Character[] = []
+  let eligiblePeers: Character[] = []
   try {
-    npcs = await personaDb.listNpcsFor(arch || npc)
+    eligiblePeers = (await listAllLinkedMemoryEligibleCharacters(arch || npc)).all
   } catch {
-    npcs = []
+    eligiblePeers = []
   }
-  for (const n of npcs) {
+  for (const n of eligiblePeers) {
     const nid = n.id.trim()
     if (!nid || nid === npc) continue
     pushCharRules(ordered, n, `{{id:${nid}}}`)

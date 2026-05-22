@@ -5,9 +5,62 @@ import { fileURLToPath } from 'node:url'
 import tailwindcss from '@tailwindcss/vite'
 import react from '@vitejs/plugin-react'
 import basicSsl from '@vitejs/plugin-basic-ssl'
-import { defineConfig, type Plugin } from 'vite'
+import { defineConfig, type Plugin, type ResolvedConfig } from 'vite'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
+
+const PWA_MANIFEST_SRC = path.resolve(__dirname, 'pwa-manifest.template.json')
+
+/** 按 Vite base 生成 manifest，避免 iOS 把「添加到主屏幕」当成普通书签（scope/start_url 不匹配） */
+function pwaManifestPlugin(): Plugin {
+  let resolvedBase = '/'
+
+  const normalizeBase = (base: string) => (base === '/' ? '/' : base.endsWith('/') ? base : `${base}/`)
+
+  const buildManifestJson = (base: string) => {
+    const b = normalizeBase(base)
+    const raw = JSON.parse(fs.readFileSync(PWA_MANIFEST_SRC, 'utf-8')) as {
+      icons: { src: string; [k: string]: unknown }[]
+      [k: string]: unknown
+    }
+    const withBase = (p: string) => (p.startsWith('/') ? p : `${b}${p}`)
+    return {
+      ...raw,
+      id: b,
+      start_url: '.',
+      scope: '/',
+      icons: raw.icons.map((icon) => ({ ...icon, src: withBase(icon.src) })),
+    }
+  }
+
+  const manifestReqPath = (base: string) => {
+    const b = normalizeBase(base)
+    return b === '/' ? '/manifest.webmanifest' : `${b}manifest.webmanifest`.replace(/\/+/g, '/')
+  }
+
+  return {
+    name: 'pwa-manifest',
+    configResolved(config: ResolvedConfig) {
+      resolvedBase = config.base
+    },
+    configureServer(server) {
+      const serveManifest = (reqPath: string) => reqPath === manifestReqPath(server.config.base)
+      server.middlewares.use((req, res, next) => {
+        const reqPath = (req.url ?? '').split('?')[0]
+        if (!serveManifest(reqPath)) return next()
+        res.setHeader('Content-Type', 'application/manifest+json; charset=utf-8')
+        res.setHeader('Cache-Control', 'no-cache')
+        res.end(JSON.stringify(buildManifestJson(server.config.base)))
+      })
+    },
+    writeBundle() {
+      const outDir = path.resolve(this.environment.config.build.outDir)
+      const outFile = path.join(outDir, 'manifest.webmanifest')
+      fs.mkdirSync(outDir, { recursive: true })
+      fs.writeFileSync(outFile, `${JSON.stringify(buildManifestJson(resolvedBase), null, 2)}\n`)
+    },
+  }
+}
 
 /** 将仓库根目录 `image/` 同步到 `dist/image/`；开发期在中间件中提供同源路径（与 `resolveMeetDefaultEncounterChatBgUrl` 一致） */
 function copyRootImageDirToDist(): Plugin {
@@ -60,15 +113,27 @@ function copyRootImageDirToDist(): Plugin {
 }
 
 // https://vite.dev/config/
-// 与 GitHub 仓库名一致，默认站点为 https://<用户>.github.io/Lumi-Phone/
-// 绑定自定义域名并只用域名访问时，可改为 base: '/' 后重新构建部署
-export default defineConfig({
-  base: '/Lumi-Phone/',
-  plugins: [react(), tailwindcss(), basicSsl(), copyRootImageDirToDist()],
+// 与 GitHub 仓库名一致，生产构建 base 为 /Lumi-Phone/（GitHub Pages）
+// 本地 dev/preview 用 /，便于局域网 IP 直接访问并正确安装 PWA
+function resolveAppBase(command: 'build' | 'serve') {
+  // dev：局域网 IP 直连根路径；build/preview/部署：GitHub Pages 子路径
+  if (command === 'build') return '/Lumi-Phone/'
+  if (process.env.npm_lifecycle_event === 'preview') return '/Lumi-Phone/'
+  return '/'
+}
+
+export default defineConfig(({ command }) => {
+  const base = resolveAppBase(command)
+  return {
+  base,
+  plugins: [react(), tailwindcss(), basicSsl(), copyRootImageDirToDist(), pwaManifestPlugin()],
   /** 监听 0.0.0.0，同一局域网（同一 WiFi）内设备可通过本机 IP 访问 */
   server: {
     host: true,
     port: 5173,
+    fs: {
+      allow: [__dirname, path.resolve(__dirname, '剧本杀')],
+    },
     // 通过 basicSsl() 启用 https；这里按 ServerOptions 传对象即可
     https: {},
     proxy: {
@@ -95,4 +160,5 @@ export default defineConfig({
     host: true,
     port: 4173,
   },
+  }
 })

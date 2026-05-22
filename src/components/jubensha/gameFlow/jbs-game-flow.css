@@ -1,0 +1,390 @@
+/* 入局前置 · 浅色复古藏书阁（与剧本杀馆主厅同调） */
+
+.jbs-gf-root {
+  --jbs-gf-bg: #f4f1ea;
+  --jbs-gf-bg-warm: #ebe6dc;
+  --jbs-gf-paper: #faf8f5;
+  --jbs-gf-ink: #1a1a1a;
+  --jbs-gf-mahogany: #5c3d2e;
+  --jbs-gf-gilt: #8b6914;
+  --jbs-gf-gilt-soft: rgba(139, 105, 20, 0.12);
+  --jbs-gf-seal: #722f37;
+  --jbs-gf-parchment: #f4f1ea;
+  background: var(--jbs-gf-bg);
+  color: var(--jbs-gf-ink);
+}
+
+.jbs-gf-obsidian-bg {
+  background:
+    url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='3'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='0.04'/%3E%3C/svg%3E"),
+    radial-gradient(ellipse 90% 55% at 50% 0%, rgba(139, 105, 20, 0.06) 0%, transparent 58%),
+    radial-gradient(ellipse 70% 45% at 50% 100%, rgba(92, 61, 46, 0.05) 0%, transparent 50%),
+    linear-gradient(180deg, #faf8f5 0%, #f4f1ea 45%, #ebe6dc 100%);
+}
+
+.jbs-gf-text-muted {
+  color: rgba(92, 61, 46, 0.65);
+}
+
+.jbs-gf-text-accent {
+  color: var(--jbs-gf-gilt);
+}
+
+.jbs-gf-text-subtle {
+  color: rgba(26, 26, 26, 0.42);
+}
+
+.jbs-gf-btn-fate {
+  position: relative;
+  width: min(100%, 320px);
+  padding: 18px 24px;
+  border: 1px solid rgba(92, 61, 46, 0.28);
+  background: linear-gradient(180deg, #fffef9 0%, #f0ebe0 100%);
+  color: var(--jbs-gf-mahogany);
+  letter-spacing: 0.22em;
+  box-shadow:
+    0 1px 0 rgba(255, 255, 255, 0.8) inset,
+    0 8px 24px rgba(92, 61, 46, 0.08);
+  transition:
+    border-color 0.35s,
+    box-shadow 0.35s,
+    background 0.35s;
+}
+
+.jbs-gf-btn-fate:hover {
+  border-color: rgba(139, 105, 20, 0.45);
+  box-shadow: 0 10px 28px rgba(92, 61, 46, 0.12);
+}
+
+.jbs-gf-btn-fate-sub {
+  display: block;
+  margin-top: 4px;
+  font-size: 9px;
+  letter-spacing: 0.32em;
+  color: rgba(92, 61, 46, 0.45);
+}
+
+.jbs-gf-btn-invite {
+  border: 1px dashed rgba(92, 61, 46, 0.28);
+  background:
+    linear-gradient(135deg, transparent 48%, rgba(92, 61, 46, 0.04) 49%, rgba(92, 61, 46, 0.04) 51%, transparent 52%),
+    linear-gradient(180deg, #f8f4e8 0%, #ebe6dc 100%);
+  color: rgba(26, 26, 26, 0.45);
+}
+
+.jbs-gf-btn-invite .jbs-gf-btn-fate-sub {
+  color: rgba(26, 26, 26, 0.32);
+}
+
+.jbs-gf-astrolabe-ring {
+  fill: none;
+  stroke: rgba(92, 61, 46, 0.22);
+  stroke-width: 0.5;
+}
+
+.jbs-gf-astrolabe-tick {
+  stroke: rgba(139, 105, 20, 0.45);
+  stroke-width: 0.75;
+}
+
+.jbs-gf-astrolabe-core {
+  background: var(--jbs-gf-gilt);
+}
+
+.jbs-gf-typewriter {
+  font-size: 11px;
+  letter-spacing: 0.14em;
+  color: rgba(92, 61, 46, 0.72);
+}
+
+.jbs-gf-typewriter-dim {
+  color: rgba(92, 61, 46, 0.45);
+}
+
+.jbs-gf-typewriter-cursor {
+  background: rgba(139, 105, 20, 0.55);
+}
+
+/* —— 角色卷宗 · 横向滑动 —— */
+.jbs-gf-carousel-viewport {
+  position: relative;
+  width: 100%;
+}
+
+.jbs-gf-carousel-track {
+  display: flex;
+  align-items: center;
+  gap: 32px;
+  overflow-x: auto;
+  overflow-y: hidden;
+  scroll-snap-type: x mandatory;
+  scroll-behavior: smooth;
+  -webkit-overflow-scrolling: touch;
+  overscroll-behavior-x: contain;
+  padding: 0 calc(50% - 68px);
+  touch-action: pan-x;
+}
+
+.jbs-gf-carousel-slide {
+  flex: 0 0 136px;
+  scroll-snap-align: center;
+  scroll-snap-stop: always;
+}
+
+.jbs-gf-carousel-slide-btn {
+  display: block;
+  width: 100%;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+  background: transparent;
+  border: none;
+  padding: 0;
+}
+
+.jbs-gf-carousel-dot-active {
+  width: 1.5rem;
+  background: rgba(139, 105, 20, 0.65);
+}
+
+.jbs-gf-carousel-dot {
+  width: 0.375rem;
+  background: rgba(92, 61, 46, 0.2);
+}
+
+.jbs-gf-carousel-dot:hover {
+  background: rgba(92, 61, 46, 0.35);
+}
+
+.jbs-gf-carousel-confirm {
+  border: 1px solid rgba(92, 61, 46, 0.35);
+  background: linear-gradient(180deg, #5c3d2e 0%, #4a3025 100%);
+  color: #f4f1ea;
+  transition:
+    border-color 0.25s,
+    box-shadow 0.25s,
+    transform 0.2s;
+}
+
+.jbs-gf-carousel-confirm:hover:not(:disabled) {
+  border-color: rgba(114, 47, 55, 0.5);
+  box-shadow: 0 8px 24px rgba(92, 61, 46, 0.2);
+}
+
+.jbs-gf-carousel-confirm:active:not(:disabled) {
+  transform: scale(0.98);
+}
+
+/* —— 角色个人剧本 · 3D 小册 —— */
+.jbs-gf-role-script-book {
+  position: relative;
+  width: 132px;
+  height: 192px;
+  transform-style: preserve-3d;
+  transform: rotateY(-10deg);
+  filter: drop-shadow(0 12px 24px rgba(92, 61, 46, 0.18));
+}
+
+.jbs-gf-role-script-book--flat {
+  filter: none;
+  transform: none;
+}
+
+.jbs-gf-role-script-book--hero {
+  width: 248px;
+  height: 340px;
+  transform: rotateY(-8deg);
+  filter: drop-shadow(0 16px 36px rgba(92, 61, 46, 0.22));
+}
+
+.jbs-gf-role-script-book-volume {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  transform-style: preserve-3d;
+}
+
+.jbs-gf-role-script-book-face {
+  position: absolute;
+  inset: 0;
+  border-left: 8px solid #5c3d2e;
+  border-radius: 2px 6px 6px 2px;
+  box-shadow:
+    2px 0 0 #e8e4dc,
+    4px 0 0 #d9d4c8,
+    6px 0 0 #ccc6b8,
+    0 10px 28px rgba(92, 61, 46, 0.15);
+  overflow: hidden;
+  background: #ebe6dc;
+}
+
+.jbs-gf-role-script-book--flat .jbs-gf-role-script-book-face {
+  box-shadow:
+    2px 0 0 #e8e4dc,
+    4px 0 0 #d9d4c8,
+    6px 0 0 #ccc6b8;
+}
+
+.jbs-gf-role-script-book--hero .jbs-gf-role-script-book-face {
+  border-left-width: 9px;
+  border-radius: 2px 8px 8px 2px;
+}
+
+.jbs-gf-role-flip-cover-slot {
+  position: absolute;
+  inset: 0;
+  backface-visibility: hidden;
+  -webkit-backface-visibility: hidden;
+}
+
+.jbs-gf-flip-stage {
+  background: rgba(244, 241, 234, 0.72);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+}
+
+.jbs-gf-flip-back-btn {
+  border: 1px solid rgba(92, 61, 46, 0.22);
+  background: rgba(255, 254, 249, 0.92);
+  color: var(--jbs-gf-mahogany);
+  box-shadow: 0 4px 16px rgba(92, 61, 46, 0.1);
+}
+
+.jbs-gf-scrim {
+  background: rgba(92, 61, 46, 0.18);
+  backdrop-filter: blur(4px);
+  -webkit-backdrop-filter: blur(4px);
+}
+
+.jbs-gf-lock-bar {
+  background: linear-gradient(
+    to top,
+    rgba(244, 241, 234, 0.98) 0%,
+    rgba(244, 241, 234, 0.88) 55%,
+    transparent 100%
+  );
+}
+
+.jbs-gf-role-flip-scene {
+  perspective: 1100px;
+  perspective-origin: 50% 42%;
+}
+
+.jbs-gf-role-flip-book {
+  position: relative;
+  width: 248px;
+  height: 340px;
+  transform-style: preserve-3d;
+  transform: rotateY(-6deg) rotateX(2deg);
+}
+
+.jbs-gf-role-flip-inner {
+  position: absolute;
+  inset: 0;
+  border-radius: 2px 8px 8px 2px;
+  background: var(--jbs-gf-parchment);
+  border: 1px solid rgba(92, 61, 46, 0.2);
+  box-shadow: inset 0 0 40px rgba(139, 105, 20, 0.05);
+  overflow: hidden;
+}
+
+.jbs-gf-role-flip-cover-wrap {
+  position: absolute;
+  inset: 0;
+  transform-style: preserve-3d;
+  transform-origin: left center;
+}
+
+.jbs-font-kai-archive {
+  font-family:
+    'LXGW WenKai',
+    'ZCOOL XiaoWei',
+    'Noto Serif SC',
+    serif;
+  font-weight: 400;
+  font-feature-settings: 'kern' 1;
+  letter-spacing: 0.06em;
+}
+
+.jbs-gf-dossier-panel {
+  padding: 22px 20px 18px;
+  border-radius: 6px;
+  background: linear-gradient(165deg, #fffef9 0%, #f8f4e8 48%, #f0ebe0 100%);
+  border: 1px solid rgba(92, 61, 46, 0.22);
+  box-shadow:
+    0 0 0 1px rgba(255, 255, 255, 0.6) inset,
+    0 20px 48px rgba(92, 61, 46, 0.14);
+}
+
+.jbs-gf-dossier-panel-rule {
+  height: 1px;
+  background: linear-gradient(
+    90deg,
+    transparent,
+    rgba(92, 61, 46, 0.28) 20%,
+    rgba(92, 61, 46, 0.28) 80%,
+    transparent
+  );
+}
+
+.jbs-gf-dossier-field {
+  border-bottom: 1px dashed rgba(92, 61, 46, 0.25);
+  padding-bottom: 10px;
+}
+
+.jbs-gf-dossier-label {
+  font-size: 9px;
+  letter-spacing: 0.28em;
+  color: rgba(92, 61, 46, 0.65);
+  text-transform: uppercase;
+}
+
+.jbs-gf-dossier-value {
+  margin-top: 4px;
+  font-size: 20px;
+  line-height: 1.35;
+  color: var(--jbs-gf-ink);
+}
+
+.jbs-gf-dossier-redact {
+  background: linear-gradient(90deg, rgba(26, 26, 26, 0.06), transparent);
+  padding: 2px 0;
+}
+
+.jbs-gf-btn-lock {
+  background: linear-gradient(180deg, #722f37 0%, #5c252c 100%);
+  border: 1px solid rgba(92, 61, 46, 0.35);
+  color: #f4f1ea;
+  letter-spacing: 0.2em;
+}
+
+.jbs-gf-btn-lock--center {
+  min-width: 220px;
+  box-shadow: 0 8px 24px rgba(114, 47, 55, 0.22);
+}
+
+.jbs-gf-btn-return {
+  border: 1px solid rgba(92, 61, 46, 0.22);
+  background: rgba(255, 254, 249, 0.8);
+  color: var(--jbs-gf-mahogany);
+  letter-spacing: 0.16em;
+}
+
+.jbs-gf-toast {
+  background: rgba(255, 254, 249, 0.96);
+  border: 1px solid rgba(92, 61, 46, 0.22);
+  color: var(--jbs-gf-mahogany);
+  box-shadow: 0 8px 28px rgba(92, 61, 46, 0.12);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+}
+
+/* 演绎暗室仍保持深色，与入局前厅区分 */
+.jbs-gf-chat-bubble-peer {
+  background: rgba(26, 26, 30, 0.95);
+  border: 1px solid rgba(212, 175, 55, 0.15);
+}
+
+.jbs-gf-chat-bubble-self {
+  background: rgba(212, 175, 55, 0.12);
+  border: 1px solid rgba(212, 175, 55, 0.28);
+}

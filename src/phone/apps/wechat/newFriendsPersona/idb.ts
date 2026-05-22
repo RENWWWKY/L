@@ -50,6 +50,8 @@ import {
   trimMemoryTriggerText,
 } from '../memory/memoryTriggerUtils'
 import { fetchEmbeddingVector, resolveEmbeddingApiCredentials } from '../memory/memoryEmbeddingApi'
+import { migrateLegacyRootPublicUrl } from '../../../../publicAssetUrl'
+import { repairCharacterAvatarForBundleImport } from '../../../utils/characterAvatarUrl'
 import {
   backfillMemoryEmbeddingsBestEffort,
   isMemoryVectorRecallEnabled,
@@ -62,6 +64,11 @@ import {
   type MemoryVectorRecallOpts,
 } from '../memory/memoryVectorRecall'
 import { isCharacterLinkedMemory, isCharacterOwnPrivateMemory } from '../memory/memoryCharacterScope'
+import {
+  buildLinkedMemoryIdDisplayNameMap,
+  characterDisplayNameForIdMap,
+  resolveMissingIdPlaceholderDisplayNames,
+} from '../memory/linkedMemoryEligiblePeers'
 import {
   formatMemorySourceLineLabelFromMemory,
   formatPrivateMemoriesPromptWithLineScope,
@@ -666,12 +673,20 @@ function normalizeCharacter(input: unknown): Stored {
     bio: typeof raw.bio === 'string' ? (raw.bio as string) : '',
     motto: typeof raw.motto === 'string' ? (raw.motto as string) : '',
     openingLines: typeof raw.openingLines === 'string' ? (raw.openingLines as string) : '',
-    avatarUrl: typeof raw.avatarUrl === 'string' ? (raw.avatarUrl as string) : '',
+    avatarUrl:
+      typeof raw.avatarUrl === 'string'
+        ? repairCharacterAvatarForBundleImport({
+            avatarUrl: migrateLegacyRootPublicUrl(raw.avatarUrl as string),
+          })
+        : '',
     wechatNickname: typeof raw.wechatNickname === 'string' ? (raw.wechatNickname as string) : '',
     wechatId: typeof raw.wechatId === 'string' ? (raw.wechatId as string) : '',
     wechatSignature: typeof raw.wechatSignature === 'string' ? (raw.wechatSignature as string) : '',
     wechatRegion: typeof raw.wechatRegion === 'string' ? (raw.wechatRegion as string) : '',
-    momentsCoverUrl: typeof raw.momentsCoverUrl === 'string' ? (raw.momentsCoverUrl as string) : '',
+    momentsCoverUrl:
+      typeof raw.momentsCoverUrl === 'string'
+        ? migrateLegacyRootPublicUrl(raw.momentsCoverUrl as string)
+        : '',
     worldBooks,
     wechatAccountId: typeof raw.wechatAccountId === 'string' ? (raw.wechatAccountId as string).trim() : undefined,
     playerIdentityId: typeof raw.playerIdentityId === 'string' ? (raw.playerIdentityId as string) : undefined,
@@ -718,7 +733,10 @@ function normalizeCharacter(input: unknown): Stored {
         : undefined,
     isMuted: typeof raw.isMuted === 'boolean' ? raw.isMuted : undefined,
     isDanmakuMode: typeof raw.isDanmakuMode === 'boolean' ? raw.isDanmakuMode : undefined,
-    chatBackground: typeof raw.chatBackground === 'string' ? raw.chatBackground : undefined,
+    chatBackground:
+      typeof raw.chatBackground === 'string'
+        ? migrateLegacyRootPublicUrl(raw.chatBackground)
+        : undefined,
     remark: typeof raw.remark === 'string' ? raw.remark.slice(0, 64) : '',
     isStarred: typeof raw.isStarred === 'boolean' ? raw.isStarred : false,
     isBlocked: typeof raw.isBlocked === 'boolean' ? raw.isBlocked : false,
@@ -5067,48 +5085,15 @@ export class PersonaDb {
       playerDisplayName: playerDisplayFallback,
     })
 
-    /** 记忆挂在人脉 NPC 上时：存档主角 id → 显示名，并含同档案下 NPC id（供 {{archive_char}} / {{id:…}}） */
+    /** 人脉档案：主角 + 子角色 + 管理关系绑定的跨档案主角（供 {{id:…}} 展开） */
     let npcNetworkIdMap: Record<string, string> = {}
     let npcArchiveMainDisplayName: string | undefined
     const npcRootId = ownerRow?.generatedForCharacterId?.trim()
     if (npcRootId) {
-      let mainCh: Character | null = null
-      try {
-        mainCh = await this.getCharacter(npcRootId)
-      } catch {
-        mainCh = null
-      }
-      npcArchiveMainDisplayName =
-        String(mainCh?.name ?? mainCh?.wechatNickname ?? '').trim() || npcRootId.slice(0, 8)
-      npcNetworkIdMap[npcRootId] = npcArchiveMainDisplayName
-      let npcPeers: Character[] = []
-      try {
-        npcPeers = await this.listNpcsFor(npcRootId)
-      } catch {
-        npcPeers = []
-      }
-      for (const n of npcPeers) {
-        const nid = n.id.trim()
-        if (!nid) continue
-        npcNetworkIdMap[nid] = String(n.name ?? n.wechatNickname ?? '').trim() || nid.slice(0, 8)
-      }
+      npcNetworkIdMap = await buildLinkedMemoryIdDisplayNameMap(npcRootId)
+      npcArchiveMainDisplayName = npcNetworkIdMap[npcRootId]
     } else if (owner) {
-      /** 根人设（非 NPC）：同一条人脉档案下的主角 id + 其他人脉，供预览/UI 展开 `{{id:…}}`（与 NPC 视角一致） */
-      const rootId = owner.trim()
-      const archiveName =
-        String(ownerRow?.name ?? ownerRow?.wechatNickname ?? '').trim() || rootId.slice(0, 8)
-      npcNetworkIdMap[rootId] = archiveName
-      let npcPeers: Character[] = []
-      try {
-        npcPeers = await this.listNpcsFor(rootId)
-      } catch {
-        npcPeers = []
-      }
-      for (const n of npcPeers) {
-        const nid = n.id.trim()
-        if (!nid) continue
-        npcNetworkIdMap[nid] = String(n.name ?? n.wechatNickname ?? '').trim() || nid.slice(0, 8)
-      }
+      npcNetworkIdMap = await buildLinkedMemoryIdDisplayNameMap(owner)
     }
 
     const linkedRoots = new Set(
@@ -5138,26 +5123,8 @@ export class PersonaDb {
 
     const rootMeta = new Map<string, { archiveName: string; idMap: Record<string, string> }>()
     for (const rootId of linkedRoots) {
-      let root: Character | null = null
-      try {
-        root = await this.getCharacter(rootId)
-      } catch {
-        root = null
-      }
-      const archiveName =
-        String(root?.name ?? root?.wechatNickname ?? '').trim() || rootId.slice(0, 8)
-      const idMap: Record<string, string> = { [rootId]: archiveName }
-      let npcs: Character[] = []
-      try {
-        npcs = await this.listNpcsFor(rootId)
-      } catch {
-        npcs = []
-      }
-      for (const n of npcs) {
-        const nid = n.id.trim()
-        if (!nid) continue
-        idMap[nid] = String(n.name ?? n.wechatNickname ?? '').trim() || nid.slice(0, 8)
-      }
+      const idMap = await buildLinkedMemoryIdDisplayNameMap(rootId)
+      const archiveName = idMap[rootId] ?? characterDisplayNameForIdMap(null, rootId)
       rootMeta.set(rootId, { archiveName, idMap })
     }
 
@@ -5198,6 +5165,12 @@ export class PersonaDb {
       }),
     )
 
+    const allRawForIdResolve = expandedMemories.map((x) => x.raw)
+    const globalIdMap = await resolveMissingIdPlaceholderDisplayNames(
+      { ...npcNetworkIdMap, ...ownerIdMap, ...groupPeerIdMap },
+      allRawForIdResolve,
+    )
+
     return Promise.all(
       expandedMemories.map(async ({ m, raw }) => {
         if (!raw.includes('{{')) return raw
@@ -5207,17 +5180,18 @@ export class PersonaDb {
         if (m.memoryScope === 'linked' && lr && rootMeta.has(lr)) {
           const meta = rootMeta.get(lr)!
           archiveCharName = meta.archiveName
-          idToDisplayName = { ...npcNetworkIdMap, ...meta.idMap, ...ownerIdMap, ...groupPeerIdMap }
+          idToDisplayName = { ...globalIdMap, ...meta.idMap, ...ownerIdMap }
         } else if (m.memoryScope === 'group') {
-          idToDisplayName = { ...npcNetworkIdMap, ...ownerIdMap, ...groupPeerIdMap }
+          idToDisplayName = { ...globalIdMap, ...ownerIdMap, ...groupPeerIdMap }
         } else {
-          idToDisplayName = { ...npcNetworkIdMap, ...ownerIdMap, ...groupPeerIdMap }
+          idToDisplayName = { ...globalIdMap, ...ownerIdMap, ...groupPeerIdMap }
           if (npcArchiveMainDisplayName) {
             archiveCharName = npcArchiveMainDisplayName
           } else if (ownerRow && !npcRootId) {
             archiveCharName = baseNames.charName
           }
         }
+        idToDisplayName = await resolveMissingIdPlaceholderDisplayNames(idToDisplayName, [raw])
         const userName = await resolveMemoryExpandUserName(m, ownerRow, baseNames.userName)
         return expandLinkedMemoryPlaceholders(raw, {
           charName: baseNames.charName,

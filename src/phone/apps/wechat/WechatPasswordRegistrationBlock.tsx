@@ -50,9 +50,17 @@ function InsetPasswordField({
     onToggleVisible()
     requestAnimationFrame(() => {
       const el = field.inputRef.current
-      el?.focus()
+      try {
+        el?.focus({ preventScroll: true })
+      } catch {
+        el?.focus()
+      }
       const len = el?.value.length ?? 0
-      el?.setSelectionRange(len, len)
+      try {
+        el?.setSelectionRange(len, len)
+      } catch {
+        // iOS 在 type 切换瞬间可能拒绝设光标
+      }
     })
   }, [field.inputRef, onToggleVisible])
 
@@ -90,7 +98,7 @@ function InsetPasswordField({
           enterKeyHint="done"
           data-1p-ignore
           data-lpignore="true"
-          className="w-full rounded-xl border-0 bg-transparent py-3 pl-3.5 pr-11 font-mono text-[15px] tracking-[0.03em] text-[#111827] outline-none ring-0 placeholder:text-[#D1D5DB]"
+          className="w-full rounded-xl border-0 bg-transparent py-3 pl-3.5 pr-11 font-mono text-[16px] tracking-[0.03em] text-[#111827] outline-none ring-0 placeholder:text-[#D1D5DB]"
           placeholder="••••••"
         />
         <button
@@ -169,7 +177,7 @@ export function WechatPasswordRegistrationBlock({
           onFocus={onFocus}
           visible={show.confirm}
           onToggleVisible={() => toggle('confirm')}
-          autoComplete="new-password"
+          autoComplete="off"
           inputName="wx-reg-password-confirm-field"
           invalid={confirmInvalid}
         />
