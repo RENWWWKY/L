@@ -28,10 +28,12 @@ import {
   normalizeMbti,
 } from '../mbtiPersonalityWorldBook'
 import { resolveCharacterAvatarUrl } from '../../../utils/characterAvatarUrl'
+import { isLargeMbtiAvatar, resolvePlayerIdentityPreviewAvatar } from './mbtiProfileUi'
 import { useWechatStore } from '../useWechatStore'
 import {
   backfillCharacterPlayerIdentityLinkMeta,
   buildIdentityDisplayNameMapForCharacters,
+  getCharacterCrossAccountLinkedPlayerIdentityIds,
   repairCharacterSlotPrimaryBindingFromLinked,
 } from '../wechatCharacterPlayerIdentity'
 import {
@@ -362,18 +364,30 @@ function IdentityPickModal({
             </div>
           ) : (
             <div className="space-y-3">
-              {identities.map((it) => (
+              {identities.map((it) => {
+                const previewAvatar = resolvePlayerIdentityPreviewAvatar({
+                  mbti: it.mbti,
+                  avatarUrl: it.avatarUrl,
+                })
+                return (
                 <div
                   key={it.id}
                   className="flex items-center gap-3 rounded-[12px] border bg-white p-4"
                   style={{ borderColor: '#e5e5e5', boxShadow: '0 1px 3px rgba(0,0,0,0.05)' }}
                 >
-                  <div className="h-[50px] w-[50px] shrink-0 overflow-hidden rounded-full border bg-white" style={{ borderColor: '#e5e5e5' }}>
-                    {resolveCharacterAvatarUrl({ avatarUrl: it.avatarUrl }) ? (
+                  <div
+                    className="flex h-[50px] w-[50px] shrink-0 items-center justify-center overflow-hidden rounded-full border bg-white"
+                    style={{ borderColor: '#e5e5e5' }}
+                  >
+                    {previewAvatar.src ? (
                       <img
-                        src={resolveCharacterAvatarUrl({ avatarUrl: it.avatarUrl })}
+                        src={previewAvatar.src}
                         alt=""
-                        className="h-full w-full object-cover"
+                        className={
+                          previewAvatar.kind === 'mbti'
+                            ? `max-h-full max-w-full object-contain ${isLargeMbtiAvatar(it.mbti) ? '' : 'scale-90'}`
+                            : 'h-full w-full object-cover'
+                        }
                       />
                     ) : (
                       <div className="flex h-full w-full items-center justify-center bg-white">
@@ -398,7 +412,7 @@ function IdentityPickModal({
                     选择
                   </button>
                 </div>
-              ))}
+              )})}
 
               <button
                 type="button"
@@ -1016,28 +1030,24 @@ export function NewFriendsPersonaApp({
                             const primaryLabel = !bindId
                               ? '未绑定'
                               : identityNameById[bindId] || '未命名身份'
-                            const linked = (c.linkedPlayerIdentityIds ?? []).filter(
-                              (id) => id?.trim() && id.trim() !== bindId,
-                            )
-                            const primaryAcc = bindId
-                              ? resolvePlayerIdentityWechatAccountId(
-                                  c,
-                                  bindId,
-                                  identityList.find((i) => i.id === bindId),
-                                )
-                              : ''
+                            const accountFor = (pid: string) =>
+                              resolvePlayerIdentityWechatAccountId(
+                                c,
+                                pid,
+                                identityList.find((i) => i.id === pid),
+                              )
+                            const linked = bindId
+                              ? getCharacterCrossAccountLinkedPlayerIdentityIds(c, accountFor)
+                              : []
+                            const primaryAcc = bindId ? accountFor(bindId) : ''
                             const primaryAccLabel = primaryAcc
                               ? formatWechatAccountLabel(accountsBundle, primaryAcc)
                               : ''
                             const linkedSuffix = linked.length
-                              ? ` · 关联马甲：${linked
+                              ? ` · 副绑定：${linked
                                   .map((id) => {
                                     const name = identityNameById[id.trim()] || '未命名'
-                                    const la = resolvePlayerIdentityWechatAccountId(
-                                      c,
-                                      id.trim(),
-                                      identityList.find((i) => i.id === id.trim()),
-                                    )
+                                    const la = accountFor(id.trim())
                                     const accLabel = la
                                       ? formatWechatAccountLabel(accountsBundle, la)
                                       : ''
@@ -1903,9 +1913,12 @@ function PersonaEditPage({
                 worldBackgroundPrompt={characterWbPrompt}
                 identityContext={wbIdentityCtx}
                 linkedNpcsContext={linkedNpcsWbContext}
-                onChange={(next: Character) => {
+                onChange={(next) => {
                   setDirty(true)
-                  setData(next)
+                  setData((prev) => {
+                    if (!prev) return prev
+                    return typeof next === 'function' ? next(prev) : next
+                  })
                 }}
               />
             ) : null}

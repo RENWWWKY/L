@@ -15,7 +15,7 @@ export function WorldbookTab({
   worldBackgroundPrompt: string
   identityContext: PlayerIdentity | null
   linkedNpcsContext: string
-  onChange: (next: Character) => void
+  onChange: (next: Character | ((prev: Character) => Character)) => void
 }) {
   return (
     <div className="relative overflow-hidden rounded-[14px] border border-neutral-200/90 bg-[#FAFAFA] shadow-[0_1px_2px_rgba(0,0,0,0.04)]">

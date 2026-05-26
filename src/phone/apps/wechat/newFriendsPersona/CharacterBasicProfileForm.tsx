@@ -16,7 +16,7 @@ import {
   normalizeBirthdayMD,
 } from './characterProfilePhysioUtils'
 import { resolveCharacterAvatarUrl } from '../../../utils/characterAvatarUrl'
-import { isLargeMbtiAvatar, resolveMbtiImageUrl } from './mbtiProfileUi'
+import { MbtiPersonalityPickerGrid } from './MbtiPersonalityPickerGrid'
 import { DEFAULT_WORLD_BACKGROUND_ID } from './worldBackgroundConstants'
 import { formatWorldBackgroundForPrompt } from './worldBackgroundFormat'
 import { IDENTITY_POOL, daysInMonth, formatMD, randomChineseName } from './utils'
@@ -29,25 +29,6 @@ const inputUnderline =
   'w-full border-0 border-b border-neutral-200 bg-transparent py-2.5 text-[15px] text-neutral-950 outline-none ring-0 transition-colors duration-200 placeholder:text-neutral-300 focus:border-neutral-950 focus:ring-0'
 
 const gridLabel = 'text-[10px] font-medium uppercase tracking-[0.16em] text-neutral-400'
-
-const MBTI_LIST = [
-  'INTJ',
-  'INTP',
-  'ENTJ',
-  'ENTP',
-  'INFJ',
-  'INFP',
-  'ENFJ',
-  'ENFP',
-  'ISTJ',
-  'ISFJ',
-  'ESTJ',
-  'ESFJ',
-  'ISTP',
-  'ISFP',
-  'ESTP',
-  'ESFP',
-] as const
 
 export type CharacterBasicProfileFormProps = {
   editorId: string
@@ -693,45 +674,15 @@ export function CharacterBasicProfileForm({
               <div className="mx-auto mb-6 h-1 w-9 rounded-full bg-neutral-300" aria-hidden />
               <p className="text-[15px] font-semibold text-neutral-950">MBTI · 人格类型</p>
               <p className="mt-1 text-[11px] text-neutral-500">十六型 · 点击下方卡片选择</p>
-              <div className="mt-5 grid grid-cols-1 gap-3 pb-4 sm:grid-cols-2">
-                {MBTI_LIST.map((m) => {
-                  const active = form.mbti === m
-                  const src = resolveMbtiImageUrl(m)
-                  const big = isLargeMbtiAvatar(m)
-                  return (
-                    <button
-                      key={m}
-                      type="button"
-                      className={`flex items-center gap-3 rounded-xl border px-3 py-3 text-left transition-colors active:opacity-95 ${
-                        active ? 'border-neutral-950 bg-neutral-950 text-white' : 'border-neutral-200 bg-white text-neutral-800'
-                      }`}
-                      onClick={() => {
-                        setForm((prev) => ({ ...prev, mbti: m }))
-                        onMbtiSelect(m)
-                        setMbtiSheet(false)
-                      }}
-                    >
-                      <div className="flex h-12 w-12 shrink-0 items-center justify-center overflow-hidden rounded-lg bg-neutral-100">
-                        {src ? (
-                          <img
-                            src={src}
-                            alt=""
-                            className={`${big ? 'h-12 w-12' : 'h-11 w-11'} border border-neutral-200/80 object-contain`}
-                            style={{ borderColor: active ? 'rgba(255,255,255,0.25)' : undefined }}
-                            onError={(e) => {
-                              ;(e.currentTarget as HTMLImageElement).style.display = 'none'
-                            }}
-                          />
-                        ) : (
-                          <span className="font-mono text-[10px] text-neutral-400">{m}</span>
-                        )}
-                      </div>
-                      <p className={`min-w-0 font-mono text-[14px] font-semibold tracking-wide ${active ? 'text-white' : 'text-neutral-950'}`}>
-                        {m}
-                      </p>
-                    </button>
-                  )
-                })}
+              <div className="mt-5 pb-4">
+                <MbtiPersonalityPickerGrid
+                  value={form.mbti ?? ''}
+                  onSelect={(m) => {
+                    setForm((prev) => ({ ...prev, mbti: m }))
+                    onMbtiSelect(m)
+                    setMbtiSheet(false)
+                  }}
+                />
               </div>
               <button
                 type="button"

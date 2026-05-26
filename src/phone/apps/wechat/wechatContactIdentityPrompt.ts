@@ -12,7 +12,7 @@ import {
 import {
   formatPlayerIdentityDisplayName,
   getCharacterBoundPlayerIdentityId,
-  getCharacterLinkedPlayerIdentityIds,
+  getCharacterCrossAccountLinkedPlayerIdentityIds,
   shouldUseWechatHomeProfileOnlyForPrivateChat,
 } from './wechatCharacterPlayerIdentity'
 
@@ -160,10 +160,16 @@ export async function buildWechatPrivateContactIdentityContextBlock(params: {
     )
   }
 
-  const linked = getCharacterLinkedPlayerIdentityIds(ch).filter((id) => id !== primaryId && id !== sessionId)
-  if (linked.length) {
+  const crossLinked = getCharacterCrossAccountLinkedPlayerIdentityIds(ch, (lid) =>
+    resolvePlayerIdentityWechatAccountId(
+      ch,
+      lid,
+      lid === primaryId ? primaryRow : lid === sessionId ? sessionRow : null,
+    ),
+  ).filter((id) => id !== sessionId)
+  if (crossLinked.length) {
     const parts: string[] = []
-    for (const lid of linked.slice(0, 6)) {
+    for (const lid of crossLinked.slice(0, 6)) {
       const row = await personaDb.getPlayerIdentity(lid)
       const la = resolvePlayerIdentityWechatAccountId(ch, lid, row)
       parts.push(`${formatPlayerIdentityDisplayName(row, lid)}→${formatWechatAccountLabel(bundle, la)}`)

@@ -25,6 +25,11 @@ import type {
 import { dispatchDatingLinkedMemorySummarySuccess } from './dating/datingLinkedMemorySummarySuccessEvents'
 import { dispatchMeetMemorySummarySuccess } from '../lumiMeet/meetMemorySummarySuccessEvents'
 import {
+  type MemoryAiRoundCountChannel,
+  resetMemoryAiRoundCountForChannel,
+  rollbackMemoryAiRoundCountForChannel,
+} from '../lumiMeet/meetMemorySummarySettings'
+import {
   parseUnifiedMemorySummaryWithLinkedModelOutput,
   requestDatingLinkedMemoryFallbackSummary,
   requestGroupChatMemorySummary,
@@ -394,9 +399,12 @@ export async function applyUnifiedMemoryFromParsedSummary(
     datingAiPlotId?: string | null
     /** 为 true 时不派发关联记忆成功 toast（由约会剧情后台完成弹窗合并展示） */
     suppressLinkedMemoryToast?: boolean
+    /** 回滚/清零计数时使用的通道；默认微信私聊 */
+    aiRoundCountChannel?: MemoryAiRoundCountChannel
   },
 ): Promise<{ wroteAny: boolean; linkedNpcNamesWritten: string[] }> {
   const skipBump = opts.skipConversationRoundBump === true
+  const roundChannel: MemoryAiRoundCountChannel = opts.aiRoundCountChannel ?? 'wechat'
   const defer = opts.deferPrimaryAndUnifiedCursors === true
   const cid = gather.characterId
   const ck = gather.conversationKey
@@ -477,7 +485,7 @@ export async function applyUnifiedMemoryFromParsedSummary(
     : !!(primaryBody || linkedWritesToPersist.length)
 
   if (!wroteAny) {
-    if (!skipBump) await personaDb.rollbackMemoryAiRoundCountForRetry(ck)
+    if (!skipBump) await rollbackMemoryAiRoundCountForChannel(ck, roundChannel)
     else {
       const plots = opts.offlinePlotsForCursorAdvance
       if (
@@ -493,7 +501,7 @@ export async function applyUnifiedMemoryFromParsedSummary(
           await personaDb.setDatingPlotSummaryCursor(gather.plotsArchiveId, maxPlotTs)
         }
       }
-      if (skipBump) await personaDb.resetMemoryAiRoundCountForConversation(ck)
+      if (skipBump) await resetMemoryAiRoundCountForChannel(ck, roundChannel)
     }
     return { wroteAny: false, linkedNpcNamesWritten: [] }
   }
@@ -648,7 +656,7 @@ export async function applyUnifiedMemoryFromParsedSummary(
   }
 
   if (skipBump) {
-    await personaDb.resetMemoryAiRoundCountForConversation(ck)
+    await resetMemoryAiRoundCountForChannel(ck, roundChannel)
   }
 
   if (!defer && gather.hadMeet) {
@@ -722,9 +730,12 @@ export async function runUnifiedAutoMemorySummaryAfterThreshold(params: {
   skipConversationRoundBump?: boolean
   /** 约会补跑总结时传入，用于覆盖该 AI 轮次旧关联记忆 */
   datingAiPlotId?: string | null
+  /** 回滚计数通道：遇见触发时为 `meet`，默认微信私聊 */
+  aiRoundCountChannel?: MemoryAiRoundCountChannel
 }): Promise<void> {
   const cid = params.characterId.trim()
   const skipBump = params.skipConversationRoundBump === true
+  const roundChannel: MemoryAiRoundCountChannel = params.aiRoundCountChannel ?? 'wechat'
   if (!cid) return
 
   const gather = await gatherUnifiedMemoryInputsForDatingTurn({
@@ -739,7 +750,7 @@ export async function runUnifiedAutoMemorySummaryAfterThreshold(params: {
   const ck = gather.conversationKey
 
   if (!gather.hadOnline && !gather.hadOfflinePrior && !gather.hadMeet) {
-    if (!skipBump) await personaDb.rollbackMemoryAiRoundCountForRetry(ck)
+    if (!skipBump) await rollbackMemoryAiRoundCountForChannel(ck, roundChannel)
     return
   }
 
@@ -758,10 +769,11 @@ export async function runUnifiedAutoMemorySummaryAfterThreshold(params: {
     tagOfflineIncludesNewAiTurn: false,
     skipConversationRoundBump: skipBump,
     datingAiPlotId: params.datingAiPlotId,
+    aiRoundCountChannel: roundChannel,
   })
 
   if (!applied.wroteAny && !skipBump) {
-    await personaDb.rollbackMemoryAiRoundCountForRetry(ck)
+    await rollbackMemoryAiRoundCountForChannel(ck, roundChannel)
   }
 }
 

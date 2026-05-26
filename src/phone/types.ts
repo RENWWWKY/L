@@ -336,7 +336,12 @@ export function normalizeGestureEffects(raw: unknown): GestureEffectsSettings {
 
 export type CustomizationState = {
   theme: PhoneTheme
+  /** 微信资料镜像（进入微信时由当前账号同步；聊天/「我」页用，勿与桌面个人名片混用） */
   profile: Profile
+  /** 主屏桌面个人名片（独立编辑与展示，不受微信账号切换影响） */
+  personalCardProfile: Profile
+  /** 个人名片上半区背景图（规范路径或 data URL） */
+  personalCardBackgroundUrl: string
   music: MusicInfo
   apps: AppSlot[]
   desktopLayout: Array<AppSlot['id'] | null>
@@ -360,12 +365,14 @@ export const DESKTOP_LAYOUT_SLOT_COUNT = 8
 export const DEFAULT_WECHAT_CHAT_WALLPAPER_PATH = '/image/聊天壁纸默认1.jpg'
 export const DEFAULT_WECHAT_CHAT_WALLPAPER_URL = publicAssetUrl(DEFAULT_WECHAT_CHAT_WALLPAPER_PATH)
 
-/** 个人名片默认头像 URL（与 {@link DEFAULT_CUSTOMIZATION} 中 profile 一致，供查手机等模块复用） */
+/** 个人名片默认头像规范路径（写入 localStorage / 人设包用，展示时请 {@link resolvePublicImageUrl}） */
 export const DEFAULT_PUBLIC_AVATAR_PATH = '/image/个人名片默认头像1.png'
+/** @deprecated 优先存 {@link DEFAULT_PUBLIC_AVATAR_PATH}；展示用 resolvePublicImageUrl */
 export const DEFAULT_PUBLIC_AVATAR_URL = publicAssetUrl(DEFAULT_PUBLIC_AVATAR_PATH)
 
-/** 个人名片页上半身背景图 */
-export const DEFAULT_PERSONAL_CARD_BG_URL = publicAssetUrl('/image/个人名片背景图1.png')
+/** 个人名片页上半身背景图（存库用规范路径） */
+export const DEFAULT_PERSONAL_CARD_BG_PATH = '/image/个人名片背景图1.png'
+export const DEFAULT_PERSONAL_CARD_BG_URL = publicAssetUrl(DEFAULT_PERSONAL_CARD_BG_PATH)
 
 /** 微信各 Tab 未单独覆盖时使用的默认页背景（与聊天壁纸一致） */
 export const DEFAULT_WECHAT_TAB_PAGE_BG: WxFillStyle = {
@@ -394,6 +401,22 @@ export const DEFAULT_APP_PAGE_STYLE: AppPageStyle = {
     '"Cormorant Garamond", "Noto Serif SC", "STKaiti", "KaiTi", "Times New Roman", serif',
 }
 
+/** 主屏桌面个人名片默认资料 */
+export const DEFAULT_PERSONAL_CARD_PROFILE: Profile = {
+  displayName: '未命名',
+  signature: '心臟跳動的頻率是多少...₊⁺☆ *',
+  avatarEmoji: '✦',
+  avatarImageUrl: DEFAULT_PUBLIC_AVATAR_PATH,
+}
+
+/** 微信资料镜像默认值（实际展示以微信账号 bundle 为准） */
+export const DEFAULT_WECHAT_MIRROR_PROFILE: Profile = {
+  displayName: '未命名',
+  signature: '',
+  avatarEmoji: '微',
+  avatarImageUrl: DEFAULT_PUBLIC_AVATAR_PATH,
+}
+
 export const DEFAULT_CUSTOMIZATION: CustomizationState = {
   theme: {
     background: '#f2f2f4',
@@ -414,12 +437,9 @@ export const DEFAULT_CUSTOMIZATION: CustomizationState = {
     fontFamily:
       '"Cormorant Garamond", "Noto Serif SC", "STKaiti", "KaiTi", "Times New Roman", serif',
   },
-  profile: {
-    displayName: '未命名',
-    signature: '心臟跳動的頻率是多少...₊⁺☆ *',
-    avatarEmoji: '✦',
-    avatarImageUrl: DEFAULT_PUBLIC_AVATAR_URL,
-  },
+  profile: { ...DEFAULT_WECHAT_MIRROR_PROFILE },
+  personalCardProfile: { ...DEFAULT_PERSONAL_CARD_PROFILE },
+  personalCardBackgroundUrl: DEFAULT_PERSONAL_CARD_BG_PATH,
   music: {
     trackTitle: '静候播放',
     artistName: '本地音乐',

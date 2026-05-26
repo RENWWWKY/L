@@ -419,6 +419,7 @@ export async function runCharacterFriendRequestAdjudication(
     }
 
     if (userInitiated && !parsed?.decision) {
+      /** 口语兜底须读到已写入验证区的角色回复（时间戳常晚于 adjudicationCutoffMs） */
       const recentChar = (
         await loadFriendRequestMessagesForAdjudication({
           requestId: params.requestId,
@@ -426,7 +427,7 @@ export async function runCharacterFriendRequestAdjudication(
           playerIdentityId: sessionPlayerId,
           wechatAccountId: params.wechatAccountId,
           verificationEpochMs,
-          maxTimestampMs: adjudicationCutoffMs,
+          maxTimestampMs: undefined,
         })
       )
         .filter((m) => m.sender === 'character')

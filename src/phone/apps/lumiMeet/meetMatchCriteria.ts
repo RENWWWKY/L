@@ -69,12 +69,17 @@ export function legacyPurposeToMeetIntentions(p: RadarFilters['purpose']): MeetM
 }
 
 /** 注入 AI 用户消息的「寻觅法则」硬约束块 */
-export function buildEncounterAiCriteriaBlock(filters: RadarFilters): string {
+export function buildEncounterAiCriteriaBlock(
+  filters: RadarFilters,
+  opts?: { orientationRoundSeed?: number },
+): string {
   const intents =
     filters.meetIntentions.length > 0 ? filters.meetIntentions : legacyPurposeToMeetIntentions(filters.purpose)
   const intentZh = intents.map((k) => INTENT_LABEL[k]).join('；')
 
-  const oriBlock = buildEncounterOrientationCriteriaBlock(filters)
+  const oriBlock = buildEncounterOrientationCriteriaBlock(filters, {
+    orientationRoundSeed: opts?.orientationRoundSeed,
+  })
 
   const kw = filters.keywords.trim()
   const vibe = kw ? `【氛围关键词】${kw}` : ''

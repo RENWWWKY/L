@@ -9,11 +9,16 @@ const viteImageModules = import.meta.glob('../image/**/*.{png,jpg,jpeg,webp,gif,
 }) as Record<string, string>
 
 const viteBundledUrlToCanonical = new Map<string, string>()
+/** 规范路径 `/image/…` → 当前构建的 Vite ?url 产物（展示用） */
+const canonicalToViteBundledUrl = new Map<string, string>()
 for (const [file, url] of Object.entries(viteImageModules)) {
   if (typeof url !== 'string' || !url) continue
   const norm = file.replace(/\\/g, '/')
   const m = norm.match(/(?:^|\/)image\/(.+)$/i)
-  if (m?.[1]) viteBundledUrlToCanonical.set(url, `/image/${m[1]}`)
+  if (!m?.[1]) continue
+  const canon = `/image/${m[1]}`
+  viteBundledUrlToCanonical.set(url, canon)
+  if (!canonicalToViteBundledUrl.has(canon)) canonicalToViteBundledUrl.set(canon, url)
 }
 
 /** 当前部署 base 下的可请求 URL（仅用于展示，不要写入 localStorage / 人设包） */
@@ -33,7 +38,11 @@ export function canonicalPublicImagePath(url: string): string {
   if (!u) return u
   if (u.startsWith('data:') || u.startsWith('blob:')) return u
   if (/^https?:\/\//i.test(u)) {
-    if (/localhost|127\.0\.0\.1|192\.168\.\d+\.\d+/i.test(u)) return ''
+    if (/localhost|127\.0\.0\.1|192\.168\.\d+\.\d+/i.test(u)) {
+      const imagePath = u.match(/\/image\/[^?#]+/i)?.[0]
+      if (imagePath) return imagePath
+      return ''
+    }
     return u
   }
 
@@ -58,11 +67,15 @@ export function resolvePublicImageUrl(url: string): string {
   if (u.startsWith('data:') || u.startsWith('blob:')) return u
   if (/^https?:\/\//i.test(u)) return u
 
-  const fromVite = viteBundledUrlToCanonical.get(u)
-  if (fromVite) return publicAssetUrl(fromVite)
+  const bundled = viteBundledUrlToCanonical.has(u) ? u : canonicalToViteBundledUrl.get(canonicalPublicImagePath(u))
+  if (bundled) return bundled
 
   const canon = canonicalPublicImagePath(u)
-  if (canon.startsWith('/image/')) return publicAssetUrl(canon)
+  if (canon.startsWith('/image/')) {
+    const fromCanon = canonicalToViteBundledUrl.get(canon)
+    if (fromCanon) return fromCanon
+    return publicAssetUrl(canon)
+  }
 
   const base = import.meta.env.BASE_URL || '/'
   const prefix = base.endsWith('/') ? base : `${base}/`

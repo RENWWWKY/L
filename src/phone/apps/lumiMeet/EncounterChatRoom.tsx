@@ -264,9 +264,11 @@ export function EncounterChatRoom({ npc, onBack }: { npc: EncounterNPC; onBack: 
   const lastEnterDownRef = useRef(0)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
   const scrollRef = useRef<HTMLDivElement>(null)
+  const composerRef = useRef<HTMLDivElement>(null)
 
-  const keyboardInsetPx = useMeetKeyboardInset()
-  const composerInsetPx = Math.max(0, keyboardInsetPx)
+  const keyboardInsetPx = useMeetKeyboardInset(composerRef)
+  const composerInsetPx =
+    keyboardInsetPx > 0 ? Math.max(0, keyboardInsetPx) : 0
 
   useEffect(() => {
     const profileWx = profile.contactWechatId?.trim()
@@ -521,7 +523,7 @@ export function EncounterChatRoom({ npc, onBack }: { npc: EncounterNPC; onBack: 
           apiConfig,
           npc: snapNpc,
           userProfile: profile,
-          playerIdentityId: profile.baseWeChatIdentityId,
+          playerIdentityId: resolvedPid,
           deps: { upsertNpc },
         })
         showLoreToast('对方已在微信「新的朋友」发来验证')
@@ -1482,7 +1484,8 @@ export function EncounterChatRoom({ npc, onBack }: { npc: EncounterNPC; onBack: 
           className="meet-scrollbar relative z-[2] flex min-h-0 flex-1 flex-col gap-2 overflow-y-auto overflow-x-hidden py-4 pl-0 pr-0 [-webkit-overflow-scrolling:touch]"
           style={{
             ...(meetBg ? { background: 'transparent' } : {}),
-            paddingBottom: `calc(1rem + ${composerInsetPx}px)`,
+            paddingBottom: 12 + composerInsetPx,
+            scrollBehavior: 'smooth',
           }}
         >
         {timelineRows.map((row) => {
@@ -1703,24 +1706,25 @@ export function EncounterChatRoom({ npc, onBack }: { npc: EncounterNPC; onBack: 
         ) : null}
         <style>{`@keyframes meetTypingDot { 0%, 80%, 100% { transform: translateY(0); opacity: 0.35; } 40% { transform: translateY(-4px); opacity: 1; } }`}</style>
       </div>
-      </div>
 
-      {/* 与 ChatRoom 底栏一致：上内边距 + 底部安全区 */}
-      <div
-        className="relative z-10 w-full max-w-full shrink-0 border-t"
-        data-meet-coach="composer"
-        style={{
-          backgroundColor: 'var(--wx-input-bg)',
-          borderTopColor: 'var(--wx-border)',
-          paddingLeft: 12,
-          paddingRight: 12,
-          paddingTop: 12,
-          paddingBottom: 'max(12px, env(safe-area-inset-bottom, 0px))',
-          transform: composerInsetPx > 0 ? `translate3d(0, -${composerInsetPx}px, 0)` : undefined,
-          transition: 'transform 220ms ease-out',
-          willChange: composerInsetPx > 0 ? 'transform' : undefined,
-        }}
-      >
+      {/* 与 ChatRoom 一致：底栏 shrink-0 + translate3d 抬升 */}
+      {!truthMirrorOpen ? (
+        <div
+          ref={composerRef}
+          className="relative z-10 w-full max-w-full shrink-0 border-t"
+          data-meet-coach="composer"
+          style={{
+            backgroundColor: 'var(--wx-input-bg)',
+            borderTopColor: 'var(--wx-border)',
+            paddingLeft: 12,
+            paddingRight: 12,
+            paddingTop: 12,
+            paddingBottom: 'max(12px, env(safe-area-inset-bottom, 0px))',
+            transform: composerInsetPx > 0 ? `translate3d(0, -${composerInsetPx}px, 0)` : undefined,
+            transition: 'transform 220ms ease-out',
+            willChange: composerInsetPx > 0 ? 'transform' : undefined,
+          }}
+        >
         {quoteTarget ? (
           <div className="mb-2 flex items-start gap-2 rounded-[12px] border border-[#D4AF37]/25 bg-white/95 px-3 py-2">
             <div className="min-w-0 flex-1">
@@ -1800,11 +1804,6 @@ export function EncounterChatRoom({ npc, onBack }: { npc: EncounterNPC; onBack: 
               maxHeight: 120,
             }}
             onKeyDown={onComposerKeyDown}
-            onFocus={() => {
-              requestAnimationFrame(() => {
-                textareaRef.current?.scrollIntoView({ block: 'nearest', behavior: 'smooth' })
-              })
-            }}
             aria-label="输入消息"
           />
           <Pressable
@@ -1822,6 +1821,8 @@ export function EncounterChatRoom({ npc, onBack }: { npc: EncounterNPC; onBack: 
             <SendPlaneIcon color={planeColor} />
           </Pressable>
         </div>
+        </div>
+      ) : null}
       </div>
 
       {npc.comprehensivePersona ? (

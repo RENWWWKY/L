@@ -1497,6 +1497,23 @@ function normalizeMemorySettingsRow(input: unknown): MemorySettingsRow {
   const datingAutoRaw = (r as { datingAutoSummaryEnabled?: unknown }).datingAutoSummaryEnabled
   const datingAutoSummaryEnabled: MemorySettingsRow['datingAutoSummaryEnabled'] =
     datingAutoRaw === false ? false : datingAutoRaw === true ? true : undefined
+  const meetAutoRaw = (r as { meetAutoSummaryEnabled?: unknown }).meetAutoSummaryEnabled
+  const meetAutoSummaryEnabled: MemorySettingsRow['meetAutoSummaryEnabled'] =
+    meetAutoRaw === false ? false : meetAutoRaw === true ? true : undefined
+  const meetIntervalRaw = (r as { meetAutoSummaryInterval?: unknown }).meetAutoSummaryInterval
+  const meetAutoSummaryInterval: MemorySettingsRow['meetAutoSummaryInterval'] =
+    typeof meetIntervalRaw === 'number' && Number.isFinite(meetIntervalRaw)
+      ? Math.max(1, Math.min(100, Math.floor(meetIntervalRaw)))
+      : undefined
+  const meetRoundRaw = r.meetAiRoundCountByConversation
+  const meetAiRoundCountByConversation: Record<string, number> = {}
+  if (meetRoundRaw && typeof meetRoundRaw === 'object' && !Array.isArray(meetRoundRaw)) {
+    for (const [k, v] of Object.entries(meetRoundRaw as Record<string, unknown>)) {
+      if (typeof v === 'number' && Number.isFinite(v) && v >= 0) {
+        meetAiRoundCountByConversation[k] = Math.floor(v)
+      }
+    }
+  }
   return {
     id: 'default',
     autoSummaryEnabled,
@@ -1504,6 +1521,8 @@ function normalizeMemorySettingsRow(input: unknown): MemorySettingsRow {
     autoSummaryDefaultMemoryTriggerMode,
     linkedMemoryAutoSummaryEnabled,
     datingAutoSummaryEnabled,
+    meetAutoSummaryEnabled,
+    meetAutoSummaryInterval,
     memoryVectorRecallEnabled,
     memoryEmbeddingUseDedicatedApi,
     memoryEmbeddingModelId,
@@ -1520,6 +1539,8 @@ function normalizeMemorySettingsRow(input: unknown): MemorySettingsRow {
       Object.keys(meetSummaryCursorTimestampByCharacterId).length > 0
         ? meetSummaryCursorTimestampByCharacterId
         : undefined,
+    meetAiRoundCountByConversation:
+      Object.keys(meetAiRoundCountByConversation).length > 0 ? meetAiRoundCountByConversation : undefined,
   }
 }
 
@@ -4748,6 +4769,56 @@ export class PersonaDb {
     await this.putMemorySettings({ aiRoundCountByConversation: map }, { emit: false })
   }
 
+  /**
+   * 遇见临时会话：每完成一轮 NPC 回复后计数 +1；达到遇见间隔则返回 shouldSummarize 并重置该会话计数。
+   */
+  async bumpMeetMemoryAiRoundCount(conversationKey: string): Promise<{ shouldSummarize: boolean }> {
+    const settings = await this.getMemorySettings()
+    if (settings.meetAutoSummaryEnabled === false) {
+      return { shouldSummarize: false }
+    }
+    const interval =
+      typeof settings.meetAutoSummaryInterval === 'number' && Number.isFinite(settings.meetAutoSummaryInterval)
+        ? Math.max(1, Math.min(100, Math.floor(settings.meetAutoSummaryInterval)))
+        : Math.max(1, Math.floor(settings.autoSummaryInterval))
+    const map = { ...(settings.meetAiRoundCountByConversation ?? {}) }
+    const prev = map[conversationKey] ?? 0
+    const next = prev + 1
+    if (next >= interval) {
+      delete map[conversationKey]
+      await this.putMemorySettings({ meetAiRoundCountByConversation: map }, { emit: false })
+      return { shouldSummarize: true }
+    }
+    map[conversationKey] = next
+    await this.putMemorySettings({ meetAiRoundCountByConversation: map }, { emit: false })
+    return { shouldSummarize: false }
+  }
+
+  /** 遇见自动总结触发后若本轮请求失败，将计数回退到临界值。 */
+  async rollbackMeetMemoryAiRoundCountForRetry(conversationKey: string): Promise<void> {
+    const settings = await this.getMemorySettings()
+    const interval =
+      typeof settings.meetAutoSummaryInterval === 'number' && Number.isFinite(settings.meetAutoSummaryInterval)
+        ? Math.max(1, Math.min(100, Math.floor(settings.meetAutoSummaryInterval)))
+        : Math.max(1, Math.floor(settings.autoSummaryInterval))
+    const map = { ...(settings.meetAiRoundCountByConversation ?? {}) }
+    map[conversationKey] = Math.max(0, interval - 1)
+    await this.putMemorySettings({ meetAiRoundCountByConversation: map }, { emit: false })
+  }
+
+  /** 遇见合并总结成功后清零该会话「距下次自动总结」计数。 */
+  async resetMeetMemoryAiRoundCountForConversation(conversationKey: string): Promise<void> {
+    const ck = conversationKey.trim()
+    if (!ck) return
+    const settings = await this.getMemorySettings()
+    const map = { ...(settings.meetAiRoundCountByConversation ?? {}) }
+    delete map[ck]
+    await this.putMemorySettings(
+      { meetAiRoundCountByConversation: Object.keys(map).length ? map : undefined },
+      { emit: false },
+    )
+  }
+
   /** 约会触发的合并总结成功后调用：清零该会话「距下次自动总结」计数，避免与已并入总结的私聊轮数错位。 */
   async resetMemoryAiRoundCountForConversation(conversationKey: string): Promise<void> {
     const ck = conversationKey.trim()
@@ -5268,20 +5339,42 @@ export class PersonaDb {
   ): Promise<string> {
     const cid = characterId.trim()
     let raw = String(content ?? '')
-    const wbBindings = opts?.worldBookUserPlaceholderBindings
+    let wbBindings = opts?.worldBookUserPlaceholderBindings
+    let ownerRow: Character | null = null
+    if (cid) {
+      try {
+        ownerRow = await this.getCharacter(cid)
+      } catch {
+        ownerRow = null
+      }
+    }
+
     if (raw.includes('{{user') || (wbBindings?.length ?? 0) > 0) {
-      const { expandWorldBookItemUserPlaceholders } = await import('../worldBookUserPlaceholderBindings')
-      raw = await expandWorldBookItemUserPlaceholders(raw, wbBindings)
+      const {
+        expandWorldBookItemUserPlaceholders,
+        countWorldBookUserPlaceholderSlots,
+        bindingFromInsertContext,
+      } = await import('../worldBookUserPlaceholderBindings')
+      const { resolveWorldBookUserBinding } = await import('../charUserPlaceholders')
+
+      const slotCount = countWorldBookUserPlaceholderSlots(raw)
+      // 简介等字段无 per-slot 绑定时，与世界书对齐：主微信线上的档案 user 锚点（非仅 playerIdentityId）
+      if ((!wbBindings || wbBindings.length === 0) && slotCount > 0 && ownerRow) {
+        const anchor = await resolveWorldBookUserBinding(ownerRow)
+        if (anchor) {
+          const ctx = {
+            wechatAccountId: anchor.wechatAccountId,
+            playerIdentityId: anchor.playerIdentityId,
+            lineLabel: anchor.lineLabel,
+            displayName: anchor.displayName,
+          }
+          wbBindings = Array.from({ length: slotCount }, () => bindingFromInsertContext(ctx))
+        }
+      }
+
+      raw = await expandWorldBookItemUserPlaceholders(raw, wbBindings, ownerRow)
     }
     if (!raw.includes('{{')) return raw
-    const hasBareUser = /\{\{user\}\}/.test(raw) || /\{\{user:/.test(raw)
-    if ((wbBindings?.length ?? 0) > 0 && !hasBareUser) {
-      return this.expandMemoryDraftForPromptPreview({
-        content: raw,
-        characterId: cid,
-        memoryScope: 'private',
-      })
-    }
     return this.expandMemoryDraftForPromptPreview({
       content: raw,
       characterId: cid,

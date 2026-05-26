@@ -4,12 +4,20 @@ export type JBSStep = 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8
 
 export type JBSChatMessageKind = 'dm' | 'player' | 'system'
 
+/** DM 气泡内一段文字高亮（字符下标，含 start、不含 end） */
+export type DmTextHighlightRange = {
+  start: number
+  end: number
+}
+
 export type JBSChatMessage = {
   id: string
   kind: JBSChatMessageKind
   body: string
   /** 玩家发言时的剧本杀角色昵称 */
   roleName?: string
+  /** DM 气泡内高亮区间（如故事背景「公共前提」） */
+  dmHighlight?: DmTextHighlightRange
   at: number
 }
 
@@ -32,6 +40,9 @@ export type JBSClue = {
   /** 解锁所需最低步骤；Step 7 可叠加 loopRound */
   unlockStep: JBSStep
   unlockLoopRound?: number
+  /** 故事背景「公共前提」等；默认随进程解锁自动发牌 */
+  autoDisperseOnUnlock?: boolean
+  category?: 'premise' | 'evidence'
 }
 
 export const JBS_STEP_LABELS: Record<JBSStep, string> = {
@@ -90,6 +101,12 @@ export function isClueUnlocked(clue: JBSClue, step: JBSStep, loopRound: number):
   return step >= clue.unlockStep
 }
 
-export function manuscriptStorageKey(scriptId: string, roleId: string): string {
-  return `jbs-manuscript-${scriptId}-${roleId}`
+/** 手札内可见：进程已解锁且玩家已完成飞牌收纳 */
+export function isClueCollectedInDrawer(
+  clue: JBSClue,
+  step: JBSStep,
+  loopRound: number,
+  collectedIds: readonly string[],
+): boolean {
+  return isClueUnlocked(clue, step, loopRound) && collectedIds.includes(clue.id)
 }

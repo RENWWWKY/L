@@ -141,7 +141,7 @@ export function RoleScriptDetail({ script, card, onReturn, onLockIn }: RoleScrip
 
                 <div className="jbs-gf-dossier-panel-rule my-5" aria-hidden />
 
-                <p className="jbs-font-serif text-justify text-[14px] leading-[1.92] text-[#1a1a1a]/88">
+                <p className="jbs-font-serif text-justify text-[14px] leading-[1.92] text-[#1a1a1a]/88 whitespace-pre-wrap">
                   {card.role.blurb}
                 </p>
 

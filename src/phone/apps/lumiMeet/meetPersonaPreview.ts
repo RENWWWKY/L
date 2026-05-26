@@ -157,13 +157,19 @@ export function buildMeetNpcVitalsSubtitle(npc: EncounterNPC): string | null {
   return parts.length ? parts.join(' · ') : null
 }
 
-/** 匹配卡首行：性别 · 性取向 · 职业 */
+/** 匹配卡首行：性别 · MBTI · 性取向 · 职业 */
 export function buildMeetNpcProfileMetaLine(npc: EncounterNPC): string {
   const occ =
     npc.occupation?.trim() ||
     (npc.comprehensivePersona
       ? deriveMeetOccupationLabel(npc.comprehensivePersona.abilities.skills)
       : '')
-  const parts = [npc.gender?.trim(), npc.orientation?.trim(), occ].filter(Boolean)
+  const mbtiRaw =
+    npc.mbti?.trim() ||
+    (npc.comprehensivePersona
+      ? formatMeetMbtiLettersForUi(npc.comprehensivePersona.core.mbti)
+      : '')
+  const mbti = mbtiRaw && mbtiRaw !== '—' ? mbtiRaw : ''
+  const parts = [npc.gender?.trim(), mbti, npc.orientation?.trim(), occ].filter(Boolean)
   return parts.length ? parts.join(' · ') : '—'
 }

@@ -9,7 +9,8 @@ import {
   useState,
   type ReactNode,
 } from 'react'
-import type { WeChatPersonaContact } from '../../types'
+import type { Profile, WeChatPersonaContact } from '../../types'
+import { normalizeProfileAvatarForSave } from '../../utils/characterAvatarUrl'
 import { useCustomization } from '../../CustomizationContext'
 import { purgeAllMeetEntriesFromLoreArchive } from '../lumiMeet/meetClearEncounterData'
 import { resetWorldbookLoreArchiveAfterWeChatErase } from '../../worldbook/worldbookLoreStore'
@@ -72,6 +73,13 @@ export type DeleteWechatAccountResult =
   | { ok: true; remainingAccounts: number }
   | { ok: false; reason: 'no-profile' }
 
+function phoneAvatarToWechatUrl(avatarImageUrl: string): string {
+  const t = avatarImageUrl.trim()
+  if (!t) return normalizeProfileAvatarForSave('')
+  if (t.startsWith('data:') || t.startsWith('blob:')) return t
+  return normalizeProfileAvatarForSave(t)
+}
+
 type WechatStoreContextValue = {
   profile: WechatProfile | null
   hydrated: boolean
@@ -79,6 +87,8 @@ type WechatStoreContextValue = {
   currentAccountId: string | null
   /** 切换账号后递增，供微信主界面强制重挂载 */
   accountSwitchRevision: number
+  /** 同步更新手机全局资料与当前微信账号 bundle（编辑资料须走此接口） */
+  updatePhoneProfile: (patch: Partial<Profile>) => Promise<void>
   completeRegistration: (profile: WechatProfile) => Promise<void>
   addAccountFromRegistration: (profile: WechatProfile) => Promise<void>
   switchAccount: (accountId: string) => Promise<void>
@@ -138,16 +148,18 @@ export function WechatStoreProvider({ children }: { children: ReactNode }) {
     if (active) setProfile(accountToProfile(active))
   }, [])
 
+  /** 仅同步微信资料镜像（profile），不改动桌面 personalCardProfile */
   const syncPhoneCustomization = useCallback(
     (p: WechatProfile) => {
+      const nick = p.nickname.trim()
       setPhoneProfile({
-        displayName: p.nickname.trim(),
+        displayName: nick,
         signature: p.signature?.trim() ?? '',
         avatarImageUrl: p.avatarUrl.trim(),
-        avatarEmoji: p.nickname.trim().slice(0, 1) || state.profile.avatarEmoji,
+        avatarEmoji: nick.slice(0, 1) || '微',
       })
     },
-    [setPhoneProfile, state.profile.avatarEmoji],
+    [setPhoneProfile],
   )
 
   const applyActiveAccount = useCallback(
@@ -406,6 +418,39 @@ export function WechatStoreProvider({ children }: { children: ReactNode }) {
     [applyActiveAccount, persistBundle, snapshotContactsForAccount, state.wechatPersonaContacts],
   )
 
+  const updatePhoneProfile = useCallback(
+    async (patch: Partial<Profile>) => {
+      setPhoneProfile(patch)
+
+      const bundle = bundleRef.current
+      const accId = currentAccountId
+      if (!bundle || !accId) return
+
+      const acc = findAccountById(bundle, accId)
+      if (!acc) return
+
+      const nickname =
+        patch.displayName !== undefined ? patch.displayName.trim() || acc.nickname : acc.nickname
+      const signature =
+        patch.signature !== undefined ? patch.signature.trim() : (acc.signature ?? '')
+      const avatarUrl =
+        patch.avatarImageUrl !== undefined
+          ? phoneAvatarToWechatUrl(patch.avatarImageUrl)
+          : acc.avatarUrl
+
+      const nextAcc: UserAccount = {
+        ...cloneAccount(acc),
+        nickname,
+        signature: signature || undefined,
+        avatarUrl,
+        lastActive: Date.now(),
+      }
+      const merged = upsertAccountInBundle(bundle, nextAcc)
+      await persistBundle(merged.accounts, merged.currentAccountId)
+    },
+    [currentAccountId, persistBundle, setPhoneProfile],
+  )
+
   const updatePassword = useCallback(
     async (params: {
       currentPassword: string
@@ -566,6 +611,7 @@ export function WechatStoreProvider({ children }: { children: ReactNode }) {
       switchAccount,
       setActivePlayerIdentityForCurrentAccount,
       appendPersonaContactsForCurrentAccount,
+      updatePhoneProfile,
       updatePassword,
       deleteAccount,
     }),
@@ -580,6 +626,7 @@ export function WechatStoreProvider({ children }: { children: ReactNode }) {
       switchAccount,
       setActivePlayerIdentityForCurrentAccount,
       appendPersonaContactsForCurrentAccount,
+      updatePhoneProfile,
       updatePassword,
       deleteAccount,
     ],

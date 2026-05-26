@@ -28,7 +28,7 @@ const DISCOVER_ACTIONS: DiscoverAction[] = [
   { id: 'shop', label: '小店', icon: Store },
 ]
 
-/** 发现页子功能开发中占位（朋友圈、剧本杀馆等） */
+/** 发现页子功能开发中占位（如朋友圈） */
 function DiscoverFeatureUnderDev({
   title,
   hint,
@@ -77,6 +77,7 @@ export function WeChatDiscoverInstagram({
   onActionClick,
   onImmersiveViewChange,
   currentUserName,
+  personaContacts: _personaContacts = [],
   className = '',
 }: WeChatDiscoverInstagramProps) {
   const [activeView, setActiveView] = useState<'list' | 'moments' | 'anonymous-qa' | 'jubensha'>('list')
@@ -109,7 +110,7 @@ export function WeChatDiscoverInstagram({
       <DiscoverFeatureUnderDev
         className={className}
         title="剧本杀馆"
-        hint="剧本杀大厅、组局与对局流程正在开发，稍后将在此接入。"
+        hint="典藏剧本、组局入局与局内流程正在打磨，稍后将在此接入。"
         onBack={() => setActiveView('list')}
       />
     )

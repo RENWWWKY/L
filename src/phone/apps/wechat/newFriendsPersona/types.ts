@@ -455,6 +455,17 @@ export type MemorySettingsRow = {
    */
   datingAutoSummaryEnabled?: boolean
   /**
+   * 遇见 App 临时会话是否触发自动总结（与微信私聊设置独立；写入的记忆仍共用同一长期记忆库）。
+   * 显式 `false` 关闭；缺省为开启。
+   */
+  meetAutoSummaryEnabled?: boolean
+  /**
+   * 遇见 App 自动总结间隔轮数（NPC 文字回复）；未设置时回退为 {@link autoSummaryInterval}。
+   */
+  meetAutoSummaryInterval?: number
+  /** 各会话（与私聊 storage 键一致）自上次遇见自动总结以来已完成的 NPC 回复轮数 */
+  meetAiRoundCountByConversation?: Record<string, number>
+  /**
    * 长期记忆向量语义召回：显式 `false` 关闭；缺省为开启（仍需聊天 API 里配置有效 url+key 才会实际请求 embedding）。
    */
   memoryVectorRecallEnabled?: boolean

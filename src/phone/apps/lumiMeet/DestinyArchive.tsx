@@ -5,6 +5,7 @@ import { personaDb } from '../wechat/newFriendsPersona/idb'
 import type { CharacterMemory } from '../wechat/newFriendsPersona/types'
 import { DestinyArchiveMemoryCard } from './DestinyArchiveMemoryCard'
 import { DestinyArchiveSummaryProgressPanel } from './DestinyArchiveSummaryProgressPanel'
+import { MeetMemorySummarySettingsCard } from './MeetMemorySummarySettingsCard'
 import { computeDestinyArchiveStats, mergeNpcIntoDestinyArchive } from './meetDestinyArchive'
 import {
   deleteMeetArchiveMemoryEntry,
@@ -15,6 +16,10 @@ import {
 import { useMeetStore } from './LumiMeetStore'
 import type { MeetArchiveCoachTab } from './meetAppCoachSteps'
 import { MEET_APP_COACH_TARGET_ATTR } from './meetAppCoachSteps'
+import {
+  resolveMeetAutoSummaryEnabled,
+  resolveMeetAutoSummaryInterval,
+} from './meetMemorySummarySettings'
 
 const PLATINUM = '#D4AF37'
 
@@ -34,6 +39,7 @@ export function DestinyArchive({ coachArchiveTab = null }: { coachArchiveTab?: A
   const activeArchiveTab = coachArchiveTab ?? archiveTab
   const [searchQuery, setSearchQuery] = useState('')
   const [summaryInterval, setSummaryInterval] = useState<number | null>(null)
+  const [meetAutoSummaryEnabled, setMeetAutoSummaryEnabled] = useState(true)
 
   const merged = useMemo(
     () =>
@@ -75,11 +81,22 @@ export function DestinyArchive({ coachArchiveTab = null }: { coachArchiveTab?: A
     return () => window.removeEventListener('wechat-storage-changed', on)
   }, [reloadMemories])
 
-  useEffect(() => {
+  const reloadSummarySettings = useCallback(() => {
     void personaDb.getMemorySettings().then((s) => {
-      setSummaryInterval(Math.max(1, Math.floor(s.autoSummaryInterval)))
+      setSummaryInterval(resolveMeetAutoSummaryInterval(s))
+      setMeetAutoSummaryEnabled(resolveMeetAutoSummaryEnabled(s))
     })
   }, [])
+
+  useEffect(() => {
+    reloadSummarySettings()
+  }, [reloadSummarySettings])
+
+  useEffect(() => {
+    const on = () => reloadSummarySettings()
+    window.addEventListener('wechat-storage-changed', on)
+    return () => window.removeEventListener('wechat-storage-changed', on)
+  }, [reloadSummarySettings])
 
   const filteredRows = useMemo(() => {
     if (!searchQuery.trim()) return merged
@@ -133,12 +150,20 @@ export function DestinyArchive({ coachArchiveTab = null }: { coachArchiveTab?: A
           </p>
           {summaryInterval != null ? (
             <p className="mx-auto mt-2 max-w-[320px] text-[11px] font-light leading-relaxed text-[#b0aba3]">
-              邂逅对话与微信私聊共用记忆设置：每 {summaryInterval} 轮 NPC 回复自动写入一条
-              <span className="text-[#9a7d3a]"> [遇见] </span>
-              记忆（已收录 {totalMemoryCount} 条）
+              {meetAutoSummaryEnabled ? (
+                <>
+                  遇见邂逅每 {summaryInterval} 轮 NPC 回复自动写入一条
+                  <span className="text-[#9a7d3a]"> [遇见] </span>
+                  记忆（已收录 {totalMemoryCount} 条；与微信设置独立，记忆库共用）
+                </>
+              ) : (
+                <>遇见自动总结已关闭（已收录 {totalMemoryCount} 条；可在下方开启）</>
+              )}
             </p>
           ) : null}
         </header>
+
+        <MeetMemorySummarySettingsCard />
 
         <nav
           {...{ [MEET_APP_COACH_TARGET_ATTR]: 'archive-tabs' }}

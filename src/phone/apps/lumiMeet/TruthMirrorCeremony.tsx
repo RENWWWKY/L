@@ -4,6 +4,7 @@ import { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import type { ApiConfig } from '../api/types'
 import { pickTruthMirrorQuestionIndices, resolveMeetTruthPeerCeremonyCopy, TRUTH_MIRROR_QUESTIONS } from './encounterTruthMirrorData'
+import { useKeyboardInset } from '../../hooks/useKeyboardInset'
 import { getLumiMeetPortalTarget } from './lumiMeetPortal'
 import { aiMeetTruthMirrorCharAnswer, scrubMeetNpcWechatLeaks } from './lumiMeetAi'
 import { meetMessagesToAiTranscript } from './meetEncounterTranscript'
@@ -264,6 +265,7 @@ export function TruthMirrorCeremonyPortal({
   if (!el) return null
 
   const tripletReady = triplet.every((t) => t.trim().length > 0)
+  const keyboardInsetPx = useKeyboardInset()
 
   const fanAngles: [number, number, number] = [-14, 0, 14]
   const fanY: [number, number, number] = [10, 0, 10]
@@ -330,7 +332,12 @@ export function TruthMirrorCeremonyPortal({
             ) : null}
           </AnimatePresence>
 
-          <div className="relative flex min-h-0 flex-1 flex-col items-center px-4 pb-[max(16px,env(safe-area-inset-bottom))]">
+          <div
+            className="relative flex min-h-0 flex-1 flex-col items-center overflow-y-auto overflow-x-hidden px-4 [-webkit-overflow-scrolling:touch]"
+            style={{
+              paddingBottom: `calc(max(16px, env(safe-area-inset-bottom, 0px)) + ${keyboardInsetPx}px)`,
+            }}
+          >
             <p className="meet-caption-en text-center text-[9px] uppercase tracking-[0.34em] text-[#9a9590]">
               TRUTH · 交换真心话
             </p>
@@ -445,6 +452,12 @@ export function TruthMirrorCeremonyPortal({
                           disabled={sealing}
                           className="mt-2 min-h-[120px] w-full flex-1 resize-none border-0 border-b border-[#dcd7cf] bg-transparent px-0 py-2 font-dossier-serif text-[14px] leading-relaxed tracking-[0.04em] text-[#1a1918] outline-none ring-0 placeholder:text-[#b8b4ae] placeholder:font-dossier-serif disabled:opacity-60"
                           placeholder="写下你的答案... (Write your truth)"
+                          onPointerDown={(e) => {
+                            const ta = e.currentTarget
+                            if (document.activeElement !== ta) {
+                              ta.focus({ preventScroll: true })
+                            }
+                          }}
                         />
                       )}
                       {sealing ? (

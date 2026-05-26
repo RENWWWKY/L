@@ -2,6 +2,10 @@ import { personaDb } from '../wechat/newFriendsPersona/idb'
 import { loadMeetPersisted } from './meetPersistLoad'
 import { resolveMeetAutoSummaryConversationKey } from './meetMemoryRoundFinalize'
 import { findMeetWechatAccount, listMeetSelectableWechatAccounts } from './meetWechatAccountPool'
+import {
+  resolveMeetAutoSummaryEnabled,
+  resolveMeetAutoSummaryInterval,
+} from './meetMemorySummarySettings'
 
 export type MeetMemorySummaryProgressRow = {
   charId: string
@@ -35,9 +39,9 @@ export async function loadMeetMemorySummaryProgress(params: {
 }): Promise<MeetMemorySummaryProgressRow[]> {
   const identityHint = params.meetProfileBaseWeChatIdentityId
   const settings = await personaDb.getMemorySettings()
-  const interval = Math.max(1, Math.floor(settings.autoSummaryInterval))
-  const autoSummaryEnabled = settings.autoSummaryEnabled !== false
-  const roundMap = settings.aiRoundCountByConversation ?? {}
+  const interval = resolveMeetAutoSummaryInterval(settings)
+  const autoSummaryEnabled = resolveMeetAutoSummaryEnabled(settings)
+  const roundMap = settings.meetAiRoundCountByConversation ?? {}
 
   let boundAcc = ''
   const contactWx = params.meetProfileContactWechatId?.trim()

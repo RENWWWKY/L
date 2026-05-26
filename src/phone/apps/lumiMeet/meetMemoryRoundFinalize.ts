@@ -9,6 +9,7 @@ import { resolvePrivateChatSessionPlayerIdentityId } from '../wechat/wechatChara
 import { MEET_MEMORY_CONTENT_TAG } from './meetMemoryConstants'
 import type { MeetChatMessage } from './meetTypes'
 import { findMeetWechatAccount, listMeetSelectableWechatAccounts } from './meetWechatAccountPool'
+import { resolveMeetAutoSummaryEnabled } from './meetMemorySummarySettings'
 
 /** 将遇见线程全部标为已纳入自动总结游标（加好友导入微信时调用，避免与私聊游标重复总结） */
 export async function advanceMeetSummaryCursorFromThread(
@@ -53,7 +54,7 @@ export async function alignWeChatSummaryCursorAfterMeetImport(params: {
 }
 
 /**
- * 遇见临时会话每完成一轮 NPC 模型回复后调用：与私聊/约会共用 `autoSummaryInterval` 计数，
+ * 遇见临时会话每完成一轮 NPC 模型回复后调用：使用遇见独立间隔与计数，
  * 达阈值后走 {@link runUnifiedAutoMemorySummaryAfterThreshold}（合并私聊 / 遇见 / 线下）。
  */
 /** 与临时会话自动总结计数、邂逅档案「总结进度」展示共用 */
@@ -89,7 +90,7 @@ export async function finalizeMeetCharacterMemoryRoundAfterAiReply(params: {
   if (!cid) return
 
   const memSettings = await personaDb.getMemorySettings()
-  if (memSettings.autoSummaryEnabled === false) return
+  if (!resolveMeetAutoSummaryEnabled(memSettings)) return
 
   const explicit = params.sessionPlayerIdentityId?.trim() || ''
   const fromGlobal = (await personaDb.getCurrentIdentityId()).trim()
@@ -105,7 +106,7 @@ export async function finalizeMeetCharacterMemoryRoundAfterAiReply(params: {
 
   let shouldSummarizeNow = false
   try {
-    const { shouldSummarize } = await personaDb.bumpMemoryAiRoundCount(ck)
+    const { shouldSummarize } = await personaDb.bumpMeetMemoryAiRoundCount(ck)
     shouldSummarizeNow = shouldSummarize
     if (!shouldSummarizeNow) return
     await runUnifiedAutoMemorySummaryAfterThreshold({
@@ -115,10 +116,11 @@ export async function finalizeMeetCharacterMemoryRoundAfterAiReply(params: {
       characterRealName: params.characterRealName.trim() || '对方',
       sessionPlayerIdentityId: appHint,
       wechatAccountId: boundAcc || null,
+      aiRoundCountChannel: 'meet',
     })
   } catch (err) {
     if (shouldSummarizeNow) {
-      await personaDb.rollbackMemoryAiRoundCountForRetry(ck)
+      await personaDb.rollbackMeetMemoryAiRoundCountForRetry(ck)
     }
     console.warn('[meet-memory] auto summary failed', err)
   }

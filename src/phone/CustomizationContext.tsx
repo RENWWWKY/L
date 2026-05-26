@@ -12,6 +12,10 @@ import { flushSync } from 'react-dom'
 import { personaDb, pullPhoneKvWithLocalStorageLegacy } from './apps/wechat/newFriendsPersona/idb'
 import {
   DEFAULT_CUSTOMIZATION,
+  DEFAULT_PERSONAL_CARD_BG_PATH,
+  DEFAULT_PERSONAL_CARD_PROFILE,
+  DEFAULT_PUBLIC_AVATAR_PATH,
+  DEFAULT_WECHAT_MIRROR_PROFILE,
   DEFAULT_APP_PAGE_STYLE,
   type CustomizationState,
   type PhoneTheme,
@@ -36,7 +40,8 @@ import {
 } from './types'
 import { migrateLegacyRootPublicUrl } from '../publicAssetUrl'
 
-const STORAGE_KEY = 'lumi-phone-custom-v3'
+const STORAGE_KEY = 'lumi-phone-custom-v4'
+const LEGACY_STORAGE_KEY_V3 = 'lumi-phone-custom-v3'
 const LEGACY_STORAGE_KEY_V2 = 'lumi-phone-custom-v2'
 const LEGACY_STORAGE_KEY = 'lumi-phone-custom-v1'
 const LEGACY_STORY_FONT =
@@ -115,6 +120,28 @@ function syncBubbleByRoleWithNewGlobal(
   return out
 }
 
+function normalizeProfileSlice(raw: Partial<Profile> | undefined, fallback: Profile): Profile {
+  const profile = { ...fallback, ...raw }
+  profile.avatarImageUrl = migrateLegacyRootPublicUrl(profile.avatarImageUrl)
+  if (!profile.avatarImageUrl.trim()) {
+    profile.avatarImageUrl = DEFAULT_PUBLIC_AVATAR_PATH
+  }
+  return profile
+}
+
+/** v3 及更早仅存单一 profile：拆出桌面个人名片，避免被微信资料覆盖 */
+function resolvePersonalCardProfileFromRaw(raw: Partial<CustomizationState>): Profile {
+  if (raw.personalCardProfile && typeof raw.personalCardProfile === 'object') {
+    return normalizeProfileSlice(raw.personalCardProfile, DEFAULT_PERSONAL_CARD_PROFILE)
+  }
+  const legacy = raw.profile
+  const defaultSig = DEFAULT_PERSONAL_CARD_PROFILE.signature
+  if (legacy && typeof legacy === 'object' && legacy.signature?.trim() === defaultSig) {
+    return normalizeProfileSlice(legacy, DEFAULT_PERSONAL_CARD_PROFILE)
+  }
+  return { ...DEFAULT_PERSONAL_CARD_PROFILE }
+}
+
 function normalizeState(raw: Partial<CustomizationState>): CustomizationState {
   const theme = { ...DEFAULT_CUSTOMIZATION.theme, ...raw.theme }
   theme.wallpaperUrl = migrateLegacyRootPublicUrl(theme.wallpaperUrl)
@@ -124,12 +151,22 @@ function normalizeState(raw: Partial<CustomizationState>): CustomizationState {
   }
   const wechatTheme = normalizeWeChatTheme(raw.wechatTheme)
   const musicMerged = { ...DEFAULT_CUSTOMIZATION.music, ...raw.music }
-  const profile = { ...DEFAULT_CUSTOMIZATION.profile, ...raw.profile }
+  const profile = normalizeProfileSlice(raw.profile, DEFAULT_WECHAT_MIRROR_PROFILE)
+  const personalCardProfile = resolvePersonalCardProfileFromRaw(raw)
+  let personalCardBackgroundUrl = migrateLegacyRootPublicUrl(
+    typeof raw.personalCardBackgroundUrl === 'string'
+      ? raw.personalCardBackgroundUrl
+      : DEFAULT_PERSONAL_CARD_BG_PATH,
+  )
+  if (!personalCardBackgroundUrl.trim()) {
+    personalCardBackgroundUrl = DEFAULT_PERSONAL_CARD_BG_PATH
+  }
   const apps = normalizeApps(raw.apps)
-  profile.avatarImageUrl = migrateLegacyRootPublicUrl(profile.avatarImageUrl)
   return {
     theme,
     profile,
+    personalCardProfile,
+    personalCardBackgroundUrl,
     music: {
       ...musicMerged,
       playMode: normalizeMusicPlayMode(musicMerged.playMode),
@@ -502,7 +539,11 @@ function normalizeDesktopLayout(parsedLayout: unknown, apps: AppSlot[]): Array<A
 type Ctx = {
   state: CustomizationState
   setTheme: (patch: Partial<PhoneTheme>) => void
+  /** 仅更新微信资料镜像（由微信内编辑或账号同步写入） */
   setProfile: (patch: Partial<Profile>) => void
+  /** 主屏桌面个人名片 */
+  setPersonalCardProfile: (patch: Partial<Profile>) => void
+  setPersonalCardBackgroundUrl: (url: string) => void
   setMusic: (patch: Partial<MusicInfo>) => void
   setUi: (patch: Partial<UiPreferences>) => void
   reorderApps: (orderedIds: AppSlot['id'][]) => void
@@ -594,6 +635,7 @@ export function CustomizationProvider({ children }: { children: ReactNode }) {
       try {
         const raw = await pullPhoneKvWithLocalStorageLegacy(STORAGE_KEY, [
           STORAGE_KEY,
+          LEGACY_STORAGE_KEY_V3,
           LEGACY_STORAGE_KEY_V2,
           LEGACY_STORAGE_KEY,
         ])
@@ -822,6 +864,18 @@ export function CustomizationProvider({ children }: { children: ReactNode }) {
     setState((s) => ({ ...s, profile: { ...s.profile, ...patch } }))
   }, [])
 
+  const setPersonalCardProfile = useCallback((patch: Partial<Profile>) => {
+    setState((s) => ({
+      ...s,
+      personalCardProfile: { ...s.personalCardProfile, ...patch },
+    }))
+  }, [])
+
+  const setPersonalCardBackgroundUrl = useCallback((url: string) => {
+    const next = migrateLegacyRootPublicUrl(url.trim()) || DEFAULT_PERSONAL_CARD_BG_PATH
+    setState((s) => ({ ...s, personalCardBackgroundUrl: next }))
+  }, [])
+
   const setMusic = useCallback((patch: Partial<MusicInfo>) => {
     setState((s) => ({ ...s, music: { ...s.music, ...patch } }))
   }, [])
@@ -965,6 +1019,7 @@ export function CustomizationProvider({ children }: { children: ReactNode }) {
     void personaDb.deletePhoneKv(STORAGE_KEY)
     if (typeof localStorage !== 'undefined') {
       localStorage.removeItem(STORAGE_KEY)
+      localStorage.removeItem(LEGACY_STORAGE_KEY_V3)
       localStorage.removeItem(LEGACY_STORAGE_KEY_V2)
       localStorage.removeItem(LEGACY_STORAGE_KEY)
     }
@@ -981,6 +1036,8 @@ export function CustomizationProvider({ children }: { children: ReactNode }) {
       state,
       setTheme,
       setProfile,
+      setPersonalCardProfile,
+      setPersonalCardBackgroundUrl,
       setMusic,
       setUi,
       reorderApps,
@@ -1006,6 +1063,8 @@ export function CustomizationProvider({ children }: { children: ReactNode }) {
       state,
       setTheme,
       setProfile,
+      setPersonalCardProfile,
+      setPersonalCardBackgroundUrl,
       setMusic,
       setUi,
       reorderApps,

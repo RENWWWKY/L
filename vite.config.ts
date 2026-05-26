@@ -86,9 +86,11 @@ function copyRootImageDirToDist(): Plugin {
         const base = rawBase === '/' ? '' : rawBase.replace(/\/$/, '')
         const expectedPrefix = base ? `${base}/image/` : '/image/'
         if (!urlPath.startsWith(expectedPrefix)) return next()
-        const name = decodeURIComponent(urlPath.slice(expectedPrefix.length))
-        if (!name || name.includes('..') || name.includes('/') || name.includes('\\')) return next()
-        const file = path.join(rootImage, name)
+        const rel = decodeURIComponent(urlPath.slice(expectedPrefix.length))
+        if (!rel || rel.includes('..')) return next()
+        const file = path.resolve(rootImage, rel.replace(/\\/g, '/'))
+        const rootResolved = path.resolve(rootImage)
+        if (!file.startsWith(rootResolved + path.sep) && file !== rootResolved) return next()
         if (!fs.existsSync(file) || !fs.statSync(file).isFile()) return next()
         const ext = path.extname(file).toLowerCase()
         const ct =

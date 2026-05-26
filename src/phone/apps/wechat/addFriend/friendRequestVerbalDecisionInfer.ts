@@ -19,7 +19,10 @@ export function inferFriendRequestDecisionFromCharacterText(texts: string[]): Fr
 
   const acceptStrong =
     /<decision>\s*accept/i.test(joined) ||
-    /(已通过|同意了你的|通过了你的|好友已通过|验证已通过|我通过了|那就通过|帮你通过了)/.test(joined) ||
+    /(已通过|同意了你的|通过了你的|好友已通过|验证已通过|我通过了|那就通过|帮你通过了|通过一下|加你了|好友加上了)/.test(
+      joined,
+    ) ||
+    /(好[，,]?加|可以加|同意加|那就加|这就加).{0,12}(好友|微信|你)/.test(joined) ||
     (/通过/.test(joined) && /(好友|验证|申请)/.test(joined) && !/(不|没|未|别)/.test(joined))
 
   if (acceptStrong) return 'accept'

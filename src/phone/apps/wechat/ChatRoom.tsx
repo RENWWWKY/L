@@ -16,6 +16,7 @@ import { AnimatePresence, motion } from 'framer-motion'
 import { AtSign, ChevronDown, PhoneCall, X } from 'lucide-react'
 
 import { useCustomization } from '../../CustomizationContext'
+import { resolveCharacterAvatarUrl } from '../../utils/characterAvatarUrl'
 import { Pressable } from '../../components/Pressable'
 import type { WeChatBubbleTheme, WeChatTheme } from '../../types'
 import { wechatBubbleThemesEqual } from '../../types'
@@ -1942,7 +1943,7 @@ export function ChatRoom({
     let cancelled = false
     const direct = peerAvatarUrl?.trim()
     if (direct) {
-      setPeerAvatarResolved(direct)
+      setPeerAvatarResolved(resolveCharacterAvatarUrl({ avatarUrl: direct }) || direct)
       return
     }
     if (useLumiProjectAssistantPrompt) {
@@ -1956,7 +1957,8 @@ export function ChatRoom({
     }
     void personaDb.getCharacter(cid).then((c) => {
       if (cancelled) return
-      setPeerAvatarResolved(c?.avatarUrl?.trim() || undefined)
+      const resolved = resolveCharacterAvatarUrl({ avatarUrl: c?.avatarUrl })
+      setPeerAvatarResolved(resolved || undefined)
     })
     return () => {
       cancelled = true
@@ -3127,7 +3129,10 @@ export function ChatRoom({
       for (const mem of g?.members ?? []) {
         if (mem.charId === WECHAT_GROUP_USER_CHAR_ID || mem.charId === WECHAT_GROUP_BOT_CHARACTER_ID) continue
         const ch = await personaDb.getCharacter(mem.charId)
-        if (ch?.avatarUrl?.trim()) map[mem.charId] = ch.avatarUrl.trim()
+        if (ch?.avatarUrl?.trim()) {
+          const resolved = resolveCharacterAvatarUrl({ avatarUrl: ch.avatarUrl })
+          if (resolved) map[mem.charId] = resolved
+        }
       }
       setGroupAvatarByCharId(map)
     }

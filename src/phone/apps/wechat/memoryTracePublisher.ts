@@ -25,11 +25,12 @@ import {
 import type {
   MemoryTraceData,
   MemoryTraceWorldBookAfterChat,
+  MemoryTraceWorldBookAfterInjectedEntry,
   MemoryTraceWorldBookAfterPatchRow,
 } from './memoryTraceTypes'
 import {
-  buildChatAfterWorldBookDynamicSection,
   hasChatAfterWorldBookItems,
+  listChatAfterWorldBookItems,
   type WorldBookAfterPatch,
 } from './newFriendsPersona/worldBookAfterPatch'
 import { setLastMemoryTrace } from './memoryTraceStore'
@@ -229,19 +230,60 @@ export async function buildWorldBookAfterPatchRowsForGroupChat(
 
 export function buildWorldBookAfterChatTrace(params: {
   protocolInPrompt: boolean
-  injectedDynamicSection: string
+  /** @deprecated 思维溯源 UI 不再展示；保留字段兼容旧存档 */
+  injectedDynamicSection?: string
+  injectedSnapshotEntries?: MemoryTraceWorldBookAfterInjectedEntry[]
   patchOutputRulesIncluded: boolean
   parsedPatches: MemoryTraceWorldBookAfterPatchRow[]
   appliedToDb: boolean
 }): MemoryTraceWorldBookAfterChat {
   return {
     protocolInPrompt: params.protocolInPrompt,
-    injectedDynamicSection: params.injectedDynamicSection.trim(),
+    injectedDynamicSection: String(params.injectedDynamicSection ?? '').trim(),
+    injectedSnapshotEntries: params.injectedSnapshotEntries?.length ? params.injectedSnapshotEntries : undefined,
     patchOutputRulesIncluded: params.patchOutputRulesIncluded,
     parsedPatches: params.parsedPatches,
     appliedToDb: params.appliedToDb,
     modelOmittedPatchBlock: params.patchOutputRulesIncluded && params.parsedPatches.length === 0,
   }
+}
+
+function buildAfterChatInjectedSnapshotEntries(
+  members: Array<{ character: Character; characterName: string }>,
+  expand: (s: string) => string,
+): MemoryTraceWorldBookAfterInjectedEntry[] {
+  const out: MemoryTraceWorldBookAfterInjectedEntry[] = []
+  for (const { character, characterName } of members) {
+    const cid = character.id?.trim()
+    for (const row of listChatAfterWorldBookItems(character)) {
+      out.push({
+        characterId: cid || undefined,
+        characterName: characterName.trim() || '角色',
+        bookName: row.bookName,
+        itemName: row.itemName,
+        content: expand(row.content),
+      })
+    }
+  }
+  return out
+}
+
+async function buildAfterChatInjectedSnapshotEntriesForCharacterIds(
+  characterIds: string[],
+  nameById: Map<string, string>,
+  playerDisplayFallback: string,
+): Promise<MemoryTraceWorldBookAfterInjectedEntry[]> {
+  const out: MemoryTraceWorldBookAfterInjectedEntry[] = []
+  for (const rawId of characterIds) {
+    const cid = rawId.trim()
+    if (!cid) continue
+    const ch = await personaDb.getCharacter(cid)
+    if (!ch) continue
+    const expand = await expandTraceTextForCharacter(ch, playerDisplayFallback)
+    const cname = nameById.get(cid) || ch.name?.trim() || ch.wechatNickname?.trim() || '角色'
+    out.push(...buildAfterChatInjectedSnapshotEntries([{ character: ch, characterName: cname }], expand))
+  }
+  return out
 }
 
 /** 当前全局玩家身份展示名：人设未绑定身份或绑定记录缺省时，与记忆注入一致用于 `{{user}}` */
@@ -399,16 +441,26 @@ export async function publishWeChatPrivatePersonaMemoryTrace(params: {
   const lastReply = lastNonEmptyBubbleText(params.replyBubbles)
 
   const chatAfterProtocol = hasChatAfterWorldBookItems(params.character)
-  const chatAfterDynExpanded = chatAfterProtocol
-    ? expand(buildChatAfterWorldBookDynamicSection(params.character)).trim()
-    : ''
+  const injectedSnapshotEntries =
+    chatAfterProtocol && params.character
+      ? buildAfterChatInjectedSnapshotEntries(
+          [
+            {
+              character: params.character,
+              characterName:
+                params.charDisplayName.trim() || params.character.name?.trim() || '角色',
+            },
+          ],
+          expand,
+        )
+      : []
   const patchRows = buildWorldBookAfterPatchRowsFromSingleCharacter(
     params.character,
     params.worldBookPatches ?? [],
   )
   const worldBookAfterChat = buildWorldBookAfterChatTrace({
     protocolInPrompt: chatAfterProtocol,
-    injectedDynamicSection: chatAfterDynExpanded,
+    injectedSnapshotEntries,
     patchOutputRulesIncluded: chatAfterProtocol,
     parsedPatches: patchRows,
     appliedToDb: params.worldBookAfterApplied === true,
@@ -515,11 +567,18 @@ export async function publishWeChatGroupMemoryTrace(params: {
   const patchRules = params.patchRulesIncluded === true
   const injRaw = String(params.groupChatAfterInjectedRaw ?? '').trim()
   const protocolGroup = patchRules || injRaw.length > 0
-  const injectedDynamicSection = injRaw ? expand(injRaw).trim() : ''
+  const injectedSnapshotEntries =
+    protocolGroup && params.wbGroupCharIds.length
+      ? await buildAfterChatInjectedSnapshotEntriesForCharacterIds(
+          params.wbGroupCharIds,
+          new Map([[cid, params.primaryNpcDisplayName.trim() || '角色']]),
+          playerFb,
+        )
+      : []
   const patchRows = await buildWorldBookAfterPatchRowsForGroupChat(params.worldBookPatches ?? [], primaryChar)
   const worldBookAfterChat = buildWorldBookAfterChatTrace({
     protocolInPrompt: protocolGroup,
-    injectedDynamicSection,
+    injectedSnapshotEntries,
     patchOutputRulesIncluded: patchRules,
     parsedPatches: patchRows,
     appliedToDb: params.worldBookAfterApplied === true,

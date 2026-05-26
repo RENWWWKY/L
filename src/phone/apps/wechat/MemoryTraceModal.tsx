@@ -286,15 +286,33 @@ export function MemoryTraceModal({ open, onClose, data }: MemoryTraceModalProps)
                             本轮已向模型要求「有变化则输出 ---WB_AFTER_PATCH---」，但<strong className="font-semibold">未解析到有效补丁</strong>（可能模型未输出、JSON 格式不符，或仅声明无实质字段）。
                           </p>
                         ) : null}
-                        {data.worldBookAfterChat.injectedDynamicSection.trim() ? (
+                        {data.worldBookAfterChat.injectedSnapshotEntries?.length ? (
                           <div>
                             <p className="text-[11px] font-medium uppercase tracking-[0.2em] text-neutral-400">
-                              注入快照（与模型所见一致）
+                              注入快照（尾声延展条目）
                             </p>
-                            <pre className="mt-2 max-h-[min(36vh,360px)] overflow-y-auto whitespace-pre-wrap break-words rounded-lg border border-neutral-100 bg-neutral-50/80 p-3 font-sans text-[12px] text-neutral-700 [scrollbar-width:thin]">
-                              {data.worldBookAfterChat.injectedDynamicSection}
-                            </pre>
+                            <ul className="mt-2 space-y-3">
+                              {data.worldBookAfterChat.injectedSnapshotEntries.map((entry, i) => (
+                                <li
+                                  key={`${entry.characterId ?? 'char'}-${entry.bookName}-${entry.itemName}-${i}`}
+                                  className="rounded-lg border border-neutral-100 bg-neutral-50/80 p-3 shadow-sm"
+                                >
+                                  <p className="text-[13px] font-semibold text-neutral-800">
+                                    {entry.characterName}
+                                    <span className="mx-1.5 font-normal text-neutral-400">·</span>
+                                    {entry.bookName && entry.itemName
+                                      ? `「${entry.bookName}」·「${entry.itemName}」`
+                                      : entry.itemName || entry.bookName || '世界书条目'}
+                                  </p>
+                                  <pre className="mt-2 max-h-[min(28vh,280px)] overflow-y-auto whitespace-pre-wrap break-words rounded-md border border-neutral-100 bg-white/90 p-2.5 font-sans text-[12px] leading-relaxed text-neutral-700 [scrollbar-width:thin]">
+                                    {entry.content.trim() ? entry.content : '（条目正文为空）'}
+                                  </pre>
+                                </li>
+                              ))}
+                            </ul>
                           </div>
+                        ) : data.worldBookAfterChat.protocolInPrompt ? (
+                          <p className="text-[12px] text-neutral-500">本轮已注入尾声延展条目，但未记录结构化快照（请在新回合后查看）。</p>
                         ) : (
                           <p className="text-[12px] text-neutral-500">本轮 system 未包含「尾声延展」条目正文快照。</p>
                         )}

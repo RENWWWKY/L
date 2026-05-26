@@ -12,7 +12,8 @@ import {
 import type { LucideIcon } from 'lucide-react'
 import { motion } from 'framer-motion'
 
-const AVATAR_PLACEHOLDER = 'https://via.placeholder.com/120'
+import { resolveProfileAvatarPreviewUrl } from '../phone/utils/characterAvatarUrl'
+import { DEFAULT_PUBLIC_AVATAR_PATH } from '../phone/types'
 
 function MemoryTraceNeuronGlyph({ className }: { className?: string }) {
   return (
@@ -81,12 +82,14 @@ const MENU_ROWS: MenuRow[] = [
 export function WeChatMeInstagramProfile({
   nickname = '微信昵称',
   signature = '个性签名：生活不止眼前的苟且，还有诗和远方。',
-  avatarUrl = AVATAR_PLACEHOLDER,
+  avatarUrl,
   onOpenProfileCard,
   onOpenMemoryTrace,
   onMenuItemClick,
   className = '',
 }: WeChatMeInstagramProfileProps) {
+  const avatarSrc = resolveProfileAvatarPreviewUrl(avatarUrl)
+
   return (
     <div
       className={`h-full min-h-0 overflow-y-auto [scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden ${className}`}
@@ -104,13 +107,17 @@ export function WeChatMeInstagramProfile({
             >
               <div className="mx-auto flex h-[124px] w-[124px] items-center justify-center rounded-full border bg-white" style={{ borderColor: '#e5e5e5' }}>
                 <img
-                  src={avatarUrl}
+                  src={avatarSrc}
                   alt=""
                   width={120}
                   height={120}
                   className="h-[120px] w-[120px] shrink-0 rounded-full border object-cover"
                   style={{ borderColor: '#e5e5e5' }}
                   loading="lazy"
+                  onError={(e) => {
+                    const fallback = resolveProfileAvatarPreviewUrl(DEFAULT_PUBLIC_AVATAR_PATH)
+                    if (e.currentTarget.src !== fallback) e.currentTarget.src = fallback
+                  }}
                 />
               </div>
               <h1 className="mt-4 text-center text-[20px] font-semibold leading-tight" style={{ color: '#000000' }}>
@@ -127,13 +134,17 @@ export function WeChatMeInstagramProfile({
             >
               <div className="mx-auto flex h-[124px] w-[124px] items-center justify-center rounded-full border bg-white" style={{ borderColor: '#e5e5e5' }}>
                 <img
-                  src={avatarUrl}
+                  src={avatarSrc}
                   alt=""
                   width={120}
                   height={120}
                   className="h-[120px] w-[120px] shrink-0 rounded-full border object-cover"
                   style={{ borderColor: '#e5e5e5' }}
                   loading="lazy"
+                  onError={(e) => {
+                    const fallback = resolveProfileAvatarPreviewUrl(DEFAULT_PUBLIC_AVATAR_PATH)
+                    if (e.currentTarget.src !== fallback) e.currentTarget.src = fallback
+                  }}
                 />
               </div>
               <h1 className="mt-4 text-center text-[20px] font-semibold leading-tight" style={{ color: '#000000' }}>

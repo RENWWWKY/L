@@ -1,4 +1,5 @@
 import type { WeChatPersonaContact } from '../../types'
+import { resolveCharacterAvatarUrl } from '../../utils/characterAvatarUrl'
 import { personaDb, pullPhoneKvWithLocalStorageLegacy } from './newFriendsPersona/idb'
 import type { Character } from './newFriendsPersona/types'
 import { characterAccessibleToWechatAccount } from './wechatAccountScope'
@@ -118,13 +119,41 @@ export function contactEntryFromCharacter(
 ): WeChatPersonaContact {
   const cid = ch.id.trim()
   const userRemark = opts?.remarkName?.trim()
+  const avatarCanon = ch.avatarUrl?.trim() || undefined
   return {
     id: `persona-${cid}`,
     characterId: cid,
     remarkName: userRemark ? userRemark.slice(0, 64) : defaultPersonaContactRemarkFromCharacter(ch),
-    avatarUrl: ch.avatarUrl?.trim() || undefined,
+    avatarUrl: avatarCanon,
     isStarred: !!ch.isStarred,
   }
+}
+
+/** 通讯录缺头像时从人设库补全（导入旧包后常见） */
+export async function enrichPersonaContactsAvatarsFromCharacters(
+  contacts: readonly WeChatPersonaContact[],
+): Promise<WeChatPersonaContact[]> {
+  const out: WeChatPersonaContact[] = []
+  for (const c of contacts) {
+    if (c.avatarUrl?.trim()) {
+      out.push(c)
+      continue
+    }
+    const ch = await personaDb.getCharacter(c.characterId)
+    const avatarUrl = ch?.avatarUrl?.trim()
+    out.push(avatarUrl ? { ...c, avatarUrl } : c)
+  }
+  return out
+}
+
+/** 展示用：解析通讯录条目的本地 / 远程头像 URL */
+export function resolvePersonaContactAvatarForDisplay(
+  contact: Pick<WeChatPersonaContact, 'avatarUrl'>,
+  characterAvatarUrl?: string | null,
+): string {
+  return resolveCharacterAvatarUrl({
+    avatarUrl: contact.avatarUrl?.trim() || characterAvatarUrl?.trim() || '',
+  })
 }
 
 /** 加好友通过等场景：强制用本次写入的 remarkName 覆盖合并结果（避免 merge 因「较短」不更新）。 */
@@ -280,6 +309,8 @@ export async function reconcileAccountPersonaContacts(params: {
       existing: merged,
     })
   }
+
+  merged = await enrichPersonaContactsAvatarsFromCharacters(merged)
 
   const nextBundle = bundleWithAccountPersonaContacts(params.bundle, params.account.accountId, merged)
   return { bundle: nextBundle, contacts: merged }

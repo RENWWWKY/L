@@ -44,7 +44,7 @@ export function WorldBooksEditor({
 }: {
   apiConfig: ApiConfig | null
   character: Character
-  onChange: (next: Character) => void
+  onChange: (next: Character | ((prev: Character) => Character)) => void
   forPlayerIdentity?: boolean
   worldBackgroundPrompt?: string
   identityContext?: PlayerIdentity | null
@@ -148,7 +148,7 @@ export function WorldBooksEditor({
 
   /** 老用户自动注册后绑定表可能仍指向 wx-slot；进入编辑器时静默写回具名身份。 */
   useEffect(() => {
-    if (!needsUserPlaceholderRepair) return
+    if (forPlayerIdentity || !needsUserPlaceholderRepair) return
     let cancelled = false
     void (async () => {
       const next = await alignCharacterWorldBookUserPlaceholders(character)
@@ -157,7 +157,7 @@ export function WorldBooksEditor({
     return () => {
       cancelled = true
     }
-  }, [needsUserPlaceholderRepair, character, onChange])
+  }, [forPlayerIdentity, needsUserPlaceholderRepair, character, onChange])
 
   const userPlaceholderSummary = useMemo(
     () => summarizeWorldBookUserPlaceholdersOnCharacter(character),
@@ -210,13 +210,15 @@ export function WorldBooksEditor({
     worldBookUserInsertContext,
   ])
 
+  /** 遇见人设库专用：合并重复 vol 壳层。玩家身份与世界书 id 无关，勿跑以免用陈旧闭包覆盖本地编辑。 */
   useEffect(() => {
+    if (forPlayerIdentity) return
     const cid = character.id.trim()
     if (!cid) return
     if (!meetWorldbooksNeedConsolidation(cid, worldBooks)) return
     const next = consolidateMeetCharacterWorldBooks(cid, worldBooks)
-    onChange({ ...character, worldBooks: next, updatedAt: Date.now() })
-  }, [character.id])
+    onChange((prev) => ({ ...prev, worldBooks: next, updatedAt: Date.now() }))
+  }, [forPlayerIdentity, character.id, worldBooks, onChange])
 
   /** 遇见角色已加微信但 vol10 仍为占位稿：打开人设世界书时自动补写结业初印象 */
   useEffect(() => {
@@ -242,17 +244,24 @@ export function WorldBooksEditor({
     }
   }, [apiConfig, character.id, forPlayerIdentity, onChange, worldBooks])
 
-  const setWorldBooks = (next: WorldBook[]) => {
-    onChange({ ...character, worldBooks: next, updatedAt: Date.now() })
-  }
+  const setWorldBooks = useCallback(
+    (updater: WorldBook[] | ((prev: WorldBook[]) => WorldBook[])) => {
+      onChange((prev) => {
+        const prevBooks = prev.worldBooks ?? []
+        const nextBooks = typeof updater === 'function' ? updater(prevBooks) : updater
+        return { ...prev, worldBooks: nextBooks, updatedAt: Date.now() }
+      })
+    },
+    [onChange],
+  )
 
   const addWorldBook = () => {
     const wb: WorldBook = { id: uid('wb'), name: '未命名世界书', enabled: true, items: [], collapsed: false }
-    setWorldBooks([wb, ...worldBooks])
+    setWorldBooks((books) => [wb, ...books])
   }
 
   const updateWorldBook = (wbId: string, patch: Partial<WorldBook>) => {
-    setWorldBooks(worldBooks.map((w) => (w.id === wbId ? { ...w, ...patch } : w)))
+    setWorldBooks((books) => books.map((w) => (w.id === wbId ? { ...w, ...patch } : w)))
   }
 
   const addItem = (wbId: string): string => {
@@ -268,8 +277,8 @@ export function WorldBooksEditor({
       updatedAt: now,
       collapsed: false,
     }
-    setWorldBooks(
-      worldBooks.map((w) =>
+    setWorldBooks((books) =>
+      books.map((w) =>
         w.id === wbId ? { ...w, collapsed: false, items: [item, ...(w.items ?? [])] } : w,
       ),
     )
@@ -277,8 +286,8 @@ export function WorldBooksEditor({
   }
 
   const updateItem = (wbId: string, itemId: string, patch: Partial<WorldBookItem>) => {
-    setWorldBooks(
-      worldBooks.map((w) =>
+    setWorldBooks((books) =>
+      books.map((w) =>
         w.id !== wbId
           ? w
           : {
@@ -290,12 +299,14 @@ export function WorldBooksEditor({
   }
 
   const removeWorldBook = (wbId: string) => {
-    setWorldBooks(worldBooks.filter((w) => w.id !== wbId))
+    setWorldBooks((books) => books.filter((w) => w.id !== wbId))
     setSheetEntry((s) => (s?.wbId === wbId ? null : s))
   }
 
   const removeItem = (wbId: string, itemId: string) => {
-    setWorldBooks(worldBooks.map((w) => (w.id === wbId ? { ...w, items: (w.items ?? []).filter((it) => it.id !== itemId) } : w)))
+    setWorldBooks((books) =>
+      books.map((w) => (w.id === wbId ? { ...w, items: (w.items ?? []).filter((it) => it.id !== itemId) } : w)),
+    )
     setSheetEntry((s) => (s?.wbId === wbId && s?.itemId === itemId ? null : s))
   }
 
@@ -458,7 +469,6 @@ export function WorldBooksEditor({
           worldBooks.map((wb) => (
             <motion.div
               key={wb.id}
-              layout
               className="overflow-hidden rounded-[22px] border border-gray-50 bg-white/95 shadow-[0_4px_24px_rgba(0,0,0,0.04)] backdrop-blur-md"
             >
               <div

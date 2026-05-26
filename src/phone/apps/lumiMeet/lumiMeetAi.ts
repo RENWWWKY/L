@@ -27,6 +27,7 @@ import { resolveMeetPublicDisplayName } from './meetPublicProfileDisplay'
 import type { EncounterNPC, MeetChatMessage, MeetPublicProfile, RadarFilters, SquarePostStyle } from './meetTypes'
 import { buildMeetQuoteParticipantLabels } from './meetMessageQuote'
 import { MEET_PROMPT_CONTEXT_MAX_LINES, meetThreadToPromptLines } from './meetNpcQuoteParse'
+import { clampMeetEpilogueBody } from './meetPersonaWorldbookSync'
 import { buildMeetTruthMirrorOutputPolicy } from './meetTruthMirrorTurnPolicy'
 import { hasUnresolvedMeetTruthMirrorCharRequest } from './meetTruthMirrorResonance'
 import {
@@ -286,7 +287,11 @@ export async function aiGenerateEncounterNpc(params: {
   )
   const purpose = purposeMap[effPurpose]
   const kw = params.filters.keywords.trim()
-  const criteriaBlock = buildEncounterAiCriteriaBlock(params.filters)
+  const orientationRoundSeed =
+    Date.now() +
+    kw.length * 17 +
+    params.filters.orientationPreferences.reduce((acc, p, i) => acc + p.charCodeAt(0) * (i + 3), 0)
+  const criteriaBlock = buildEncounterAiCriteriaBlock(params.filters, { orientationRoundSeed })
 
   if (!cfg?.apiUrl?.trim() || !cfg?.apiKey?.trim()) {
     throw new MeetEncounterGenerationError('api_required')
@@ -322,7 +327,7 @@ export async function aiGenerateEncounterNpc(params: {
     for (let attempt = 0; attempt < maxAttempts; attempt++) {
       const retryBlock =
         attempt > 0
-          ? `\n【上轮生成已否决】${lastRejectReason}\n【必须纠正】顶层 orientation 须改为「${pickOrientationFieldExample(prefs)}」一类，且 comprehensive.psyche.orientationOrigin 与之同一认同；不得再输出不相容取向。`
+          ? `\n【上轮生成已否决】${lastRejectReason}\n【必须纠正】顶层 orientation 须改为「${pickOrientationFieldExample(prefs, orientationRoundSeed + attempt)}」一类，且 comprehensive.psyche.orientationOrigin 与之同一认同；不得再输出不相容取向。`
           : ''
       const raw = await openAiCompatibleChat(
         cfg,
@@ -723,7 +728,7 @@ export async function aiMeetEncounterEpilogueLore(params: {
 
 【占位符硬性要求】成稿中须多次、自然地出现字面字符串 **{{char}}**（指本档案人设）与 **{{user}}**（指绑定的玩家身份），二者均须以英文花括号原样输出；不得用 TA/对方/此人 等代词完全顶替而不出现占位符；至少各出现 2 次。
 
-【长度】单段连续正文，**90–110 个汉字**（勿短于 85、勿超过 115），无小标题、无列表、无 Markdown/XML。
+【长度】单段连续正文，**90–115 个汉字**（须写完整句并在句号处收束；勿短于 85、勿超过 120），无小标题、无列表、无 Markdown/XML。
 
 【内容】融合：①对下方摘录的极简归纳（须有据；摘录极短则写「会话尚浅、信息有限」）；②{{char}} 对 {{user}} 的当前态度：信任远近、是否愿意继续接触、边界与顾虑（须与摘录与人设气质一致，禁止无条件倒贴或无端敌意）。
 【分寸】第三人称档案体；禁止土味情话式抒情、禁止未熟先定性为恋人；恋爱向意向仅体现为「愿意继续了解、持保留或欣赏」，勿写成告白体。`
@@ -750,7 +755,8 @@ ${hasTranscript ? transcriptText : '（无有效对话摘录。）'}
       .replace(/<[^>]{1,20}>/g, ' ')
       .replace(/\s+/g, ' ')
       .trim()
-    return t.slice(0, 400) || aiMeetEncounterEpilogueLore({ ...params, apiConfig: null })
+    const clamped = clampMeetEpilogueBody(t)
+    return clamped || aiMeetEncounterEpilogueLore({ ...params, apiConfig: null })
   } catch {
     return aiMeetEncounterEpilogueLore({ ...params, apiConfig: null })
   }

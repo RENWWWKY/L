@@ -76,6 +76,10 @@
   color: rgba(26, 26, 26, 0.32);
 }
 
+.jbs-gf-resume-card {
+  backdrop-filter: blur(6px);
+}
+
 .jbs-gf-astrolabe-ring {
   fill: none;
   stroke: rgba(92, 61, 46, 0.22);

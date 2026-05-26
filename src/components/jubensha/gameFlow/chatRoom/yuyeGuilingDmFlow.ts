@@ -6,7 +6,7 @@ import {
   parseDmSections,
 } from './parseDmHostScript'
 
-import dmScriptRaw from '../../../../../剧本杀/《雨夜归零》/DM-主持剧本.md?raw'
+import dmScriptRaw from '../../../../../剧本杀/《雨夜归零》/剧本/DM-主持剧本.md?raw'
 
 const YUYE_DM = parseDmSections(dmScriptRaw)
 
@@ -31,7 +31,7 @@ export function getYuyeGuilingAdvanceDmBodies(step: JBSStep, loopRound: number):
     case 3:
       return []
     case 4:
-      return extractDmBlockquoteChunks(section('公共剧情①')).filter(Boolean)
+      return []
     case 5:
       return []
     case 6:
@@ -56,9 +56,9 @@ export function getYuyeGuilingSystemHint(step: JBSStep, loopRound: number): stri
     case 3:
       return '个人剧本 · 自我介绍已解封。请阅读后等待主持人宣读公共剧情（本局无席间公开发言）。'
     case 4:
-      return '个人剧本 · 第一幕已解封。请结合方才公共剧情完整阅读第一幕。'
+      return '主持人正在宣读公共剧情①，请静听，勿翻阅后续章节。'
     case 5:
-      return null
+      return '个人剧本 · 第一幕已解封。请结合方才公共剧情完整阅读第一幕。'
     case 7:
       if (loopRound === 1) return '个人剧本 · 第二幕已解封。'
       if (loopRound >= 3) return '个人剧本 · 第三幕已解封。'

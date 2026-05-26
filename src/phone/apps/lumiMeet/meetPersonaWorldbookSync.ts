@@ -18,12 +18,31 @@ export function buildMeetEpilogueLoreTitle(playerDisplayName?: string | null): s
   return hasUser ? `对 {{user}} 的初印象 (Lumi Meet)` : '初遇印象 (Lumi Meet)'
 }
 
-/** 尾声延展：落库前截断为约百字（按 Unicode 码点计），避免过长独白 */
-export function clampMeetEpilogueBody(s: string, maxChars = 110): string {
+const MEET_EPILOGUE_BODY_MAX_CHARS = 120
+
+/** 在 maxChars 内尽量于句读处收束，避免「愿意在…」式硬截断省略号。 */
+export function clampMeetEpilogueBody(s: string, maxChars = MEET_EPILOGUE_BODY_MAX_CHARS): string {
   const t = String(s ?? '').trim()
   const arr = Array.from(t)
   if (arr.length <= maxChars) return t
-  return `${arr.slice(0, Math.max(0, maxChars - 1)).join('')}…`
+
+  const head = arr.slice(0, maxChars).join('')
+  const sentenceEnders = ['。', '！', '？', '；', '.', '!', '?'] as const
+  let cut = -1
+  for (const ch of sentenceEnders) {
+    const i = head.lastIndexOf(ch)
+    if (i > cut) cut = i
+  }
+  if (cut >= Math.floor(maxChars * 0.5)) {
+    return head.slice(0, cut + 1).trim()
+  }
+
+  const commaCut = Math.max(head.lastIndexOf('，'), head.lastIndexOf(','))
+  if (commaCut >= Math.floor(maxChars * 0.65)) {
+    return `${head.slice(0, commaCut + 1).trim()}。`
+  }
+
+  return head.trimEnd()
 }
 
 export function formatMeetEpilogueImpressionForStorage(params: {

@@ -1,4 +1,4 @@
-import type { WeChatPersonaContact } from '../../types'
+import type { Profile, WeChatPersonaContact } from '../../types'
 import {
   isWechatProfileComplete,
   normalizeWechatProfile,
@@ -36,6 +36,17 @@ export function accountToProfile(account: UserAccount): WechatProfile {
     password: account.password,
     gender: account.gender,
     signature: account.signature,
+  }
+}
+
+/** 微信账号资料 → 编辑资料弹窗用的 Profile 形状 */
+export function wechatProfileToPhoneProfile(p: WechatProfile): Profile {
+  const nick = p.nickname.trim()
+  return {
+    displayName: nick || '未命名',
+    signature: p.signature?.trim() ?? '',
+    avatarImageUrl: p.avatarUrl.trim(),
+    avatarEmoji: nick.slice(0, 1) || '微',
   }
 }
 

@@ -1,6 +1,10 @@
+import type { RefObject } from 'react'
+
 import { useKeyboardInset } from '../../hooks/useKeyboardInset'
 
-/** @deprecated 请直接用 `useKeyboardInset`；保留别名避免大范围改名 */
-export function useMeetKeyboardInset(): number {
-  return useKeyboardInset()
+/** 遇见临时会话 · 与微信 ChatRoom 同源键盘抬升 */
+export function useMeetKeyboardInset(
+  composerRef?: RefObject<HTMLElement | null>,
+): number {
+  return useKeyboardInset(composerRef)
 }

@@ -1,5 +1,7 @@
 /** MBTI 形象图与四字概括，供档案页等复用（与项目根 image/MBTI人格形象图 一致） */
 
+import { resolveCharacterAvatarUrl } from '../../../utils/characterAvatarUrl'
+
 const MBTI_IMAGE_URLS = import.meta.glob('../../../../../image/MBTI人格形象图/*.{png,jpg,jpeg,webp}', {
   eager: true,
   import: 'default',
@@ -21,8 +23,45 @@ export function isLargeMbtiAvatar(mbti?: string): boolean {
   return key === 'ISFJ' || key === 'ENTJ'
 }
 
-/** 各类型人格速写（约二十字，人设档案与身份卡等处共用） */
-export const MBTI_SUMMARY_4: Record<string, string> = {
+/** 玩家身份列表/卡片：已选 MBTI 时优先展示人格形象图，否则回落自定义头像 */
+export function resolvePlayerIdentityPreviewAvatar(params: {
+  mbti?: string | null
+  avatarUrl?: string | null
+}): { src: string; kind: 'mbti' | 'photo' | 'none' } {
+  const mbtiSrc = resolveMbtiImageUrl(String(params.mbti ?? ''))
+  if (mbtiSrc) return { src: mbtiSrc, kind: 'mbti' }
+  const photo = resolveCharacterAvatarUrl({ avatarUrl: String(params.avatarUrl ?? '') })
+  if (photo) return { src: photo, kind: 'photo' }
+  return { src: '', kind: 'none' }
+}
+
+/** 十六型四字概括（选择面板按钮副标题） */
+export const MBTI_TAGLINE_4: Record<string, string> = {
+  INTJ: '谋略深远',
+  INTP: '思辨求真',
+  ENTJ: '统率攻坚',
+  ENTP: '机变善辩',
+  INFJ: '温柔洞察',
+  INFP: '理想温情',
+  ENFJ: '热忱引航',
+  ENFP: '热情灵动',
+  ISTJ: '踏实守规',
+  ISFJ: '体贴守成',
+  ESTJ: '务实号令',
+  ESFJ: '和睦周全',
+  ISTP: '冷静务实',
+  ISFP: '感性随和',
+  ESTP: '果敢应变',
+  ESFP: '乐天外向',
+}
+
+export function getMbtiTagline4(mbti: string): string {
+  const key = (mbti || '').trim().toUpperCase()
+  return key ? MBTI_TAGLINE_4[key] ?? '' : ''
+}
+
+/** 各类型人格速写（较长说明，供档案注入等） */
+export const MBTI_SUMMARY_BLURB: Record<string, string> = {
   INTJ: '善长远规划，喜独立思考，常以逻辑与效率把目标落到实地。',
   INTP: '热衷追问「为什么」，擅长抽象建模，爱在思辨里逼近真相。',
   ENTJ: '目标感强敢拍板，善于带队攻坚，习惯掌控节奏直至结果。',
@@ -40,3 +79,6 @@ export const MBTI_SUMMARY_4: Record<string, string> = {
   ESTP: '反应迅捷敢冒险，擅长临场应变，享受挑战与即时掌控。',
   ESFP: '外向乐天善交际，爱热闹也爱即兴，常是气氛与行动力担当。',
 }
+
+/** @deprecated 请用 {@link MBTI_TAGLINE_4} / {@link MBTI_SUMMARY_BLURB} */
+export const MBTI_SUMMARY_4 = MBTI_TAGLINE_4

@@ -1,0 +1,523 @@
+/* 剧本交互阅读器 · Dark Academia / Parchment */
+@import '../../jbs-kai-fonts.css';
+
+.jbs-script-book-widget {
+  perspective: 1200px;
+  transform-style: preserve-3d;
+}
+
+.jbs-script-book-cover {
+  background: linear-gradient(145deg, #1a1512 0%, #2a221c 38%, #12100e 100%);
+  border: 1px solid rgba(196, 168, 118, 0.35);
+  box-shadow:
+    0 0 0 1px rgba(255, 255, 255, 0.06) inset,
+    0 18px 40px rgba(0, 0, 0, 0.45),
+    4px 0 12px rgba(0, 0, 0, 0.25);
+}
+
+.jbs-script-book-spine {
+  background: linear-gradient(90deg, #0d0c0b 0%, #3d3228 50%, #1a1512 100%);
+}
+
+.jbs-script-book-tag {
+  font-family: ui-sans-serif, system-ui, sans-serif;
+  font-size: 8px;
+  font-weight: 200;
+  letter-spacing: 0.32em;
+  color: rgba(220, 205, 175, 0.72);
+  animation: jbs-script-reading-pulse 2.2s ease-in-out infinite;
+}
+
+@keyframes jbs-script-reading-pulse {
+  0%,
+  100% {
+    opacity: 0.45;
+  }
+  50% {
+    opacity: 1;
+  }
+}
+
+.jbs-script-reader-scrim {
+  background: rgba(12, 10, 8, 0.72);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+}
+
+.jbs-script-reader-shell {
+  background: linear-gradient(165deg, #2a221c 0%, #1a1512 100%);
+  border: 1px solid rgba(196, 168, 118, 0.28);
+  box-shadow: 0 24px 64px rgba(0, 0, 0, 0.55);
+}
+
+.jbs-script-collapse-btn {
+  border: 1px solid rgba(196, 168, 118, 0.35);
+  background: linear-gradient(180deg, rgba(60, 50, 40, 0.95) 0%, rgba(26, 21, 18, 0.98) 100%);
+  color: rgba(220, 205, 175, 0.92);
+}
+
+.jbs-script-tutorial-btn {
+  border: 1px solid rgba(196, 168, 118, 0.28);
+  background: rgba(42, 34, 28, 0.72);
+  color: rgba(220, 205, 175, 0.88);
+}
+
+.jbs-script-tutorial-btn:hover {
+  background: rgba(52, 42, 34, 0.88);
+  color: rgba(240, 232, 216, 0.95);
+}
+
+.jbs-script-tutorial-sheet {
+  background: linear-gradient(165deg, #2a221c 0%, #1a1512 100%);
+  border: 1px solid rgba(196, 168, 118, 0.28);
+  box-shadow: 0 24px 64px rgba(0, 0, 0, 0.55);
+}
+
+.jbs-script-coach-card {
+  background: linear-gradient(165deg, #2f2720 0%, #1e1814 100%);
+  border: 1px solid rgba(196, 168, 118, 0.32);
+  box-shadow: 0 20px 56px rgba(0, 0, 0, 0.45);
+}
+
+.jbs-script-coach-centered {
+  padding:
+    max(20px, env(safe-area-inset-top, 0px))
+    max(16px, env(safe-area-inset-right, 0px))
+    max(20px, env(safe-area-inset-bottom, 0px))
+    max(16px, env(safe-area-inset-left, 0px));
+}
+
+.jbs-script-coach-card--anchored {
+  /* 与 JS 计算的 safe inset 叠加，刘海屏再留一点呼吸 */
+  scroll-padding-top: env(safe-area-inset-top, 0px);
+}
+
+.jbs-script-tutorial-primary {
+  border: 1px solid rgba(196, 168, 118, 0.45);
+  background: linear-gradient(180deg, rgba(196, 168, 118, 0.28) 0%, rgba(92, 61, 46, 0.55) 100%);
+  color: rgba(255, 248, 235, 0.96);
+}
+
+.jbs-script-tutorial-primary:active {
+  opacity: 0.9;
+}
+
+.jbs-script-tutorial-secondary {
+  border: 1px solid rgba(196, 168, 118, 0.22);
+  background: rgba(36, 30, 26, 0.85);
+  color: rgba(220, 205, 175, 0.82);
+}
+
+.jbs-script-tutorial-secondary:active {
+  background: rgba(48, 40, 34, 0.95);
+}
+
+.jbs-script-page {
+  border: 1px solid rgba(92, 61, 46, 0.18);
+  box-shadow: 0 8px 28px rgba(0, 0, 0, 0.2);
+}
+
+.jbs-script-page-shadow {
+  pointer-events: none;
+  background: linear-gradient(
+    to left,
+    rgba(0, 0, 0, 0.45) 0%,
+    rgba(0, 0, 0, 0.12) 40%,
+    transparent 100%
+  );
+}
+
+/* 剧本内页 · 揭页翻阅（与线索牌 flip-inner 同构） */
+.jbs-script-flip-scene {
+  perspective: 1100px;
+  -webkit-perspective: 1100px;
+  perspective-origin: 50% 42%;
+  overflow: hidden;
+}
+
+.jbs-script-page-static {
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+.jbs-script-page-body-box {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: hidden;
+  padding-bottom: 2.5rem;
+  box-sizing: border-box;
+}
+
+.jbs-script-page-paginate-probe {
+  position: fixed;
+  left: -100000px;
+  top: 0;
+  overflow: hidden;
+  visibility: hidden;
+  pointer-events: none;
+  box-sizing: border-box;
+}
+
+.jbs-script-page-paginate-probe .jbs-script-page-body-box {
+  flex: none;
+  overflow: hidden;
+}
+
+/* 仅左右缘接管揭页手势，中间正文区可选取/标注 */
+.jbs-script-flip-edge {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 35%;
+  z-index: 4;
+  touch-action: none;
+}
+
+/* 便签拖动优先于左右揭页热区（热区 z-4，便签 z-8） */
+.jbs-script-sticky-notes-overlay {
+  pointer-events: none;
+}
+
+.jbs-script-flip-edge--prev {
+  left: 0;
+}
+
+.jbs-script-flip-edge--next {
+  right: 0;
+}
+
+.jbs-script-page--flip {
+  overflow: visible;
+  transform-style: preserve-3d;
+  -webkit-transform-style: preserve-3d;
+}
+
+.jbs-script-flip-leaf {
+  z-index: 4;
+  transform-style: preserve-3d;
+  -webkit-transform-style: preserve-3d;
+  will-change: transform;
+}
+
+.jbs-script-flip-hint {
+  animation: jbs-script-flip-hint 4s ease-out 1;
+}
+
+@keyframes jbs-script-flip-hint {
+  0%,
+  10% {
+    opacity: 0;
+  }
+  24%,
+  70% {
+    opacity: 1;
+  }
+  100% {
+    opacity: 0;
+  }
+}
+
+.jbs-script-page-content {
+  padding-top: 0.125rem;
+  padding-bottom: 0.25rem;
+}
+
+.jbs-script-section-tag-wrap {
+  position: absolute;
+  top: 0;
+  left: 0;
+  z-index: 4;
+  max-width: min(100%, 11rem);
+}
+
+.jbs-script-section-tag {
+  position: absolute;
+  top: 0;
+  left: 0;
+  z-index: 2;
+  max-width: calc(100% - 3rem);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  border: 1px solid rgba(139, 105, 20, 0.38);
+  border-radius: 999px;
+  background: rgba(255, 254, 249, 0.82);
+  padding: 0.2rem 0.55rem;
+  font-size: 9px;
+  letter-spacing: 0.14em;
+  color: rgba(92, 61, 46, 0.78);
+  box-shadow: 0 1px 4px rgba(60, 40, 28, 0.08);
+  pointer-events: none;
+}
+
+.jbs-script-section-tag-wrap .jbs-script-section-tag {
+  position: static;
+  pointer-events: auto;
+}
+
+.jbs-script-section-tag--jump {
+  display: inline-flex;
+  max-width: 100%;
+  align-items: center;
+  gap: 0.2rem;
+  cursor: pointer;
+  transition:
+    background 0.15s ease,
+    border-color 0.15s ease;
+}
+
+.jbs-script-section-tag--jump:hover {
+  border-color: rgba(184, 151, 58, 0.55);
+  background: rgba(255, 252, 242, 0.95);
+}
+
+.jbs-script-section-jump-menu {
+  position: absolute;
+  top: calc(100% + 6px);
+  left: 0;
+  z-index: 12;
+  min-width: min(16.5rem, calc(100vw - 3rem));
+  max-width: min(18rem, calc(100vw - 2.5rem));
+  border: 1px solid rgba(139, 105, 20, 0.32);
+  border-radius: 12px;
+  background: rgba(255, 254, 249, 0.97);
+  padding: 0.45rem 0.35rem 0.4rem;
+  box-shadow: 0 10px 28px rgba(40, 28, 18, 0.16);
+}
+
+.jbs-script-section-jump-menu-title {
+  margin: 0 0.45rem 0.35rem;
+  font-size: 8px;
+  letter-spacing: 0.2em;
+  color: rgba(92, 61, 46, 0.5);
+}
+
+.jbs-script-section-jump-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  max-height: min(42vh, 240px);
+  overflow-y: auto;
+}
+
+.jbs-script-section-jump-item {
+  display: flex;
+  width: 100%;
+  align-items: center;
+  gap: 0.35rem;
+  border-radius: 8px;
+  padding: 0.45rem 0.5rem;
+  text-align: left;
+  font-size: 10px;
+  line-height: 1.35;
+  color: rgba(61, 46, 36, 0.9);
+  transition: background 0.12s ease;
+}
+
+.jbs-script-section-jump-item:hover:not(:disabled) {
+  background: rgba(240, 228, 205, 0.65);
+}
+
+.jbs-script-section-jump-item:disabled {
+  cursor: not-allowed;
+  opacity: 0.48;
+}
+
+.jbs-script-section-jump-item--current {
+  background: rgba(232, 214, 175, 0.45);
+}
+
+.jbs-script-section-jump-item-tag {
+  flex-shrink: 0;
+  border: 1px solid rgba(139, 105, 20, 0.28);
+  border-radius: 999px;
+  padding: 0.1rem 0.4rem;
+  font-size: 8px;
+  letter-spacing: 0.12em;
+  color: rgba(92, 61, 46, 0.75);
+}
+
+.jbs-script-section-jump-item-title {
+  min-width: 0;
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 10px;
+  letter-spacing: 0.04em;
+}
+
+.jbs-script-page-body {
+  padding-top: 1.65rem;
+  padding-bottom: 1.5rem;
+  font-family: var(--jbs-font-kai);
+  font-size: 16px;
+  font-weight: 400;
+  line-height: 1.95;
+  letter-spacing: 0.06em;
+  color: #1a1a1a;
+  text-align: left;
+}
+
+.jbs-script-lock-seal {
+  border: 2px solid rgba(139, 105, 20, 0.55);
+  border-radius: 50%;
+  width: 72px;
+  height: 72px;
+  color: rgba(139, 105, 20, 0.85);
+  font-family: ui-sans-serif, system-ui, sans-serif;
+  font-size: 7px;
+  letter-spacing: 0.22em;
+  box-shadow: 0 0 0 4px rgba(139, 105, 20, 0.12);
+}
+
+.jbs-script-finish-btn {
+  border: 1px solid rgba(92, 61, 46, 0.35);
+  background: linear-gradient(180deg, #fffef9 0%, #ebe6dc 100%);
+  color: rgba(61, 46, 36, 0.92);
+  letter-spacing: 0.2em;
+}
+
+/* —— 剧本页标注：便签 / 下划线 / 圈选 —— */
+.jbs-script-annotate-layer {
+  outline: none;
+  touch-action: pan-y;
+}
+
+.jbs-script-annotate-body,
+.jbs-script-page-body {
+  -webkit-user-select: text;
+  user-select: text;
+  touch-action: manipulation;
+}
+
+.jbs-script-annotate-layer:focus-visible {
+  box-shadow: 0 0 0 1px rgba(196, 168, 118, 0.35) inset;
+}
+
+.jbs-script-annotate-toolbar {
+  border-top: 1px solid rgba(196, 168, 118, 0.12);
+}
+
+.jbs-script-annotate-tool {
+  border: 1px solid rgba(196, 168, 118, 0.28);
+  background: rgba(26, 21, 18, 0.55);
+  color: rgba(220, 205, 175, 0.82);
+}
+
+.jbs-script-annotate-tool--active {
+  border-color: rgba(196, 168, 118, 0.55);
+  background: rgba(92, 61, 46, 0.45);
+  color: rgba(255, 248, 235, 0.95);
+}
+
+.jbs-script-annotate-hint {
+  color: rgba(196, 168, 118, 0.45);
+}
+
+/* 局内手写便签 · 未选中=半透明预览，选中/编辑=实底 */
+.jbs-script-sticky-note {
+  z-index: 1;
+  border: 1px dashed rgba(139, 105, 20, 0.38);
+  background: rgba(255, 254, 249, 0.14);
+  box-shadow: none;
+  transition:
+    background 0.22s ease,
+    border-color 0.22s ease,
+    box-shadow 0.22s ease;
+}
+
+.jbs-script-sticky-note--opaque,
+.jbs-script-sticky-note--persist {
+  border-style: solid;
+  border-color: rgba(139, 105, 20, 0.55);
+  background: linear-gradient(165deg, #fffef5 0%, #f5ecd8 48%, #ebe2cc 100%);
+  box-shadow:
+    0 1px 0 rgba(255, 255, 255, 0.65) inset,
+    0 8px 22px rgba(60, 40, 28, 0.16);
+}
+
+.jbs-script-sticky-note--persist .jbs-script-sticky-note-text {
+  color: rgba(61, 46, 36, 0.92);
+}
+
+.jbs-script-sticky-note--persist .jbs-script-sticky-note-chrome span {
+  color: rgba(92, 61, 46, 0.55);
+}
+
+.jbs-script-sticky-note-chrome {
+  border-bottom: 1px solid rgba(139, 105, 20, 0.12);
+  background: rgba(92, 61, 46, 0.04);
+  touch-action: none;
+}
+
+.jbs-script-sticky-note--opaque .jbs-script-sticky-note-chrome,
+.jbs-script-sticky-note--persist .jbs-script-sticky-note-chrome {
+  border-bottom-color: rgba(139, 105, 20, 0.2);
+  background: rgba(139, 105, 20, 0.1);
+}
+
+.jbs-script-sticky-note-body {
+  cursor: text;
+  touch-action: manipulation;
+  -webkit-user-select: text;
+  user-select: text;
+}
+
+.jbs-script-sticky-note-text {
+  color: rgba(61, 46, 36, 0.92);
+}
+
+.jbs-script-sticky-note:not(.jbs-script-sticky-note--opaque) .jbs-script-sticky-note-text {
+  color: rgba(61, 46, 36, 0.55);
+}
+
+.jbs-script-sticky-note:not(.jbs-script-sticky-note--opaque) .jbs-script-sticky-note-chrome span {
+  color: rgba(92, 61, 46, 0.38);
+}
+
+.jbs-script-note-done {
+  border: 1px solid rgba(139, 105, 20, 0.35);
+  background: rgba(255, 254, 249, 0.85);
+  color: rgba(92, 61, 46, 0.85);
+}
+
+.jbs-script-note-delete {
+  border: 1px solid rgba(139, 105, 20, 0.32);
+  color: rgba(92, 61, 46, 0.82);
+  background: rgba(255, 254, 249, 0.88);
+}
+
+.jbs-script-note-delete:hover {
+  border-color: rgba(114, 47, 55, 0.45);
+  color: rgba(114, 47, 55, 0.95);
+  background: rgba(255, 248, 245, 0.98);
+}
+
+.jbs-script-mark-underline {
+  position: absolute;
+  height: 2px;
+  background: rgba(139, 105, 20, 0.72);
+  border-radius: 1px;
+}
+
+.jbs-script-mark-circle {
+  position: absolute;
+  border: 2px solid rgba(139, 105, 20, 0.65);
+  border-radius: 50%;
+  box-shadow: 0 0 0 1px rgba(139, 105, 20, 0.12);
+}
+
+.jbs-script-mini-anchor {
+  perspective: 900px;
+  border: 1px solid rgba(196, 168, 118, 0.4);
+  background: linear-gradient(145deg, #2a221c 0%, #12100e 100%);
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.4);
+}
+
+.jbs-script-mini-anchor-label {
+  font-family: ui-sans-serif, system-ui, sans-serif;
+  font-size: 7px;
+  letter-spacing: 0.2em;
+  color: rgba(220, 205, 175, 0.75);
+}

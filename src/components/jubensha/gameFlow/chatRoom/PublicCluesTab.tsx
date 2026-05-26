@@ -1,8 +1,9 @@
 import { AnimatePresence, motion, useMotionValue, useSpring, useTransform } from 'framer-motion'
-import { useCallback, useRef } from 'react'
+import { useCallback, useEffect, useRef } from 'react'
 
-import { isClueUnlocked } from './jbsFlowTypes'
+import { isClueCollectedInDrawer } from './jbsFlowTypes'
 import { useJBSFlow } from './JBSFlowEngine'
+import { CLUE_FLIP_PERSPECTIVE, CLUE_OPEN_SPRING } from './clueCardMotion'
 
 function ClueCard({
   title,
@@ -30,54 +31,67 @@ function ClueCard({
       type="button"
       onClick={onInspect}
       className="jbs-gf-chat-clue-card aspect-[3/4] w-[calc(50%-6px)] shrink-0 overflow-hidden rounded-lg focus:outline-none"
-      initial={{ rotateY: 88, opacity: 0.4 }}
-      animate={{ rotateY: 0, opacity: 1 }}
-      transition={{ duration: 0.65, ease: [0.22, 1, 0.36, 1] }}
-      style={{ transformStyle: 'preserve-3d' }}
+      initial={{ rotateY: 92, opacity: 0.35, scale: 0.92 }}
+      animate={{ rotateY: 0, opacity: 1, scale: 1 }}
+      transition={CLUE_OPEN_SPRING}
+      style={{ transformStyle: 'preserve-3d', perspective: CLUE_FLIP_PERSPECTIVE }}
       whileTap={{ scale: 0.97 }}
     >
       <img src={imageUrl} alt="" className="h-[72%] w-full object-cover" />
-      <p className="jbs-font-serif px-2 py-2 text-center text-[11px] tracking-wide text-[#3d2e24]/88">
-        {title}
-      </p>
+      <div className="jbs-gf-chat-clue-card-caption flex flex-1 flex-col justify-center">
+        <p className="jbs-font-serif px-2 py-2 text-center text-[11px] tracking-wide text-[#3d2e24]/88">
+          {title}
+        </p>
+      </div>
     </motion.button>
   )
 }
 
 function ClueInspector() {
-  const { clues, inspectingClueId, setInspectingClueId, currentStep, loopRound } = useJBSFlow()
+  const { clues, inspectingClueId, setInspectingClueId, currentStep, loopRound, collectedClueIds } =
+    useJBSFlow()
   const clue = clues.find((c) => c.id === inspectingClueId)
   const dragRef = useRef<HTMLDivElement>(null)
+  const entryDoneRef = useRef(false)
 
-  const rotateX = useMotionValue(0)
-  const rotateY = useMotionValue(0)
-  const springX = useSpring(rotateX, { stiffness: 180, damping: 22 })
-  const springY = useSpring(rotateY, { stiffness: 180, damping: 22 })
+  const tiltX = useMotionValue(0)
+  const tiltY = useMotionValue(0)
+  const springTiltX = useSpring(tiltX, { stiffness: 180, damping: 22 })
+  const springTiltY = useSpring(tiltY, { stiffness: 180, damping: 22 })
   const shadow = useTransform(
-    springY,
+    springTiltY,
     [-12, 12],
     ['0 28px 48px rgba(92, 61, 46, 0.22)', '0 8px 24px rgba(92, 61, 46, 0.14)'],
   )
 
+  useEffect(() => {
+    entryDoneRef.current = false
+    const t = window.setTimeout(() => {
+      entryDoneRef.current = true
+    }, 520)
+    return () => window.clearTimeout(t)
+  }, [inspectingClueId])
+
   const onPointerMove = useCallback(
     (e: React.PointerEvent) => {
+      if (!entryDoneRef.current) return
       const el = dragRef.current
       if (!el) return
       const rect = el.getBoundingClientRect()
       const px = (e.clientX - rect.left) / rect.width - 0.5
       const py = (e.clientY - rect.top) / rect.height - 0.5
-      rotateY.set(px * 18)
-      rotateX.set(-py * 14)
+      tiltY.set(px * 14)
+      tiltX.set(-py * 10)
     },
-    [rotateX, rotateY],
+    [tiltX, tiltY],
   )
 
   const onPointerLeave = useCallback(() => {
-    rotateX.set(0)
-    rotateY.set(0)
-  }, [rotateX, rotateY])
+    tiltX.set(0)
+    tiltY.set(0)
+  }, [tiltX, tiltY])
 
-  if (!clue || !isClueUnlocked(clue, currentStep, loopRound)) return null
+  if (!clue || !isClueCollectedInDrawer(clue, currentStep, loopRound, collectedClueIds)) return null
 
   return (
     <motion.div
@@ -85,40 +99,58 @@ function ClueInspector() {
       initial={{ opacity: 0 }}
       animate={{ opacity: 1 }}
       exit={{ opacity: 0 }}
+      transition={{ duration: 0.28 }}
       onClick={() => setInspectingClueId(null)}
     >
       <motion.div
-        ref={dragRef}
         className="w-full max-w-[240px]"
-        style={{
-          rotateX: springX,
-          rotateY: springY,
-          transformPerspective: 900,
-          boxShadow: shadow,
-        }}
-        onPointerMove={onPointerMove}
-        onPointerLeave={onPointerLeave}
-        onClick={(e) => e.stopPropagation()}
+        style={{ perspective: CLUE_FLIP_PERSPECTIVE }}
+        initial={{ rotateY: -94, opacity: 0, scale: 0.86 }}
+        animate={{ rotateY: 0, opacity: 1, scale: 1 }}
+        exit={{ rotateY: 78, opacity: 0, scale: 0.9 }}
+        transition={CLUE_OPEN_SPRING}
       >
-        <div className="jbs-gf-chat-glass-panel overflow-hidden rounded-xl">
-          <img src={clue.imageUrl} alt="" className="aspect-[3/4] w-full object-cover" />
-        </div>
-        <p className="jbs-font-serif mt-4 text-center text-[14px] font-semibold leading-relaxed text-[#1a1a1a]/92">
-          {clue.title}
-        </p>
-        <p className="jbs-font-serif mt-2 text-center text-[12px] leading-loose text-[#5c3d2e]/72">
-          {clue.description}
-        </p>
-        <p className="jbs-gf-chat-step-pill mt-4 text-center text-[9px]">
+        <motion.div
+          ref={dragRef}
+          className="jbs-clue-flip-inner"
+          style={{
+            rotateX: springTiltX,
+            rotateY: springTiltY,
+            transformStyle: 'preserve-3d',
+            boxShadow: shadow,
+          }}
+          onPointerMove={onPointerMove}
+          onPointerLeave={onPointerLeave}
+          onClick={(e) => e.stopPropagation()}
+        >
+          <div className="jbs-gf-chat-clue-inspector-card overflow-hidden rounded-xl">
+            <img src={clue.imageUrl} alt="" className="aspect-[3/4] w-full object-cover" />
+            <div className="jbs-gf-chat-clue-inspector-body">
+              <p className="jbs-font-serif text-center text-[14px] font-semibold leading-relaxed text-[#1a1a1a]/92">
+                {clue.title}
+              </p>
+              <p className="jbs-font-serif mt-2 text-center text-[12px] leading-loose text-[#5c3d2e]/82">
+                {clue.description}
+              </p>
+            </div>
+          </div>
+        </motion.div>
+        <motion.p
+          className="jbs-gf-chat-step-pill mt-4 text-center text-[9px]"
+          initial={{ opacity: 0, y: 6 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ delay: 0.32, duration: 0.35 }}
+        >
           拖动以检视 · 点击空白关闭
-        </p>
+        </motion.p>
       </motion.div>
     </motion.div>
   )
 }
 
 export function PublicCluesTab() {
-  const { clues, currentStep, loopRound, inspectingClueId, setInspectingClueId } = useJBSFlow()
+  const { clues, currentStep, loopRound, inspectingClueId, setInspectingClueId, collectedClueIds } =
+    useJBSFlow()
 
   return (
     <>
@@ -126,13 +158,18 @@ export function PublicCluesTab() {
         <p className="jbs-font-serif jbs-gf-text-muted text-center text-[10px] tracking-[0.24em]">
           公共线索区 · 证据链
         </p>
+        {clues.some((c) => c.category === 'premise') ? (
+          <p className="jbs-font-serif jbs-gf-text-muted mt-2 text-center text-[9px] tracking-[0.2em]">
+            公共前提 · 入局须知
+          </p>
+        ) : null}
         <div className="mt-4 flex flex-wrap gap-3">
           {clues.map((clue) => (
             <ClueCard
               key={clue.id}
               title={clue.title}
               imageUrl={clue.imageUrl}
-              unlocked={isClueUnlocked(clue, currentStep, loopRound)}
+              unlocked={isClueCollectedInDrawer(clue, currentStep, loopRound, collectedClueIds)}
               onInspect={() => setInspectingClueId(clue.id)}
             />
           ))}

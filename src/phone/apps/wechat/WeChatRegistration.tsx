@@ -22,6 +22,9 @@ import {
 } from './wechatDefaultAvatars'
 import { pickRandomWechatNickname } from './wechatNicknameRandomPool'
 import { pickRandomWechatId } from './wechatIdRandomPool'
+import { resolveCharacterAvatarUrl } from '../../utils/characterAvatarUrl'
+import { canonicalPublicImagePath } from '../../../publicAssetUrl'
+import { DEFAULT_PUBLIC_AVATAR_PATH } from '../../types'
 const formCollapseExit = {
   opacity: 0,
   y: 20,
@@ -216,7 +219,8 @@ export function WeChatRegistration({ onBack, mode = 'initial', onAccountAdded }:
   const handleCreate = useCallback(() => {
     if (!canSubmit) return
     setSubmitting(true)
-    const resolvedAvatar = avatarUrl.trim() || getDefaultWechatRegistrationAvatar()
+    const rawAvatar = avatarUrl.trim() || getDefaultWechatRegistrationAvatar()
+    const resolvedAvatar = canonicalPublicImagePath(rawAvatar) || rawAvatar
     const draft: WechatProfile = {
       avatarUrl: resolvedAvatar,
       nickname: nickname.trim(),
@@ -315,7 +319,15 @@ export function WeChatRegistration({ onBack, mode = 'initial', onAccountAdded }:
                   className="group relative flex size-24 items-center justify-center overflow-hidden rounded-full border border-[#E5E7EB] bg-[#F9FAFB] transition-colors hover:border-[#D1D5DB]"
                   aria-label="本地上传头像"
                 >
-                  <img src={avatarUrl} alt="" className="size-full object-cover" />
+                  <img
+                    src={resolveCharacterAvatarUrl({ avatarUrl }) || resolveCharacterAvatarUrl({ avatarUrl: DEFAULT_PUBLIC_AVATAR_PATH })}
+                    alt=""
+                    className="size-full object-cover"
+                    onError={(e) => {
+                      const fb = resolveCharacterAvatarUrl({ avatarUrl: DEFAULT_PUBLIC_AVATAR_PATH })
+                      if (fb && e.currentTarget.src !== fb) e.currentTarget.src = fb
+                    }}
+                  />
                   <span className="pointer-events-none absolute inset-0 flex items-center justify-center bg-black/0 transition-colors group-hover:bg-black/25">
                     <Plus className="size-5 stroke-[1.5] text-white opacity-0 transition-opacity group-hover:opacity-100" aria-hidden />
                   </span>

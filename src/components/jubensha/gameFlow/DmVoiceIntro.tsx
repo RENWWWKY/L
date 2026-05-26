@@ -17,6 +17,9 @@ export type DmVoiceIntroProps = {
   typewriterScripts?: readonly string[]
   onComplete: () => void
   embedded?: boolean
+  /** 续玩：已播完轨数，跳过已播放段落 */
+  initialCompletedTrackCount?: number
+  onTrackProgress?: (completedTrackCount: number) => void
 }
 
 export function DmVoiceIntro({
@@ -24,8 +27,11 @@ export function DmVoiceIntro({
   typewriterScripts,
   onComplete,
   embedded = false,
+  initialCompletedTrackCount = 0,
+  onTrackProgress,
 }: DmVoiceIntroProps) {
-  const [trackIndex, setTrackIndex] = useState(0)
+  const completedStart = Math.max(0, Math.min(initialCompletedTrackCount, tracks.length))
+  const [trackIndex, setTrackIndex] = useState(completedStart)
   const [phase, setPhase] = useState<PlayPhase>('loading')
   const [errorHint, setErrorHint] = useState<string | null>(null)
   const [typingActive, setTypingActive] = useState(false)
@@ -57,13 +63,14 @@ export function DmVoiceIntro({
 
   const advanceTrack = useCallback(() => {
     setTypingActive(false)
+    onTrackProgress?.(trackIndex + 1)
     if (trackIndex < tracks.length - 1) {
       setTrackIndex((i) => i + 1)
       setPhase('loading')
       return
     }
     finish()
-  }, [finish, trackIndex, tracks.length])
+  }, [finish, onTrackProgress, trackIndex, tracks.length])
 
   const playCurrent = useCallback(
     async (opts?: { fromGesture?: boolean }): Promise<boolean> => {
@@ -122,8 +129,17 @@ export function DmVoiceIntro({
 
   /** 进入开场页自动播双轨；被策略拦截时等任意点击续播 */
   useEffect(() => {
+    if (completedStart >= tracks.length) {
+      finish()
+      return
+    }
+    if (completedStart > 0) {
+      startedRef.current = true
+      void beginDualPlaybackRef.current(false)
+      return
+    }
     void beginDualPlaybackRef.current(false)
-  }, [])
+  }, [completedStart, finish, tracks.length])
 
   useEffect(() => {
     const onGesture = () => unlockFromGesture()

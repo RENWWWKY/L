@@ -86,6 +86,7 @@ import {
   collectWorldBookAfterRevertSnapshot,
   extractWorldBookAfterPatchBlock,
   hasChatAfterWorldBookItems,
+  listChatAfterWorldBookItems,
   sanitizeWorldBookAfterRevertEntries,
   WORLD_BOOK_AFTER_PATCH_UPDATED_EVENT,
 } from '../newFriendsPersona/worldBookAfterPatch'
@@ -1321,16 +1322,22 @@ ${vnVoiceParamsRule ? `${vnVoiceParamsRule}\n` : ''}${vnBackgroundRule ? `${vnBa
   }
   const traceBody = splitDatingAiResponseAndUnifiedMemoryJson(trimmedForPlot).plotRaw
   const chatAfterProtocol = !!(mainCharRow && hasChatAfterWorldBookItems(mainCharRow))
-  const chatAfterDynExpanded =
+  const injectedSnapshotEntries =
     chatAfterProtocol && mainCharRow
-      ? expandCharUserPlaceholders(buildChatAfterWorldBookDynamicSection(mainCharRow), charUserNames).trim()
-      : ''
+      ? listChatAfterWorldBookItems(mainCharRow).map((r) => ({
+          characterId: mainCharRow.id,
+          characterName: mainCharRow.name?.trim() || character.realName?.trim() || '角色',
+          bookName: r.bookName,
+          itemName: r.itemName,
+          content: expandCharUserPlaceholders(r.content, charUserNames),
+        }))
+      : []
   const patchRowsForTrace = buildWorldBookAfterPatchRowsFromSingleCharacter(mainCharRow, wbExtract.patches)
   const worldBookAfterChatTrace =
     chatAfterProtocol || wbExtract.patches.length
       ? buildWorldBookAfterChatTrace({
           protocolInPrompt: chatAfterProtocol,
-          injectedDynamicSection: chatAfterDynExpanded,
+          injectedSnapshotEntries,
           patchOutputRulesIncluded: chatAfterProtocol,
           parsedPatches: patchRowsForTrace,
           appliedToDb: wbAfterAppliedToDb,

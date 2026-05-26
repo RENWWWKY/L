@@ -97,7 +97,7 @@ export function CustomizeScreen({ onBack }: Props) {
   const {
     state,
     setTheme,
-    setProfile,
+    setPersonalCardProfile,
     setMusic,
     setUi,
     setAppLabel,
@@ -110,7 +110,17 @@ export function CustomizeScreen({ onBack }: Props) {
     setGestureEffects,
     resetDefaults,
   } = useCustomization()
-  const { theme, profile, music, apps, ui, appPageStyles, dockStyle, customCss, gestureEffects } = state
+  const {
+    theme,
+    personalCardProfile: profile,
+    music,
+    apps,
+    ui,
+    appPageStyles,
+    dockStyle,
+    customCss,
+    gestureEffects,
+  } = state
   const appearanceStyle = appPageStyles.appearance
 
   const [section, setSection] = useState<SectionKey>('nav')
@@ -137,7 +147,7 @@ export function CustomizeScreen({ onBack }: Props) {
       case 'font':
         return '全局字体'
       case 'profile':
-        return '名片'
+        return '桌面个人名片'
       case 'music':
         return '桌面组件'
       case 'pageStyles':
@@ -329,7 +339,11 @@ export function CustomizeScreen({ onBack }: Props) {
               onClick={() => setSection('theme')}
             />
             <NavCard title="全局字体" desc="中文/英文字体风格与字号观感" onClick={() => setSection('font')} />
-            <NavCard title="名片" desc="头像、昵称、签名、日期" onClick={() => setSection('profile')} />
+            <NavCard
+              title="桌面个人名片"
+              desc="主屏名片头像、昵称、签名（与微信资料独立）"
+              onClick={() => setSection('profile')}
+            />
             <NavCard title="桌面组件" desc="播放器、Dock样式" onClick={() => setSection('music')} />
             <NavCard
               title="点击动效和拖尾"
@@ -705,7 +719,7 @@ export function CustomizeScreen({ onBack }: Props) {
                   color: theme.text,
                 }}
                 value={profile.displayName}
-                onChange={(e) => setProfile({ displayName: e.target.value })}
+                onChange={(e) => setPersonalCardProfile({ displayName: e.target.value })}
               />
             </div>
             <div>
@@ -718,7 +732,7 @@ export function CustomizeScreen({ onBack }: Props) {
                   color: theme.text,
                 }}
                 value={profile.signature}
-                onChange={(e) => setProfile({ signature: e.target.value })}
+                onChange={(e) => setPersonalCardProfile({ signature: e.target.value })}
               />
             </div>
             <div>
@@ -731,7 +745,7 @@ export function CustomizeScreen({ onBack }: Props) {
                   color: theme.text,
                 }}
                 value={profile.avatarEmoji}
-                onChange={(e) => setProfile({ avatarEmoji: e.target.value.slice(0, 4) })}
+                onChange={(e) => setPersonalCardProfile({ avatarEmoji: e.target.value.slice(0, 4) })}
               />
             </div>
             <div>
@@ -745,7 +759,7 @@ export function CustomizeScreen({ onBack }: Props) {
                 }}
                 placeholder="https://..."
                 value={profile.avatarImageUrl}
-                onChange={(e) => setProfile({ avatarImageUrl: e.target.value })}
+                onChange={(e) => setPersonalCardProfile({ avatarImageUrl: e.target.value })}
               />
             </div>
           </div>

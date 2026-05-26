@@ -6,6 +6,7 @@ import {
   backfillCharacterPlayerIdentityLinkMeta,
   formatPlayerIdentityDisplayName,
   getCharacterBoundPlayerIdentityId,
+  getCharacterCrossAccountLinkedPlayerIdentityIds,
   getCharacterLinkedPlayerIdentityIds,
 } from '../../wechatCharacterPlayerIdentity'
 import {
@@ -72,12 +73,28 @@ export function BindingsInfoTab({ character }: { character: Character }) {
         const fresh = (await personaDb.getCharacter(character.id)) ?? character
         const bundle = await loadAccountsBundle()
         const primary = getCharacterBoundPlayerIdentityId(fresh)
-        const linked = getCharacterLinkedPlayerIdentityIds(fresh).filter((id) => id !== primary)
+        const identityCache = new Map<string, PlayerIdentity | null>()
+        await Promise.all(
+          getCharacterLinkedPlayerIdentityIds(fresh).map(async (id) => {
+            identityCache.set(id, await personaDb.getPlayerIdentity(id))
+          }),
+        )
+        const accountFor = (identityId: string) =>
+          resolvePlayerIdentityWechatAccountId(
+            fresh,
+            identityId,
+            identityCache.get(identityId) ?? null,
+          )
+        const linked = primary ? getCharacterCrossAccountLinkedPlayerIdentityIds(fresh, accountFor) : []
         const items: BindingRow[] = []
 
         const pushRow = async (identityId: string, role: 'primary' | 'linked') => {
-          const identity = await personaDb.getPlayerIdentity(identityId)
-          const accountId = resolvePlayerIdentityWechatAccountId(fresh, identityId, identity)
+          let identity = identityCache.get(identityId)
+          if (identity === undefined) {
+            identity = await personaDb.getPlayerIdentity(identityId)
+            identityCache.set(identityId, identity)
+          }
+          const accountId = accountFor(identityId)
           items.push({
             identityId,
             role,
@@ -87,8 +104,10 @@ export function BindingsInfoTab({ character }: { character: Character }) {
           })
         }
 
-        if (primary) await pushRow(primary, 'primary')
-        for (const lid of linked) await pushRow(lid, 'linked')
+        if (primary) {
+          await pushRow(primary, 'primary')
+          for (const lid of linked) await pushRow(lid, 'linked')
+        }
 
         if (!cancelled) setRows(items)
       } finally {
@@ -111,8 +130,8 @@ export function BindingsInfoTab({ character }: { character: Character }) {
         <p className="text-[9px] font-semibold uppercase tracking-[0.28em] text-neutral-400">02 LINK · 扮演绑定</p>
         <h2 className="mt-2 text-[17px] font-semibold tracking-tight text-[#1C1C1E]">绑定信息</h2>
         <p className="mt-1 text-[11px] font-light leading-relaxed text-neutral-500">
-          查看该角色档案绑定的玩家扮演身份。主绑定为跨马甲共享的档案锚点；副绑定为其它微信号加好友后关联的马甲。AI
-          私聊时会按「当前微信线」与「主绑定」分属账号区分，避免误判为换号。
+          主绑定为创建角色时写入档案的扮演身份。仅当<strong className="font-medium text-neutral-600">其它微信号</strong>
+          也与本角色建立绑定时，才会出现副绑定；同一微信下的多个「我的身份」不会在此重复列出。私聊时 AI 按当前微信线与主绑定分属账号区分，避免误判为换号。
         </p>
       </header>
 
@@ -122,7 +141,7 @@ export function BindingsInfoTab({ character }: { character: Character }) {
         <div className="rounded-[12px] border border-dashed border-neutral-200 bg-neutral-50/60 px-4 py-8 text-center">
           <p className="text-[14px] font-medium text-neutral-600">尚未绑定玩家身份</p>
           <p className="mt-2 text-[12px] leading-relaxed text-neutral-500">
-            创建角色时选择身份，或在微信加好友通过后，系统会将对应马甲写入副绑定。
+            创建角色时选择身份；其它微信号加好友通过后，若与主绑定不是同一微信账号，会写入副绑定。
           </p>
         </div>
       ) : (

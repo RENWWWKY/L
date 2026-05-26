@@ -24,6 +24,55 @@ const FAX_THUMB = LEDGER_THUMB
 const CAR_THUMB = KEY_THUMB
 const EMAIL_THUMB = LEDGER_THUMB
 
+const PREMISE_ALLERGY_THUMB = `data:image/svg+xml,${encodeURIComponent(
+  `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 160"><rect width="120" height="160" fill="#1a1814"/><circle cx="60" cy="72" r="22" fill="none" stroke="#c9a227" stroke-width="1.2"/><path d="M60 50v44M48 62h24M52 78c6-8 20-8 26 0" fill="none" stroke="#8b7355" stroke-width="1"/></svg>`,
+)}`
+
+const PREMISE_STORM_THUMB = `data:image/svg+xml,${encodeURIComponent(
+  `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 160"><rect width="120" height="160" fill="#0d0c0b"/><path d="M30 36h60l-6 52H36L30 36z" fill="none" stroke="rgba(255,255,255,0.25)" stroke-width="1"/><path d="M44 58l-8 28M60 52l-6 34M76 60l10 26" stroke="rgba(180,200,220,0.5)" stroke-width="1.2"/></svg>`,
+)}`
+
+const PREMISE_GUARD_THUMB = `data:image/svg+xml,${encodeURIComponent(
+  `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 160"><rect width="120" height="160" fill="#121110"/><path d="M60 38 L78 48v28c0 18-8 32-18 38-10-6-18-20-18-38V48z" fill="none" stroke="#c0b8a8" stroke-width="1.4"/><circle cx="60" cy="58" r="8" fill="none" stroke="#8b7355" stroke-width="1"/></svg>`,
+)}`
+
+/** 故事背景「公共前提」· 播完 dm故事背景1/2 后飞牌收纳 */
+export const YUYE_STORY_PREMISE_CLUE_IDS = [
+  'yuye-premise-allergy',
+  'yuye-premise-layout',
+  'yuye-premise-guard',
+] as const
+
+const YUYE_PREMISE_CLUES: JBSClue[] = [
+  {
+    id: 'yuye-premise-allergy',
+    title: '林晚星 · 金盏花过敏',
+    description: '林晚星对金盏花过敏，宴席本应避免相关食材（细节仅核心圈知晓）。',
+    imageUrl: PREMISE_ALLERGY_THUMB,
+    unlockStep: 2,
+    autoDisperseOnUnlock: false,
+    category: 'premise',
+  },
+  {
+    id: 'yuye-premise-layout',
+    title: '玻璃湾七号 · 动线',
+    description: '暴雨；主楼餐厅与负一层酒窖、负二层车库连通。',
+    imageUrl: PREMISE_STORM_THUMB,
+    unlockStep: 2,
+    autoDisperseOnUnlock: false,
+    category: 'premise',
+  },
+  {
+    id: 'yuye-premise-guard',
+    title: '保安队长周启驻场',
+    description: '保安队长周启驻场，全场安保由其一肩负责。',
+    imageUrl: PREMISE_GUARD_THUMB,
+    unlockStep: 2,
+    autoDisperseOnUnlock: false,
+    category: 'premise',
+  },
+]
+
 /** 《雨夜归零》· 与 DM 主持剧本「公共线索」三批一致 */
 const YUYE_CLUES: JBSClue[] = [
   {
@@ -125,7 +174,7 @@ const YUYE_CLUES: JBSClue[] = [
 ]
 
 export function buildScriptClues(scriptId: string): JBSClue[] {
-  if (scriptId === 'yuye-guiling') return YUYE_CLUES
+  if (scriptId === 'yuye-guiling') return [...YUYE_PREMISE_CLUES, ...YUYE_CLUES]
   return [
     {
       id: 'c-generic-1',
@@ -135,4 +184,9 @@ export function buildScriptClues(scriptId: string): JBSClue[] {
       unlockStep: 6,
     },
   ]
+}
+
+export function getStoryBackgroundPremiseClueIds(scriptId: string): readonly string[] {
+  if (scriptId === 'yuye-guiling') return YUYE_STORY_PREMISE_CLUE_IDS
+  return []
 }

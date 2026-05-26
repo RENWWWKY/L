@@ -6,6 +6,10 @@ import {
   loadMeetMemorySummaryProgress,
   type MeetMemorySummaryProgressRow,
 } from './meetMemorySummaryProgress'
+import {
+  resolveMeetAutoSummaryEnabled,
+  resolveMeetAutoSummaryInterval,
+} from './meetMemorySummarySettings'
 import type { EncounterMemory, MeetPublicProfile } from './meetTypes'
 import { MEET_APP_COACH_TARGET_ATTR } from './meetAppCoachSteps'
 
@@ -53,7 +57,7 @@ function ProgressRowCard({ row }: { row: MeetMemorySummaryProgressRow }) {
 
       <p className="mt-2.5 text-[13px] font-light leading-relaxed text-[#5c574f]">
         {!row.autoSummaryEnabled ? (
-          <span className="text-[#a39e96]">自动总结已关闭（微信记忆引擎中开启后才会计数）</span>
+          <span className="text-[#a39e96]">遇见自动总结已关闭（上方开启后才会计数）</span>
         ) : row.roundsUntilNext <= 0 ? (
           <>
             已达间隔阈值，<span className="text-[#9a7d3a]">下一次 NPC 回复</span>将尝试写入记忆
@@ -118,8 +122,8 @@ export function DestinyArchiveSummaryProgressPanel(props: {
     try {
       const settings = await personaDb.getMemorySettings()
       if (seq !== reloadSeqRef.current) return
-      setInterval(Math.max(1, Math.floor(settings.autoSummaryInterval)))
-      setAutoSummaryEnabled(settings.autoSummaryEnabled !== false)
+      setInterval(resolveMeetAutoSummaryInterval(settings))
+      setAutoSummaryEnabled(resolveMeetAutoSummaryEnabled(settings))
 
       const rows = await loadMeetMemorySummaryProgress({
         rows: archiveSnapshot.map((r) => ({ charId: r.charId, nickname: r.nickname })),
@@ -175,13 +179,13 @@ export function DestinyArchiveSummaryProgressPanel(props: {
   return (
     <div {...{ [MEET_APP_COACH_TARGET_ATTR]: 'archive-summary-progress' }} className="px-4 pb-8">
       <p className="text-center text-[12px] font-light leading-relaxed text-[#8a847b]">
-        与微信私聊共用计数：每完成一轮
+        遇见独立计数：每完成一轮
         <span className="text-[#9a7d3a]"> NPC 文字回复 </span>
         计 1 轮；满 {interval} 轮后合并写入
         <span className="text-[#9a7d3a]"> [遇见] </span>
-        长期记忆。
+        长期记忆（写入后与微信共用同一记忆库）。
         {!autoSummaryEnabled ? (
-          <span className="mt-1 block text-[#c45c5c]">当前全局自动总结已关闭。</span>
+          <span className="mt-1 block text-[#c45c5c]">当前遇见自动总结已关闭。</span>
         ) : null}
       </p>
 

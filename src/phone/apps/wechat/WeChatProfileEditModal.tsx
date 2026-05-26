@@ -1,11 +1,14 @@
-import { useEffect, useId, useState } from 'react'
+import { useEffect, useId, useMemo, useState } from 'react'
 
 import { ImageCropperModal } from '../../components/ImageCropperModal'
 import { Pressable } from '../../components/Pressable'
 import type { Profile } from '../../types'
+import {
+  normalizeProfileAvatarForSave,
+  resolveProfileAvatarPreviewUrl,
+} from '../../utils/characterAvatarUrl'
+import { DEFAULT_PUBLIC_AVATAR_PATH } from '../../types'
 import { compressAvatarDataUrl, MAX_AVATAR_DATA_URL_LEN } from './avatarCompress'
-
-const AVATAR_PREVIEW_FALLBACK = 'https://via.placeholder.com/120'
 
 type Props = {
   open: boolean
@@ -29,9 +32,12 @@ export function WeChatProfileEditModal({ open, onClose, profile, onSave }: Props
     setAvatarCropSrc('')
   }, [open, profile.displayName, profile.signature, profile.avatarImageUrl])
 
-  if (!open) return null
+  const previewSrc = useMemo(
+    () => resolveProfileAvatarPreviewUrl(avatarImageUrl),
+    [avatarImageUrl],
+  )
 
-  const previewSrc = avatarImageUrl.trim() || AVATAR_PREVIEW_FALLBACK
+  if (!open) return null
 
   const onPickFile = (file: File | null) => {
     if (!file || !file.type.startsWith('image/')) return
@@ -48,7 +54,7 @@ export function WeChatProfileEditModal({ open, onClose, profile, onSave }: Props
     onSave({
       displayName: displayName.trim() || profile.displayName,
       signature: signature.trim(),
-      avatarImageUrl: avatarImageUrl.trim(),
+      avatarImageUrl: normalizeProfileAvatarForSave(avatarImageUrl),
     })
     onClose()
   }
@@ -110,6 +116,10 @@ export function WeChatProfileEditModal({ open, onClose, profile, onSave }: Props
               height={96}
               className="h-24 w-24 rounded-full border object-cover"
               style={{ borderColor: '#e5e5e5' }}
+              onError={(e) => {
+                const fallback = resolveProfileAvatarPreviewUrl(DEFAULT_PUBLIC_AVATAR_PATH)
+                if (e.currentTarget.src !== fallback) e.currentTarget.src = fallback
+              }}
             />
             <span className="mt-1 block text-center text-[12px]" style={{ color: '#666' }}>
               点击更换头像
@@ -119,9 +129,9 @@ export function WeChatProfileEditModal({ open, onClose, profile, onSave }: Props
             type="button"
             className="text-[12px]"
             style={{ color: '#888' }}
-            onClick={() => setAvatarImageUrl('')}
+            onClick={() => setAvatarImageUrl(DEFAULT_PUBLIC_AVATAR_PATH)}
           >
-            清除头像
+            恢复默认头像
           </Pressable>
         </div>
 

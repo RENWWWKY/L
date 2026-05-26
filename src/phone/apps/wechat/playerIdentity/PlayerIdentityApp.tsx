@@ -1,15 +1,16 @@
 import { ArrowLeft, Check, Download, Edit, Plus, Trash2, User } from 'lucide-react'
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import type { ApiConfig } from '../../api/types'
 import { useCurrentApiConfig } from '../../api/ApiSettingsContext'
 import { personaDb } from '../newFriendsPersona/idb'
 import { DEFAULT_WORLD_BACKGROUND_ID } from '../newFriendsPersona/worldBackgroundConstants'
 import { formatWorldBackgroundForPrompt } from '../newFriendsPersona/worldBackgroundFormat'
 import { canonicalPublicImagePath } from '../../../../publicAssetUrl'
-import { repairCharacterAvatarForBundleImport, resolveCharacterAvatarUrl } from '../../../utils/characterAvatarUrl'
+import { repairCharacterAvatarForBundleImport } from '../../../utils/characterAvatarUrl'
 import type { PlayerIdentity, Relationship } from '../newFriendsPersona/types'
 import { daysInMonth, formatMD, randomChineseName, uid, zodiacFromMD } from '../newFriendsPersona/utils'
 import { InlineDropdown } from '../newFriendsPersona/InlineDropdown'
+import { MbtiPersonalityPickerGrid } from '../newFriendsPersona/MbtiPersonalityPickerGrid'
 import { WorldBooksEditor } from '../newFriendsPersona/WorldBooksEditor'
 import type { ScheduleTable } from '../newFriendsPersona/types'
 import { ScheduleEditorScreen } from '../schedule/ScheduleEditorScreen'
@@ -20,7 +21,11 @@ import {
   isMbtiPersonalityWorldBookName,
   normalizeMbti,
 } from '../mbtiPersonalityWorldBook'
-import { isLargeMbtiAvatar, resolveMbtiImageUrl } from '../newFriendsPersona/mbtiProfileUi'
+import {
+  isLargeMbtiAvatar,
+  resolveMbtiImageUrl,
+  resolvePlayerIdentityPreviewAvatar,
+} from '../newFriendsPersona/mbtiProfileUi'
 import { useWechatStore } from '../useWechatStore'
 import { resolveCanonicalCharacterId } from '../wechatGlobalCharacterRegistry'
 import { identityBelongsToWechatAccount, stampWechatAccountOwner } from '../wechatAccountScope'
@@ -34,7 +39,6 @@ const COLORS = {
   border: '#e5e5e5',
 } as const
 
-const MBTI_LIST = ['INTJ', 'INTP', 'ENTJ', 'ENTP', 'INFJ', 'INFP', 'ENFJ', 'ENFP', 'ISTJ', 'ISFJ', 'ESTJ', 'ESFJ', 'ISTP', 'ISFP', 'ESTP', 'ESFP'] as const
 const IDENTITY_OPTIONS = [
   '学生',
   '教师',
@@ -403,7 +407,12 @@ export function PlayerIdentityApp({
             />
           ) : (
             <div className="space-y-3">
-              {list.map((it) => (
+              {list.map((it) => {
+                const previewAvatar = resolvePlayerIdentityPreviewAvatar({
+                  mbti: it.mbti,
+                  avatarUrl: it.avatarUrl,
+                })
+                return (
                 <Card key={it.id}>
                   <div className="flex w-full items-stretch">
                     <button
@@ -412,14 +421,18 @@ export function PlayerIdentityApp({
                       onClick={() => setPage({ name: 'edit', id: it.id, isNew: false })}
                     >
                       <div
-                        className="h-[50px] w-[50px] shrink-0 overflow-hidden rounded-full border"
+                        className="flex h-[50px] w-[50px] shrink-0 items-center justify-center overflow-hidden rounded-full border bg-white"
                         style={{ borderColor: COLORS.border }}
                       >
-                        {resolveCharacterAvatarUrl({ avatarUrl: it.avatarUrl }) ? (
+                        {previewAvatar.src ? (
                           <img
-                            src={resolveCharacterAvatarUrl({ avatarUrl: it.avatarUrl })}
+                            src={previewAvatar.src}
                             alt=""
-                            className="h-full w-full object-cover"
+                            className={
+                              previewAvatar.kind === 'mbti'
+                                ? `max-h-full max-w-full object-contain ${isLargeMbtiAvatar(it.mbti) ? '' : 'scale-90'}`
+                                : 'h-full w-full object-cover'
+                            }
                           />
                         ) : (
                           <div className="flex h-full w-full items-center justify-center" style={{ background: '#ffffff' }}>
@@ -469,7 +482,7 @@ export function PlayerIdentityApp({
                     </div>
                   </div>
                 </Card>
-              ))}
+              )})}
             </div>
           )}
         </div>
@@ -596,6 +609,11 @@ function IdentityEditPage({
   const [editTab, setEditTab] = useState<'basic' | 'worldbook' | 'bindings' | 'schedule'>('basic')
   const [identityWbPrompt, setIdentityWbPrompt] = useState('')
   const [scheduleOpen, setScheduleOpen] = useState(false)
+  const dirtyRef = useRef(false)
+
+  useEffect(() => {
+    dirtyRef.current = dirty
+  }, [dirty])
 
   useEffect(() => {
     void (async () => {
@@ -610,7 +628,9 @@ function IdentityEditPage({
           onBack()
           return
         }
-        setData(existing)
+        if (!dirtyRef.current) {
+          setData(existing)
+        }
       }
       setLoaded(true)
     })()
@@ -885,7 +905,15 @@ function IdentityEditPage({
 
           <div className="mt-4" />
 
-          {editTab === 'basic' ? (
+          {!loaded ? (
+            <Card>
+              <p className="px-5 py-10 text-center text-[14px]" style={{ color: COLORS.faint }}>
+                正在加载身份信息…
+              </p>
+            </Card>
+          ) : null}
+
+          {loaded && editTab === 'basic' ? (
           <Card>
             <div className="border-b px-5 py-4" style={{ borderColor: COLORS.border }}>
               <p className="text-[14px] font-semibold" style={{ color: COLORS.text }}>
@@ -1078,41 +1106,15 @@ function IdentityEditPage({
                         setPainOpen(false)
                       }}
                     >
-                      <div className="grid grid-cols-2 gap-2 px-3 py-2">
-                        {MBTI_LIST.map((m) => {
-                          const active = data.mbti === m
-                          const big = m === 'ENTJ' || m === 'ESFJ'
-                          return (
-                            <button
-                              key={m}
-                              type="button"
-                              className="flex items-center gap-2 rounded-xl border px-3 py-2 text-left transition-all duration-200 ease-out"
-                              style={{
-                                borderColor: '#e5e5e5',
-                                background: active ? '#111827' : '#ffffff',
-                                color: active ? '#ffffff' : '#000000',
-                              }}
-                              onClick={() => {
-                                setDirty(true)
-                                setData((prev) => syncMbtiPersonalityWorldBooks(prev, m))
-                                setMbtiOpen(false)
-                              }}
-                            >
-                              <div className="flex h-9 w-9 items-center justify-center overflow-hidden rounded-lg">
-                                <img
-                                  src={resolveMbtiImageUrl(m)}
-                                  alt=""
-                                  className={`${big ? 'h-9 w-9' : 'h-[36px] w-[36px]'} border object-contain`}
-                                  style={{ borderColor: active ? 'rgba(255,255,255,0.25)' : '#e5e5e5' }}
-                                  onError={(e) => {
-                                    ;(e.currentTarget as HTMLImageElement).style.display = 'none'
-                                  }}
-                                />
-                              </div>
-                              <p className="min-w-0 font-mono text-[13px] font-semibold tracking-wide">{m}</p>
-                            </button>
-                          )
-                        })}
+                      <div className="px-3 py-2">
+                        <MbtiPersonalityPickerGrid
+                          value={data.mbti ?? ''}
+                          onSelect={(m) => {
+                            setDirty(true)
+                            setData((prev) => syncMbtiPersonalityWorldBooks(prev, m))
+                            setMbtiOpen(false)
+                          }}
+                        />
                       </div>
                       <div className="px-3 pb-2">
                         <button
@@ -1430,7 +1432,7 @@ function IdentityEditPage({
           </Card>
           ) : null}
 
-          {editTab === 'schedule' ? (
+          {loaded && editTab === 'schedule' ? (
           <Card>
             <div className="border-b px-5 py-4" style={{ borderColor: COLORS.border }}>
               <p className="text-[14px] font-semibold" style={{ color: COLORS.text }}>
@@ -1465,20 +1467,21 @@ function IdentityEditPage({
           </Card>
           ) : null}
 
-          {editTab === 'worldbook' ? (
+          {loaded && editTab === 'worldbook' ? (
           <WorldBooksEditor
             apiConfig={apiConfig}
             character={data}
             forPlayerIdentity
+            identityContext={data}
             worldBackgroundPrompt={identityWbPrompt}
             onChange={(next) => {
               setDirty(true)
-              setData(next)
+              setData((prev) => (typeof next === 'function' ? next(prev) : next))
             }}
           />
           ) : null}
 
-          {editTab === 'bindings' ? (
+          {loaded && editTab === 'bindings' ? (
           <Card>
             <div className="border-b px-5 py-4" style={{ borderColor: COLORS.border }}>
               <p className="text-[14px] font-semibold" style={{ color: COLORS.text }}>
@@ -1587,7 +1590,6 @@ function IdentityEditPage({
           await personaDb.upsertPlayerIdentity(merged)
         }}
       />
-      {!loaded ? null : null}
       {confirmLeave ? (
         <div className="fixed inset-0 z-[1200] flex items-center justify-center bg-black/50 px-4">
           <div className="w-full max-w-[400px] rounded-[16px] bg-white p-5">

@@ -1,8 +1,10 @@
 import type { PlayRecord, JubenshaScript } from './types'
 
 const YUYE_COVER = new URL('../../../剧本杀/《雨夜归零》/剧本杀封面.png', import.meta.url).href
-const YUYE_CHENGYUAN = new URL('../../../剧本杀/《雨夜归零》/程予安个人剧本封面.png', import.meta.url).href
+const YUYE_SUWANQING = new URL('../../../剧本杀/《雨夜归零》/苏晚晴个人剧本封面.png', import.meta.url).href
 const YUYE_LUJINGCHUAN = new URL('../../../剧本杀/《雨夜归零》/陆景川个人剧本封面.png', import.meta.url).href
+const YUYE_SHENZHIYI = new URL('../../../剧本杀/《雨夜归零》/沈知意个人剧本封面.png', import.meta.url).href
+const YUYE_CHENGYUAN = new URL('../../../剧本杀/《雨夜归零》/程予安个人剧本封面.png', import.meta.url).href
 
 export const MOCK_JUBENSHA_SCRIPTS: JubenshaScript[] = [
   {
@@ -25,6 +27,7 @@ export const MOCK_JUBENSHA_SCRIPTS: JubenshaScript[] = [
         name: '苏晚晴',
         gender: '女',
         publicIdentity: '归零科技品牌总监',
+        roleScriptCoverUrl: YUYE_SUWANQING,
         blurb:
           '苏晚晴，二十八岁，现任归零科技品牌总监，统管集团对外形象、发布会口径与重大场合的舆情应对。上月自上海分公司调回滨海总部，以业务负责人身份受邀赴玻璃湾七号。业内称她「会把故事讲进投资人的幻灯片里」——从容、克制，擅长时间线与公众叙述的缝合。',
       },
@@ -40,6 +43,7 @@ export const MOCK_JUBENSHA_SCRIPTS: JubenshaScript[] = [
         name: '沈知意',
         gender: '女',
         publicIdentity: '沈厚泽基金派驻代表',
+        roleScriptCoverUrl: YUYE_SHENZHIYI,
         blurb:
           '沈知意，二十六岁，沈厚泽基金派驻代表，专责对赌延期补充协议、回购触发线与现金流核查。此行奉命旁听玻璃湾七号晚宴，评估归零科技是否仍具投资价值，并以条款口径约束创始团队与合伙人的每一项承诺。对外只谈数字与签字，不谈私交。',
       },

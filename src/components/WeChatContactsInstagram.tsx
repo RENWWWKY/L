@@ -2,8 +2,10 @@ import { ChevronRight, HelpCircle, MessageSquare, Star, Tag, UserPlus, Users } f
 import { type PointerEvent as ReactPointerEvent, useEffect, useMemo, useRef, useState } from 'react'
 
 import lumiAssistantLogoUrl from '../../image/主屏幕图标.png'
+import { DEFAULT_PUBLIC_AVATAR_URL } from '../phone/types'
+import { resolveCharacterAvatarUrl } from '../phone/utils/characterAvatarUrl'
 
-const AVATAR_PLACEHOLDER = 'https://via.placeholder.com/44'
+const AVATAR_PLACEHOLDER = DEFAULT_PUBLIC_AVATAR_URL
 
 const LETTER_INDEX = [
   'A',
@@ -306,7 +308,7 @@ export function WeChatContactsInstagram({
                     className="flex w-full items-center px-4 py-3 text-left transition-colors duration-200 hover:bg-[#fafafa]"
                   >
                     <img
-                      src={c.avatarUrl || AVATAR_PLACEHOLDER}
+                      src={resolveCharacterAvatarUrl({ avatarUrl: c.avatarUrl }) || AVATAR_PLACEHOLDER}
                       alt=""
                       width={44}
                       height={44}
@@ -352,7 +354,7 @@ export function WeChatContactsInstagram({
                             className="flex w-full items-center px-4 py-3 text-left transition-colors duration-200 hover:bg-[#fafafa]"
                           >
                             <img
-                              src={c.avatarUrl || AVATAR_PLACEHOLDER}
+                              src={resolveCharacterAvatarUrl({ avatarUrl: c.avatarUrl }) || AVATAR_PLACEHOLDER}
                               alt=""
                               width={44}
                               height={44}

@@ -13,12 +13,23 @@ export type MemoryTraceWorldBookAfterPatchRow = {
   newContentFull: string
 }
 
+/** 单条「尾声延展」注入快照（思维溯源 UI；不含协议类提示词正文） */
+export type MemoryTraceWorldBookAfterInjectedEntry = {
+  characterId?: string
+  characterName: string
+  bookName: string
+  itemName: string
+  content: string
+}
+
 /** 思维溯源：本回合「尾声延展」世界书快照是否进 prompt、模型是否回传覆盖 JSON、是否写库 */
 export type MemoryTraceWorldBookAfterChat = {
   /** 已向模型注入「尾声延展」可变条目快照（在场角色有已启用的 priority=after 条目） */
   protocolInPrompt: boolean
-  /** 与 system 中注入的快照同源（占位符已展开；无则空串） */
+  /** @deprecated 仅存旧溯源；UI 请用 {@link injectedSnapshotEntries} */
   injectedDynamicSection: string
+  /** 注入模型的尾声延展条目快照（占位符已展开；不含本地协议说明） */
+  injectedSnapshotEntries?: MemoryTraceWorldBookAfterInjectedEntry[]
   /** 是否附带 ---WB_AFTER_PATCH--- 输出说明 */
   patchOutputRulesIncluded: boolean
   /** 从模型输出解析到的补丁 + 写库前旧正文对照 */
@@ -230,9 +241,30 @@ export function parseMemoryTraceData(raw: unknown): MemoryTraceData | null {
         })
       }
     }
+    const injectedSnapshotEntries: MemoryTraceWorldBookAfterInjectedEntry[] = []
+    const inj = w.injectedSnapshotEntries
+    if (Array.isArray(inj)) {
+      for (const x of inj) {
+        if (!x || typeof x !== 'object') continue
+        const e = x as Record<string, unknown>
+        const characterName = asStr(e.characterName).trim()
+        const itemName = asStr(e.itemName).trim()
+        const content = asStr(e.content)
+        if (!characterName && !itemName && !content.trim()) continue
+        const eid = e.characterId != null ? asStr(e.characterId).trim() : ''
+        injectedSnapshotEntries.push({
+          characterId: eid || undefined,
+          characterName: characterName || '角色',
+          bookName: asStr(e.bookName).trim() || '世界书',
+          itemName: itemName || '条目',
+          content,
+        })
+      }
+    }
     worldBookAfterChat = {
       protocolInPrompt: Boolean(w.protocolInPrompt),
       injectedDynamicSection: asStr(w.injectedDynamicSection),
+      injectedSnapshotEntries: injectedSnapshotEntries.length ? injectedSnapshotEntries : undefined,
       patchOutputRulesIncluded: Boolean(w.patchOutputRulesIncluded),
       parsedPatches,
       appliedToDb: Boolean(w.appliedToDb),

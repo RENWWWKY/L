@@ -98,6 +98,31 @@ export function getCharacterLinkedPlayerIdentityIds(
   return [...out]
 }
 
+/**
+ * 副绑定（UI / 分线）：仅保留与主绑定归属**不同微信账号**的扮演身份。
+ * 同一微信号下的多个「我的身份」马甲不计入副绑定，绑定信息页只展示主绑定即可。
+ */
+export function getCharacterCrossAccountLinkedPlayerIdentityIds(
+  character: {
+    playerIdentityId?: string
+    linkedPlayerIdentityIds?: string[]
+    playerIdentityLinkMeta?: PlayerIdentityLinkMeta[]
+  } | null | undefined,
+  accountIdForIdentityId: (identityId: string) => string,
+): string[] {
+  const primary = getCharacterBoundPlayerIdentityId(character)
+  if (!primary) return []
+  const primaryAcc = accountIdForIdentityId(primary).trim()
+  const candidates = getCharacterLinkedPlayerIdentityIds(character).filter((id) => id !== primary)
+  if (!primaryAcc) {
+    return candidates.filter((id) => {
+      const acc = accountIdForIdentityId(id).trim()
+      return !!acc
+    })
+  }
+  return candidates.filter((id) => accountIdForIdentityId(id).trim() !== primaryAcc)
+}
+
 export function isPlayerIdentityLinkedToCharacter(
   character: { playerIdentityId?: string; linkedPlayerIdentityIds?: string[] } | null | undefined,
   playerIdentityId: string | null | undefined,
@@ -108,26 +133,23 @@ export function isPlayerIdentityLinkedToCharacter(
 }
 
 /**
- * 私聊会话身份段（同步回退）：优先本号 App 身份且已在角色 linked 中，否则档案主绑定。
+ * 私聊会话身份段（同步回退）：角色已主绑定身份时固定用该档；
+ * 未绑定时才用当前 App 所选身份（新建身份不会覆盖既有角色绑定）。
  */
 export function resolvePrivateChatSessionPlayerIdentityId(
   characterRow: { playerIdentityId?: string; linkedPlayerIdentityIds?: string[] } | null | undefined,
   appPlayerIdentityId: string | null | undefined,
 ): string {
-  const app = appPlayerIdentityId?.trim()
-  if (app && app !== '__none__') {
-    if (isPlayerIdentityLinkedToCharacter(characterRow, app)) return app
-    if (!getCharacterBoundPlayerIdentityId(characterRow)) return app
-  }
   const bound = getCharacterBoundPlayerIdentityId(characterRow)
   if (bound) return bound
+  const app = appPlayerIdentityId?.trim()
   if (app && app !== '__none__') return app
   return '__none__'
 }
 
 /**
- * 打开私聊/入账时解析会话身份：优先本马甲下该角色**已有消息**的 identity 段，
- * 与消息列表 thread 聚合逻辑一致，避免小号好友申请档被档案主绑定覆盖。
+ * 打开私聊/入账时解析会话身份：仅在**该角色主绑定 + 关联身份**中，
+ * 选已有真实聊天记录（timestamp > 0）的档；无记录时回退主绑定，避免新建全局身份空仓抢线。
  */
 export async function resolveActivePrivateChatSessionPlayerIdentityId(params: {
   characterId: string
@@ -139,20 +161,19 @@ export async function resolveActivePrivateChatSessionPlayerIdentityId(params: {
   const app = params.appPlayerIdentityId?.trim() || '__none__'
   const acc = params.wechatAccountId?.trim()
   const ch = await personaDb.getCharacter(cid)
+  const bound = getCharacterBoundPlayerIdentityId(ch)
 
   if (acc) {
     const candidates = new Set<string>()
-    for (const sid of await collectWechatAccountPlayerIdentityIds(acc)) {
-      if (sid && sid !== '__none__') candidates.add(sid)
-    }
-    if (app !== '__none__') candidates.add(app)
     for (const lid of getCharacterLinkedPlayerIdentityIds(ch)) {
       if (!lid || lid === '__none__') continue
       const row = await personaDb.getPlayerIdentity(lid)
-      if (row && identityBelongsToWechatAccount(row, acc)) candidates.add(lid)
+      if (row && !identityBelongsToWechatAccount(row, acc)) continue
+      candidates.add(lid)
     }
 
-    let bestSid = app
+    const fallbackSid = bound || (app !== '__none__' ? app : '__none__')
+    let bestSid = fallbackSid
     let bestTs = -1
     for (const sid of candidates) {
       const key = wechatAccountPrivateConversationKey(acc, cid, sid)
@@ -163,7 +184,7 @@ export async function resolveActivePrivateChatSessionPlayerIdentityId(params: {
         bestSid = sid
       }
     }
-    if (bestTs >= 0 && bestSid && bestSid !== '__none__') return bestSid
+    if (bestTs > 0 && bestSid && bestSid !== '__none__') return bestSid
 
     for (const sid of candidates) {
       if (!sid || sid === '__none__') continue

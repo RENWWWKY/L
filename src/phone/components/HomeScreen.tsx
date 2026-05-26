@@ -1382,7 +1382,7 @@ export function HomeScreen({ onOpenApp }: Props) {
                   onPointerCancel={!isEditMode ? profileLongPressHandlers.onPointerCancel : undefined}
                   onPointerLeave={!isEditMode ? profileLongPressHandlers.onPointerLeave : undefined}
                 >
-                  <PersonalCard />
+                  <PersonalCard interactive={!isEditMode} />
                 </motion.div>
               </div>
             )
@@ -1578,7 +1578,7 @@ export function HomeScreen({ onOpenApp }: Props) {
               transition={DRAG_GHOST_TRANSITION}
             >
               {activeWidgetDrag.widget === 'profile' ? (
-                <PersonalCard />
+                <PersonalCard interactive={false} />
               ) : activeWidgetDrag.widget === 'music' ? (
                 <MusicWidget isEditMode />
               ) : (
