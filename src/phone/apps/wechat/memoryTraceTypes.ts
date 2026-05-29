@@ -51,12 +51,58 @@ export type MemoryTraceLineScopedMeta = {
   lineRelation: MemoryTraceLineRelation
 }
 
+/** 思维溯源：人脉圈内角色↔角色关系边 */
+export type MemoryTraceNetworkCharEdge = {
+  fromName: string
+  toName: string
+  relation: string
+  fromCallsTo?: string
+  fromPerspective: string
+  toPerspective: string
+  involvesFocus: boolean
+}
+
+/** 思维溯源：玩家↔圈内角色（人脉 · 玩家视角配置） */
+export type MemoryTraceNetworkPlayerLink = {
+  targetName: string
+  isFocusCharacter: boolean
+  relationThemToYou?: string
+  theySeeYou?: string
+  relationYouToThem?: string
+  youSeeThem?: string
+  theyCallYou?: string
+  youCallThem?: string
+}
+
+/** 思维溯源：玩家身份↔当前角色绑定边 */
+export type MemoryTraceNetworkIdentityEdge = {
+  scopeLabel: string
+  identityName: string
+  relation: string
+  summary: string
+}
+
+/** 本轮注入模型的人脉关系与看法（与 `loadPrivateChatNetworkRelationshipsBlock` 同源） */
+export type MemoryTraceNetworkRelationships = {
+  injected: boolean
+  focusCharacterName: string
+  rootCharacterName: string
+  involvingFocus: MemoryTraceNetworkCharEdge[]
+  otherInClique: MemoryTraceNetworkCharEdge[]
+  playerLinks: MemoryTraceNetworkPlayerLink[]
+  identityEdges: MemoryTraceNetworkIdentityEdge[]
+  /** 占位符已展开、与 system 注入一致的全文 */
+  promptExcerpt: string
+}
+
 /** 思维溯源：一轮模型回复所加载的上下文矩阵（与注入逻辑对齐） */
 export type MemoryTraceData = {
   lastReply: string
   charName: string
   /** 可选：旧持久化记录无此字段 */
   worldBookAfterChat?: MemoryTraceWorldBookAfterChat | null
+  /** 可选：旧持久化记录无此字段 */
+  networkRelationships?: MemoryTraceNetworkRelationships | null
   contextMatrix: {
     baseDirectives: {
       /** 兼容旧版：简短标签；新版以 personaDetail 全文为准 */
@@ -272,10 +318,86 @@ export function parseMemoryTraceData(raw: unknown): MemoryTraceData | null {
     }
   }
 
+  let networkRelationships: MemoryTraceNetworkRelationships | null | undefined
+  const nr = o.networkRelationships
+  if (nr && typeof nr === 'object') {
+    const nro = nr as Record<string, unknown>
+    const parseCharEdges = (arr: unknown): MemoryTraceNetworkCharEdge[] => {
+      const out: MemoryTraceNetworkCharEdge[] = []
+      if (!Array.isArray(arr)) return out
+      for (const x of arr) {
+        if (!x || typeof x !== 'object') continue
+        const e = x as Record<string, unknown>
+        const fromName = asStr(e.fromName).trim()
+        const toName = asStr(e.toName).trim()
+        if (!fromName || !toName) continue
+        out.push({
+          fromName,
+          toName,
+          relation: asStr(e.relation, '关系'),
+          fromCallsTo: asStr(e.fromCallsTo) || undefined,
+          fromPerspective: asStr(e.fromPerspective),
+          toPerspective: asStr(e.toPerspective),
+          involvesFocus: Boolean(e.involvesFocus),
+        })
+      }
+      return out
+    }
+    const parsePlayerLinks = (arr: unknown): MemoryTraceNetworkPlayerLink[] => {
+      const out: MemoryTraceNetworkPlayerLink[] = []
+      if (!Array.isArray(arr)) return out
+      for (const x of arr) {
+        if (!x || typeof x !== 'object') continue
+        const e = x as Record<string, unknown>
+        const targetName = asStr(e.targetName).trim()
+        if (!targetName) continue
+        out.push({
+          targetName,
+          isFocusCharacter: Boolean(e.isFocusCharacter),
+          relationThemToYou: asStr(e.relationThemToYou) || undefined,
+          theySeeYou: asStr(e.theySeeYou) || undefined,
+          relationYouToThem: asStr(e.relationYouToThem) || undefined,
+          youSeeThem: asStr(e.youSeeThem) || undefined,
+          theyCallYou: asStr(e.theyCallYou) || undefined,
+          youCallThem: asStr(e.youCallThem) || undefined,
+        })
+      }
+      return out
+    }
+    const parseIdentityEdges = (arr: unknown): MemoryTraceNetworkIdentityEdge[] => {
+      const out: MemoryTraceNetworkIdentityEdge[] = []
+      if (!Array.isArray(arr)) return out
+      for (const x of arr) {
+        if (!x || typeof x !== 'object') continue
+        const e = x as Record<string, unknown>
+        const identityName = asStr(e.identityName).trim()
+        if (!identityName) continue
+        out.push({
+          scopeLabel: asStr(e.scopeLabel, '玩家身份'),
+          identityName,
+          relation: asStr(e.relation, '关系'),
+          summary: asStr(e.summary),
+        })
+      }
+      return out
+    }
+    networkRelationships = {
+      injected: Boolean(nro.injected),
+      focusCharacterName: asStr(nro.focusCharacterName, '你'),
+      rootCharacterName: asStr(nro.rootCharacterName, '档案主角'),
+      involvingFocus: parseCharEdges(nro.involvingFocus),
+      otherInClique: parseCharEdges(nro.otherInClique),
+      playerLinks: parsePlayerLinks(nro.playerLinks),
+      identityEdges: parseIdentityEdges(nro.identityEdges),
+      promptExcerpt: asStr(nro.promptExcerpt),
+    }
+  }
+
   return {
     lastReply,
     charName: charName || '角色',
     worldBookAfterChat,
+    networkRelationships,
     contextMatrix: {
       baseDirectives: {
         persona,

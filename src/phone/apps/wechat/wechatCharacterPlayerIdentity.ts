@@ -542,6 +542,61 @@ export async function backfillCharacterPlayerIdentityLinkMeta(characterId: strin
   return true
 }
 
+/**
+ * 旧存档迁移：人脉 NPC 缺 `playerIdentityId` 时，继承所属主角的档案主绑定（并补关系边）。
+ * 不覆盖 NPC 已有主绑定。
+ */
+export async function backfillNpcPlayerIdentityFromRootMain(rootMainId: string): Promise<number> {
+  const rootId = rootMainId.trim()
+  if (!rootId) return 0
+  const main = await personaDb.getCharacter(rootId)
+  if (!main?.id || main.generatedForCharacterId?.trim()) return 0
+
+  const bindId = getCharacterBoundPlayerIdentityId(main)
+  if (!bindId) return 0
+
+  const npcs = await personaDb.listNpcsFor(rootId)
+  if (!npcs.length) return 0
+
+  const identity = await personaDb.getPlayerIdentity(bindId)
+  const identityName = formatPlayerIdentityDisplayName(identity, bindId)
+  let fixed = 0
+
+  for (const npc of npcs) {
+    if (getCharacterBoundPlayerIdentityId(npc)) continue
+    await personaDb.upsertCharacter({
+      ...npc,
+      playerIdentityId: bindId,
+      wechatAccountId: npc.wechatAccountId?.trim() || main.wechatAccountId,
+      updatedAt: Date.now(),
+    })
+    await personaDb.upsertPlayerIdentityBindings({
+      identityId: bindId,
+      characterId: npc.id,
+      identityName,
+      characterName: npc.name?.trim() || '角色',
+    })
+    fixed += 1
+  }
+  return fixed
+}
+
+/** 当前微信账号下所有人脉主角：批量补全其 NPC 的主绑定（进入人设列表时静默执行）。 */
+export async function backfillAllNpcPlayerIdentityFromRootMains(
+  wechatAccountId: string | null | undefined,
+): Promise<number> {
+  const acc = wechatAccountId?.trim()
+  if (!acc) return 0
+  const roots = (await personaDb.listCharactersForWechatAccount(acc)).filter(
+    (c) => !c.generatedForCharacterId?.trim() && !c.isPlayerIdentity,
+  )
+  let total = 0
+  for (const main of roots) {
+    total += await backfillNpcPlayerIdentityFromRootMain(main.id)
+  }
+  return total
+}
+
 /** upsert 时保留主绑定；若传入新身份则并入 linked，不覆盖主档。 */
 export function preserveCharacterBoundPlayerIdentity<T extends {
   playerIdentityId?: string

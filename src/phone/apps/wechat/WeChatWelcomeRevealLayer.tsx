@@ -13,15 +13,20 @@ export function WeChatWelcomeRevealLayer({
   children: ReactNode
   className?: string
 }) {
-  const { active } = useWeChatWelcomeReveal()
+  const { active, phase } = useWeChatWelcomeReveal()
   const motionProps = useWeChatWelcomeRevealMotion(slot)
+  const blockPointer = active && phase === 'under-mask'
 
   if (!active) {
     return <div className={className}>{children}</div>
   }
 
   return (
-    <motion.div className={className} {...motionProps} initial={false}>
+    <motion.div
+      className={`${className ?? ''}${blockPointer ? ' pointer-events-none' : ''}`}
+      {...motionProps}
+      initial={false}
+    >
       {children}
     </motion.div>
   )

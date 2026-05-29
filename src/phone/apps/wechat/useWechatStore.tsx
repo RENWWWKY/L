@@ -40,7 +40,7 @@ import { alignAllStoredWorldBookUserPlaceholders } from './worldBookUserPlacehol
 import { alignAllStoredMemoryUserPlaceholders } from './memoryUserPlaceholderBindings'
 import {
   bundleWithAccountPersonaContacts,
-  filterPersonaContactsToWechatAccount,
+  filterPersonaContactsForWechatAccount,
   applyIncomingPersonaContactRemarkOverrides,
   mergeWeChatPersonaContacts,
   personaContactsEqual,
@@ -173,7 +173,7 @@ export function WechatStoreProvider({ children }: { children: ReactNode }) {
     async (account: UserAccount, opts?: { bumpRevision?: boolean; contactsOverride?: WeChatPersonaContact[] }) => {
       const primaryId = bundleRef.current?.accounts[0]?.accountId
       const raw = opts?.contactsOverride ?? account.personaContacts
-      const contacts = await filterPersonaContactsToWechatAccount(raw, account.accountId, primaryId)
+      const contacts = await filterPersonaContactsForWechatAccount(raw, account, primaryId)
       if (
         bundleRef.current &&
         !personaContactsEqual(raw, contacts)
@@ -252,7 +252,6 @@ export function WechatStoreProvider({ children }: { children: ReactNode }) {
               account: active,
               sessionPlayerIdentityId: sessionId,
               fromInMemory: state.wechatPersonaContacts,
-              recoverFromChats: true,
             })
             bundle = reconciled.bundle
             bundleRef.current = bundle
@@ -313,17 +312,29 @@ export function WechatStoreProvider({ children }: { children: ReactNode }) {
     const primaryId = bundle.accounts[0]?.accountId
     // 内存尚未从 bundle/KV 恢复，但 bundle 仍有联系人 → 禁止用空 snap 覆盖 bundle
     if (!snap.length && active.personaContacts.length > 0) {
-      suppressContactsBundleSyncRef.current = true
-      setWeChatPersonaContacts(active.personaContacts.map((c) => ({ ...c })))
+      void (async () => {
+        const filtered = await filterPersonaContactsForWechatAccount(
+          active.personaContacts,
+          active,
+          primaryId,
+        )
+        suppressContactsBundleSyncRef.current = true
+        setWeChatPersonaContacts(filtered.map((c) => ({ ...c })))
+      })()
       return
     }
     // 多账号：bundle 为空但内存有联系人 → 仅当过滤后对本号仍为空时才视为「大号通讯录泄漏」
     if (bundle.accounts.length > 1 && !active.personaContacts.length && snap.length > 0) {
       void (async () => {
-        const filtered = await filterPersonaContactsToWechatAccount(snap, activeAccountId, primaryId)
+        const filtered = await filterPersonaContactsForWechatAccount(snap, active, primaryId)
         suppressContactsBundleSyncRef.current = true
         if (!filtered.length) {
-          setWeChatPersonaContacts(active.personaContacts.map((c) => ({ ...c })))
+          const restored = await filterPersonaContactsForWechatAccount(
+            active.personaContacts,
+            active,
+            primaryId,
+          )
+          setWeChatPersonaContacts(restored.map((c) => ({ ...c })))
           return
         }
         setWeChatPersonaContacts(filtered.map((c) => ({ ...c })))
@@ -336,8 +347,16 @@ export function WechatStoreProvider({ children }: { children: ReactNode }) {
       })()
       return
     }
-    const nextAccounts = snapshotContactsForAccount(snap, activeAccountId)
-    void persistBundle(nextAccounts, bundle.currentAccountId)
+    void (async () => {
+      const filtered = await filterPersonaContactsForWechatAccount(snap, active, primaryId)
+      if (!personaContactsEqual(snap, filtered)) {
+        suppressContactsBundleSyncRef.current = true
+        setWeChatPersonaContacts(filtered)
+        return
+      }
+      const nextAccounts = snapshotContactsForAccount(filtered, activeAccountId)
+      await persistBundle(nextAccounts, bundle.currentAccountId)
+    })()
   }, [
     currentAccountId,
     hydrated,
@@ -346,6 +365,31 @@ export function WechatStoreProvider({ children }: { children: ReactNode }) {
     snapshotContactsForAccount,
     state.wechatPersonaContacts,
   ])
+
+  /** 任意入口写入通讯录后，剔除当前微信账号本人（含人设页直接 replace）。 */
+  useEffect(() => {
+    if (!hydrated || !currentAccountId) return
+    if (!contactsReadyForBundleSyncRef.current) return
+    const bundle = bundleRef.current
+    if (!bundle) return
+    const active = findAccountById(bundle, currentAccountId)
+    if (!active) return
+    const primaryId = bundle.accounts[0]?.accountId
+    let cancelled = false
+    void (async () => {
+      const filtered = await filterPersonaContactsForWechatAccount(
+        state.wechatPersonaContacts,
+        active,
+        primaryId,
+      )
+      if (cancelled || personaContactsEqual(state.wechatPersonaContacts, filtered)) return
+      suppressContactsBundleSyncRef.current = true
+      setWeChatPersonaContacts(filtered)
+    })()
+    return () => {
+      cancelled = true
+    }
+  }, [currentAccountId, hydrated, setWeChatPersonaContacts, state.wechatPersonaContacts])
 
   /** Edge / 移动端后台回收标签页后：重读 IndexedDB，自动对齐通讯录并通知各页重读库。 */
   useEffect(() => {
@@ -467,7 +511,7 @@ export function WechatStoreProvider({ children }: { children: ReactNode }) {
         mergeWeChatPersonaContacts(active.personaContacts, add),
         add,
       )
-      const filtered = await filterPersonaContactsToWechatAccount(merged, currentAccountId, primaryId)
+      const filtered = await filterPersonaContactsForWechatAccount(merged, active, primaryId)
       suppressContactsBundleSyncRef.current = true
       setWeChatPersonaContacts(filtered.map((c) => ({ ...c })))
       const nextAccounts = bundle.accounts.map((a) =>
@@ -668,7 +712,6 @@ export function WechatStoreProvider({ children }: { children: ReactNode }) {
         account,
         sessionPlayerIdentityId: sessionId,
         fromInMemory: draftContacts,
-        recoverFromChats: true,
       })
       bundle = reconciled.bundle
       bundleRef.current = bundle

@@ -23,6 +23,8 @@ const WECHAT_ACCOUNT_DEEP_ERASE_LOCAL_STORAGE_KEYS = [
   'wechat-dating-characters-v1',
   'wechat-sticker-center-v1',
   'lumi-lore-archive-v1',
+  'anonymous-qna-v2',
+  'anonymous-qna-directed-posts-v1',
 ] as const
 
 export function shouldErasePhoneKvKeyForWeChatAccount(key: string): boolean {

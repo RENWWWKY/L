@@ -15,6 +15,7 @@ import type {
   WeChatReplyToMeta,
 } from './newFriendsPersona/types'
 import { genderLabelZh } from './newFriendsPersona/utils'
+import { loadPrivateChatNetworkRelationshipsBlock } from './networkRelationshipsPrompt'
 import { buildPrivateChatNetworkNpcPronounBlock } from './privateChatNetworkNpcPronoun'
 import {
   buildMemorySummaryCharGenderDirective,
@@ -573,6 +574,8 @@ export function buildSystemContent(params: {
   worldBookUserLineLabel?: string
   /** 同人脉第三人他/她分轨表（由 materializeSystemContent 预组装） */
   networkNpcPronounBlock?: string
+  /** 人脉圈内角色↔角色关系、双方看法（由 materializeSystemContent 预组装） */
+  networkRelationshipsBlock?: string
 }): string {
   const worldBookIdentity = params.worldBookPlayerIdentity ?? params.playerIdentity
   const expandNames = resolveCharUserNamesForPrompt({
@@ -695,7 +698,9 @@ export function buildSystemContent(params: {
 
   const networkNpcPronoun =
     params.promptMode === 'persona' ? params.networkNpcPronounBlock?.trim() || '' : ''
-  const rawMain = `${WECHAT_ROLEPLAY_SYSTEM_PROMPT}${loreBlock}${mem}${memScopeFence}${unsPriv}${unsGrp}${unsMeet}${offlinePlots}${meetEncounter}${meetContinuity}${altProbe}${groupChatsRecent}${replyBias}${currentTime}${schedule}${pi}${fictionCot}${extra}${networkNpcPronoun}${peerLine}`
+  const networkRelationships =
+    params.promptMode === 'persona' ? params.networkRelationshipsBlock?.trim() || '' : ''
+  const rawMain = `${WECHAT_ROLEPLAY_SYSTEM_PROMPT}${loreBlock}${mem}${memScopeFence}${unsPriv}${unsGrp}${unsMeet}${offlinePlots}${meetEncounter}${meetContinuity}${altProbe}${groupChatsRecent}${replyBias}${currentTime}${schedule}${pi}${fictionCot}${extra}${networkRelationships}${networkNpcPronoun}${peerLine}`
   return linkedExpand(rawMain)
 }
 
@@ -706,17 +711,25 @@ async function materializeSystemContent(params: BuildSystemContentParams): Promi
   const worldBookTextForPrompt = params.character
     ? await buildWorldBookTextForPrompt(params.character)
     : ''
-  const networkNpcPronounBlock =
+  const [networkNpcPronounBlock, networkRelationshipsBlock] = await Promise.all([
     params.character && params.promptMode === 'persona'
-      ? await buildPrivateChatNetworkNpcPronounBlock({
+      ? buildPrivateChatNetworkNpcPronounBlock({
           character: params.character,
           playerThirdPersonRule: buildWeChatPlayerThirdPersonPronounIronRule(params.playerIdentity),
         })
-      : ''
+      : Promise.resolve(''),
+    params.character && params.promptMode === 'persona'
+      ? loadPrivateChatNetworkRelationshipsBlock({
+          character: params.character,
+          sessionPlayerIdentityId: params.playerIdentity?.id,
+        })
+      : Promise.resolve(''),
+  ])
   const raw = buildSystemContent({
     ...params,
     worldBookTextForPrompt,
     networkNpcPronounBlock,
+    networkRelationshipsBlock,
   })
   const wbIden = params.worldBookPlayerIdentity ?? params.playerIdentity ?? null
   return expandSystemPromptPlaceholders(raw, {

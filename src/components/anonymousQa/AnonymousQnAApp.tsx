@@ -7,49 +7,90 @@ import { AskQuestionModal } from './AskQuestionModal'
 import { QnAGeneratorModal } from './QnAGeneratorModal'
 import { EnvelopeReveal } from './EnvelopeReveal'
 import { generateDynamicRepliesWithAi, generateQuestionsWithAi, type GeneratorStyle } from './aiGeneration'
-import { MOCK_PROFILE_LISTS, MOCK_QNA_CONTACTS, MOCK_QUESTIONS } from './mockData'
+import type { AnonymousQaWechatContext } from './buildAnonymousQaPersonaContext'
+import { buildThreadCommentsFromDirectedOutput } from './directedInitialComments'
+import { generateDirectedQuestionDualOutput } from './directedQuestionAi'
+import { mapPersonaReplyToAnswer } from './personaAiGeneration'
+import { QnAPendingOverlay } from './QnAPendingOverlay'
+import { QnAPostDetailPage } from './QnAPostDetailPage'
 import { PostDetailPage } from './PostDetailPage'
 import { QnABottomNav } from './QnABottomNav'
 import type { QnAProfileTab } from './types'
 import { QnAProfilePage } from './QnAProfilePage'
 import { QnAFeedPage } from './QnAFeedPage'
 import type { MockContact, Question } from './types'
+import type { QnADirectedPost } from './qnaStoreTypes'
+import { getQnaDirectedPost, resetQnaDirectedStore } from './qnaDirectedStore'
+import {
+  filterLegacyMockQnaState,
+  loadQnaMainState,
+  saveQnaMainState,
+} from './qnaPersistence'
+import { QnAStoreProvider, useQnAStore, useQnADirectedPost, hydrateQnaDirectedStore } from './useQnAStore'
+import { WECHAT_ACCOUNT_DEEP_ERASED_EVENT } from '../../phone/apps/wechat/wechatAccountDeepErase'
 
 const QNA_BG_IMAGE_URL = new URL('../../../image/匿问我答背景图.png', import.meta.url).toString()
-const QNA_STORAGE_KEY = 'anonymous-qna-v2'
+
+const EMPTY_LIST_BY_TAB: Record<string, string[]> = {
+  received: [],
+  asked: [],
+  answered: [],
+  liked: [],
+  commented: [],
+}
 
 type AnonymousQnAAppProps = {
   onBack: () => void
   currentUserName?: string
+  contacts?: MockContact[]
+  wechatCtx?: AnonymousQaWechatContext | null
 }
 
-export function AnonymousQnAApp({ onBack, currentUserName = '我' }: AnonymousQnAAppProps) {
-  const [questions, setQuestions] = useState<Question[]>(() => {
-    try {
-      const raw = localStorage.getItem(QNA_STORAGE_KEY)
-      if (raw) {
-        const parsed = JSON.parse(raw) as { questions?: Question[]; listByTab?: Record<string, string[]> }
-        if (Array.isArray(parsed.questions)) return parsed.questions
-      }
-    } catch {
-      // ignore
-    }
-    return MOCK_QUESTIONS.map((q) => ({ ...q }))
-  })
-  const [listByTab, setListByTab] = useState<Record<string, string[]>>(() => {
-    try {
-      const raw = localStorage.getItem(QNA_STORAGE_KEY)
-      if (raw) {
-        const parsed = JSON.parse(raw) as { listByTab?: Record<string, string[]> }
-        if (parsed.listByTab && typeof parsed.listByTab === 'object') return parsed.listByTab
-      }
-    } catch {
-      // ignore
-    }
-    return { ...MOCK_PROFILE_LISTS }
-  })
+function questionFromDirectedPost(post: QnADirectedPost): Question {
+  return {
+    id: post.id,
+    body: post.question,
+    visibility: 'directed',
+    targetUserIds: [post.targetContactId],
+    targetDisplayNames: [post.targetCharacterName],
+    targetCharacterId: post.targetCharacterId,
+    createdAt: post.createdAt,
+    askerDisplayName: '匿名',
+    directedAiPostId: post.id,
+    answers: [
+      {
+        id: `a-main-${post.id}`,
+        createdAt: post.createdAt,
+        authorId: post.targetCharacterId,
+        authorName: post.targetCharacterName,
+        isAnonymous: false,
+        content: post.characterAnswer,
+        likeCount: 0,
+        dislikeCount: 0,
+        replies: [],
+      },
+    ],
+    topAnswerSnippet: {
+      authorName: post.targetCharacterName,
+      isAnonymous: false,
+      text: post.characterAnswer,
+      likeCount: 0,
+    },
+  }
+}
+
+function AnonymousQnAAppInner({
+  onBack,
+  currentUserName = '我',
+  contacts: contactsProp,
+  wechatCtx = null,
+}: AnonymousQnAAppProps) {
+  const { saveDirectedPost } = useQnAStore()
+  const [qnaHydrated, setQnaHydrated] = useState(false)
+  const [questions, setQuestions] = useState<Question[]>([])
+  const [listByTab, setListByTab] = useState<Record<string, string[]>>(() => ({ ...EMPTY_LIST_BY_TAB }))
   const [nav, setNav] = useState<'home' | 'profile'>('home')
-  const [profileTab, setProfileTab] = useState<QnAProfileTab>('received')
+  const [profileTab, setProfileTab] = useState<QnAProfileTab>('asked')
   const [detailId, setDetailId] = useState<string | null>(null)
   const [answerForId, setAnswerForId] = useState<string | null>(null)
   const [askOpen, setAskOpen] = useState(false)
@@ -57,12 +98,20 @@ export function AnonymousQnAApp({ onBack, currentUserName = '我' }: AnonymousQn
   const [generating, setGenerating] = useState(false)
   const [aiReplying, setAiReplying] = useState(false)
   const [envelopeOpen, setEnvelopeOpen] = useState(false)
+  const [pendingCharacterName, setPendingCharacterName] = useState<string | null>(null)
   const envelopeTargetRef = useRef<string | null>(null)
   const timersRef = useRef<number[]>([])
-  const contacts = useMemo(
-    () => MOCK_QNA_CONTACTS.map((c) => (c.id === 'self' ? { ...c, remarkName: currentUserName } : c)),
-    [currentUserName],
-  )
+
+  const contacts = useMemo(() => {
+    const base = (contactsProp ?? []).map((c) => ({ ...c }))
+    const hasSelf = base.some((c) => c.id === 'self')
+    const withSelf = hasSelf
+      ? base.map((c) => (c.id === 'self' ? { ...c, remarkName: currentUserName } : c))
+      : [{ id: 'self', remarkName: currentUserName }, ...base]
+    return withSelf
+  }, [contactsProp, currentUserName])
+
+  const directedPost = useQnADirectedPost(detailId)
 
   const detailQuestion = useMemo(() => questions.find((q) => q.id === detailId) ?? null, [detailId, questions])
   const answerQuestion = useMemo(
@@ -79,7 +128,10 @@ export function AnonymousQnAApp({ onBack, currentUserName = '我' }: AnonymousQn
         setEnvelopeOpen(true)
         return
       }
-      // 定向提问：无回答时进入发布回答页；有回答时仅进入详情页互动
+      if (q.directedAiPostId && getQnaDirectedPost(q.directedAiPostId)) {
+        setDetailId(q.directedAiPostId)
+        return
+      }
       if (q.visibility === 'directed' && q.answers.length === 0) {
         setAnswerForId(id)
         return
@@ -92,12 +144,43 @@ export function AnonymousQnAApp({ onBack, currentUserName = '我' }: AnonymousQn
   const closeDetail = () => setDetailId(null)
 
   useEffect(() => {
-    try {
-      localStorage.setItem(QNA_STORAGE_KEY, JSON.stringify({ questions, listByTab }))
-    } catch {
-      // ignore
+    let cancelled = false
+    void (async () => {
+      try {
+        const [main] = await Promise.all([loadQnaMainState(), hydrateQnaDirectedStore()])
+        if (cancelled) return
+        if (main) {
+          const cleaned = filterLegacyMockQnaState(main)
+          if (cleaned.questions.length) setQuestions(cleaned.questions)
+          if (Object.keys(cleaned.listByTab).length) {
+            setListByTab({ ...EMPTY_LIST_BY_TAB, ...cleaned.listByTab })
+          }
+        }
+      } catch {
+        // ignore
+      } finally {
+        if (!cancelled) setQnaHydrated(true)
+      }
+    })()
+    return () => {
+      cancelled = true
     }
-  }, [questions, listByTab])
+  }, [])
+
+  useEffect(() => {
+    if (!qnaHydrated) return
+    void saveQnaMainState({ questions, listByTab }).catch(() => {})
+  }, [questions, listByTab, qnaHydrated])
+
+  useEffect(() => {
+    const onErased = () => {
+      setQuestions([])
+      setListByTab({ ...EMPTY_LIST_BY_TAB })
+      void resetQnaDirectedStore()
+    }
+    window.addEventListener(WECHAT_ACCOUNT_DEEP_ERASED_EVENT, onErased)
+    return () => window.removeEventListener(WECHAT_ACCOUNT_DEEP_ERASED_EVENT, onErased)
+  }, [])
 
   useEffect(() => {
     return () => {
@@ -112,7 +195,7 @@ export function AnonymousQnAApp({ onBack, currentUserName = '我' }: AnonymousQn
     setQuestions((prev) =>
       prev.map((q) => {
         if (q.id !== id) return q
-        shouldCompose = q.visibility === 'directed' && q.answers.length === 0
+        shouldCompose = q.visibility === 'directed' && q.answers.length === 0 && !q.directedAiPostId
         return { ...q, unreadForCurrentUser: false }
       }),
     )
@@ -137,29 +220,90 @@ export function AnonymousQnAApp({ onBack, currentUserName = '我' }: AnonymousQn
     setListByTab((prev) => ({ ...prev, asked: [id, ...(prev.asked ?? [])] }))
   }
 
-  const handleSubmitDirected = (body: string, targets: MockContact[]) => {
-    const ts = Date.now()
-    const newQs: Question[] = targets.map((t, i) => ({
-      id: `q-d-${ts}-${i}`,
-      body,
-      visibility: 'directed',
-      targetUserIds: [t.id],
-      targetDisplayNames: [t.remarkName],
-      createdAt: Date.now(),
-      askerDisplayName: '匿名',
-      answers: [],
-      unreadForCurrentUser: t.id === 'self',
-    }))
-    setQuestions((prev) => [...newQs, ...prev])
-    setListByTab((prev) => ({
-      ...prev,
-      asked: [...newQs.map((q) => q.id), ...(prev.asked ?? [])],
-      received: [
-        ...newQs.filter((q) => q.targetUserIds?.includes('self')).map((q) => q.id),
-        ...(prev.received ?? []),
-      ],
-    }))
-  }
+  const runDirectedAiForTarget = useCallback(
+    async (body: string, target: MockContact): Promise<string> => {
+      const cid = target.characterId!.trim()
+      setPendingCharacterName(target.remarkName)
+      try {
+        const output = await generateDirectedQuestionDualOutput({
+          questionBody: body,
+          targetContact: target,
+          contacts,
+          wechatCtx,
+        })
+        const baseMs = Date.now()
+        const id = `q-d-ai-${baseMs}-${cid.slice(0, 8)}`
+        const threadComments = await buildThreadCommentsFromDirectedOutput({
+          output,
+          baseMs,
+          contacts,
+          targetCharacterId: cid,
+          targetCharacterName: target.remarkName,
+          targetCharacterAvatar: target.avatarUrl,
+        })
+        const post: QnADirectedPost = {
+          id,
+          question: body,
+          targetCharacterId: cid,
+          targetCharacterName: target.remarkName,
+          targetCharacterAvatar:
+            target.avatarUrl?.trim() || '/image/个人名片默认头像1.png',
+          targetContactId: target.id,
+          characterAnswer: output.characterAnswer,
+          createdAt: baseMs,
+          comments: [],
+          threadComments,
+        }
+        saveDirectedPost(post)
+        const q = questionFromDirectedPost(post)
+        setQuestions((prev) => [q, ...prev])
+        setListByTab((prev) => ({
+          ...prev,
+          asked: [id, ...(prev.asked ?? [])],
+        }))
+        return id
+      } finally {
+        setPendingCharacterName(null)
+      }
+    },
+    [contacts, saveDirectedPost, wechatCtx],
+  )
+
+  const handleSubmitDirected = useCallback(
+    async (body: string, targets: MockContact[]) => {
+      const aiTargets = targets.filter((t) => t.characterId?.trim())
+      const legacyTargets = targets.filter((t) => !t.characterId?.trim())
+
+      if (legacyTargets.length) {
+        const ts = Date.now()
+        const newQs: Question[] = legacyTargets.map((t, i) => ({
+          id: `q-d-${ts}-${i}`,
+          body,
+          visibility: 'directed',
+          targetUserIds: [t.id],
+          targetDisplayNames: [t.remarkName],
+          createdAt: Date.now(),
+          askerDisplayName: '匿名',
+          answers: [],
+        }))
+        setQuestions((prev) => [...newQs, ...prev])
+        setListByTab((prev) => ({
+          ...prev,
+          asked: [...newQs.map((q) => q.id), ...(prev.asked ?? [])],
+        }))
+      }
+
+      let lastId: string | null = null
+      for (const t of aiTargets) {
+        lastId = await runDirectedAiForTarget(body, t)
+      }
+      if (lastId) {
+        setDetailId(lastId)
+        setNav('home')
+      }
+    },
+    [runDirectedAiForTarget],
+  )
 
   const handleAnswerSubmit = (text: string) => {
     if (!answerForId) return
@@ -198,16 +342,15 @@ export function AnonymousQnAApp({ onBack, currentUserName = '我' }: AnonymousQn
     setAnswerForId(null)
     setNav('profile')
     setProfileTab('answered')
-    if (answerForId) {
-      const postedQuestion = questions.find((q) => q.id === answerForId)
-      if (postedQuestion) {
-        void enqueueAiReplies(postedQuestion, text)
-      }
+    const postedQuestion = questions.find((q) => q.id === answerForId)
+    if (postedQuestion) {
+      void enqueueAiReplies(postedQuestion, text)
     }
   }
 
   const enqueueAiReplies = useCallback(
     async (question: Question, userComment: string) => {
+      if (question.directedAiPostId) return
       const recent = question.answers
         .slice(-3)
         .map((a) => `${a.authorName}: ${a.content}`)
@@ -216,8 +359,10 @@ export function AnonymousQnAApp({ onBack, currentUserName = '我' }: AnonymousQn
       const rows = await generateDynamicRepliesWithAi({
         postBody: question.body,
         isContact: !!question.isContact,
+        contactCharacterId: question.contactCharacterId,
         recentComments: recent,
         userComment,
+        wechatCtx,
       })
       const delay = 2000 + Math.floor(Math.random() * 2000)
       const timer = window.setTimeout(() => {
@@ -226,17 +371,7 @@ export function AnonymousQnAApp({ onBack, currentUserName = '我' }: AnonymousQn
             if (q.id !== question.id) return q
             const targetAnswerId = q.answers[0]?.id
             if (!targetAnswerId) {
-              const newAnswers = rows.map((r) => ({
-                id: `a-ai-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
-                createdAt: Date.now(),
-                authorId: `ai-${Math.random().toString(36).slice(2, 7)}`,
-                authorName: r.authorMask,
-                isAnonymous: true,
-                content: r.content,
-                likeCount: Math.floor(Math.random() * 20),
-                dislikeCount: Math.floor(Math.random() * 3),
-                replies: [],
-              }))
+              const newAnswers = rows.map((r) => mapPersonaReplyToAnswer(r, contacts))
               return { ...q, answers: [...q.answers, ...newAnswers] }
             }
             return {
@@ -269,12 +404,12 @@ export function AnonymousQnAApp({ onBack, currentUserName = '我' }: AnonymousQn
       }, delay)
       timersRef.current.push(timer)
     },
-    [],
+    [contacts, wechatCtx],
   )
 
   const handleDetailComment = useCallback(
     (text: string) => {
-      if (!detailId) return
+      if (!detailId || directedPost) return
       let snapshot: Question | null = null
       setQuestions((prev) =>
         prev.map((q) => {
@@ -329,7 +464,7 @@ export function AnonymousQnAApp({ onBack, currentUserName = '我' }: AnonymousQn
         void enqueueAiReplies(snapshot, text)
       }
     },
-    [currentUserName, detailId, enqueueAiReplies],
+    [currentUserName, detailId, directedPost, enqueueAiReplies],
   )
 
   const handleGeneratePosts = useCallback(
@@ -341,6 +476,7 @@ export function AnonymousQnAApp({ onBack, currentUserName = '我' }: AnonymousQn
           count: params.count,
           includeContacts: params.includeContacts,
           contacts,
+          wechatCtx,
         })
         setQuestions((prev) => [...generated, ...prev])
       } finally {
@@ -348,10 +484,10 @@ export function AnonymousQnAApp({ onBack, currentUserName = '我' }: AnonymousQn
         setGeneratorOpen(false)
       }
     },
-    [contacts],
+    [contacts, wechatCtx],
   )
 
-  const showChrome = !detailId && !answerForId
+  const showChrome = !detailId && !answerForId && !pendingCharacterName
 
   return (
     <div
@@ -362,6 +498,8 @@ export function AnonymousQnAApp({ onBack, currentUserName = '我' }: AnonymousQn
         backgroundPosition: 'center top',
       }}
     >
+      <QnAPendingOverlay open={!!pendingCharacterName} characterName={pendingCharacterName ?? ''} />
+
       {showChrome ? (
         <header
           className="flex shrink-0 items-center justify-between border-b border-black/6 bg-white/95 px-3 pb-2 backdrop-blur-md"
@@ -387,6 +525,15 @@ export function AnonymousQnAApp({ onBack, currentUserName = '我' }: AnonymousQn
             questionBody={answerQuestion.body}
             onBack={() => setAnswerForId(null)}
             onSubmit={handleAnswerSubmit}
+          />
+        ) : detailId && directedPost ? (
+          <QnAPostDetailPage
+            key="directed-detail"
+            post={directedPost}
+            onBack={closeDetail}
+            currentUserName={currentUserName}
+            contacts={contacts}
+            wechatCtx={wechatCtx}
           />
         ) : detailId ? (
           <PostDetailPage
@@ -439,7 +586,9 @@ export function AnonymousQnAApp({ onBack, currentUserName = '我' }: AnonymousQn
         onClose={() => setAskOpen(false)}
         contacts={contacts}
         onSubmitPublic={handleSubmitPublic}
-        onSubmitDirected={handleSubmitDirected}
+        onSubmitDirected={(body, targets) => {
+          void handleSubmitDirected(body, targets)
+        }}
       />
 
       <QnAGeneratorModal
@@ -458,5 +607,13 @@ export function AnonymousQnAApp({ onBack, currentUserName = '我' }: AnonymousQn
         onRevealed={onEnvelopeRevealed}
       />
     </div>
+  )
+}
+
+export function AnonymousQnAApp(props: AnonymousQnAAppProps) {
+  return (
+    <QnAStoreProvider>
+      <AnonymousQnAAppInner {...props} />
+    </QnAStoreProvider>
   )
 }

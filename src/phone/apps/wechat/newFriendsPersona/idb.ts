@@ -38,6 +38,7 @@ import type {
   WorldBackground,
   WorldBookUserPlaceholderBinding,
 } from './types'
+import type { CrossBindingGraphLayoutRecord } from './personaRoster/crossBindings/crossBindingTypes'
 import { buildCharacterFullTrashArchive, type PersonaDbTrashSource } from '../../recycleBin/archiveCharacterDeletion'
 import { INDEXED_TRASH_RETENTION_MS, emitIndexedTrashChanged } from '../../recycleBin/recycleBinEvents'
 import type { IndexedTrashEntry } from '../../recycleBin/indexedTrashTypes'
@@ -124,7 +125,7 @@ import { characterBelongsToWechatAccount, stampWechatAccountOwner } from '../wec
 import { WECHAT_USER_PROFILE_KV_KEY, WECHAT_USER_PROFILE_KV_KEY_LEGACY } from '../wechatProfileTypes'
 
 const DB_NAME = 'wechat-personas-v1'
-const DB_VERSION = 25
+const DB_VERSION = 26
 
 /** 复合索引：按会话 + 时间戳范围查询（日历、按日跳转） */
 const CHAT_MSG_INDEX_CONV_TS = 'conversationKey_timestamp'
@@ -140,6 +141,7 @@ const CHAT_MSG_STORE = 'chatMessages'
 const IDENTITY_STORE = 'playerIdentities'
 const REL_STORE = 'relationships'
 const GRAPH_VIEW_STORE = 'networkGraphViews'
+const CROSS_BINDING_GRAPH_LAYOUT_STORE = 'crossBindingGraphLayouts'
 const PLAYER_LINKS_STORE = 'playerNetworkLinks'
 const CONFIG_STORE = 'appConfig'
 const MEMORY_SETTINGS_STORE = 'memorySettings'
@@ -1288,6 +1290,38 @@ function graphViewId(rootCharacterId: string, perspectiveCharacterId: string) {
   return `${rootCharacterId}::${perspectiveCharacterId}`
 }
 
+function normalizeCrossBindingGraphLayout(input: unknown): CrossBindingGraphLayoutRecord | null {
+  const now = Date.now()
+  const v = (input ?? {}) as Partial<CrossBindingGraphLayoutRecord>
+  if (typeof v.id !== 'string' || typeof v.anchorType !== 'string' || typeof v.anchorId !== 'string') {
+    return null
+  }
+  if (v.anchorType !== 'user' && v.anchorType !== 'main' && v.anchorType !== 'npc') return null
+  const pan =
+    v.viewportPan && typeof v.viewportPan === 'object'
+      ? (v.viewportPan as { x?: unknown; y?: unknown })
+      : null
+  const px = typeof pan?.x === 'number' ? pan.x : 0
+  const py = typeof pan?.y === 'number' ? pan.y : 0
+  const positions: Record<string, { x: number; y: number }> = {}
+  if (v.positions && typeof v.positions === 'object' && !Array.isArray(v.positions)) {
+    for (const [k, val] of Object.entries(v.positions as Record<string, unknown>)) {
+      if (!val || typeof val !== 'object') continue
+      const p = val as { x?: unknown; y?: unknown }
+      if (typeof p.x === 'number' && typeof p.y === 'number') positions[k] = { x: p.x, y: p.y }
+    }
+  }
+  return {
+    id: v.id,
+    anchorType: v.anchorType,
+    anchorId: v.anchorId,
+    viewportZoom: typeof v.viewportZoom === 'number' && Number.isFinite(v.viewportZoom) ? v.viewportZoom : 1,
+    viewportPan: { x: px, y: py },
+    positions,
+    updatedAt: typeof v.updatedAt === 'number' ? v.updatedAt : now,
+  }
+}
+
 function normalizePlayerLink(input: unknown, now: number): PlayerNetworkLink {
   const r = (input ?? {}) as Partial<PlayerNetworkLink>
   return {
@@ -1828,6 +1862,11 @@ function openDb(): Promise<IDBDatabase> {
       if (!db.objectStoreNames.contains(INDEXED_TRASH_STORE)) {
         const tr = db.createObjectStore(INDEXED_TRASH_STORE, { keyPath: 'id' })
         tr.createIndex('expiresAt', 'expiresAt', { unique: false })
+      }
+      if (!db.objectStoreNames.contains(CROSS_BINDING_GRAPH_LAYOUT_STORE)) {
+        const gs = db.createObjectStore(CROSS_BINDING_GRAPH_LAYOUT_STORE, { keyPath: 'id' })
+        gs.createIndex('anchorType', 'anchorType', { unique: false })
+        gs.createIndex('anchorId', 'anchorId', { unique: false })
       }
     }
     req.onsuccess = () => resolve(req.result)
@@ -4616,6 +4655,44 @@ export class PersonaDb {
       updatedAt: Date.now(),
     })
     if (normalized) tx.objectStore(GRAPH_VIEW_STORE).put(normalized)
+    await txDone(tx)
+    db.close()
+  }
+
+  async getCrossBindingGraphLayout(
+    anchorType: CrossBindingGraphLayoutRecord['anchorType'],
+    anchorId: string,
+  ): Promise<CrossBindingGraphLayoutRecord | null> {
+    const db = await openDb()
+    if (!db.objectStoreNames.contains(CROSS_BINDING_GRAPH_LAYOUT_STORE)) {
+      db.close()
+      return null
+    }
+    const tx = db.transaction(CROSS_BINDING_GRAPH_LAYOUT_STORE, 'readonly')
+    const req = tx
+      .objectStore(CROSS_BINDING_GRAPH_LAYOUT_STORE)
+      .get(`${anchorType}:${anchorId}`)
+    const res = await new Promise<unknown>((resolve, reject) => {
+      req.onsuccess = () => resolve(req.result)
+      req.onerror = () => reject(req.error ?? new Error('get cross binding graph layout'))
+    })
+    await txDone(tx)
+    db.close()
+    return normalizeCrossBindingGraphLayout(res)
+  }
+
+  async putCrossBindingGraphLayout(record: CrossBindingGraphLayoutRecord): Promise<void> {
+    const db = await openDb()
+    if (!db.objectStoreNames.contains(CROSS_BINDING_GRAPH_LAYOUT_STORE)) {
+      db.close()
+      return
+    }
+    const tx = db.transaction(CROSS_BINDING_GRAPH_LAYOUT_STORE, 'readwrite')
+    const normalized = normalizeCrossBindingGraphLayout({
+      ...record,
+      updatedAt: Date.now(),
+    })
+    if (normalized) tx.objectStore(CROSS_BINDING_GRAPH_LAYOUT_STORE).put(normalized)
     await txDone(tx)
     db.close()
   }

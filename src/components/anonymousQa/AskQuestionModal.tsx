@@ -1,5 +1,5 @@
 import { AnimatePresence, motion } from 'framer-motion'
-import { useState } from 'react'
+import { useMemo, useState } from 'react'
 import { X } from 'lucide-react'
 
 import type { MockContact } from './types'
@@ -28,6 +28,9 @@ export function AskQuestionModal({
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
   const [flyAway, setFlyAway] = useState(false)
 
+  /** 定向提问：仅通讯录好友，不可选自己 */
+  const pickableContacts = useMemo(() => contacts.filter((c) => c.id !== 'self'), [contacts])
+
   const toggleContact = (id: string) => {
     setSelectedIds((prev) => {
       const next = new Set(prev)
@@ -44,13 +47,17 @@ export function AskQuestionModal({
       setPickerOpen(true)
       return
     }
+    if (mode === 'directed') {
+      const targets = pickableContacts.filter((c) => selectedIds.has(c.id))
+      onSubmitDirected(t, targets)
+      setBody('')
+      setSelectedIds(new Set())
+      onClose()
+      return
+    }
     setFlyAway(true)
     window.setTimeout(() => {
-      if (mode === 'public') onSubmitPublic(t)
-      else {
-        const targets = contacts.filter((c) => selectedIds.has(c.id))
-        onSubmitDirected(t, targets)
-      }
+      onSubmitPublic(t)
       setFlyAway(false)
       setBody('')
       setSelectedIds(new Set())
@@ -58,7 +65,7 @@ export function AskQuestionModal({
     }, 720)
   }
 
-  const selectedContacts = contacts.filter((c) => selectedIds.has(c.id))
+  const selectedContacts = pickableContacts.filter((c) => selectedIds.has(c.id))
 
   return (
     <AnimatePresence>
@@ -196,7 +203,10 @@ export function AskQuestionModal({
                   <p className="text-center text-[13px] font-medium text-[#111827]">选择好友</p>
                   <p className="mt-1 text-center text-[11px] text-[#9CA3AF]">每位好友将单独收到提问，互不可见</p>
                   <ul className="mt-4 max-h-[40vh] space-y-2 overflow-y-auto">
-                    {contacts.map((c) => {
+                    {pickableContacts.length === 0 ? (
+                      <li className="py-6 text-center text-[13px] text-[#9CA3AF]">通讯录暂无好友</li>
+                    ) : null}
+                    {pickableContacts.map((c) => {
                       const on = selectedIds.has(c.id)
                       return (
                         <li key={c.id}>

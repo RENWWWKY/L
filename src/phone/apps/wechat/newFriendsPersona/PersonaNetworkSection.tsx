@@ -15,6 +15,7 @@ import type { CSSProperties, PointerEvent } from 'react'
 import type { Character, PlayerNetworkLink, Relationship } from './types'
 import { useCustomization } from '../../../CustomizationContext'
 import { personaDb } from './idb'
+import { backfillNpcPlayerIdentityFromRootMain } from '../wechatCharacterPlayerIdentity'
 import { stampWechatAccountOwner } from '../wechatAccountScope'
 import { DEFAULT_WORLD_BACKGROUND_ID } from './worldBackgroundConstants'
 import { formatWorldBackgroundForPrompt } from './worldBackgroundFormat'
@@ -210,6 +211,26 @@ function refineLayoutWithForces(
   return pos
 }
 
+/** 人脉 NPC 继承主角（或当前扮演档）的主绑定，供「绑定信息」页与私聊分线读取 */
+function withNpcPlayerIdentityBinding(npc: Character, main: Character, bindIdentityId: string): Character {
+  const pid = bindIdentityId.trim()
+  if (!pid || pid === '__none__') return npc
+  return {
+    ...npc,
+    playerIdentityId: pid,
+    wechatAccountId: npc.wechatAccountId?.trim() || main.wechatAccountId,
+    updatedAt: Date.now(),
+  }
+}
+
+function resolveNetworkBindIdentityId(main: Character, playerIdentity: { id?: string } | null): string {
+  return (
+    main.playerIdentityId?.trim() ||
+    playerIdentity?.id?.trim() ||
+    ''
+  )
+}
+
 /** 与主角编辑页「新建角色」一致的空白卡，并标记为当前主角下的 NPC */
 function newBlankNpcForMain(main: Character): Character {
   const now = Date.now()
@@ -399,6 +420,7 @@ export function PersonaNetworkSection({ main, apiConfig, onApiMissing, onOpenNpc
   }, [edgeDetail, playerLinkCharIdForModal])
 
   const reload = useCallback(async () => {
+    await backfillNpcPlayerIdentityFromRootMain(main.id)
     const acc = main.wechatAccountId?.trim()
     const list = acc
       ? await personaDb.listNpcsForAccessibleRoot(main.id, acc, linkedCharacterIds)
@@ -520,17 +542,22 @@ export function PersonaNetworkSection({ main, apiConfig, onApiMissing, onOpenNpc
         customNote,
         worldBackgroundSummary,
       })
+      const bindIdentityId = resolveNetworkBindIdentityId(main, playerIdentity)
       const acc = main.wechatAccountId?.trim()
       for (const c of characters) {
-        await personaDb.upsertCharacter(acc ? stampWechatAccountOwner(c, acc) : c)
+        const bound = withNpcPlayerIdentityBinding(c, main, bindIdentityId)
+        await personaDb.upsertCharacter(acc ? stampWechatAccountOwner(bound, acc) : bound)
       }
       await personaDb.bulkPutRelationships(relationships)
       await personaDb.putPlayerNetworkLinks(main.id, nextPl)
-      if (main.playerIdentityId?.trim()) {
-        const identity = await personaDb.getPlayerIdentity(main.playerIdentityId)
+      if (bindIdentityId && bindIdentityId !== '__none__') {
+        const identity =
+          playerIdentity?.id === bindIdentityId
+            ? playerIdentity
+            : await personaDb.getPlayerIdentity(bindIdentityId)
         for (const npc of characters) {
           await personaDb.upsertPlayerIdentityBindings({
-            identityId: main.playerIdentityId,
+            identityId: bindIdentityId,
             characterId: npc.id,
             identityName: identity?.name || '你',
             characterName: npc.name || '角色',
@@ -598,7 +625,21 @@ export function PersonaNetworkSection({ main, apiConfig, onApiMissing, onOpenNpc
     }
     const npc = newBlankNpcForMain(main)
     npc.name = name
-    await personaDb.upsertCharacter(npc)
+    const bindIdentityId =
+      resolveNetworkBindIdentityId(main, null) ||
+      (await personaDb.getCurrentIdentityId()).trim()
+    const toSave = withNpcPlayerIdentityBinding(npc, main, bindIdentityId)
+    const acc = main.wechatAccountId?.trim()
+    await personaDb.upsertCharacter(acc ? stampWechatAccountOwner(toSave, acc) : toSave)
+    if (bindIdentityId && bindIdentityId !== '__none__') {
+      const identity = await personaDb.getPlayerIdentity(bindIdentityId)
+      await personaDb.upsertPlayerIdentityBindings({
+        identityId: bindIdentityId,
+        characterId: toSave.id,
+        identityName: identity?.name || '你',
+        characterName: toSave.name || '角色',
+      })
+    }
     const rel = manualRelation.trim()
     if (rel) {
       const nextLink: PlayerNetworkLink = {

@@ -32,6 +32,8 @@ import {
   WeChatContactsInstagram,
 } from '../../../components/WeChatContactsInstagram'
 import { WeChatDiscoverInstagram } from '../../../components/WeChatDiscoverInstagram'
+import type { MockContact } from '../../../components/anonymousQa/types'
+import type { AnonymousQaWechatContext } from '../../../components/anonymousQa/buildAnonymousQaPersonaContext'
 import { DatingSystem } from './dating/DatingSystem'
 import { NewFriendsPersonaApp } from './newFriendsPersona/NewFriendsPersonaApp'
 import type { FriendRequest } from './newFriendsPersona/friendRequestTypes'
@@ -874,7 +876,7 @@ function Header({
         background: 'var(--wx-surface)',
       }}
     >
-      <div className="flex w-10 shrink-0 items-center justify-start">
+      <div className="relative z-20 flex w-10 shrink-0 items-center justify-start">
         {showBack ? (
           <Pressable
             onClick={onBack}
@@ -922,7 +924,7 @@ function Header({
 
       {center}
 
-      <div className="relative flex w-10 shrink-0 items-center justify-end">
+      <div className="relative z-20 flex w-10 shrink-0 items-center justify-end">
         {showRight ? (
           <>
             {customRight ? (
@@ -3703,6 +3705,25 @@ function WeChatAppInner({ onBack }: Props) {
     [state.wechatPersonaContacts],
   )
 
+  const anonymousQnaContacts = useMemo((): MockContact[] => {
+    const selfAvatar =
+      resolveCharacterAvatarUrl({
+        avatarUrl: wechatAccountProfile?.avatarUrl ?? state.profile.avatarImageUrl,
+      }) || undefined
+    const self: MockContact = {
+      id: 'self',
+      remarkName: state.profile.displayName?.trim() || '我',
+      avatarUrl: selfAvatar,
+    }
+    const friends: MockContact[] = state.wechatPersonaContacts.map((c) => ({
+      id: c.id,
+      characterId: c.characterId,
+      remarkName: c.remarkName,
+      avatarUrl: resolveCharacterAvatarUrl({ avatarUrl: c.avatarUrl }) || undefined,
+    }))
+    return [self, ...friends]
+  }, [state.profile.avatarImageUrl, state.profile.displayName, state.wechatPersonaContacts, wechatAccountProfile?.avatarUrl])
+
   useEffect(() => {
     if (typeof window === 'undefined') return
     try {
@@ -3870,6 +3891,16 @@ function WeChatAppInner({ onBack }: Props) {
       cancelled = true
     }
   }, [route.name, accountSwitchRevision, currentAccountId, accounts])
+
+  const anonymousQnaWechatCtx = useMemo((): AnonymousQaWechatContext | null => {
+    if (playerIdentityId === null) return null
+    return {
+      wechatAccountId: currentAccountId,
+      playerIdentityId,
+      playerDisplayName: state.profile.displayName?.trim() || '我',
+      apiConfig,
+    }
+  }, [apiConfig, currentAccountId, playerIdentityId, state.profile.displayName])
 
   /** 把仍落在「未选身份」(__none__) 下的会话迁到当前身份；随后修复曾误入私聊键的群消息，避免与群会话双份并存。 */
   useEffect(() => {
@@ -4565,14 +4596,19 @@ function WeChatAppInner({ onBack }: Props) {
   )
 
   const exitChatToMessages = useCallback(() => {
+    const convKey = activeConversationKey
+    chatMarkOnceForConvKeyRef.current = null
+    wxDockChatRef.current = null
+    setRoute({ name: 'tabs', tab: 'messages' })
     void (async () => {
-      if (activeConversationKey) {
-        await personaDb.markWeChatConversationReadToLatest(activeConversationKey)
+      try {
+        if (convKey) {
+          await personaDb.markWeChatConversationReadToLatest(convKey)
+        }
+        await refreshMessageThreadsMeta()
+      } catch {
+        // 读游标/列表刷新失败不阻断已完成的返回
       }
-      chatMarkOnceForConvKeyRef.current = null
-      wxDockChatRef.current = null
-      await refreshMessageThreadsMeta()
-      setRoute({ name: 'tabs', tab: 'messages' })
     })()
   }, [activeConversationKey, refreshMessageThreadsMeta])
 
@@ -5597,7 +5633,8 @@ function WeChatAppInner({ onBack }: Props) {
       )}
       </WeChatWelcomeRevealLayer>
 
-      <WeChatWelcomeRevealLayer slot="body" className="flex min-h-0 flex-1 flex-col">
+      <WeChatWelcomeRevealLayer slot="body" className="relative flex min-h-0 flex-1 flex-col">
+      <div className="relative flex min-h-0 flex-1 flex-col overflow-hidden">
       <AnimatePresence>
         {busyDetailOpen && chatHeaderBusyOn ? (
           <motion.div
@@ -5642,7 +5679,6 @@ function WeChatAppInner({ onBack }: Props) {
         ) : null}
       </AnimatePresence>
 
-      <div className="relative flex min-h-0 flex-1 flex-col overflow-hidden">
         {wxDockChat && activeConversationCharacterId ? (
           <div
             className={
@@ -5803,6 +5839,8 @@ function WeChatAppInner({ onBack }: Props) {
                   <WeChatDiscoverInstagram
                     onImmersiveViewChange={setDiscoverMomentsOpen}
                     currentUserName={state.profile.displayName || '我'}
+                    qnaContacts={anonymousQnaContacts}
+                    qnaWechatCtx={anonymousQnaWechatCtx}
                   />
                 </div>
               ) : (

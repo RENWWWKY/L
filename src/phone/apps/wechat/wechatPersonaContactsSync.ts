@@ -6,8 +6,10 @@ import type { Character } from './newFriendsPersona/types'
 import { characterAccessibleToWechatAccount } from './wechatAccountScope'
 import { cloneAccount, findAccountById, loadAccountsBundle, resolveAccountSessionIdentityId } from './wechatAccountPersistence'
 import type { UserAccount, WechatAccountsBundle } from './wechatAccountTypes'
-import { WECHAT_LUMI_PEER_CHARACTER_ID } from './wechatConversationKey'
 import { resolveCanonicalCharacterId } from './wechatGlobalCharacterRegistry'
+import {
+  excludeUserAccountFromPersonaContacts,
+} from './wechatPersonaContactsSelfFilter'
 
 export const PHONE_CUSTOMIZATION_KV_KEY = 'lumi-phone-custom-v4'
 
@@ -176,80 +178,54 @@ export function applyIncomingPersonaContactRemarkOverrides(
   })
 }
 
-/**
- * 启动兜底：本身份下有私聊记录、但通讯录缺失的角色，从人设库补一条。
- */
-export async function recoverPersonaContactsFromPrivateChats(params: {
-  sessionPlayerIdentityIds: string[]
-  wechatAccountId: string
-  primaryWechatAccountId?: string | null
-  existing: WeChatPersonaContact[]
-}): Promise<WeChatPersonaContact[]> {
-  const acc = params.wechatAccountId.trim()
-  if (!acc) return params.existing
-
-  const primary = params.primaryWechatAccountId?.trim() || acc
-  const peerIds = await personaDb.listPrivateChatPeerCharacterIdsForWechatAccount(
-    acc,
-    params.sessionPlayerIdentityIds,
-    { includeLegacyKeys: primary === acc },
-  )
-  if (!peerIds.length) return params.existing
-
-  const linked = new Set<string>()
-  for (const id of params.existing.map((c) => c.characterId)) {
-    const canon = await resolveCanonicalCharacterId(id)
-    if (canon) linked.add(canon)
-  }
-
-  const additions: WeChatPersonaContact[] = []
-  for (const rawPeer of peerIds) {
-    if (rawPeer === WECHAT_LUMI_PEER_CHARACTER_ID) continue
-    const canon = (await resolveCanonicalCharacterId(rawPeer)) || rawPeer.trim()
-    if (!canon || linked.has(canon)) continue
-    const ch = await personaDb.getCharacter(canon)
-    if (!ch || !characterAccessibleToWechatAccount(ch, acc, linked)) continue
-    linked.add(canon)
-    additions.push(contactEntryFromCharacter(ch))
-  }
-
-  if (!additions.length) return params.existing
-  return mergeWeChatPersonaContacts(params.existing, additions)
+export function isCharacterInPersonaContacts(
+  contacts: readonly WeChatPersonaContact[],
+  characterId: string,
+): boolean {
+  const id = characterId.trim()
+  if (!id) return false
+  return contacts.some((c) => c.characterId.trim() === id)
 }
 
-/**
- * 启动/切回前台兜底：人设库仍有角色但通讯录缺失时，从 characters 表补条目。
- */
-export async function recoverPersonaContactsFromCharacterStore(params: {
-  wechatAccountId: string
-  primaryWechatAccountId?: string | null
-  existing: WeChatPersonaContact[]
-}): Promise<WeChatPersonaContact[]> {
-  const acc = params.wechatAccountId.trim()
-  if (!acc) return params.existing
+export type PersonaContactSyncPromptCopy = {
+  title: string
+  message: string
+  confirmText: string
+}
 
-  const chars = await personaDb.listCharactersForWechatAccount(acc)
-  if (!chars.length) return params.existing
-
-  const linked = new Set<string>()
-  for (const id of params.existing.map((c) => c.characterId)) {
-    const canon = await resolveCanonicalCharacterId(id)
-    if (canon) linked.add(canon)
+/** 人设保存后询问是否同步/加入通讯录的文案 */
+export function personaContactSyncPromptCopy(
+  inContacts: boolean,
+  isNpc: boolean,
+): PersonaContactSyncPromptCopy {
+  if (inContacts) {
+    return {
+      title: '同步到通讯录？',
+      message: '该角色已在微信通讯录中。是否用当前人设资料（头像、备注名等）更新通讯录展示？',
+      confirmText: '同步更新',
+    }
   }
-
-  const additions: WeChatPersonaContact[] = []
-  for (const ch of chars) {
-    const rawId = ch.id.trim()
-    if (!rawId) continue
-    const canon = (await resolveCanonicalCharacterId(rawId)) || rawId
-    if (linked.has(canon)) continue
-    if (!characterAccessibleToWechatAccount(ch, acc, linked)) continue
-    linked.add(canon)
-    additions.push(contactEntryFromCharacter(ch))
+  return {
+    title: '加入通讯录？',
+    message: isNpc
+      ? '该角色尚未加入微信通讯录。是否将当前角色单独加入通讯录？（批量加入主角与全部 NPC 请在列表页点击「生成微信通讯录联系人」）'
+      : '该角色尚未加入微信通讯录。是否现在加入并展示当前头像与备注名？（一并加入人脉 NPC 请在列表页点击「生成微信通讯录联系人」）',
+    confirmText: '加入通讯录',
   }
+}
 
-  if (!additions.length) return params.existing
-  return mergeWeChatPersonaContacts(params.existing, additions)
+/** 马甲隔离 + 剔除当前微信账号本人。 */
+export async function filterPersonaContactsForWechatAccount(
+  contacts: readonly WeChatPersonaContact[],
+  account: UserAccount,
+  primaryWechatAccountId?: string | null,
+): Promise<WeChatPersonaContact[]> {
+  const scoped = await filterPersonaContactsToWechatAccount(
+    contacts,
+    account.accountId,
+    primaryWechatAccountId,
+  )
+  return excludeUserAccountFromPersonaContacts(scoped, account)
 }
 
 export function isWechatMultiAccountBundle(bundle: WechatAccountsBundle): boolean {
@@ -265,7 +241,7 @@ export async function repairMultiAccountPersonaContactsBundle(
   let changed = false
   const accounts = await Promise.all(
     bundle.accounts.map(async (a) => {
-      const filtered = await filterPersonaContactsToWechatAccount(a.personaContacts, a.accountId, primaryId)
+      const filtered = await filterPersonaContactsForWechatAccount(a.personaContacts, a, primaryId)
       if (!personaContactsEqual(a.personaContacts, filtered)) changed = true
       return { ...cloneAccount(a), personaContacts: filtered }
     }),
@@ -305,14 +281,13 @@ export async function filterPersonaContactsToWechatAccount(
   return out
 }
 
-/** 合并 KV / 内存 / bundle，并写回指定账号的 personaContacts。 */
+/** 合并 KV / 内存 / bundle，并写回指定账号的 personaContacts（不自动从私聊或人设库补条目）。 */
 export async function reconcileAccountPersonaContacts(params: {
   bundle: WechatAccountsBundle
   account: UserAccount
   sessionPlayerIdentityId: string
   fromCustomizationKv?: WeChatPersonaContact[]
   fromInMemory?: WeChatPersonaContact[]
-  recoverFromChats?: boolean
 }): Promise<{ bundle: WechatAccountsBundle; contacts: WeChatPersonaContact[] }> {
   const multi = isWechatMultiAccountBundle(params.bundle)
   const primaryId = params.bundle.accounts[0]?.accountId
@@ -326,42 +301,18 @@ export async function reconcileAccountPersonaContacts(params: {
     merged = mergeWeChatPersonaContacts(params.account.personaContacts, kv, memory)
   }
 
-  merged = await filterPersonaContactsToWechatAccount(merged, params.account.accountId, primaryId)
-
-  if (params.recoverFromChats !== false) {
-    const sessionIds = multi
-      ? [params.sessionPlayerIdentityId.trim(), params.account.baseIdentityId.trim()].filter(
-          (id, i, arr) => id && arr.indexOf(id) === i,
-        )
-      : [
-          params.sessionPlayerIdentityId.trim(),
-          params.account.baseIdentityId.trim(),
-          '__none__',
-        ].filter((id, i, arr) => id && arr.indexOf(id) === i)
-
-    merged = await recoverPersonaContactsFromPrivateChats({
-      sessionPlayerIdentityIds: sessionIds,
-      wechatAccountId: params.account.accountId,
-      primaryWechatAccountId: primaryId,
-      existing: merged,
-    })
-  }
-
-  merged = await recoverPersonaContactsFromCharacterStore({
-    wechatAccountId: params.account.accountId,
-    primaryWechatAccountId: primaryId,
-    existing: merged,
-  })
-
+  merged = await filterPersonaContactsForWechatAccount(merged, params.account, primaryId)
   merged = await enrichPersonaContactsAvatarsFromCharacters(merged)
+  merged = await excludeUserAccountFromPersonaContacts(merged, params.account)
 
   const nextBundle = bundleWithAccountPersonaContacts(params.bundle, params.account.accountId, merged)
   return { bundle: nextBundle, contacts: merged }
 }
 
 /**
- * 切回前台 / 内存与 IndexedDB 不一致时：重读 bundle，从私聊与人设库重建通讯录。
+ * 切回前台 / 内存与 IndexedDB 不一致时：重读 bundle，合并已有通讯录快照。
  * 若 IndexedDB 核心表已空，则无法恢复聊天内容，仅能拉回 bundle 里残留的通讯录快照。
+ * 不会从私聊或人设库自动补通讯录条目。
  */
 export async function repairWeChatSessionPersistence(params: {
   bundle: WechatAccountsBundle | null
@@ -394,9 +345,10 @@ export async function repairWeChatSessionPersistence(params: {
 
   if (!idbHasCore) {
     if (!memory.length && bundleHasContacts) {
+      const filtered = await excludeUserAccountFromPersonaContacts(active.personaContacts, active)
       return {
         bundle,
-        contacts: active.personaContacts.map((c) => ({ ...c })),
+        contacts: filtered.map((c) => ({ ...c })),
         repaired: true,
       }
     }
@@ -409,7 +361,6 @@ export async function repairWeChatSessionPersistence(params: {
     account: active,
     sessionPlayerIdentityId: sessionId,
     fromInMemory: memory,
-    recoverFromChats: true,
   })
 
   if (personaContactsEqual(memory, reconciled.contacts)) {

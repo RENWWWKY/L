@@ -4,6 +4,7 @@ import { personaDb } from '../idb'
 import { loadAccountsBundle } from '../../wechatAccountPersistence'
 import {
   backfillCharacterPlayerIdentityLinkMeta,
+  backfillNpcPlayerIdentityFromRootMain,
   formatPlayerIdentityDisplayName,
   getCharacterBoundPlayerIdentityId,
   getCharacterCrossAccountLinkedPlayerIdentityIds,
@@ -70,7 +71,12 @@ export function BindingsInfoTab({ character }: { character: Character }) {
       setLoading(true)
       try {
         await backfillCharacterPlayerIdentityLinkMeta(character.id)
-        const fresh = (await personaDb.getCharacter(character.id)) ?? character
+        let fresh = (await personaDb.getCharacter(character.id)) ?? character
+        const rootId = fresh.generatedForCharacterId?.trim()
+        if (rootId && !getCharacterBoundPlayerIdentityId(fresh)) {
+          await backfillNpcPlayerIdentityFromRootMain(rootId)
+          fresh = (await personaDb.getCharacter(character.id)) ?? fresh
+        }
         const bundle = await loadAccountsBundle()
         const primary = getCharacterBoundPlayerIdentityId(fresh)
         const identityCache = new Map<string, PlayerIdentity | null>()

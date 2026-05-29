@@ -1,5 +1,6 @@
 import { personaDb } from '../newFriendsPersona/idb'
 import type { Character } from '../newFriendsPersona/types'
+import { buildNetworkRelationshipsPromptBlock } from '../networkRelationshipsPrompt'
 import { worldBookPronounGuideAnnotation } from '../newFriendsPersona/worldBookPronounGuide'
 
 const MAX_CHARS = 4200
@@ -35,26 +36,8 @@ export async function loadDatingNpcNetworkPromptBlock(params: {
   const mainLabel = params.mainRealName.trim() || '主角'
 
   try {
-    const [npcRows, playerLinks] = await Promise.all([
-      personaDb.listNpcsFor(rootId),
-      personaDb.getPlayerNetworkLinks(rootId),
-    ])
+    const npcRows = await personaDb.listNpcsFor(rootId)
     const npcs = npcRows as Character[]
-    const idToName = new Map<string, string>()
-    idToName.set(rootId, mainLabel)
-    for (const n of npcs) {
-      idToName.set(n.id, (n.name || '').trim() || '未命名')
-    }
-
-    const cliqueIds = [rootId, ...npcs.map((n) => n.id)]
-    const rels = await personaDb.listRelationshipsInNetwork(cliqueIds)
-    const relsFiltered = rels.filter((r) => !r.isPlayerIdentity)
-    // 只保留「主角 <-> NPC」直接关系，避免把 NPC<->NPC 或其他圈层关系误注入当前角色剧情
-    const mainToNpcRels = relsFiltered.filter((r) => {
-      const fromMain = r.fromCharacterId === rootId && r.toCharacterId !== rootId
-      const toMain = r.toCharacterId === rootId && r.fromCharacterId !== rootId
-      return fromMain || toMain
-    })
 
     const lines: string[] = []
     lines.push(`【主角】${mainLabel}（勿在正文输出 id）`)
@@ -72,46 +55,17 @@ export async function loadDatingNpcNetworkPromptBlock(params: {
       }
     }
 
-    if (mainToNpcRels.length) {
-      lines.push('\n【圈内关系（主角 ↔ NPC）】')
-      for (const r of mainToNpcRels.slice(0, 48)) {
-        const a = idToName.get(r.fromCharacterId)
-        const b = idToName.get(r.toCharacterId)
-        if (!a || !b) continue
-        const rel = (r.relation || '').trim()
-        const call = (r.fromCallsTo || '').trim()
-        const fp = (r.fromPerspective || '').trim().slice(0, 100)
-        const tp = (r.toPerspective || '').trim().slice(0, 100)
-        const mid = rel || '关系'
-        const callBit = call ? ` · ${a}称${b}「${call}」` : ''
-        const tail = [fp && `（从${a}看：${fp}）`, tp && `（从${b}看：${tp}）`].filter(Boolean).join('')
-        lines.push(`- ${a} —「${mid}」→ ${b}${callBit}${tail}`)
-      }
-    }
+    const relBlock = await buildNetworkRelationshipsPromptBlock({
+      rootId,
+      focusCharacterId: rootId,
+      mainToNpcOnly: true,
+      maxChars: 2800,
+    })
 
-    if (playerLinks.length) {
-      lines.push('\n【玩家与该主角圈内人（人脉编辑配置）】')
-      for (const pl of playerLinks.slice(0, 24)) {
-        const nm = idToName.get(pl.characterId)
-        if (!nm) continue
-        const bits = [
-          pl.theyCallYou ? `称呼你：${String(pl.theyCallYou).trim()}` : '',
-          pl.youCallThem ? `你称呼TA：${String(pl.youCallThem).trim()}` : '',
-          pl.relationThemToYou,
-          pl.theySeeYou,
-        ]
-          .map((x) => String(x || '').trim())
-          .filter(Boolean)
-        if (!bits.length) continue
-        lines.push(`- 对「${nm}」：${bits.join('；').slice(0, 280)}`)
-      }
-    }
+    if (!npcs.length && !relBlock.trim()) return ''
 
-    if (!npcs.length && !mainToNpcRels.length && !playerLinks.length) {
-      return ''
-    }
-
-    const body = lines.join('\n').slice(0, MAX_CHARS)
+    const roster = lines.join('\n')
+    const body = `${roster}${relBlock}`.slice(0, MAX_CHARS)
     return (
       `【主角人脉网·须参考】以下来自人设「人脉」绑定；**有名 NPC 须优先从下表与关系中选用**，勿随意用新全名顶替表中已有职能/关系位（如已有队友却写另一随机队友名）。` +
       `若仅需一次性无名龙套，用「工作人员」「路人」等弱指代，勿起易与表内混淆的全名。\n\n${body}`

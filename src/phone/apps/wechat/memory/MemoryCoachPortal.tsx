@@ -4,7 +4,11 @@ import { createPortal } from 'react-dom'
 import { Pressable } from '../../../components/Pressable'
 import { ARCHIVE_SERIF } from './memoryArchiveTheme'
 import type { MemoryCoachStep } from './memoryCoachTypes'
-import { memoryCoachScopedTargetSelector, memoryCoachTargetSelector } from './memoryCoachTypes'
+import {
+  MEMORY_COACH_ROOT_ATTR,
+  MEMORY_COACH_TARGET_ATTR,
+  memoryCoachScopedTargetSelector,
+} from './memoryCoachTypes'
 
 const PAD = 10
 const RADIUS = 16
@@ -13,19 +17,28 @@ const CARD_EST_H = 240
 
 type HoleRect = { top: number; left: number; width: number; height: number }
 
-function findCoachTargetNode(scopeRoot: string | undefined, target: string): Element | null {
+function findCoachTargetNode(
+  scopeRoot: string | undefined,
+  target: string,
+  targetAttr: string,
+  rootAttr: string,
+): Element | null {
   if (scopeRoot?.trim()) {
-    return document.querySelector(memoryCoachScopedTargetSelector(scopeRoot.trim(), target))
+    return document.querySelector(
+      memoryCoachScopedTargetSelector(scopeRoot.trim(), target, rootAttr, targetAttr),
+    )
   }
-  return document.querySelector(memoryCoachTargetSelector(target))
+  return document.querySelector(`[${targetAttr}="${target}"]`)
 }
 
 function measureTargetInOverlay(
   target: string,
   overlayEl: HTMLElement,
-  scopeRoot?: string,
+  scopeRoot: string | undefined,
+  targetAttr: string,
+  rootAttr: string,
 ): HoleRect | null {
-  const node = findCoachTargetNode(scopeRoot, target)
+  const node = findCoachTargetNode(scopeRoot, target, targetAttr, rootAttr)
   if (!node) return null
   const er = node.getBoundingClientRect()
   const or = overlayEl.getBoundingClientRect()
@@ -157,6 +170,8 @@ export function MemoryCoachPortal({
   scopeRoot,
   layoutEpoch,
   zIndex = 61000,
+  coachTargetAttr = MEMORY_COACH_TARGET_ATTR,
+  coachRootAttr = MEMORY_COACH_ROOT_ATTR,
 }: {
   open: boolean
   steps: MemoryCoachStep[]
@@ -171,6 +186,8 @@ export function MemoryCoachPortal({
   /** Tab 切换等触发布局后再测量 */
   layoutEpoch?: string | number
   zIndex?: number
+  coachTargetAttr?: string
+  coachRootAttr?: string
 }) {
   const overlayRef = useRef<HTMLDivElement>(null)
   const step = steps[stepIndex]
@@ -191,7 +208,7 @@ export function MemoryCoachPortal({
       return
     }
     if (step.target) {
-      findCoachTargetNode(scopeRoot, step.target)?.scrollIntoView({
+      findCoachTargetNode(scopeRoot, step.target, coachTargetAttr, coachRootAttr)?.scrollIntoView({
         block: 'nearest',
         inline: 'nearest',
         behavior: 'instant',
@@ -204,13 +221,13 @@ export function MemoryCoachPortal({
         setTooltipPos(null)
         return
       }
-      const nextHole = measureTargetInOverlay(step.target, o, scopeRoot)
+      const nextHole = measureTargetInOverlay(step.target, o, scopeRoot, coachTargetAttr, coachRootAttr)
       const or = o.getBoundingClientRect()
       setHole(nextHole)
       setTooltipPos(nextHole ? layoutTooltipCard(nextHole, or.width, or.height) : null)
     }
     scheduleCoachRemeasure(measure)
-  }, [open, step, scopeRoot])
+  }, [coachRootAttr, coachTargetAttr, open, scopeRoot, step])
 
   useLayoutEffect(() => {
     if (open && step) onBeforeStep?.(step, stepIndex)
@@ -264,14 +281,10 @@ export function MemoryCoachPortal({
           animate={{ opacity: 1 }}
           exit={{ opacity: 0 }}
         >
-          <Pressable
-            type="button"
-            className="absolute inset-0 h-full w-full cursor-default border-0 bg-transparent p-0"
-            aria-label="跳过引导"
-            onClick={onSkip}
-          >
-            <span className="sr-only">跳过引导</span>
-          </Pressable>
+          <div
+            className="absolute inset-0 h-full w-full cursor-default"
+            aria-hidden
+          />
 
           {showHole && hole ? (
             <motion.div

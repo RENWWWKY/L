@@ -14,7 +14,7 @@ const PLATINUM = '#D4AF37'
 const INK = '#1C1C1E'
 const SHEET_SPRING = { type: 'spring' as const, damping: 38, stiffness: 380 }
 
-type AccordionId = 'sample' | 'wbAfter' | 'core' | 'cursor' | 'deep'
+type AccordionId = 'sample' | 'wbAfter' | 'network' | 'core' | 'cursor' | 'deep'
 
 function pct(score: number): string {
   return `${Math.round(score * 1000) / 10}%`
@@ -352,6 +352,167 @@ export function MemoryTraceModal({ open, onClose, data }: MemoryTraceModalProps)
                                 </li>
                               ))}
                             </ul>
+                          </div>
+                        ) : null}
+                      </div>
+                    </AccordionRow>
+                  ) : null}
+
+                  {data.networkRelationships ? (
+                    <AccordionRow
+                      titleEn="NETWORK RELATIONS"
+                      titleZh="人脉关系与看法"
+                      expanded={expanded === 'network'}
+                      onToggle={() => toggleAccordion('network')}
+                    >
+                      <div className="space-y-4 px-1">
+                        <p className="text-[12px] leading-relaxed text-neutral-600">
+                          本轮私聊注入的圈内角色↔角色关系、双方看法与称呼，以及玩家↔圈内人、玩家身份↔本角色绑定边。与发给模型的 system 块同源。
+                        </p>
+                        <p className="text-[11px] text-neutral-500">
+                          视角角色：
+                          <span className="font-semibold text-neutral-800">
+                            {data.networkRelationships?.focusCharacterName}
+                          </span>
+                          {' · '}
+                          人脉根：
+                          <span className="font-semibold text-neutral-800">
+                            {data.networkRelationships?.rootCharacterName}
+                          </span>
+                        </p>
+
+                        {(data.networkRelationships?.involvingFocus?.length ?? 0) > 0 ? (
+                          <div>
+                            <p className="text-[11px] font-medium uppercase tracking-[0.2em] text-neutral-400">
+                              与你直接相关 · 角色↔角色
+                            </p>
+                            <ul className="mt-2 space-y-2">
+                              {data.networkRelationships!.involvingFocus.map((row, i) => (
+                                <li
+                                  key={`f-${row.fromName}-${row.toName}-${i}`}
+                                  className="rounded-lg border border-amber-100/80 bg-amber-50/40 p-3 text-[12px] leading-relaxed text-neutral-800"
+                                >
+                                  <p className="font-semibold">
+                                    {row.fromName} —「{row.relation}」→ {row.toName}
+                                    {row.fromCallsTo ? (
+                                      <span className="font-normal text-neutral-600">
+                                        {' '}
+                                        · {row.fromName}称{row.toName}「{row.fromCallsTo}」
+                                      </span>
+                                    ) : null}
+                                  </p>
+                                  {row.fromPerspective ? (
+                                    <p className="mt-1 text-neutral-600">
+                                      {row.fromName}看：{row.fromPerspective}
+                                    </p>
+                                  ) : null}
+                                  {row.toPerspective ? (
+                                    <p className="mt-0.5 text-neutral-600">
+                                      {row.toName}看：{row.toPerspective}
+                                    </p>
+                                  ) : null}
+                                </li>
+                              ))}
+                            </ul>
+                          </div>
+                        ) : null}
+
+                        {(data.networkRelationships?.otherInClique?.length ?? 0) > 0 ? (
+                          <div>
+                            <p className="text-[11px] font-medium uppercase tracking-[0.2em] text-neutral-400">
+                              圈内其他人际 · 角色↔角色
+                            </p>
+                            <ul className="mt-2 space-y-2">
+                              {data.networkRelationships!.otherInClique.map((row, i) => (
+                                <li
+                                  key={`o-${row.fromName}-${row.toName}-${i}`}
+                                  className="rounded-lg border border-neutral-100 bg-neutral-50/80 p-3 text-[12px] leading-relaxed text-neutral-700"
+                                >
+                                  <p className="font-semibold">
+                                    {row.fromName} —「{row.relation}」→ {row.toName}
+                                    {row.fromCallsTo ? (
+                                      <span className="font-normal text-neutral-600">
+                                        {' '}
+                                        · {row.fromName}称{row.toName}「{row.fromCallsTo}」
+                                      </span>
+                                    ) : null}
+                                  </p>
+                                  {(row.fromPerspective || row.toPerspective) && (
+                                    <p className="mt-1 text-neutral-600">
+                                      {[row.fromPerspective && `${row.fromName}看：${row.fromPerspective}`, row.toPerspective && `${row.toName}看：${row.toPerspective}`]
+                                        .filter(Boolean)
+                                        .join(' · ')}
+                                    </p>
+                                  )}
+                                </li>
+                              ))}
+                            </ul>
+                          </div>
+                        ) : null}
+
+                        {(data.networkRelationships?.playerLinks?.length ?? 0) > 0 ? (
+                          <div>
+                            <p className="text-[11px] font-medium uppercase tracking-[0.2em] text-neutral-400">
+                              玩家与圈内角色
+                            </p>
+                            <ul className="mt-2 space-y-2">
+                              {data.networkRelationships!.playerLinks.map((row, i) => (
+                                <li
+                                  key={`pl-${row.targetName}-${i}`}
+                                  className="rounded-lg border border-neutral-100 bg-white p-3 text-[12px] text-neutral-700"
+                                >
+                                  <p className="font-semibold">
+                                    「{row.targetName}」
+                                    {row.isFocusCharacter ? (
+                                      <span className="ml-1.5 text-[10px] font-semibold text-amber-800/90">
+                                        当前角色对玩家
+                                      </span>
+                                    ) : null}
+                                  </p>
+                                  <ul className="mt-1.5 space-y-0.5 text-neutral-600">
+                                    {row.relationThemToYou ? <li>TA对你的关系：{row.relationThemToYou}</li> : null}
+                                    {row.theySeeYou ? <li>TA怎么看你：{row.theySeeYou}</li> : null}
+                                    {row.relationYouToThem ? <li>你对TA的关系：{row.relationYouToThem}</li> : null}
+                                    {row.youSeeThem ? <li>你怎么看TA：{row.youSeeThem}</li> : null}
+                                    {row.theyCallYou ? <li>TA称呼你：{row.theyCallYou}</li> : null}
+                                    {row.youCallThem ? <li>你称呼TA：{row.youCallThem}</li> : null}
+                                  </ul>
+                                </li>
+                              ))}
+                            </ul>
+                          </div>
+                        ) : null}
+
+                        {(data.networkRelationships?.identityEdges?.length ?? 0) > 0 ? (
+                          <div>
+                            <p className="text-[11px] font-medium uppercase tracking-[0.2em] text-neutral-400">
+                              玩家身份 ↔ 本角色
+                            </p>
+                            <ul className="mt-2 space-y-2">
+                              {data.networkRelationships!.identityEdges.map((row, i) => (
+                                <li
+                                  key={`id-${row.identityName}-${i}`}
+                                  className="rounded-lg border border-indigo-100/80 bg-indigo-50/30 p-3 text-[12px] text-neutral-800"
+                                >
+                                  <span className="rounded-md bg-indigo-100/60 px-1.5 py-0.5 text-[10px] font-semibold text-indigo-900/80">
+                                    {row.scopeLabel}
+                                  </span>
+                                  <p className="mt-1.5 font-semibold">「{row.identityName}」—「{row.relation}」</p>
+                                  <p className="mt-1 text-neutral-600">{row.summary}</p>
+                                </li>
+                              ))}
+                            </ul>
+                          </div>
+                        ) : null}
+
+                        {data.networkRelationships?.promptExcerpt?.trim() ? (
+                          <div>
+                            <p className="text-[11px] font-medium uppercase tracking-[0.2em] text-neutral-400">
+                              注入全文（与模型一致）
+                            </p>
+                            <pre className="mt-2 max-h-[min(40vh,400px)] overflow-y-auto whitespace-pre-wrap break-words rounded-lg border border-neutral-100 bg-neutral-50/80 p-3 font-sans text-[12px] leading-relaxed text-neutral-700 [scrollbar-width:thin]">
+                              {data.networkRelationships.promptExcerpt}
+                            </pre>
                           </div>
                         ) : null}
                       </div>

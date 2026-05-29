@@ -34,6 +34,7 @@ import {
   type WorldBookAfterPatch,
 } from './newFriendsPersona/worldBookAfterPatch'
 import { setLastMemoryTrace } from './memoryTraceStore'
+import { buildPrivateChatNetworkRelationshipsTrace } from './networkRelationshipsPrompt'
 import type { ChatTranscriptTurn } from './wechatChatAi'
 import {
   WECHAT_HISTORY_MAX_MESSAGES,
@@ -466,10 +467,24 @@ export async function publishWeChatPrivatePersonaMemoryTrace(params: {
     appliedToDb: params.worldBookAfterApplied === true,
   })
 
+  const netTraceRaw = await buildPrivateChatNetworkRelationshipsTrace({
+    character: params.character,
+    sessionPlayerIdentityId: params.sessionPlayerIdentityId,
+  })
+  const networkRelationships = netTraceRaw
+    ? {
+        ...netTraceRaw,
+        promptExcerpt: netTraceRaw.promptExcerpt.trim()
+          ? expand(netTraceRaw.promptExcerpt)
+          : '',
+      }
+    : null
+
   const data: MemoryTraceData = {
     lastReply: lastReply || '（本轮无可见文本气泡）',
     charName: params.charDisplayName.trim() || params.character?.name?.trim() || '角色',
     worldBookAfterChat,
+    networkRelationships,
     contextMatrix: {
       baseDirectives: {
         persona: personaTagsFromCharacter(params.character),

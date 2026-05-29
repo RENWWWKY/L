@@ -1,9 +1,19 @@
-import { BookOpen, Camera, ChevronRight, Construction, MessageCircleQuestionMark, Store } from 'lucide-react'
+import {
+  BookOpen,
+  Camera,
+  ChevronRight,
+  Construction,
+  Headphones,
+  MessageCircleQuestionMark,
+  Store,
+} from 'lucide-react'
 import { useEffect, useState } from 'react'
 
 import { AnonymousQnAApp } from './anonymousQa/AnonymousQnAApp'
+import type { AnonymousQaWechatContext } from './anonymousQa/buildAnonymousQaPersonaContext'
+import type { MockContact } from './anonymousQa/types'
 
-type DiscoverActionId = 'moments' | 'anonymous-qa' | 'shop' | 'jubensha'
+type DiscoverActionId = 'moments' | 'anonymous-qa' | 'listen-together' | 'shop' | 'jubensha'
 
 type DiscoverAction = {
   id: DiscoverActionId
@@ -15,11 +25,15 @@ export type WeChatDiscoverInstagramProps = {
   onActionClick?: (id: DiscoverActionId) => void
   onImmersiveViewChange?: (open: boolean) => void
   currentUserName?: string
+  /** 匿问我答：真实通讯录（含 self + 人脉 NPC） */
+  qnaContacts?: MockContact[]
+  qnaWechatCtx?: AnonymousQaWechatContext | null
   className?: string
 }
 
 const DISCOVER_ACTIONS: DiscoverAction[] = [
   { id: 'moments', label: '朋友圈', icon: Camera },
+  { id: 'listen-together', label: '听一听', icon: Headphones },
   { id: 'anonymous-qa', label: '匿问我答', icon: MessageCircleQuestionMark },
   { id: 'jubensha', label: '剧本杀馆', icon: BookOpen },
   { id: 'shop', label: '小店', icon: Store },
@@ -74,9 +88,13 @@ export function WeChatDiscoverInstagram({
   onActionClick,
   onImmersiveViewChange,
   currentUserName,
+  qnaContacts,
+  qnaWechatCtx = null,
   className = '',
 }: WeChatDiscoverInstagramProps) {
-  const [activeView, setActiveView] = useState<'list' | 'moments' | 'anonymous-qa' | 'jubensha'>('list')
+  const [activeView, setActiveView] = useState<
+    'list' | 'moments' | 'listen-together' | 'anonymous-qa' | 'jubensha'
+  >('list')
   useEffect(() => {
     onImmersiveViewChange?.(activeView !== 'list')
   }, [activeView, onImmersiveViewChange])
@@ -94,10 +112,25 @@ export function WeChatDiscoverInstagram({
       />
     )
   }
+  if (activeView === 'listen-together') {
+    return (
+      <DiscoverFeatureUnderDev
+        className={className}
+        title="听一听"
+        hint="音乐播放、歌单、笔记流与网易云登录能力正在开发，稍后将在此接入。"
+        onBack={() => setActiveView('list')}
+      />
+    )
+  }
   if (activeView === 'anonymous-qa') {
     return (
       <div className={`h-full min-h-0 ${className}`}>
-        <AnonymousQnAApp onBack={() => setActiveView('list')} currentUserName={currentUserName} />
+        <AnonymousQnAApp
+          onBack={() => setActiveView('list')}
+          currentUserName={currentUserName}
+          contacts={qnaContacts}
+          wechatCtx={qnaWechatCtx}
+        />
       </div>
     )
   }
@@ -130,6 +163,7 @@ export function WeChatDiscoverInstagram({
                     onClick={() => {
                       onActionClick?.(item.id)
                       if (item.id === 'moments') setActiveView('moments')
+                      if (item.id === 'listen-together') setActiveView('listen-together')
                       if (item.id === 'anonymous-qa') setActiveView('anonymous-qa')
                       if (item.id === 'jubensha') setActiveView('jubensha')
                     }}

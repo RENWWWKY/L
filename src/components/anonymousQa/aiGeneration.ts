@@ -1,4 +1,12 @@
 import type { MockContact, Question, QnAAnswer } from './types'
+import type { AnonymousQaWechatContext } from './buildAnonymousQaPersonaContext'
+import {
+  attachContactMetaToQuestion,
+  contactRosterForQuestionPrompt,
+  generatePersonaAwareDynamicReplies,
+  pickContactForGeneratedRow,
+  type DynamicReplyRow,
+} from './personaAiGeneration'
 
 const API_STORAGE_KEY = 'ai-api-presets-v1'
 
@@ -9,6 +17,7 @@ export type BatchGenerateParams = {
   count: number
   includeContacts: boolean
   contacts: MockContact[]
+  wechatCtx?: AnonymousQaWechatContext | null
 }
 
 type ApiConfig = {
@@ -25,11 +34,6 @@ type GeneratedRow = {
   content: string
   likes: number
   initialComments?: Array<{ author: string; content: string }>
-}
-
-type DynamicReplyRow = {
-  authorMask: string
-  content: string
 }
 
 function safeParseJson<T>(text: string): T | null {
@@ -174,6 +178,7 @@ export async function generateQuestionsWithAi(params: BatchGenerateParams): Prom
 # Output Format
 返回纯 JSON 数组，不要 markdown。`
 
+  const roster = includeContacts ? contactRosterForQuestionPrompt(params.contacts) : ''
   const userPrompt = `请生成 ${count} 条，字段格式严格为：
 [
   {
@@ -185,7 +190,7 @@ export async function generateQuestionsWithAi(params: BatchGenerateParams): Prom
     "likes": 10-500数字,
     "initialComments":[{"author":"网友A","content":"..."}]
   }
-]`
+]${includeContacts ? `\n\n【可被选为匿名好友提问的通讯录（isContact 为 true 时 authorMask 用「你的某位好友」，内容须像该关系会问出口的私密问题；勿写真名）】\n${roster}` : ''}`
 
   const raw = await callAiJson(systemPrompt, userPrompt)
   const rows = raw ? safeParseJson<GeneratedRow[]>(raw) : null
@@ -193,9 +198,9 @@ export async function generateQuestionsWithAi(params: BatchGenerateParams): Prom
 
   return data.map((row, idx) => {
     const isDirected = row.type === 'directed'
-    const contact = params.contacts[(idx + Math.floor(Math.random() * Math.max(1, params.contacts.length))) % Math.max(1, params.contacts.length)]
+    const contact = pickContactForGeneratedRow(params.contacts, idx, isDirected)
     const answers = (row.initialComments ?? []).map((c, i) => toAnswer(c.author || `匿名网友${i + 1}`, c.content || '蹲一个后续'))
-    return {
+    const base: Question = {
       id: row.id || crypto.randomUUID(),
       body: String(row.content ?? '').trim() || '这个问题你会怎么选？',
       visibility: isDirected ? 'directed' : 'public',
@@ -215,12 +220,32 @@ export async function generateQuestionsWithAi(params: BatchGenerateParams): Prom
           }
         : undefined,
       answers,
-      unreadForCurrentUser: isDirected,
+      unreadForCurrentUser: isDirected && (contact?.id === 'self' || !contact),
     }
+    return attachContactMetaToQuestion(base, row.isContact ? contact : null, !!row.isContact)
   })
 }
 
 export async function generateDynamicRepliesWithAi(args: {
+  postBody: string
+  isContact: boolean
+  contactCharacterId?: string
+  recentComments: string
+  userComment: string
+  wechatCtx?: AnonymousQaWechatContext | null
+}): Promise<DynamicReplyRow[]> {
+  return generatePersonaAwareDynamicReplies({
+    postBody: args.postBody,
+    isContact: args.isContact,
+    contactCharacterId: args.contactCharacterId,
+    recentComments: args.recentComments,
+    userComment: args.userComment,
+    wechatCtx: args.wechatCtx ?? null,
+    fallbackGeneric: () => generateGenericDynamicRepliesWithAi(args),
+  })
+}
+
+async function generateGenericDynamicRepliesWithAi(args: {
   postBody: string
   isContact: boolean
   recentComments: string

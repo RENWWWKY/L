@@ -1,5 +1,6 @@
 import { personaDb } from '../newFriendsPersona/idb'
 import type { Character } from '../newFriendsPersona/types'
+import { hasReverseCharacterRelationship } from '../newFriendsPersona/personaRoster/crossBindings/crossBindingEngine'
 
 /**
  * 存档主角在「管理关系 / 人脉」中通过角色↔角色边绑定的其它主角（非 `generatedForCharacterId` 人脉子角色）。
@@ -20,7 +21,12 @@ export async function listRelationshipBoundProtagonistPeers(archiveOwnerId: stri
   for (const r of rels) {
     if (r.isPlayerIdentity) continue
     if (r.fromCharacterId === owner) peerIds.add(r.toCharacterId.trim())
-    else if (r.toCharacterId === owner) peerIds.add(r.fromCharacterId.trim())
+    else if (
+      r.toCharacterId === owner &&
+      hasReverseCharacterRelationship(rels, r)
+    ) {
+      peerIds.add(r.fromCharacterId.trim())
+    }
   }
 
   const out: Character[] = []

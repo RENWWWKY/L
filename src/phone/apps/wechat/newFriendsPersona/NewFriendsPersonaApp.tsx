@@ -1,6 +1,6 @@
-import { ArrowLeft, Plus, Save, Trash2, User, UserPlus, X } from 'lucide-react'
+import { ArrowLeft, Plus, Save, User, X } from 'lucide-react'
 import { AnimatePresence, motion } from 'framer-motion'
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { emitWeChatStorageChanged, personaDb } from './idb'
 import type { Character, PlayerIdentity, Relationship } from './types'
 import { genderLabelZh, uid } from './utils'
@@ -10,7 +10,6 @@ import { useCustomization } from '../../../CustomizationContext'
 import type { WeChatPersonaContact } from '../../../types'
 import { ImageCropperModal } from '../../../components/ImageCropperModal'
 import { PersonaNetworkSection } from './PersonaNetworkSection'
-import { PersonaBindingsManager } from './PersonaBindingsManager'
 import { DEFAULT_WORLD_BACKGROUND_ID } from './worldBackgroundConstants'
 import type { ScheduleTable } from './types'
 import { ScheduleEditorScreen } from '../schedule/ScheduleEditorScreen'
@@ -27,20 +26,8 @@ import {
   isMbtiPersonalityWorldBookName,
   normalizeMbti,
 } from '../mbtiPersonalityWorldBook'
-import { resolveCharacterAvatarUrl } from '../../../utils/characterAvatarUrl'
 import { isLargeMbtiAvatar, resolvePlayerIdentityPreviewAvatar } from './mbtiProfileUi'
 import { useWechatStore } from '../useWechatStore'
-import {
-  backfillCharacterPlayerIdentityLinkMeta,
-  buildIdentityDisplayNameMapForCharacters,
-  getCharacterCrossAccountLinkedPlayerIdentityIds,
-  repairCharacterSlotPrimaryBindingFromLinked,
-} from '../wechatCharacterPlayerIdentity'
-import {
-  formatWechatAccountLabel,
-  resolvePlayerIdentityWechatAccountId,
-} from '../wechatContactIdentityPrompt'
-import { loadAccountsBundle } from '../wechatAccountPersistence'
 import { deleteCharacterPersonaForWechatAccount } from '../wechatCharacterPersonaDelete'
 import {
   collectCanonicalIdsPreservedAcrossAccounts,
@@ -53,6 +40,12 @@ import {
   characterBelongsToWechatAccount,
   stampWechatAccountOwner,
 } from '../wechatAccountScope'
+import {
+  contactEntryFromCharacter,
+  isCharacterInPersonaContacts,
+  personaContactSyncPromptCopy,
+  type PersonaContactSyncPromptCopy,
+} from '../wechatPersonaContactsSync'
 import { ArchiveIndexTabs } from './personaEditor/ArchiveIndexTabs'
 import type { PersonaEditTabId } from './personaEditor/personaEditorTabs'
 import { BasicInfoTab } from './personaEditor/BasicInfoTab'
@@ -68,16 +61,19 @@ import {
   meetWorldbooksNeedConsolidation,
 } from '../../lumiMeet/meetWorldbookConsolidate'
 import { WorldbookTab } from './personaEditor/WorldbookTab'
+import { PersonaTabs } from './personaRoster/PersonaTabs'
+import { PersonaList } from './personaRoster/PersonaList'
+import { PersonaRosterAvatar } from './personaRoster/PersonaRosterAvatar'
+import { CrossBindingsPanel, PERSONA_RELATIONS_COACH_ROOT } from './personaRoster/crossBindings/CrossBindingsPanel'
+import { formatIdentityBindingDisplay } from './personaRoster/personaRosterDisplay'
+import { usePersonaRoster } from './personaRoster/usePersonaRoster'
+import type { PersonaRosterTabId } from './personaRoster/personaRosterTypes'
+import { WeChatThemePageBackdrop } from './WeChatThemePageBackdrop'
 
-const bg = '#f5f5f5'
-const card = '#ffffff'
+const bg = '#F7F7F9'
 const text = '#262626'
 const sub = '#8e8e8e'
 const border = '#dbdbdb'
-
-function Card({ children }: { children: React.ReactNode }) {
-  return <div className="rounded-2xl bg-white shadow-[0_1px_3px_rgba(0,0,0,0.06)]" style={{ background: card }}>{children}</div>
-}
 
 /** 人脉「你↔主角」所在根：主角本人为 id，NPC 为 generatedForCharacterId */
 function networkRootCharacterId(ch: Pick<Character, 'id' | 'generatedForCharacterId'>): string {
@@ -430,6 +426,108 @@ function IdentityPickModal({
   )
 }
 
+function MainCharacterPickModal({
+  open,
+  mainCharacters,
+  identityList,
+  identityNameById,
+  onClose,
+  onPick,
+}: {
+  open: boolean
+  mainCharacters: Character[]
+  identityList: PlayerIdentity[]
+  identityNameById: Record<string, string>
+  onClose: () => void
+  onPick: (main: Character) => void
+}) {
+  if (!open) return null
+  const hasAny = mainCharacters.length > 0
+  return (
+    <div
+      className="fixed inset-0 z-[1200] flex items-center justify-center px-4"
+      style={{ background: 'rgba(0,0,0,0.5)' }}
+      onClick={onClose}
+    >
+      <div
+        className="w-full max-w-[400px] rounded-[16px] bg-white"
+        style={{ background: '#ffffff' }}
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="relative px-5 pt-5">
+          <p className="text-center text-[18px] font-bold" style={{ color: '#000000' }}>
+            选择主要角色
+          </p>
+          <p className="mt-1 text-center text-[13px]" style={{ color: '#666666' }}>
+            新建 NPC 将围绕该主角，并继承其绑定的用户身份
+          </p>
+          <button
+            type="button"
+            onClick={onClose}
+            className="absolute right-3 top-3 rounded-[10px] p-2 transition-all duration-200 ease-out hover:bg-[#f5f5f5]"
+            aria-label="关闭"
+          >
+            <X className="size-5" style={{ color: '#666666' }} />
+          </button>
+        </div>
+
+        <div className="max-h-[min(60vh,420px)] overflow-y-auto px-5 pb-5 pt-4">
+          {!hasAny ? (
+            <div className="py-6 text-center">
+              <User className="mx-auto size-12" style={{ color: '#999999' }} strokeWidth={1.5} />
+              <p className="mt-4 text-[16px] font-semibold" style={{ color: '#666666' }}>
+                暂无主要角色
+              </p>
+              <p className="mt-2 text-[14px]" style={{ color: '#999999' }}>
+                请先创建主要角色，再为其添加次要/NPC
+              </p>
+            </div>
+          ) : (
+            <div className="space-y-3">
+              {mainCharacters.map((main) => {
+                const identityLine = formatIdentityBindingDisplay(
+                  main,
+                  main.playerIdentityId,
+                  identityList,
+                  identityNameById,
+                )
+                return (
+                  <div
+                    key={main.id}
+                    className="flex items-center gap-3 rounded-[12px] border bg-white p-4"
+                    style={{ borderColor: '#e5e5e5', boxShadow: '0 1px 3px rgba(0,0,0,0.05)' }}
+                  >
+                    <PersonaRosterAvatar character={main} size={50} />
+                    <div className="min-w-0 flex-1">
+                      <p className="truncate text-[16px] font-semibold" style={{ color: '#000000' }}>
+                        {main.name?.trim() || '未命名'}
+                      </p>
+                      <p className="mt-1 truncate text-[13px]" style={{ color: '#666666' }}>
+                        {main.identity?.trim() || '—'}
+                      </p>
+                      <p className="mt-0.5 truncate text-[12px]" style={{ color: '#999999' }}>
+                        绑定身份 · {identityLine}
+                      </p>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => onPick(main)}
+                      className="rounded-[8px] px-4 py-2 text-[13px] font-semibold text-white transition-all duration-200 ease-out"
+                      style={{ background: '#000000' }}
+                    >
+                      选择
+                    </button>
+                  </div>
+                )
+              })}
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  )
+}
+
 
 function newCharacter(): Character {
   const now = Date.now()
@@ -458,6 +556,30 @@ function newCharacter(): Character {
     worldBackgroundId: DEFAULT_WORLD_BACKGROUND_ID,
     worldBackgroundEnabled: true,
     schedule: undefined,
+  }
+}
+
+/** 空白 NPC 草稿：围绕主角，并继承主角绑定的用户身份 */
+function newBlankNpcForMain(main: Character): Character {
+  const now = Date.now()
+  return {
+    id: uid('ch'),
+    createdAt: now,
+    updatedAt: now,
+    name: '',
+    gender: 'female',
+    age: null,
+    birthdayMD: '',
+    zodiac: '',
+    identity: '学生',
+    mbti: '',
+    bio: '',
+    avatarUrl: '',
+    worldBooks: [],
+    generatedForCharacterId: main.id,
+    playerIdentityId: main.playerIdentityId,
+    wechatAccountId: main.wechatAccountId,
+    worldBackgroundId: main.worldBackgroundId?.trim() || DEFAULT_WORLD_BACKGROUND_ID,
   }
 }
 
@@ -742,7 +864,14 @@ export function NewFriendsPersonaApp({
 }) {
   const [page, setPage] = useState<
     | { name: 'list' }
-    | { name: 'edit'; id: string; isNew: boolean; draft?: Character }
+    | {
+        name: 'edit'
+        id: string
+        isNew: boolean
+        draft?: Character
+        /** NPC 编辑页返回目标：名册直入为 list，人脉内打开为 parent */
+        backTo?: 'list' | 'parent'
+      }
   >(() =>
     initialEditCharacterId?.trim()
       ? { name: 'edit', id: initialEditCharacterId.trim(), isNew: false }
@@ -754,17 +883,15 @@ export function NewFriendsPersonaApp({
     if (!id) return
     setPage({ name: 'edit', id, isNew: false })
   }, [initialEditCharacterId])
-  const [list, setList] = useState<Character[]>([])
-  const [loading, setLoading] = useState(false)
+  const [rosterTab, setRosterTab] = useState<PersonaRosterTabId>('main')
+  const [relationsTopRight, setRelationsTopRight] = useState<ReactNode>(null)
+  const ensureRelationsTab = useCallback(() => setRosterTab('relations'), [])
   const [deleteId, setDeleteId] = useState<string | null>(null)
   const [deleteTargetDetachHint, setDeleteTargetDetachHint] = useState<string | null>(null)
   const [identityPickOpen, setIdentityPickOpen] = useState(false)
-  const [identityList, setIdentityList] = useState<PlayerIdentity[]>([])
-  const [identityNameById, setIdentityNameById] = useState<Record<string, string>>({})
-  const [accountsBundle, setAccountsBundle] = useState<Awaited<ReturnType<typeof loadAccountsBundle>>>(null)
+  const [mainPickOpen, setMainPickOpen] = useState(false)
   const [identityLoading, setIdentityLoading] = useState(false)
   const [pendingNewDraft, setPendingNewDraft] = useState<Character | null>(null)
-  const [bindingsOpen, setBindingsOpen] = useState(false)
   const [contactGenRootId, setContactGenRootId] = useState<string | null>(null)
   const [aiGeneratingWechat, setAiGeneratingWechat] = useState(false)
   const [aiRemarkCandidates, setAiRemarkCandidates] = useState<Character[] | null>(null)
@@ -789,39 +916,22 @@ export function NewFriendsPersonaApp({
   const linkedCharacterIdSet = useMemo(() => new Set(linkedCharacterIds), [linkedCharacterIds])
   const apiConfigList = useCurrentApiConfig('chatCard')
 
-  const refresh = useCallback(async () => {
-    setLoading(true)
-    try {
-      const acc = currentAccountId?.trim()
-      if (!acc) {
-        setList([])
-        setIdentityNameById({})
-        return
-      }
-      let res = await personaDb.listRootCharactersAccessibleToWechatAccount(acc, linkedCharacterIds)
-      let repaired = false
-      for (const c of res) {
-        if (await repairCharacterSlotPrimaryBindingFromLinked(c.id)) repaired = true
-        if (await backfillCharacterPlayerIdentityLinkMeta(c.id)) repaired = true
-      }
-      if (repaired) {
-        res = await personaDb.listRootCharactersAccessibleToWechatAccount(acc, linkedCharacterIds)
-      }
-      setList(res)
-      setIdentityNameById(await buildIdentityDisplayNameMapForCharacters(acc, res))
-      setAccountsBundle(await loadAccountsBundle())
-    } catch (e) {
-      console.warn('[persona] list refresh failed', e)
-      window.alert(e instanceof Error ? e.message : '加载角色列表失败，请稍后重试')
-    } finally {
-      setLoading(false)
-    }
-  }, [currentAccountId, linkedCharacterIds])
+  const {
+    mainCharacters,
+    npcCharacters,
+    identityList,
+    identityNameById,
+    accountsBundle,
+    mainNameById,
+    mainById,
+    loading,
+    refresh,
+  } = usePersonaRoster(linkedCharacterIds)
 
   const refreshIdentities = async () => {
     setIdentityLoading(true)
-    const res = await personaDb.listPlayerIdentities(currentAccountId ?? undefined)
-    setIdentityList(res)
+    await personaDb.listPlayerIdentities(currentAccountId ?? undefined)
+    await refresh()
     setIdentityLoading(false)
   }
 
@@ -854,15 +964,10 @@ export function NewFriendsPersonaApp({
     onMarkRequestsRead?.()
   }, [entrySource, onMarkRequestsRead, page.name])
 
-  const buildPersonaContactEntries = useCallback((chars: Character[]): WeChatPersonaContact[] => {
-    return chars.map((ch) => ({
-      id: `persona-${ch.id}`,
-      characterId: ch.id,
-      remarkName: (ch.remark?.trim() || ch.wechatNickname?.trim() || ch.name || '未命名').slice(0, 64),
-      avatarUrl: ch.avatarUrl?.trim() || undefined,
-      isStarred: !!ch.isStarred,
-    }))
-  }, [])
+  const buildPersonaContactEntries = useCallback(
+    (chars: Character[]): WeChatPersonaContact[] => chars.map((ch) => contactEntryFromCharacter(ch)),
+    [],
+  )
 
   const runDirectWechatContacts = useCallback(
     async (rootId: string) => {
@@ -980,186 +1085,116 @@ export function NewFriendsPersonaApp({
       )
     }
     return (
-      <div className="relative flex h-full min-h-0 flex-col overflow-hidden" style={{ background: bg }}>
-        <TopBar title="角色人设" onBack={onBack} />
+      <div className="relative flex h-full min-h-0 flex-col overflow-hidden">
+        <WeChatThemePageBackdrop />
+        <div
+          className="relative z-[1] flex min-h-0 flex-1 flex-col"
+          {...PERSONA_RELATIONS_COACH_ROOT}
+        >
+        <TopBar
+          title="世界线人物名册"
+          onBack={onBack}
+          right={rosterTab === 'relations' ? relationsTopRight : undefined}
+        />
 
-        <div className="min-h-0 flex-1 overflow-y-auto overflow-x-hidden touch-pan-y overscroll-x-none px-4 pb-4 pt-4 [scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden">
-          <>
-          <Card>
-            <div className="border-b px-4 py-4" style={{ borderColor: border }}>
-              <p className="text-[14px] font-medium" style={{ color: text }}>
-                已创建角色
-              </p>
-              <p className="mt-1 text-[12px]" style={{ color: sub, fontWeight: 300 }}>
-                数据存储在 IndexedDB，刷新不会丢失。
-              </p>
-            </div>
-            {list.length ? (
-              <div className="divide-y" style={{ borderColor: border }}>
-                {list.map((c) => (
-                  <div key={c.id} className="flex items-center gap-3 px-4 py-4">
-                    <button
-                      type="button"
-                      onClick={() => setPage({ name: 'edit', id: c.id, isNew: false })}
-                      className="flex min-w-0 flex-1 items-center gap-3 text-left transition-all duration-200 ease-out hover:bg-[#fafafa] rounded-xl px-2 py-2 -mx-2"
-                    >
-                      {resolveCharacterAvatarUrl({ avatarUrl: c.avatarUrl }) ? (
-                        <img
-                          src={resolveCharacterAvatarUrl({ avatarUrl: c.avatarUrl })}
-                          alt=""
-                          className="h-12 w-12 rounded-full border object-cover"
-                          style={{ borderColor: border }}
-                        />
-                      ) : (
-                        <div
-                          className="h-12 w-12 shrink-0 rounded-full border border-dashed bg-[#fafafa]"
-                          style={{ borderColor: border }}
-                          aria-hidden
-                        />
-                      )}
-                      <div className="min-w-0 flex-1">
-                        <p className="truncate text-[15px] font-medium" style={{ color: text }}>
-                          {c.name || '未命名'}
-                        </p>
-                        <p className="mt-1 truncate text-[12px]" style={{ color: sub, fontWeight: 300 }}>
-                          {c.identity} · {genderLabelZh(c.gender)} · {c.zodiac || '未设置生日'}
-                        </p>
-                        <p className="mt-1 truncate text-[12px]" style={{ color: sub, fontWeight: 300 }}>
-                          {(() => {
-                            const bindId = c.playerIdentityId?.trim()
-                            const primaryLabel = !bindId
-                              ? '未绑定'
-                              : identityNameById[bindId] || '未命名身份'
-                            const accountFor = (pid: string) =>
-                              resolvePlayerIdentityWechatAccountId(
-                                c,
-                                pid,
-                                identityList.find((i) => i.id === pid),
-                              )
-                            const linked = bindId
-                              ? getCharacterCrossAccountLinkedPlayerIdentityIds(c, accountFor)
-                              : []
-                            const primaryAcc = bindId ? accountFor(bindId) : ''
-                            const primaryAccLabel = primaryAcc
-                              ? formatWechatAccountLabel(accountsBundle, primaryAcc)
-                              : ''
-                            const linkedSuffix = linked.length
-                              ? ` · 副绑定：${linked
-                                  .map((id) => {
-                                    const name = identityNameById[id.trim()] || '未命名'
-                                    const la = accountFor(id.trim())
-                                    const accLabel = la
-                                      ? formatWechatAccountLabel(accountsBundle, la)
-                                      : ''
-                                    return accLabel ? `${name}·${accLabel}` : name
-                                  })
-                                  .slice(0, 2)
-                                  .join('、')}${linked.length > 2 ? '…' : ''}`
-                              : ''
-                            const primaryWithAcc = primaryAccLabel
-                              ? `${primaryLabel}·${primaryAccLabel}`
-                              : primaryLabel
-                            return `档案主绑定：${primaryWithAcc}${linkedSuffix}`
-                          })()}
-                        </p>
-                      </div>
-                    </button>
-                    <div className="flex shrink-0 items-center gap-1">
-                      <button
-                        type="button"
-                        onClick={() => setContactGenRootId(c.id)}
-                        className="rounded-xl border bg-white p-2 transition-all duration-200 ease-out hover:bg-[#fafafa]"
-                        style={{ borderColor: border, color: text }}
-                        aria-label="生成联系人"
-                        title="生成联系人"
-                      >
-                        <UserPlus className="size-4" />
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => {
-                          void (async () => {
-                            const acc = currentAccountId?.trim()
-                            if (!acc) {
-                              setDeleteTargetDetachHint(null)
-                              setDeleteId(c.id)
-                              return
-                            }
-                            const canonical = (await resolveCanonicalCharacterId(c.id)) || c.id
-                            const ch = await personaDb.getCharacter(canonical)
-                            const bundle = normalizeAccountsBundle(
-                              await personaDb.getPhoneKv(WECHAT_ACCOUNTS_BUNDLE_KV_KEY),
-                            )
-                            const preserved = bundle
-                              ? await expandCanonicalIdSet(
-                                  collectCanonicalIdsPreservedAcrossAccounts(bundle, acc),
-                                )
-                              : new Set<string>()
-                            const ownedHere = ch ? characterBelongsToWechatAccount(ch, acc) : false
-                            const usedElsewhere = preserved.has(canonical)
-                            setDeleteTargetDetachHint(
-                              usedElsewhere || !ownedHere
-                                ? '该角色可能在其它微信账号中仍在使用。确认后仅从当前账号移除联系人、本号聊天记录与本号可见的人设；其它马甲上的同一角色档案与共享长期记忆将保留。'
-                                : null,
-                            )
-                            setDeleteId(c.id)
-                          })()
-                        }}
-                        className="rounded-xl border bg-white p-2 transition-all duration-200 ease-out hover:bg-[#fafafa]"
-                        style={{ borderColor: border, color: sub }}
-                        aria-label="删除角色"
-                      >
-                        <Trash2 className="size-4" />
-                      </button>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            ) : (
-              <div className="px-4 py-8 text-center">
-                <p className="text-[14px] font-medium" style={{ color: text }}>
-                  还没有角色
-                </p>
-                <p className="mt-2 text-[12px]" style={{ color: sub, fontWeight: 300 }}>
-                  点击下方按钮创建第一个角色人设。
-                </p>
-              </div>
-            )}
-          </Card>
+        <div className="min-h-0 flex-1 overflow-y-auto overflow-x-hidden touch-pan-y overscroll-x-none pb-4 [scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden">
+          <PersonaTabs active={rosterTab} onChange={setRosterTab} />
 
-          <div className="mt-4">
-            <Card>
-              <div className="px-4 py-4">
-                <p className="text-[14px] font-medium" style={{ color: text }}>
-                  跨角色关系与身份绑定
-                </p>
-                <p className="mt-1 text-[12px] leading-relaxed" style={{ color: sub, fontWeight: 300 }}>
-                  在已创建的角色（不含 NPC）之间添加有向关系；将「我的身份」与任意根角色手动绑定或解除。
-                </p>
-                <button
-                  type="button"
-                  className="mt-3 w-full rounded-xl border bg-white py-3 text-[13px] font-semibold transition-all duration-200 ease-out hover:bg-[#fafafa]"
-                  style={{ borderColor: border, color: text }}
-                  onClick={() => setBindingsOpen(true)}
-                >
-                  管理关系与绑定
-                </button>
-              </div>
-            </Card>
-          </div>
+          <AnimatePresence mode="wait">
+            <motion.div
+              key={rosterTab}
+              className="px-4 pt-4"
+              initial={{ opacity: 0, y: 10 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: 6 }}
+              transition={{ duration: 0.3, ease: [0.22, 1, 0.36, 1] }}
+            >
+              {rosterTab === 'main' ? (
+                <PersonaList
+                  variant="main"
+                  characters={mainCharacters}
+                  loading={loading}
+                  identityList={identityList}
+                  identityNameById={identityNameById}
+                  mainNameById={mainNameById}
+                  mainById={mainById}
+                  accountsBundle={accountsBundle}
+                  onOpen={(id) => setPage({ name: 'edit', id, isNew: false })}
+                  onDelete={(id) => {
+                    void (async () => {
+                      const acc = currentAccountId?.trim()
+                      if (!acc) {
+                        setDeleteTargetDetachHint(null)
+                        setDeleteId(id)
+                        return
+                      }
+                      const canonical = (await resolveCanonicalCharacterId(id)) || id
+                      const ch = await personaDb.getCharacter(canonical)
+                      const bundle = normalizeAccountsBundle(
+                        await personaDb.getPhoneKv(WECHAT_ACCOUNTS_BUNDLE_KV_KEY),
+                      )
+                      const preserved = bundle
+                        ? await expandCanonicalIdSet(
+                            collectCanonicalIdsPreservedAcrossAccounts(bundle, acc),
+                          )
+                        : new Set<string>()
+                      const ownedHere = ch ? characterBelongsToWechatAccount(ch, acc) : false
+                      const usedElsewhere = preserved.has(canonical)
+                      setDeleteTargetDetachHint(
+                        usedElsewhere || !ownedHere
+                          ? '该角色可能在其它微信账号中仍在使用。确认后仅从当前账号移除联系人、本号聊天记录与本号可见的人设；其它马甲上的同一角色档案与共享长期记忆将保留。'
+                          : null,
+                      )
+                      setDeleteId(id)
+                    })()
+                  }}
+                  onGenerateContacts={setContactGenRootId}
+                  emptyTitle="尚无主要角色"
+                  emptyHint="点击下方按钮创建第一位主角档案，世界线由此展开。"
+                />
+              ) : null}
 
-          {loading ? (
-            <p className="mt-4 text-center text-[12px]" style={{ color: sub }}>
-              加载中...
-            </p>
-          ) : null}
-          </>
+              {rosterTab === 'npc' ? (
+                <PersonaList
+                  variant="npc"
+                  characters={npcCharacters}
+                  loading={loading}
+                  identityList={identityList}
+                  identityNameById={identityNameById}
+                  mainNameById={mainNameById}
+                  mainById={mainById}
+                  accountsBundle={accountsBundle}
+                  onOpen={(id) => setPage({ name: 'edit', id, isNew: false, backTo: 'list' })}
+                  onDelete={(id) => {
+                    void (async () => {
+                      setDeleteTargetDetachHint(null)
+                      setDeleteId(id)
+                    })()
+                  }}
+                  emptyTitle="尚无 NPC 档案"
+                  emptyHint="在主要角色的「人脉关系」中生成 NPC 后，将自动归入本册。"
+                />
+              ) : null}
+
+              {rosterTab === 'relations' ? (
+                <CrossBindingsPanel
+                  mainCharacters={mainCharacters}
+                  npcCharacters={npcCharacters}
+                  identityList={identityList}
+                  identityNameById={identityNameById}
+                  loading={loading}
+                  onTopBarRight={setRelationsTopRight}
+                  onEnsureRelationsTab={ensureRelationsTab}
+                />
+              ) : null}
+            </motion.div>
+          </AnimatePresence>
         </div>
 
-        <div className="shrink-0 px-4 pt-2" style={{ paddingBottom: 'calc(20px + env(safe-area-inset-bottom,0px))' }}>
+        <div className="shrink-0 space-y-2 px-4 pt-2" style={{ paddingBottom: 'calc(20px + env(safe-area-inset-bottom,0px))' }}>
           <button
             type="button"
-            className="flex w-full items-center justify-center gap-2 rounded-xl bg-[#111827] px-4 py-3 text-[15px] font-semibold text-white transition-all duration-200 ease-out hover:bg-[#0b1220]"
+            className="flex w-full items-center justify-center gap-2 rounded-full bg-[#111827] px-4 py-3.5 text-[15px] font-semibold text-white shadow-[0_8px_24px_rgba(0,0,0,0.12)] transition-all duration-200 ease-out hover:bg-[#0b1220]"
             onClick={async () => {
               const c = newCharacter()
               setPendingNewDraft(c)
@@ -1169,6 +1204,14 @@ export function NewFriendsPersonaApp({
           >
             <Plus className="size-5" />
             新建角色人设
+          </button>
+          <button
+            type="button"
+            className="flex w-full items-center justify-center gap-2 rounded-full border border-[#111827]/15 bg-white px-4 py-3.5 text-[15px] font-semibold text-[#111827] shadow-[0_4px_16px_rgba(0,0,0,0.04)] transition-all duration-200 ease-out hover:bg-[#FAFAFA]"
+            onClick={() => setMainPickOpen(true)}
+          >
+            <Plus className="size-5" />
+            新建次要/NPC
           </button>
         </div>
 
@@ -1201,7 +1244,6 @@ export function NewFriendsPersonaApp({
                 characterId: id,
                 wechatAccountId: acc,
               })
-              setList((prev) => prev.filter((c) => c.id !== id))
               await refresh()
               if (mode === 'detached-from-account') {
                 window.alert(
@@ -1259,13 +1301,6 @@ export function NewFriendsPersonaApp({
           }}
         />
 
-        {bindingsOpen ? (
-          <PersonaBindingsManager
-            onClose={() => setBindingsOpen(false)}
-            onSaved={() => void refresh()}
-          />
-        ) : null}
-
         <IdentityPickModal
           open={identityPickOpen}
           loading={identityLoading}
@@ -1289,6 +1324,26 @@ export function NewFriendsPersonaApp({
             setPage({ name: 'edit', id: draft.id, isNew: true, draft })
           }}
         />
+
+        <MainCharacterPickModal
+          open={mainPickOpen}
+          mainCharacters={mainCharacters}
+          identityList={identityList}
+          identityNameById={identityNameById}
+          onClose={() => setMainPickOpen(false)}
+          onPick={async (main) => {
+            if (!main.playerIdentityId?.trim()) {
+              window.alert('该主角尚未绑定用户身份，请先在主角人设中绑定身份后再创建 NPC。')
+              return
+            }
+            const base = newBlankNpcForMain(main)
+            const draft = currentAccountId ? stampWechatAccountOwner(base, currentAccountId) : base
+            await setActivePlayerIdentityForCurrentAccount(main.playerIdentityId.trim())
+            setMainPickOpen(false)
+            setPage({ name: 'edit', id: draft.id, isNew: true, draft, backTo: 'list' })
+          }}
+        />
+        </div>
       </div>
     )
   }
@@ -1299,11 +1354,15 @@ export function NewFriendsPersonaApp({
       id={page.id}
       isNew={page.isNew}
       draft={page.draft}
+      backTo={page.backTo ?? 'parent'}
       onBack={() => setPage({ name: 'list' })}
       onSaved={() => void refresh()}
       onNavigateToCharacter={(cid, draftNpc) => {
-        if (draftNpc) setPage({ name: 'edit', id: draftNpc.id, isNew: true, draft: draftNpc })
-        else setPage({ name: 'edit', id: cid, isNew: false })
+        if (draftNpc) {
+          setPage({ name: 'edit', id: draftNpc.id, isNew: true, draft: draftNpc, backTo: 'parent' })
+        } else {
+          setPage({ name: 'edit', id: cid, isNew: false, backTo: 'parent' })
+        }
       }}
       onBundleImported={async ({ rootId, replacePage }) => {
         await refresh()
@@ -1317,6 +1376,7 @@ function PersonaEditPage({
   id,
   isNew,
   draft,
+  backTo,
   onBack,
   onSaved,
   onNavigateToCharacter,
@@ -1325,6 +1385,8 @@ function PersonaEditPage({
   id: string
   isNew: boolean
   draft?: Character
+  /** NPC 返回：名册 list / 主角人脉 parent */
+  backTo: 'list' | 'parent'
   onBack: () => void
   onSaved: () => void
   onNavigateToCharacter: (characterId: string, draftNpc?: Character) => void
@@ -1370,11 +1432,16 @@ function PersonaEditPage({
   const [protagonistCallsUser, setProtagonistCallsUser] = useState('')
   const protagonistCallsTouchedRef = useRef(false)
   const { currentAccountId } = useWechatStore()
-  const { state: phoneState } = useCustomization()
+  const { state: phoneState, replaceWeChatPersonaContacts } = useCustomization()
   const linkedCharacterIdSet = useMemo(
     () => new Set(phoneState.wechatPersonaContacts.map((c) => c.characterId.trim()).filter(Boolean)),
     [phoneState.wechatPersonaContacts],
   )
+  const [contactSyncPrompt, setContactSyncPrompt] = useState<{
+    character: Character
+    pendingBack: boolean
+    copy: PersonaContactSyncPromptCopy
+  } | null>(null)
 
   useEffect(() => {
     void (async () => {
@@ -1523,14 +1590,42 @@ function PersonaEditPage({
     }
   }, [])
 
-  /** NPC 返回所属主角编辑页，主角返回人设列表（通讯录上一页） */
+  /** 名册直入的 NPC 返回列表；人脉内打开的 NPC 返回所属主角；主角返回名册 */
   const performBack = useCallback(async () => {
     let ch = data
     if (!ch) ch = await personaDb.getCharacter(id)
-    const parentId = ch?.generatedForCharacterId
-    if (parentId) onNavigateToCharacter(parentId)
-    else onBack()
-  }, [data, id, onBack, onNavigateToCharacter])
+    const parentId = ch?.generatedForCharacterId?.trim()
+    if (parentId && backTo === 'parent') {
+      onNavigateToCharacter(parentId)
+      return
+    }
+    onBack()
+  }, [backTo, data, id, onBack, onNavigateToCharacter])
+
+  const promptContactSyncAfterPersist = useCallback(
+    (ch: Character, pendingBack: boolean) => {
+      const inContacts = isCharacterInPersonaContacts(phoneState.wechatPersonaContacts, ch.id)
+      setContactSyncPrompt({
+        character: ch,
+        pendingBack,
+        copy: personaContactSyncPromptCopy(inContacts, !!ch.generatedForCharacterId?.trim()),
+      })
+    },
+    [phoneState.wechatPersonaContacts],
+  )
+
+  const dismissContactSyncPrompt = useCallback(
+    (didSync: boolean) => {
+      if (!contactSyncPrompt) return
+      const { character, pendingBack } = contactSyncPrompt
+      if (didSync) {
+        replaceWeChatPersonaContacts([character.id], [contactEntryFromCharacter(character)])
+      }
+      setContactSyncPrompt(null)
+      if (pendingBack) void performBack()
+    },
+    [contactSyncPrompt, performBack, replaceWeChatPersonaContacts],
+  )
 
   const setField = <K extends keyof Character>(k: K, v: Character[K]) => {
     setDirty(true)
@@ -1656,7 +1751,7 @@ function PersonaEditPage({
     setSaving(false)
     setDirty(false)
     onSaved()
-    void performBack()
+    promptContactSyncAfterPersist(next, true)
   }
 
   const persistSchedule = async (next: ScheduleTable) => {
@@ -1669,6 +1764,7 @@ function PersonaEditPage({
     setDirty(true)
     setData(merged)
     await personaDb.upsertCharacter(merged)
+    promptContactSyncAfterPersist(merged, false)
   }
 
   const onPickAvatarFile = (file: File | null) => {
@@ -2062,6 +2158,16 @@ function PersonaEditPage({
             }
           })()
         }}
+      />
+
+      <CenterDialog
+        open={!!contactSyncPrompt}
+        title={contactSyncPrompt?.copy.title ?? ''}
+        message={contactSyncPrompt?.copy.message ?? ''}
+        confirmText={contactSyncPrompt?.copy.confirmText ?? '确定'}
+        cancelText="暂不"
+        onCancel={() => dismissContactSyncPrompt(false)}
+        onConfirm={() => dismissContactSyncPrompt(true)}
       />
 
       <CenterDialog
