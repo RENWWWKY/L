@@ -1,4 +1,4 @@
-/** 听一听 · 主页 / 搜索 / 笔记 / 全屏播放 共用页面背景 */
+/** 听一听 · 除「我的」外各页共用壁纸背景 */
 export const LISTEN_TOGETHER_PAGE_BG_URL = '/images/listen-together-page-bg.png'
 
 /** 全屏播放器 · 黑胶右下角装饰动图 */

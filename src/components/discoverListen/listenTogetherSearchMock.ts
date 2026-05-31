@@ -14,12 +14,26 @@ export type VibeCategory = {
   gradient: string
 }
 
+export type FrequencyTicket = {
+  id: string
+  emoji: string
+  label: string
+  searchQuery: string
+}
+
 export const SEARCH_EXPLORE_MOCK = {
   searchSuggestions: [
     { text: '深夜循环歌单', isHot: true, type: 'character_vibe' as const },
     { text: '落日飞车', isHot: false, type: 'normal' as const },
     { text: '微醺暗恋期', isHot: true, type: 'normal' as const },
   ],
+  frequencyTickets: [
+    { id: 't1', emoji: '🌧️', label: '适合雨天', searchQuery: '雨天 氛围' },
+    { id: 't2', emoji: '☕', label: '咖啡馆白噪', searchQuery: '咖啡馆 轻音乐' },
+    { id: 't3', emoji: '🌃', label: '深夜心碎', searchQuery: '深夜 emo' },
+    { id: 't4', emoji: '🌅', label: '晨曦通勤', searchQuery: '早晨 治愈' },
+    { id: 't5', emoji: '💫', label: '微醺暗恋', searchQuery: 'R&B 浪漫' },
+  ] satisfies FrequencyTicket[],
   categories: [
     {
       id: 'c1',
@@ -49,8 +63,23 @@ export const SEARCH_EXPLORE_MOCK = {
       cover: 'https://images.unsplash.com/photo-1507838153414-b4b713384a76?w=400&q=80',
       gradient: 'from-stone-800/40 to-stone-900/60',
     },
+    {
+      id: 'c5',
+      title: 'R&B / 灵魂乐',
+      subtitle: 'Midnight Emo',
+      cover: 'https://images.unsplash.com/photo-1493225457124-a1a2a5f5294b?w=400&q=80',
+      gradient: 'from-rose-950/50 to-stone-900/70',
+    },
+    {
+      id: 'c6',
+      title: '独立 民谣',
+      subtitle: 'Indie Folk',
+      cover: 'https://images.unsplash.com/photo-1511379938547-c1f69419868d?w=400&q=80',
+      gradient: 'from-amber-950/40 to-stone-900/65',
+    },
   ],
 } satisfies {
   searchSuggestions: SearchSuggestion[]
+  frequencyTickets: FrequencyTicket[]
   categories: VibeCategory[]
 }

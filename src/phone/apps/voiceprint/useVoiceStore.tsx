@@ -1,15 +1,22 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from 'react'
 import type { MiniMaxApiRegion, MiniMaxVoiceInfo } from './services/minimaxApi'
+import {
+  CHARACTER_VOICE_MAP_LS_KEY,
+  pruneCharacterVoiceMappings as pruneCharacterVoiceMappingsInStorage,
+  pruneCharacterVoiceMappingsToAllowed as pruneCharacterVoiceMappingsToAllowedInStorage,
+  readCharacterVoiceMapFromStorage,
+  type CharacterVoiceMap,
+} from './characterVoiceMapStorage'
 
 const LS_KEY = {
   apiKey: 'minimax:apiKey',
   groupId: 'minimax:groupId',
   speechModel: 'minimax:speechModel',
   apiRegion: 'minimax:apiRegion',
-  characterVoiceMap: 'minimax:characterVoiceMap',
+  characterVoiceMap: CHARACTER_VOICE_MAP_LS_KEY,
 } as const
 
-export type CharacterVoiceMap = Record<string, string>
+export type { CharacterVoiceMap }
 
 type VoiceStore = {
   apiKey: string
@@ -27,25 +34,11 @@ type VoiceStore = {
   characterVoiceMap: CharacterVoiceMap
   setCharacterVoice: (characterId: string, voiceId: string) => void
   clearCharacterVoice: (characterId: string) => void
+  pruneCharacterVoiceMappings: (characterIds: readonly string[]) => void
+  pruneCharacterVoiceMappingsToAllowed: (allowedCharacterIds: ReadonlySet<string>) => void
 }
 
 const Ctx = createContext<VoiceStore | null>(null)
-
-function safeParseMap(raw: string): CharacterVoiceMap {
-  try {
-    const parsed = JSON.parse(raw) as unknown
-    if (!parsed || typeof parsed !== 'object') return {}
-    const out: CharacterVoiceMap = {}
-    for (const [k, v] of Object.entries(parsed as Record<string, unknown>)) {
-      const id = String(k || '').trim()
-      const voice = typeof v === 'string' ? v.trim() : ''
-      if (id && voice) out[id] = voice
-    }
-    return out
-  } catch {
-    return {}
-  }
-}
 
 export function VoiceStoreProvider({ children }: { children: ReactNode }) {
   const [apiKey, setApiKeyState] = useState(() => localStorage.getItem(LS_KEY.apiKey) ?? '')
@@ -56,7 +49,7 @@ export function VoiceStoreProvider({ children }: { children: ReactNode }) {
   )
   const [voices, setVoices] = useState<MiniMaxVoiceInfo[]>([])
   const [characterVoiceMap, setCharacterVoiceMap] = useState<CharacterVoiceMap>(() =>
-    safeParseMap(localStorage.getItem(LS_KEY.characterVoiceMap) ?? ''),
+    readCharacterVoiceMapFromStorage(),
   )
 
   const setApiKey = useCallback((v: string) => setApiKeyState(v), [])
@@ -117,6 +110,14 @@ export function VoiceStoreProvider({ children }: { children: ReactNode }) {
     })
   }, [])
 
+  const pruneCharacterVoiceMappings = useCallback((characterIds: readonly string[]) => {
+    setCharacterVoiceMap(pruneCharacterVoiceMappingsInStorage(characterIds))
+  }, [])
+
+  const pruneCharacterVoiceMappingsToAllowed = useCallback((allowedCharacterIds: ReadonlySet<string>) => {
+    setCharacterVoiceMap(pruneCharacterVoiceMappingsToAllowedInStorage(allowedCharacterIds))
+  }, [])
+
   const value = useMemo<VoiceStore>(
     () => ({
       apiKey,
@@ -132,6 +133,8 @@ export function VoiceStoreProvider({ children }: { children: ReactNode }) {
       characterVoiceMap,
       setCharacterVoice,
       clearCharacterVoice,
+      pruneCharacterVoiceMappings,
+      pruneCharacterVoiceMappingsToAllowed,
     }),
     [
       apiKey,
@@ -146,6 +149,8 @@ export function VoiceStoreProvider({ children }: { children: ReactNode }) {
       characterVoiceMap,
       setCharacterVoice,
       clearCharacterVoice,
+      pruneCharacterVoiceMappings,
+      pruneCharacterVoiceMappingsToAllowed,
     ],
   )
 

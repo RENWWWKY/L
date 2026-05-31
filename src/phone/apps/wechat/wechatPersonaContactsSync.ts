@@ -11,6 +11,8 @@ import {
   excludeUserAccountFromPersonaContacts,
 } from './wechatPersonaContactsSelfFilter'
 
+export { excludeUserAccountFromPersonaContacts } from './wechatPersonaContactsSelfFilter'
+
 export const PHONE_CUSTOMIZATION_KV_KEY = 'lumi-phone-custom-v4'
 
 function normalizeWeChatPersonaContacts(v: unknown): WeChatPersonaContact[] {
@@ -81,6 +83,18 @@ export function personaContactsEqual(
   b: readonly WeChatPersonaContact[],
 ): boolean {
   return personaContactsFingerprint(a) === personaContactsFingerprint(b)
+}
+
+/** 内存通讯录是 bundle 通讯录的真子集 → 用户主动删除过联系人，修复时勿从 bundle 回填。 */
+export function memoryContactsReflectUserRemovalFrom(
+  memory: readonly WeChatPersonaContact[],
+  bundleContacts: readonly WeChatPersonaContact[],
+): boolean {
+  const bundleIds = new Set(bundleContacts.map((c) => c.characterId.trim()).filter(Boolean))
+  const memoryIds = memory.map((c) => c.characterId.trim()).filter(Boolean)
+  if (memoryIds.length > bundleIds.size) return false
+  if (!memoryIds.every((id) => bundleIds.has(id))) return false
+  return memoryIds.length < bundleIds.size
 }
 
 /** 从手机外观 KV 读取通讯录（避免与 Customization 水合竞态）。 */
@@ -342,15 +356,22 @@ export async function repairWeChatSessionPersistence(params: {
   const core = await countWeChatPersonaCoreStoreRecords()
   const idbHasCore = core.characters > 0 || core.chatMessages > 0
   const bundleHasContacts = active.personaContacts.length > 0
+  const primaryId = bundle.accounts[0]?.accountId
+  const userRemovedSubset = memoryContactsReflectUserRemovalFrom(memory, active.personaContacts)
+
+  if (userRemovedSubset) {
+    const filtered = await filterPersonaContactsForWechatAccount(memory, active, primaryId)
+    const scoped = await excludeUserAccountFromPersonaContacts(filtered, active)
+    const nextBundle = bundleWithAccountPersonaContacts(bundle, active.accountId, scoped)
+    if (personaContactsEqual(memory, scoped) && personaContactsEqual(active.personaContacts, scoped)) {
+      return { bundle, contacts: scoped, repaired: false }
+    }
+    return { bundle: nextBundle, contacts: scoped, repaired: true }
+  }
 
   if (!idbHasCore) {
     if (!memory.length && bundleHasContacts) {
-      const filtered = await excludeUserAccountFromPersonaContacts(active.personaContacts, active)
-      return {
-        bundle,
-        contacts: filtered.map((c) => ({ ...c })),
-        repaired: true,
-      }
+      return { bundle, contacts: memory, repaired: false }
     }
     return { bundle, contacts: memory, repaired: false }
   }

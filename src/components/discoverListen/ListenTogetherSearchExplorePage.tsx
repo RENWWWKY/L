@@ -99,6 +99,7 @@ function SearchResultRow({
 export type ListenTogetherSearchExplorePageProps = {
   className?: string
   neteaseCookie?: string
+  sessionActive?: boolean
   onRequireLogin?: () => void
   onPlaySong?: (song: NeteaseSongItem) => void
   onCategorySelect?: (category: VibeCategory) => void
@@ -107,6 +108,7 @@ export type ListenTogetherSearchExplorePageProps = {
 export function ListenTogetherSearchExplorePage({
   className = '',
   neteaseCookie = '',
+  sessionActive = false,
   onRequireLogin,
   onPlaySong,
   onCategorySelect,
@@ -121,7 +123,7 @@ export function ListenTogetherSearchExplorePage({
     async (text: string) => {
       const q = text.trim()
       if (!q) return
-      if (!neteaseCookie) {
+      if (!sessionActive) {
         onRequireLogin?.()
         return
       }
@@ -139,7 +141,7 @@ export function ListenTogetherSearchExplorePage({
         setLoading(false)
       }
     },
-    [neteaseCookie, onRequireLogin],
+    [neteaseCookie, sessionActive, onRequireLogin],
   )
 
   const submitSearch = useCallback(() => {

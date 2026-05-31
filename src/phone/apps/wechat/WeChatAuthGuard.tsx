@@ -1,10 +1,14 @@
 import { AnimatePresence, motion } from 'framer-motion'
-import { useEffect, useRef, useState, type ReactNode } from 'react'
+import { useCallback, useState, type ReactNode } from 'react'
 import { WeChatRegistration } from './WeChatRegistration'
 import { WeChatWelcomeSplash } from './WeChatWelcomeSplash'
 import { WeChatWelcomeRevealProvider } from './weChatWelcomeRevealContext'
 import { useWechatStore } from './useWechatStore'
 import { isWechatProfileComplete } from './wechatProfileTypes'
+import {
+  clearWeChatWelcomeSplashPending,
+  isWeChatWelcomeSplashPending,
+} from './wechatWelcomeSplashGate'
 
 type Props = {
   children: ReactNode
@@ -14,25 +18,18 @@ type Props = {
 export function WeChatAuthGuard({ children, onBack }: Props) {
   const { profile, hydrated } = useWechatStore()
   const hasProfile = isWechatProfileComplete(profile)
-  const [welcomeDone, setWelcomeDone] = useState(false)
-  const hadProfileOnHydrateRef = useRef<boolean | null>(null)
+  const [welcomeFinished, setWelcomeFinished] = useState(false)
 
-  /** 仅老用户（启动时已有档案）跳过注册与欢迎动效 */
-  useEffect(() => {
-    if (!hydrated || hadProfileOnHydrateRef.current !== null) return
-    hadProfileOnHydrateRef.current = hasProfile
-    if (hasProfile) setWelcomeDone(true)
-  }, [hydrated, hasProfile])
+  /** 仅「刚完成注册」且 session 打了 pending 标记时才播欢迎动效；老用户重进不再误播 */
+  const showWelcomeSplash =
+    hydrated && hasProfile && isWeChatWelcomeSplashPending() && !welcomeFinished
 
-  /** 深度注销后需重新走注册与欢迎动效 */
-  useEffect(() => {
-    if (!hydrated || hasProfile) return
-    setWelcomeDone(false)
-    hadProfileOnHydrateRef.current = false
-  }, [hydrated, hasProfile])
+  const handleWelcomeComplete = useCallback(() => {
+    clearWeChatWelcomeSplashPending()
+    setWelcomeFinished(true)
+  }, [])
 
   const showRegistration = hydrated && !hasProfile
-  const showWelcomeSplash = hydrated && hasProfile && !welcomeDone
   const showApp = hydrated && hasProfile
 
   return (
@@ -60,7 +57,7 @@ export function WeChatAuthGuard({ children, onBack }: Props) {
 
             <AnimatePresence>
               {showWelcomeSplash ? (
-                <WeChatWelcomeSplash key="wechat-welcome-splash" onComplete={() => setWelcomeDone(true)} />
+                <WeChatWelcomeSplash key="wechat-welcome-splash" onComplete={handleWelcomeComplete} />
               ) : null}
             </AnimatePresence>
 

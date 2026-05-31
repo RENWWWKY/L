@@ -32,6 +32,7 @@ import type {
   WeChatTransferPayload,
   WeChatCallStatusPayload,
   WeChatVoicePayload,
+  WeChatMusicSyncPayload,
   WeChatTimeConfig,
   WeChatGlobalSettingsRow,
   WeChatMessageSearchIndexRow,
@@ -39,6 +40,7 @@ import type {
   WorldBookUserPlaceholderBinding,
 } from './types'
 import type { CrossBindingGraphLayoutRecord } from './personaRoster/crossBindings/crossBindingTypes'
+import { parseStoredRoundTriggerPercent, clampRoundTriggerPercent } from '../wechatMediaSendFrequency'
 import { buildCharacterFullTrashArchive, type PersonaDbTrashSource } from '../../recycleBin/archiveCharacterDeletion'
 import { INDEXED_TRASH_RETENTION_MS, emitIndexedTrashChanged } from '../../recycleBin/recycleBinEvents'
 import type { IndexedTrashEntry } from '../../recycleBin/indexedTrashTypes'
@@ -1000,6 +1002,47 @@ function normalizeWeChatChatMessage(input: unknown): WeChatChatMessage | null {
       transcriptText: transcriptText || undefined,
     }
   })()
+  const rawMusicSync = (m as { musicSync?: unknown }).musicSync
+  const musicSync: WeChatMusicSyncPayload | undefined = (() => {
+    if (!rawMusicSync || typeof rawMusicSync !== 'object') return undefined
+    const r = rawMusicSync as Record<string, unknown>
+    const kind = typeof r.kind === 'string' ? r.kind.trim() : ''
+    const inviteId = typeof r.inviteId === 'string' ? r.inviteId.trim() : ''
+    if (!inviteId) return undefined
+    if (kind === 'music_invite') {
+      const trackIdRaw = typeof r.trackId === 'number' ? r.trackId : Number(r.trackId)
+      const trackTitle = typeof r.trackTitle === 'string' ? r.trackTitle.trim().slice(0, 120) : ''
+      const trackArtist = typeof r.trackArtist === 'string' ? r.trackArtist.trim().slice(0, 120) : ''
+      const coverUrl = typeof r.coverUrl === 'string' ? r.coverUrl.trim().slice(0, 2000) : ''
+      if (!Number.isFinite(trackIdRaw) || !trackTitle) return undefined
+      return {
+        kind: 'music_invite',
+        inviteId,
+        trackId: Math.floor(trackIdRaw),
+        trackTitle,
+        trackArtist,
+        coverUrl,
+      }
+    }
+    const replyText = typeof r.replyText === 'string' ? r.replyText.trim().slice(0, 500) : ''
+    if (kind === 'music_accept') {
+      const coverUrl = typeof r.coverUrl === 'string' ? r.coverUrl.trim().slice(0, 2000) : ''
+      const trackTitle = typeof r.trackTitle === 'string' ? r.trackTitle.trim().slice(0, 120) : ''
+      const trackArtist = typeof r.trackArtist === 'string' ? r.trackArtist.trim().slice(0, 120) : ''
+      return {
+        kind: 'music_accept',
+        inviteId,
+        replyText: replyText || '频率已接轨。',
+        ...(coverUrl ? { coverUrl } : {}),
+        ...(trackTitle ? { trackTitle } : {}),
+        ...(trackArtist ? { trackArtist } : {}),
+      }
+    }
+    if (kind === 'music_decline') {
+      return { kind: 'music_decline', inviteId, replyText: replyText || '现在没空，自己听吧。' }
+    }
+    return undefined
+  })()
   const originalContent =
     typeof (m as { originalContent?: unknown }).originalContent === 'string'
       ? String((m as { originalContent?: unknown }).originalContent).slice(0, 8000)
@@ -1048,6 +1091,7 @@ function normalizeWeChatChatMessage(input: unknown): WeChatChatMessage | null {
     transfer,
     callStatus,
     voice,
+    musicSync,
     images: images.length ? images : undefined,
     isFavorite,
     replyTo,
@@ -1112,6 +1156,20 @@ function normalizeChatConversationSettingsRow(input: unknown): ChatConversationS
         ? !!(r as { showGroupRankBadgesInChat?: boolean }).showGroupRankBadgesInChat
         : false,
     chatBackground: typeof r.chatBackground === 'string' ? r.chatBackground : '',
+    ...((): Partial<ChatConversationSettingsRow> => {
+      const stickerRaw =
+        (r as { stickerRoundTriggerPercent?: unknown }).stickerRoundTriggerPercent ??
+        (r as { stickerSendFrequency?: unknown }).stickerSendFrequency
+      const voiceRaw =
+        (r as { voiceRoundTriggerPercent?: unknown }).voiceRoundTriggerPercent ??
+        (r as { voiceSendFrequency?: unknown }).voiceSendFrequency
+      const sticker = parseStoredRoundTriggerPercent(stickerRaw)
+      const voice = parseStoredRoundTriggerPercent(voiceRaw)
+      return {
+        ...(sticker !== undefined ? { stickerRoundTriggerPercent: sticker } : {}),
+        ...(voice !== undefined ? { voiceRoundTriggerPercent: voice } : {}),
+      }
+    })(),
     lastMessageTime:
       typeof r.lastMessageTime === 'number' && Number.isFinite(r.lastMessageTime) ? r.lastMessageTime : 0,
     updatedAt: typeof r.updatedAt === 'number' ? r.updatedAt : now,
@@ -3476,10 +3534,15 @@ export class PersonaDb {
       })
     }
     await this.purgeGroupChatsTouchingDeletedCharacterIds(new Set([nid]))
+    await this.purgeWechatDatingArtifactsAndMemoryTracksForCharacterIds([nid])
     const db = await openDb()
     const stores: string[] = [STORE, REL_STORE]
     if (db.objectStoreNames.contains(GRAPH_VIEW_STORE)) stores.push(GRAPH_VIEW_STORE)
     if (db.objectStoreNames.contains(PLAYER_LINKS_STORE)) stores.push(PLAYER_LINKS_STORE)
+    if (db.objectStoreNames.contains(CHAT_MSG_STORE)) stores.push(CHAT_MSG_STORE)
+    if (db.objectStoreNames.contains(CHARACTER_MEMORIES_STORE)) stores.push(CHARACTER_MEMORIES_STORE)
+    if (db.objectStoreNames.contains(CHAT_CONV_SETTINGS_STORE)) stores.push(CHAT_CONV_SETTINGS_STORE)
+    if (db.objectStoreNames.contains(CHARACTER_DANMAKU_STORE)) stores.push(CHARACTER_DANMAKU_STORE)
     const tx = db.transaction(stores, 'readwrite')
     const relStore = tx.objectStore(REL_STORE)
     const charStore = tx.objectStore(STORE)
@@ -3490,6 +3553,51 @@ export class PersonaDb {
     })
     for (const r of rels) {
       if (r.fromCharacterId === nid || r.toCharacterId === nid) relStore.delete(r.id)
+    }
+    if (db.objectStoreNames.contains(CHARACTER_MEMORIES_STORE)) {
+      const memStore = tx.objectStore(CHARACTER_MEMORIES_STORE)
+      const memReq = memStore.getAll()
+      const allMem = await new Promise<unknown[]>((resolve, reject) => {
+        memReq.onsuccess = () => resolve((memReq.result as unknown[]) ?? [])
+        memReq.onerror = () => reject(memReq.error ?? new Error('characterMemories getAll'))
+      })
+      for (const x of allMem) {
+        const row = normalizeCharacterMemory(x)
+        if (row && row.characterId === nid) memStore.delete(row.id)
+      }
+    }
+    if (db.objectStoreNames.contains(CHAT_MSG_STORE)) {
+      const cms = tx.objectStore(CHAT_MSG_STORE)
+      const mReq = cms.getAll()
+      const allMsgs = await new Promise<WeChatChatMessage[]>((resolve, reject) => {
+        mReq.onsuccess = () => {
+          const raw = (mReq.result as unknown[]) ?? []
+          resolve(
+            raw
+              .map((x) => normalizeWeChatChatMessage(x))
+              .filter((x): x is WeChatChatMessage => !!x),
+          )
+        }
+        mReq.onerror = () => reject(mReq.error ?? new Error('chatMessages getAll'))
+      })
+      for (const msg of allMsgs) {
+        if (msg.characterId === nid) cms.delete(msg.id)
+      }
+    }
+    if (db.objectStoreNames.contains(CHAT_CONV_SETTINGS_STORE)) {
+      const css = tx.objectStore(CHAT_CONV_SETTINGS_STORE)
+      const csReq = css.getAll()
+      const allCs = await new Promise<unknown[]>((resolve, reject) => {
+        csReq.onsuccess = () => resolve((csReq.result as unknown[]) ?? [])
+        csReq.onerror = () => reject(csReq.error ?? new Error('chatConversationSettings getAll'))
+      })
+      for (const raw of allCs) {
+        const row = normalizeChatConversationSettingsRow(raw)
+        if (row && row.peerCharacterId === nid) css.delete(row.conversationKey)
+      }
+    }
+    if (db.objectStoreNames.contains(CHARACTER_DANMAKU_STORE)) {
+      tx.objectStore(CHARACTER_DANMAKU_STORE).delete(nid)
     }
     charStore.delete(nid)
     if (db.objectStoreNames.contains(GRAPH_VIEW_STORE) && rootId) {
@@ -3512,6 +3620,8 @@ export class PersonaDb {
     }
     await txDone(tx)
     db.close()
+    await unregisterGlobalWechatCharacterForCharacterId(nid)
+    emitWeChatStorageChanged()
   }
 
   async getPlayerNetworkLinks(rootCharacterId: string): Promise<PlayerNetworkLink[]> {
@@ -4768,6 +4878,31 @@ export class PersonaDb {
     const all = await this.listAllRelationships()
     const victims = all.filter(
       (r) => r.isPlayerIdentity && (set.has(r.fromCharacterId) || set.has(r.toCharacterId)),
+    )
+    if (!victims.length) return
+    const db = await openDb()
+    const tx = db.transaction(REL_STORE, 'readwrite')
+    const store = tx.objectStore(REL_STORE)
+    for (const r of victims) store.delete(r.id)
+    await txDone(tx)
+    db.close()
+  }
+
+  /** 仅删除指定玩家身份与角色之间的绑定边（多账号摘联系人时不影响其它马甲）。 */
+  async deletePlayerIdentityRelationshipsForIdentityAndCharacterIds(
+    playerIdentityId: string,
+    characterIds: string[],
+  ): Promise<void> {
+    const identityId = playerIdentityId.trim()
+    if (!identityId || !characterIds.length) return
+    const charSet = new Set(characterIds.map((x) => x.trim()).filter(Boolean))
+    if (!charSet.size) return
+    const all = await this.listAllRelationships()
+    const victims = all.filter(
+      (r) =>
+        r.isPlayerIdentity &&
+        ((r.fromCharacterId === identityId && charSet.has(r.toCharacterId)) ||
+          (r.toCharacterId === identityId && charSet.has(r.fromCharacterId))),
     )
     if (!victims.length) return
     const db = await openDb()
@@ -6647,6 +6782,8 @@ export class PersonaDb {
       clearUiOnlyHiddenBeforeTimestamp?: boolean
       /** 为 true 时移除「好友验证分隔」同意时间戳 */
       clearFriendRequestAcceptedAt?: boolean
+      clearStickerRoundTriggerPercent?: boolean
+      clearVoiceRoundTriggerPercent?: boolean
     } & Partial<
       Pick<
         ChatConversationSettingsRow,
@@ -6659,6 +6796,8 @@ export class PersonaDb {
         | 'showGroupMemberNicknameInChat'
         | 'showGroupRankBadgesInChat'
         | 'chatBackground'
+        | 'stickerRoundTriggerPercent'
+        | 'voiceRoundTriggerPercent'
         | 'lastMessageTime'
         | 'uiOnlyHiddenBeforeTimestamp'
         | 'friendRequestAcceptedAtMs'
@@ -6706,6 +6845,20 @@ export class PersonaDb {
       showGroupRankBadgesInChat:
         params.showGroupRankBadgesInChat ?? existing?.showGroupRankBadgesInChat ?? false,
       chatBackground: params.chatBackground ?? existing?.chatBackground ?? '',
+      ...(params.clearStickerRoundTriggerPercent
+        ? {}
+        : typeof params.stickerRoundTriggerPercent === 'number' && Number.isFinite(params.stickerRoundTriggerPercent)
+          ? { stickerRoundTriggerPercent: clampRoundTriggerPercent(params.stickerRoundTriggerPercent) }
+          : existing?.stickerRoundTriggerPercent !== undefined
+            ? { stickerRoundTriggerPercent: existing.stickerRoundTriggerPercent }
+            : {}),
+      ...(params.clearVoiceRoundTriggerPercent
+        ? {}
+        : typeof params.voiceRoundTriggerPercent === 'number' && Number.isFinite(params.voiceRoundTriggerPercent)
+          ? { voiceRoundTriggerPercent: clampRoundTriggerPercent(params.voiceRoundTriggerPercent) }
+          : existing?.voiceRoundTriggerPercent !== undefined
+            ? { voiceRoundTriggerPercent: existing.voiceRoundTriggerPercent }
+            : {}),
       lastMessageTime: params.lastMessageTime ?? existing?.lastMessageTime ?? 0,
       updatedAt: now,
       ...(typeof uiOnlyHiddenBeforeTimestamp === 'number' &&

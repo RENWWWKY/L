@@ -10,6 +10,7 @@ import {
 } from 'react'
 import { flushSync } from 'react-dom'
 import { personaDb, pullPhoneKvWithLocalStorageLegacy } from './apps/wechat/newFriendsPersona/idb'
+import { bumpWeChatPersonaContactsUserMutation } from './apps/wechat/wechatPersonaContactsUserMutation'
 import {
   DEFAULT_CUSTOMIZATION,
   DEFAULT_PERSONAL_CARD_BG_PATH,
@@ -989,6 +990,7 @@ export function CustomizationProvider({ children }: { children: ReactNode }) {
 
   const replaceWeChatPersonaContacts = useCallback(
     (removeCharacterIds: string[], add: WeChatPersonaContact[]) => {
+      bumpWeChatPersonaContactsUserMutation()
       const rm = new Set(removeCharacterIds)
       setState((s) => ({
         ...s,
@@ -999,6 +1001,7 @@ export function CustomizationProvider({ children }: { children: ReactNode }) {
   )
 
   const removeWeChatPersonaContactsByCharacterIds = useCallback((characterIds: string[]) => {
+    bumpWeChatPersonaContactsUserMutation()
     const rm = new Set(characterIds)
     setState((s) => ({
       ...s,
@@ -1007,10 +1010,12 @@ export function CustomizationProvider({ children }: { children: ReactNode }) {
   }, [])
 
   const clearWeChatPersonaContacts = useCallback(() => {
+    bumpWeChatPersonaContactsUserMutation()
     setState((s) => ({ ...s, wechatPersonaContacts: [] }))
   }, [])
 
   const setWeChatPersonaContacts = useCallback((contacts: WeChatPersonaContact[]) => {
+    bumpWeChatPersonaContactsUserMutation()
     setState((s) => ({ ...s, wechatPersonaContacts: contacts.map((c) => ({ ...c })) }))
   }, [])
 

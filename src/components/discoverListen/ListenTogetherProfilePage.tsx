@@ -1,12 +1,14 @@
 import { motion } from 'framer-motion'
-import { ArrowLeft, Heart, Loader2, Music2, Play, RefreshCw, User } from 'lucide-react'
-import { useState } from 'react'
+import { ArrowLeft, Heart, Loader2, Music2, RefreshCw, User } from 'lucide-react'
+import { useMemo, useState } from 'react'
 
+import { ListenNotesFeedList } from './ListenTogetherNotesFeedPage'
 import { ListenNum } from './ListenNum'
 import { listenNumStatClass } from './listenTogetherTypography'
+import { NOTES_FEED_MOCK, type ListenAttachedMusic } from './listenTogetherNotesMock'
 import type { NeteaseProfileBundle } from './neteaseProfileApi'
 
-type PlaylistTab = 'created' | 'saved'
+type ProfileTab = 'created' | 'saved' | 'notes'
 
 function AvatarCornerBadges({ vipLabel, isVip }: { vipLabel: string; isVip: boolean }) {
   return (
@@ -21,37 +23,6 @@ function AvatarCornerBadges({ vipLabel, isVip }: { vipLabel: string; isVip: bool
       >
         {isVip ? vipLabel : '非会员'}
       </span>
-    </div>
-  )
-}
-
-function MiniSongBar({
-  title,
-  artist,
-  onPlay,
-}: {
-  title: string
-  artist: string
-  onPlay?: () => void
-}) {
-  return (
-    <div className="mt-3 flex items-center gap-2.5 rounded-lg bg-stone-50 p-2">
-      <div className="relative h-9 w-9 shrink-0 overflow-hidden rounded-md bg-stone-200 shadow-sm ring-1 ring-stone-100">
-        <div className="absolute inset-0 bg-gradient-to-br from-stone-300 to-stone-400" />
-        <Music2 className="absolute inset-0 m-auto size-4 text-white/70" strokeWidth={1.5} />
-      </div>
-      <div className="min-w-0 flex-1">
-        <p className="truncate text-[12px] font-medium text-stone-700">{title}</p>
-        <p className="truncate text-[10px] text-stone-400">{artist}</p>
-      </div>
-      <button
-        type="button"
-        aria-label={`播放 ${title}`}
-        onClick={onPlay}
-        className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-white text-stone-600 shadow-sm ring-1 ring-stone-100 transition-colors hover:bg-rose-50 hover:text-rose-400"
-      >
-        <Play className="size-3 fill-current pl-0.5" strokeWidth={0} />
-      </button>
     </div>
   )
 }
@@ -114,6 +85,16 @@ const GUEST_USER = {
   vip: EMPTY_VIP,
 }
 
+const VISITOR_USER = {
+  nickname: '游客',
+  avatar: null as string | null,
+  neteaseLevel: 0,
+  following: 0,
+  followers: 0,
+  listenHours: 0,
+  vip: EMPTY_VIP,
+}
+
 export type PlaylistOpenInfo = {
   id: number
   title: string
@@ -125,9 +106,11 @@ export type ListenTogetherProfilePageProps = {
   className?: string
   onBack?: () => void
   onOpenPlaylist?: (playlist: PlaylistOpenInfo) => void
-  onNotePlay?: (noteId: number) => void
+  onPlayAttachedMusic?: (music: ListenAttachedMusic, noteId: string) => void
   neteaseBound?: boolean
+  isGuestMode?: boolean
   onRequestLogin?: () => void
+  onLeaveGuest?: () => void
   neteaseProfile?: NeteaseProfileBundle | null
   profileLoading?: boolean
   profileError?: string | null
@@ -140,9 +123,11 @@ export function ListenTogetherProfilePage({
   className = '',
   onBack,
   onOpenPlaylist,
-  onNotePlay,
+  onPlayAttachedMusic,
   neteaseBound = false,
+  isGuestMode = false,
   onRequestLogin,
+  onLeaveGuest,
   neteaseProfile = null,
   profileLoading = false,
   profileError = null,
@@ -150,13 +135,17 @@ export function ListenTogetherProfilePage({
   onSyncNetease,
   syncingNetease = false,
 }: ListenTogetherProfilePageProps) {
-  const [playlistTab, setPlaylistTab] = useState<PlaylistTab>('created')
-  const [noteLikes, setNoteLikes] = useState<Record<number, boolean>>({})
+  const [profileTab, setProfileTab] = useState<ProfileTab>('created')
 
-  const notes: { id: number; content: string; song: { title: string; artist: string }; likes: number; time: string }[] = []
+  const myNotes = useMemo(
+    () => NOTES_FEED_MOCK.notes.filter((note) => note.author.type === 'user'),
+    [],
+  )
 
   const user = !neteaseBound
-    ? GUEST_USER
+    ? isGuestMode
+      ? VISITOR_USER
+      : GUEST_USER
     : neteaseProfile
       ? {
           nickname: neteaseProfile.user.nickname,
@@ -190,12 +179,14 @@ export function ListenTogetherProfilePage({
       }
 
   const activePlaylists =
-    playlistTab === 'created' ? musicAssets.createdPlaylists : musicAssets.savedPlaylists
+    profileTab === 'created' ? musicAssets.createdPlaylists : musicAssets.savedPlaylists
 
   const likedCover = musicAssets.likedSongs.cover || null
 
   const emptyHint = !neteaseBound
-    ? '登录网易云后查看'
+    ? isGuestMode
+      ? '游客模式不同步个人歌单'
+      : '登录网易云后查看'
     : profileLoading
       ? '加载中…'
       : '暂无数据'
@@ -217,8 +208,8 @@ export function ListenTogetherProfilePage({
         {neteaseBound && onSyncNetease ? (
           <button
             type="button"
-            aria-label="同步网易云数据"
-            title="同步网易云最新歌单与资料"
+            aria-label="刷新"
+            title="刷新网易云资料与歌单"
             onClick={onSyncNetease}
             disabled={syncingNetease}
             className="absolute right-3 top-[max(12px,env(safe-area-inset-top))] z-10 flex h-9 w-9 items-center justify-center rounded-full bg-white/50 text-stone-600 shadow-sm backdrop-blur-sm transition-colors hover:bg-white/80 hover:text-rose-500 disabled:opacity-60"
@@ -257,13 +248,29 @@ export function ListenTogetherProfilePage({
           </div>
           <p className="mt-1 text-[11px] tracking-[0.2em] text-stone-400">LISTEN · BOND</p>
           {!neteaseBound ? (
-            <button
-              type="button"
-              onClick={onRequestLogin}
-              className="mt-3 rounded-full bg-rose-50 px-4 py-1.5 text-[12px] text-rose-500"
-            >
-              扫码登录网易云
-            </button>
+            <div className="mt-3 flex flex-wrap items-center justify-center gap-2">
+              <button
+                type="button"
+                onClick={onRequestLogin}
+                className="rounded-full bg-rose-50 px-4 py-1.5 text-[12px] text-rose-500"
+              >
+                {isGuestMode ? '登录网易云账号' : '扫码登录网易云'}
+              </button>
+              {isGuestMode && onLeaveGuest ? (
+                <button
+                  type="button"
+                  onClick={onLeaveGuest}
+                  className="rounded-full bg-stone-100 px-4 py-1.5 text-[12px] text-stone-600"
+                >
+                  退出游客模式
+                </button>
+              ) : null}
+            </div>
+          ) : null}
+          {isGuestMode && !neteaseBound ? (
+            <p className="mt-2 max-w-[280px] text-center text-[11px] leading-relaxed text-stone-400">
+              游客可搜索与播放公开内容；登录后可同步「我喜欢的音乐」与个人歌单
+            </p>
           ) : null}
           {profileLoading || syncingNetease ? (
             <p className="mt-2 flex items-center justify-center gap-1.5 text-[11px] text-stone-400">
@@ -362,20 +369,21 @@ export function ListenTogetherProfilePage({
           </button>
 
           <div>
-            <div className="mb-4 flex items-center gap-6">
+            <div className="mb-4 flex items-center gap-5 overflow-x-auto [scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden">
               {(
                 [
                   { id: 'created' as const, label: '创建的歌单' },
                   { id: 'saved' as const, label: '收藏的歌单' },
+                  { id: 'notes' as const, label: '手账' },
                 ]
               ).map((tab) => {
-                const active = playlistTab === tab.id
+                const active = profileTab === tab.id
                 return (
                   <button
                     key={tab.id}
                     type="button"
-                    onClick={() => setPlaylistTab(tab.id)}
-                    className={`relative pb-1 text-[14px] font-medium transition-colors ${
+                    onClick={() => setProfileTab(tab.id)}
+                    className={`relative shrink-0 pb-1 text-[14px] font-medium transition-colors ${
                       active ? 'text-stone-800' : 'text-stone-400'
                     }`}
                   >
@@ -393,87 +401,45 @@ export function ListenTogetherProfilePage({
             </div>
 
             <motion.div
-              key={playlistTab}
+              key={profileTab}
               initial={{ opacity: 0, y: 6 }}
               animate={{ opacity: 1, y: 0 }}
               transition={{ duration: 0.22 }}
-              className="grid grid-cols-2 gap-3"
             >
-              {activePlaylists.length === 0 ? (
-                <p className="col-span-2 py-6 text-center text-[12px] text-stone-400">{emptyHint}</p>
+              {profileTab === 'notes' ? (
+                <ListenNotesFeedList notes={myNotes} onPlayAttachedMusic={onPlayAttachedMusic} />
               ) : (
-                activePlaylists.map((pl) => (
-                  <PlaylistCard
-                    key={pl.id}
-                    title={pl.title}
-                    count={pl.count}
-                    cover={pl.cover || ''}
-                    onClick={() => {
-                      if (!neteaseBound) {
-                        onRequestLogin?.()
-                        return
-                      }
-                      if (pl.id) {
-                        onOpenPlaylist?.({
-                          id: pl.id,
-                          title: pl.title,
-                          cover: pl.cover,
-                          count: pl.count,
-                        })
-                      }
-                    }}
-                  />
-                ))
+                <div className="grid grid-cols-2 gap-3">
+                  {activePlaylists.length === 0 ? (
+                    <p className="col-span-2 py-6 text-center text-[12px] text-stone-400">{emptyHint}</p>
+                  ) : (
+                    activePlaylists.map((pl) => (
+                      <PlaylistCard
+                        key={pl.id}
+                        title={pl.title}
+                        count={pl.count}
+                        cover={pl.cover || ''}
+                        onClick={() => {
+                          if (!neteaseBound) {
+                            onRequestLogin?.()
+                            return
+                          }
+                          if (pl.id) {
+                            onOpenPlaylist?.({
+                              id: pl.id,
+                              title: pl.title,
+                              cover: pl.cover,
+                              count: pl.count,
+                            })
+                          }
+                        }}
+                      />
+                    ))
+                  )}
+                </div>
               )}
             </motion.div>
           </div>
-        </section>
-
-        {/* 4. Music notes */}
-        <section aria-label="我的音乐手账">
-          <h2 className="mb-4 text-[15px] font-semibold tracking-tight text-stone-700">
-            我的音乐手账
-          </h2>
-          {notes.length === 0 ? (
-            <p className="py-8 text-center text-[12px] text-stone-400">{emptyHint}</p>
-          ) : null}
-          <ul className="space-y-4">
-            {notes.map((note) => {
-              const liked = noteLikes[note.id] ?? false
-              const displayLikes = note.likes + (liked ? 1 : 0)
-              return (
-                <li
-                  key={note.id}
-                  className="rounded-2xl border border-stone-100 bg-white p-4 shadow-[0_4px_24px_rgba(120,113,108,0.06)]"
-                >
-                  <p className="text-[14px] leading-relaxed text-stone-600">{note.content}</p>
-                  <MiniSongBar
-                    title={note.song.title}
-                    artist={note.song.artist}
-                    onPlay={() => onNotePlay?.(note.id)}
-                  />
-                  <div className="mt-3 flex items-center justify-between text-[11px] text-stone-400">
-                    <ListenNum className="text-[11px] text-stone-400">{note.time}</ListenNum>
-                    <button
-                      type="button"
-                      onClick={() =>
-                        setNoteLikes((prev) => ({ ...prev, [note.id]: !prev[note.id] }))
-                      }
-                      className={`inline-flex items-center gap-1 transition-colors ${
-                        liked ? 'text-rose-400' : 'hover:text-stone-600'
-                      }`}
-                    >
-                      <Heart
-                        className={`size-3.5 ${liked ? 'fill-current' : ''}`}
-                        strokeWidth={1.5}
-                      />
-                      <ListenNum>{displayLikes}</ListenNum>
-                    </button>
-                  </div>
-                </li>
-              )
-            })}
-          </ul>
         </section>
       </div>
     </div>

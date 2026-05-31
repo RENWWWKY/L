@@ -8,6 +8,7 @@ export const LISTEN_TOGETHER_PLAYLIST_CACHE_KV_KEY = 'listen-together-playlist-t
 export const LISTEN_TOGETHER_SONG_COMMENTS_CACHE_KV_KEY = 'listen-together-song-comments-v1'
 export const LISTEN_TOGETHER_PROFILE_CACHE_KV_KEY = 'listen-together-netease-profile-v1'
 export const LISTEN_TOGETHER_LOGIN_COOKIE_KV_KEY = 'listen-together-netease-login-cookie-v1'
+export const LISTEN_TOGETHER_GUEST_MODE_KV_KEY = 'listen-together-guest-mode-v1'
 export const LISTEN_TOGETHER_RECENT_SONGS_KV_KEY = 'listen-together-recent-songs-v1'
 export const LISTEN_TOGETHER_SONG_PLAYBACK_KV_KEY = 'listen-together-song-playback-v1'
 
@@ -186,6 +187,9 @@ export function getNeteaseLoginCookieSync(): string {
 export async function saveNeteaseLoginCookie(cookie: string): Promise<void> {
   loginCookieMemory = cookie
   loginCookieHydrated = true
+  if (cookie.trim()) {
+    await clearGuestMode()
+  }
   await personaDb.setPhoneKv(LISTEN_TOGETHER_LOGIN_COOKIE_KV_KEY, cookie)
   try {
     if (cookie) localStorage.setItem(LEGACY_LOGIN_COOKIE_LS_KEY, cookie)
@@ -204,6 +208,38 @@ export async function clearNeteaseLoginCookie(): Promise<void> {
   } catch {
     /* ignore */
   }
+}
+
+// —— 游客模式（无网易账号也可搜索/播放公开内容）——
+
+let guestModeMemory = false
+let guestModeHydrated = false
+
+export async function hydrateGuestMode(): Promise<boolean> {
+  if (guestModeHydrated) return guestModeMemory
+  const raw = await personaDb.getPhoneKv(LISTEN_TOGETHER_GUEST_MODE_KV_KEY)
+  guestModeMemory = raw === true
+  guestModeHydrated = true
+  return guestModeMemory
+}
+
+export function isGuestModeSync(): boolean {
+  if (guestModeHydrated) return guestModeMemory
+  return false
+}
+
+export async function setGuestMode(enabled: boolean): Promise<void> {
+  guestModeMemory = enabled
+  guestModeHydrated = true
+  if (enabled) {
+    await personaDb.setPhoneKv(LISTEN_TOGETHER_GUEST_MODE_KV_KEY, true)
+  } else {
+    await personaDb.deletePhoneKv(LISTEN_TOGETHER_GUEST_MODE_KV_KEY)
+  }
+}
+
+export async function clearGuestMode(): Promise<void> {
+  await setGuestMode(false)
 }
 
 // —— 用户资料（我的页）——
@@ -405,11 +441,13 @@ export async function clearSongPlaybackCache(songId?: number): Promise<void> {
 
 /** 用户点击「同步」：清空可刷新缓存，便于重新拉取网易云最新数据 */
 export async function clearListenTogetherSyncCaches(): Promise<void> {
+  const { clearListenTogetherPageCaches } = await import('./listenTogetherPageCache')
   await Promise.all([
     clearPlaylistCache(),
     clearSongCommentsCache(),
     clearSongPlaybackCache(),
     clearCachedNeteaseProfile(),
     clearCachedRecentSongs(),
+    clearListenTogetherPageCaches(),
   ])
 }

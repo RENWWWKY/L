@@ -29,7 +29,7 @@ import {
   isCoarsePointerDevice,
   shouldUseLiteFullscreenEffects,
 } from './listenDeviceProfile'
-import { getNextPlayMode, PLAY_MODE_LABELS, type ListenPlayMode } from './listenPlayMode'
+import { PLAY_MODE_LABELS, type ListenPlayMode } from './listenPlayMode'
 import {
   LISTEN_FULLSCREEN_VINYL_DECORATION_URL,
   LISTEN_PROGRESS_THUMB_PAUSED_URL,
@@ -671,27 +671,6 @@ function CompanionBubble({ companion }: { companion: ListenCompanionInfo }) {
   )
 }
 
-const PLAY_MODE_TOAST_MS = 2200
-
-function PlayModeSwitchToast({ label }: { label: string }) {
-  return (
-    <motion.div
-      key={label}
-      role="status"
-      aria-live="polite"
-      initial={{ opacity: 0, y: 10, scale: 0.96 }}
-      animate={{ opacity: 1, y: 0, scale: 1 }}
-      exit={{ opacity: 0, y: -8, scale: 0.98 }}
-      transition={{ duration: 0.22, ease: 'easeOut' }}
-      className="pointer-events-none fixed left-1/2 top-1/2 z-[110] w-[min(88vw,20rem)] -translate-x-1/2 -translate-y-1/2"
-    >
-      <div className="rounded-2xl bg-white/95 px-6 py-3 text-center text-sm font-medium tracking-wide text-stone-700 shadow-lg shadow-stone-200/60 ring-1 ring-stone-200/80 backdrop-blur-sm">
-        已切换为{label}
-      </div>
-    </motion.div>
-  )
-}
-
 export function ListenTogetherFullscreenPlayer({
   open,
   onClose,
@@ -719,39 +698,7 @@ export function ListenTogetherFullscreenPlayer({
 }: ListenTogetherFullscreenPlayerProps) {
   const coverSrc = song.cover?.trim() || ''
   const [centerView, setCenterView] = useState<CenterView>('vinyl')
-  const [playModeToast, setPlayModeToast] = useState<string | null>(null)
-  const playModeToastTimerRef = useRef<number | null>(null)
   const backToVinyl = useCallback(() => setCenterView('vinyl'), [])
-
-  const showPlayModeToast = useCallback((modeLabel: string) => {
-    setPlayModeToast(modeLabel)
-    if (playModeToastTimerRef.current != null) {
-      window.clearTimeout(playModeToastTimerRef.current)
-    }
-    playModeToastTimerRef.current = window.setTimeout(() => {
-      setPlayModeToast(null)
-      playModeToastTimerRef.current = null
-    }, PLAY_MODE_TOAST_MS)
-  }, [])
-
-  const handleCyclePlayMode = useCallback(() => {
-    if (!onCyclePlayMode) return
-    const nextMode = getNextPlayMode(playMode, canUseHeartMode)
-    onCyclePlayMode()
-    showPlayModeToast(PLAY_MODE_LABELS[nextMode])
-  }, [onCyclePlayMode, playMode, canUseHeartMode, showPlayModeToast])
-
-  useEffect(() => {
-    return () => {
-      if (playModeToastTimerRef.current != null) {
-        window.clearTimeout(playModeToastTimerRef.current)
-      }
-    }
-  }, [])
-
-  useEffect(() => {
-    if (!open) setPlayModeToast(null)
-  }, [open])
 
   const seekLyricLines = useMemo((): LyricSeekLine[] => {
     if (lyricLines && lyricLines.length > 0) {
@@ -784,7 +731,7 @@ export function ListenTogetherFullscreenPlayer({
   return (
     <ListenFullscreenErrorBoundary onClose={onClose}>
       <motion.div
-          className="fixed inset-0 z-[100] flex h-screen w-full flex-col overflow-hidden"
+          className="fixed inset-0 z-[10010] flex h-screen w-full flex-col overflow-hidden"
           initial={{ y: '100%' }}
           animate={{ y: 0 }}
           exit={{ y: '100%' }}
@@ -792,10 +739,6 @@ export function ListenTogetherFullscreenPlayer({
           role="dialog"
           aria-label="全屏播放"
         >
-          <AnimatePresence>
-            {playModeToast ? <PlayModeSwitchToast label={playModeToast} /> : null}
-          </AnimatePresence>
-
           {/* 1. 页面背景图 */}
           <ListenTogetherPageBackground overlayClassName="bg-white/8" />
 
@@ -925,7 +868,7 @@ export function ListenTogetherFullscreenPlayer({
                       ? PLAY_MODE_LABELS[playMode]
                       : `${PLAY_MODE_LABELS[playMode]}（心动模式仅在「我喜欢的音乐」歌单可用）`
                   }
-                  onClick={handleCyclePlayMode}
+                  onClick={onCyclePlayMode}
                   className={`flex h-11 w-11 shrink-0 items-center justify-center transition-all duration-300 active:scale-95 ${
                     playMode === 'heart'
                       ? 'rounded-2xl bg-gradient-to-br from-rose-100 via-pink-50 to-white text-rose-500 shadow-md shadow-rose-200/40 ring-1 ring-rose-200/80'

@@ -7,6 +7,7 @@ import {
   resolveCanonicalCharacterId,
   unregisterGlobalWechatCharacterForCharacterId,
 } from './wechatGlobalCharacterRegistry'
+import { pruneCharacterVoiceMappings } from '../voiceprint/characterVoiceMapStorage'
 
 export type CharacterPersonaDeleteMode = 'full' | 'detached-from-account'
 
@@ -55,6 +56,7 @@ export async function deleteCharacterPersonaForWechatAccount(params: {
     await personaDb.deleteCharacter(id)
     await unregisterGlobalWechatCharacterForCharacterId(id)
   }
+  pruneCharacterVoiceMappings([...idsToClean])
   const { recordUserWeChatDataClear } = await import('./wechatDataInventory')
   await recordUserWeChatDataClear('delete_character_persona', {
     wechatAccountId: acc,

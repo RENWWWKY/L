@@ -20,6 +20,7 @@ import { LumiMeetApp } from './apps/lumiMeet/LumiMeetApp'
 import { LumiMeetProvider } from './apps/lumiMeet/LumiMeetStore'
 import { WorldbookLoreProvider } from './worldbook/worldbookLoreStore'
 import type { AppSlot } from './types'
+import { ListenTogetherPlayerBootstrap } from '../components/discoverListen/ListenTogetherPlayerBootstrap'
 
 type Route =
   | { name: 'home' }
@@ -136,6 +137,7 @@ export function PhoneApp() {
     >
       <ApiSettingsProvider>
         <WorldbookLoreProvider>
+        <ListenTogetherPlayerBootstrap />
         <PhoneShell>
           <AnimatePresence mode="wait" initial={false}>
             {route.name === 'home' && (

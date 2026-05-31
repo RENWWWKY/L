@@ -1,5 +1,5 @@
 import { animate, AnimatePresence, motion, Reorder, useDragControls, useMotionValue } from 'framer-motion'
-import { BellOff, EyeOff, MoreHorizontal, Pin, PinOff, Plus, Trash2, CircleDot } from 'lucide-react'
+import { Activity, BellOff, EyeOff, MoreHorizontal, Pin, PinOff, Plus, Trash2, CircleDot } from 'lucide-react'
 import {
   useCallback,
   useEffect,
@@ -14,6 +14,12 @@ import {
   type ReactNode,
 } from 'react'
 import { useCustomization } from '../../CustomizationContext'
+import { LISTEN_TOGETHER_NAVIGATE_EVENT } from '../../../components/discoverListen/listenTogetherNavigation'
+import {
+  WECHAT_FOCUS_PERSONA_CHAT_EVENT,
+  consumeWeChatFocusPersonaChatId,
+  type WeChatFocusPersonaChatDetail,
+} from './wechatFocusChatNavigation'
 import { Pressable } from '../../components/Pressable'
 import {
   DEFAULT_CUSTOMIZATION,
@@ -109,6 +115,8 @@ import { resolveWorldBookUserBinding } from './charUserPlaceholders'
 import { buildFriendRequestNonPrimaryBindingBias } from './wechatFriendRequestSessionBias'
 import { resolveCanonicalCharacterId } from './wechatGlobalCharacterRegistry'
 import { contactEntryFromCharacter } from './wechatPersonaContactsSync'
+import { pruneCharacterVoiceMappings } from '../voiceprint/characterVoiceMapStorage'
+import { applyWechatContactRemovalDataClear } from './wechatContactRemoval'
 import { resolveCharacterAvatarUrl, resolveWeChatContactAvatarUrl } from '../../utils/characterAvatarUrl'
 import { WeChatMessageBubbleRow } from './WeChatMessageBubbleRow'
 import { WeChatForwardSelectChatScreen, type WeChatForwardMode } from './WeChatForwardSelectChatScreen'
@@ -638,6 +646,8 @@ function Header({
   onDismissAppearanceGuide,
   /** 为 true 时在主标题与 typingText 之间循环切换（模型已返回、消息逐条露出时） */
   titleTypingAlternate = false,
+  /** 为 true 时标题相对整条顶栏绝对居中（聊天页右侧多按钮时使用） */
+  titleCenterAbsolute = false,
 }: {
   title: string
   /** 第二行：备注/说明（灰色小字），与微信昵称主行搭配 */
@@ -646,6 +656,7 @@ function Header({
   showTyping?: boolean
   typingText?: string
   titleTypingAlternate?: boolean
+  titleCenterAbsolute?: boolean
   onBack: () => void
   onOpenTheme: () => void
   showBack: boolean
@@ -867,16 +878,18 @@ function Header({
       </div>
     )
 
+  const balancedSideSlot = customRight ? 'min-w-[76px]' : 'w-10'
+
   return (
     <header
-      className="flex shrink-0 items-center justify-between gap-2 border-b px-3 pb-2"
+      className="relative flex shrink-0 items-center justify-between gap-2 border-b px-3 pb-2"
       style={{
         paddingTop: 'max(0px, env(safe-area-inset-top, 0px))',
         borderColor: 'var(--wx-border)',
         background: 'var(--wx-surface)',
       }}
     >
-      <div className="relative z-20 flex w-10 shrink-0 items-center justify-start">
+      <div className={`relative z-20 flex ${balancedSideSlot} shrink-0 items-center justify-start`}>
         {showBack ? (
           <Pressable
             onClick={onBack}
@@ -922,9 +935,9 @@ function Header({
         ) : null}
       </div>
 
-      {center}
+      {titleCenterAbsolute ? null : center}
 
-      <div className="relative z-20 flex w-10 shrink-0 items-center justify-end">
+      <div className={`relative z-20 flex ${balancedSideSlot} shrink-0 items-center justify-end`}>
         {showRight ? (
           <>
             {customRight ? (
@@ -986,6 +999,21 @@ function Header({
           <div className="h-9 w-9" aria-hidden />
         )}
       </div>
+
+      {titleCenterAbsolute ? (
+        <div
+          className="pointer-events-none absolute bottom-0 left-0 right-0 z-10 flex min-h-9 items-center justify-center px-3"
+          style={{
+            top: 'max(0px, env(safe-area-inset-top, 0px))',
+            paddingLeft: customRight ? '4.75rem' : '2.5rem',
+            paddingRight: customRight ? '4.75rem' : '2.5rem',
+          }}
+        >
+          <div className="pointer-events-auto w-full min-w-0 [&_.flex-1]:!flex-none [&_.flex-1]:!w-full [&_.flex-1]:!max-w-full">
+            {center}
+          </div>
+        </div>
+      ) : null}
     </header>
   )
 }
@@ -3662,6 +3690,7 @@ function WeChatAppInner({ onBack }: Props) {
   const [themeOpen, setThemeOpen] = useState(false)
   const [themePanelBoot, setThemePanelBoot] = useState<ThemePanelBoot>({})
   const [chatSettingsOpen, setChatSettingsOpen] = useState(false)
+  const [psycheRadarOpen, setPsycheRadarOpen] = useState(false)
   const [messagesPlusMenuOpen, setMessagesPlusMenuOpen] = useState(false)
   const [newGroupFromMessagesOpen, setNewGroupFromMessagesOpen] = useState(false)
   const [activeGroupRow, setActiveGroupRow] = useState<GroupChatRow | null>(null)
@@ -3686,8 +3715,42 @@ function WeChatAppInner({ onBack }: Props) {
   useEffect(() => {
     void hydrateMemoryTraceFromIndexedDb()
   }, [])
+  useEffect(() => {
+    if (route.name !== 'chat') {
+      setPsycheRadarOpen(false)
+    }
+  }, [route.name])
+
   const [hideDatingChrome, setHideDatingChrome] = useState(false)
   const [discoverMomentsOpen, setDiscoverMomentsOpen] = useState(false)
+
+  useEffect(() => {
+    const onNavigateListen = () => setRoute({ name: 'tabs', tab: 'discover' })
+    window.addEventListener(LISTEN_TOGETHER_NAVIGATE_EVENT, onNavigateListen)
+    return () => window.removeEventListener(LISTEN_TOGETHER_NAVIGATE_EVENT, onNavigateListen)
+  }, [])
+
+  const openPersonaChatByCharacterId = useCallback((characterId: string) => {
+    const id = characterId.trim()
+    if (!id) return
+    setRoute({ name: 'chat', chat: { kind: 'persona', characterId: id } })
+  }, [])
+
+  useEffect(() => {
+    const pending = consumeWeChatFocusPersonaChatId()
+    if (pending) openPersonaChatByCharacterId(pending)
+  }, [openPersonaChatByCharacterId])
+
+  useEffect(() => {
+    const onFocusChat = (e: Event) => {
+      const ce = e as CustomEvent<WeChatFocusPersonaChatDetail>
+      const id = ce.detail?.characterId?.trim() || consumeWeChatFocusPersonaChatId()
+      if (id) openPersonaChatByCharacterId(id)
+    }
+    window.addEventListener(WECHAT_FOCUS_PERSONA_CHAT_EVENT, onFocusChat as EventListener)
+    return () => window.removeEventListener(WECHAT_FOCUS_PERSONA_CHAT_EVENT, onFocusChat as EventListener)
+  }, [openPersonaChatByCharacterId])
+
   const [chatOtherTyping, setChatOtherTyping] = useState(false)
   const [chatOpponentRevealPending, setChatOpponentRevealPending] = useState(false)
   const newFriendsUnreadCount = useMemo(
@@ -3785,6 +3848,8 @@ function WeChatAppInner({ onBack }: Props) {
     }
     return { id: row.id, remarkName: row.remarkName, avatarUrl: row.avatarUrl }
   }, [wxDockChat, activeGroupRow, weChatMergedContacts, state.wechatPersonaContacts])
+
+  const chatHeaderShowPsycheRadar = route.name === 'chat' && wxDockChat?.kind !== 'group'
 
   useEffect(() => {
     const layer = wxDockChat
@@ -5528,6 +5593,7 @@ function WeChatAppInner({ onBack }: Props) {
           titleTypingAlternate={
             route.name === 'chat' && chatOpponentRevealPending && !chatOtherTyping
           }
+          titleCenterAbsolute={route.name === 'chat'}
           typingText={
             route.name === 'chat' && route.chat.kind === 'group' ? '成员正在输入…' : '对方正在输入…'
           }
@@ -5575,7 +5641,26 @@ function WeChatAppInner({ onBack }: Props) {
           showRight={route.name === 'tabs' || route.name === 'chat'}
           onOpenTheme={route.name === 'chat' ? () => setChatSettingsOpen(true) : openWeChatAppearance}
           customRight={
-            route.name === 'tabs' && route.tab === 'messages' ? (
+            chatHeaderShowPsycheRadar ? (
+              <div className="flex items-center justify-end gap-0.5">
+                <Pressable
+                  type="button"
+                  aria-label="体征与心理监测"
+                  onClick={() => setPsycheRadarOpen(true)}
+                  className="flex h-9 w-9 items-center justify-center rounded-full text-[#111827]"
+                >
+                  <Activity size={20} strokeWidth={1.75} aria-hidden />
+                </Pressable>
+                <Pressable
+                  type="button"
+                  aria-label="当前聊天设置"
+                  onClick={() => setChatSettingsOpen(true)}
+                  className="flex h-9 w-9 items-center justify-center rounded-full text-[#111827]"
+                >
+                  <MoreHorizontal size={22} strokeWidth={2} aria-hidden />
+                </Pressable>
+              </div>
+            ) : route.name === 'tabs' && route.tab === 'messages' ? (
               <div className="relative flex justify-end">
                 <Pressable
                   type="button"
@@ -5760,6 +5845,8 @@ function WeChatAppInner({ onBack }: Props) {
                   if (!activeChatForRoute) return
                   setRoute({ name: 'transfer-detail', chat: activeChatForRoute, transferId })
                 }}
+                psycheRadarOpen={psycheRadarOpen}
+                onPsycheRadarOpenChange={setPsycheRadarOpen}
               />
             )}
           </div>
@@ -6417,16 +6504,20 @@ function WeChatAppInner({ onBack }: Props) {
                       })
 
                       removeWeChatPersonaContactsByCharacterIds([characterId])
+
+                      const { preservedOnOtherAccounts } = await applyWechatContactRemovalDataClear({
+                        characterId,
+                        wechatAccountId: currentAccountId?.trim() || '',
+                        playerIdentityId: sessionPid,
+                        notifyPeer,
+                        chatHistoryMode,
+                        conversationKey: convKey,
+                      })
+                      if (!preservedOnOtherAccounts) {
+                        pruneCharacterVoiceMappings([characterId])
+                      }
+
                       if (!notifyPeer) {
-                        if (chatHistoryMode === 'soft' && convKey) {
-                          await personaDb.hideWeChatConversationHistoryFromUiKeepAiContext(convKey)
-                          await personaDb.deleteCharacterDataKeepNetworkRelationships([characterId], {
-                            preserveWeChatConversationKeys: [convKey],
-                          })
-                        } else {
-                          await personaDb.deleteCharacterDataKeepNetworkRelationships([characterId])
-                        }
-                        await personaDb.deletePlayerIdentityRelationshipsTouchingCharacterIds([characterId])
                         await incrementContactDeletionCount(characterId, sessionPid)
                       } else {
                         let nick = remarkNameSeed
@@ -6478,13 +6569,6 @@ function WeChatAppInner({ onBack }: Props) {
                             updatedAt: verificationEpochMs,
                             verificationEpochMs,
                           })
-                          if (convKey) {
-                            if (chatHistoryMode === 'hard') {
-                              await personaDb.deleteAllWeChatMessagesForConversation(convKey)
-                            } else {
-                              await personaDb.hideWeChatConversationHistoryFromUiKeepAiContext(convKey)
-                            }
-                          }
                           await personaDb.appendWeChatChatMessage({
                             id: `${requestId}-del-${verificationEpochMs}-${Math.random().toString(36).slice(2, 7)}`,
                             characterId,

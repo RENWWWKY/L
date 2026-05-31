@@ -23,6 +23,8 @@ import { PlatinumToast } from './components/PlatinumToast'
 import { BottomSheet } from './components/BottomSheet'
 import { personaDb } from '../wechat/newFriendsPersona/idb'
 import type { Character } from '../wechat/newFriendsPersona/types'
+import { loadCanonicalCastingCharacterIds } from '../wechat/wechatCastingRoster'
+import { resolveCanonicalCharacterId } from '../wechat/wechatGlobalCharacterRegistry'
 
 type TabId = 'settings' | 'archive' | 'casting'
 
@@ -1225,15 +1227,45 @@ function ArchiveTab() {
 }
 
 function CastingTab() {
-  const { voices, characterVoiceMap, setCharacterVoice, clearCharacterVoice } = useVoiceStore()
+  const { state } = useCustomization()
+  const { voices, characterVoiceMap, setCharacterVoice, clearCharacterVoice, pruneCharacterVoiceMappingsToAllowed } =
+    useVoiceStore()
   const [characters, setCharacters] = useState<Character[]>([])
   const [sheetOpen, setSheetOpen] = useState(false)
   const [activeCharacter, setActiveCharacter] = useState<Character | null>(null)
   const [query, setQuery] = useState('')
 
+  const refreshCastingCharacters = useCallback(async () => {
+    const ids = await loadCanonicalCastingCharacterIds(state.wechatPersonaContacts)
+    pruneCharacterVoiceMappingsToAllowed(ids)
+
+    const list = (await personaDb.listCharacters()) ?? []
+    const byCanon = new Map<string, Character>()
+    for (const ch of list) {
+      const raw = ch.id.trim()
+      if (!raw) continue
+      const canon = (await resolveCanonicalCharacterId(raw)) || raw
+      if (!ids.has(canon)) continue
+      if (!byCanon.has(canon)) byCanon.set(canon, ch)
+    }
+    setCharacters([...byCanon.values()])
+  }, [pruneCharacterVoiceMappingsToAllowed, state.wechatPersonaContacts])
+
   useEffect(() => {
-    void personaDb.listCharacters().then((list) => setCharacters(list ?? []))
-  }, [])
+    let cancelled = false
+    void (async () => {
+      await refreshCastingCharacters()
+      if (cancelled) return
+    })()
+    const onStorage = () => {
+      void refreshCastingCharacters()
+    }
+    window.addEventListener('wechat-storage-changed', onStorage)
+    return () => {
+      cancelled = true
+      window.removeEventListener('wechat-storage-changed', onStorage)
+    }
+  }, [refreshCastingCharacters])
 
   const openPicker = (ch: Character) => {
     setActiveCharacter(ch)

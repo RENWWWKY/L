@@ -11,6 +11,11 @@ import type {
   CharacterNotificationSettingsRow,
   WeChatGlobalSettingsRow,
 } from '../newFriendsPersona/types'
+import {
+  displayRoundTriggerPercent,
+  isRoundTriggerCustomized,
+  VOICE_PROTOCOL_DEFAULT_ROUND_TRIGGER_PERCENT,
+} from '../wechatMediaSendFrequency'
 import { personaDb } from '../newFriendsPersona/idb'
 import { ChatTimeSettingsScreen } from './ChatTimeSettingsScreen'
 import { ChatFindChatHistoryScreen } from './ChatFindChatHistoryScreen'
@@ -46,30 +51,81 @@ function SettingsListCard({ children }: { children: React.ReactNode }) {
   )
 }
 
+function RoundTriggerPercentControl({
+  kind,
+  stored,
+  onChange,
+  onResetDefault,
+}: {
+  kind: 'voice' | 'sticker'
+  stored: number | undefined
+  onChange: (percent: number) => void
+  onResetDefault: () => void
+}) {
+  const display = displayRoundTriggerPercent(stored, kind)
+  const customized = isRoundTriggerCustomized(stored)
+  const defaultHint =
+    kind === 'voice'
+      ? `系统默认约 ${VOICE_PROTOCOL_DEFAULT_ROUND_TRIGGER_PERCENT}%`
+      : '系统默认由语境决定（无固定概率）'
+
+  return (
+    <div className="mt-2">
+      <div className="flex items-center justify-between gap-2">
+        <span className="text-[14px] font-medium text-black">{customized ? `${display}%` : defaultHint}</span>
+        {customized ? (
+          <button
+            type="button"
+            onClick={onResetDefault}
+            className="shrink-0 text-[12px] text-[#576b95]"
+          >
+            恢复默认
+          </button>
+        ) : null}
+      </div>
+      <input
+        type="range"
+        min={0}
+        max={100}
+        step={1}
+        value={display}
+        onChange={(e) => onChange(Number(e.target.value))}
+        className="mt-2 w-full accent-black"
+        aria-label={kind === 'voice' ? '语音消息每轮触发概率' : '表情包每轮触发概率'}
+      />
+      <div className="mt-1 flex justify-between text-[11px] text-[#8e8e8e]">
+        <span>0% 不发</span>
+        <span>100% 每轮必发</span>
+      </div>
+    </div>
+  )
+}
+
 function ListRow({
   children,
   onClick,
   borderBottom,
+  stacked,
 }: {
   children: React.ReactNode
   onClick?: () => void
   borderBottom?: boolean
+  /** 标题在上、控件在下（用于频率分段选择） */
+  stacked?: boolean
 }) {
   const style = { borderBottom: borderBottom ? '1px solid #f2f2f7' : undefined }
+  const layoutClass = stacked
+    ? 'flex w-full flex-col items-stretch px-4 py-4 text-left'
+    : 'flex w-full items-center justify-between px-4 py-4 text-left'
   if (onClick) {
     return (
-      <Pressable
-        type="button"
-        onClick={onClick}
-        className="flex w-full items-center justify-between px-4 py-4 text-left"
-        style={style}
-      >
+      <Pressable type="button" onClick={onClick} className={layoutClass} style={style}>
         {children}
       </Pressable>
     )
   }
   return (
-    <div className="flex w-full items-center justify-between px-4 py-4" style={style}>
+    <div className={layoutClass} style={style}>
       {children}
     </div>
   )
@@ -235,7 +291,21 @@ export function ChatSettingsScreen({
   }, [effectiveBusyEnabled, gs?.busyMode, peerCharacterId, conversationKey, load])
 
   const patch = useCallback(
-    async (partial: Partial<Pick<ChatConversationSettingsRow, 'isPinned' | 'isDanmakuMode' | 'chatBackground'>>) => {
+    async (
+      partial: Partial<
+        Pick<
+          ChatConversationSettingsRow,
+          | 'isPinned'
+          | 'isDanmakuMode'
+          | 'chatBackground'
+          | 'stickerRoundTriggerPercent'
+          | 'voiceRoundTriggerPercent'
+        >
+      > & {
+        clearStickerRoundTriggerPercent?: boolean
+        clearVoiceRoundTriggerPercent?: boolean
+      },
+    ) => {
       await personaDb.upsertChatConversationSettings({
         conversationKey,
         peerCharacterId,
@@ -246,6 +316,9 @@ export function ChatSettingsScreen({
     },
     [conversationKey, peerCharacterId, playerIdentityId, load],
   )
+
+  const stickerStored = effective.stickerRoundTriggerPercent
+  const voiceStored = effective.voiceRoundTriggerPercent
 
   const toggleMute = useCallback(async () => {
     await personaDb.updateMuteStatus({
@@ -534,6 +607,34 @@ export function ChatSettingsScreen({
           <ListRow onClick={() => setStub('voice')} borderBottom>
             <span className="text-[16px] text-black">主动语音电话</span>
             <Phone className="size-4 shrink-0 text-[#c7c7cc]" aria-hidden />
+          </ListRow>
+          <ListRow stacked borderBottom>
+            <div>
+              <span className="text-[16px] text-black">表情包每轮触发概率</span>
+              <p className="mt-1 text-[12px] leading-relaxed text-[#8e8e8e]">
+                拖动滑块设定角色每轮回复中至少发 1 条表情包的目标概率（0% 为完全不发）。
+              </p>
+              <RoundTriggerPercentControl
+                kind="sticker"
+                stored={stickerStored}
+                onChange={(percent) => void patch({ stickerRoundTriggerPercent: percent })}
+                onResetDefault={() => void patch({ clearStickerRoundTriggerPercent: true })}
+              />
+            </div>
+          </ListRow>
+          <ListRow stacked borderBottom>
+            <div>
+              <span className="text-[16px] text-black">语音消息每轮触发概率</span>
+              <p className="mt-1 text-[12px] leading-relaxed text-[#8e8e8e]">
+                拖动滑块设定角色每轮回复中至少发 1 条语音的目标概率（未定制时系统默认约 30%）。
+              </p>
+              <RoundTriggerPercentControl
+                kind="voice"
+                stored={voiceStored}
+                onChange={(percent) => void patch({ voiceRoundTriggerPercent: percent })}
+                onResetDefault={() => void patch({ clearVoiceRoundTriggerPercent: true })}
+              />
+            </div>
           </ListRow>
           <ListRow borderBottom>
             <span className="text-[16px] text-black">弹幕模式</span>

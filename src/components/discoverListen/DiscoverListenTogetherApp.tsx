@@ -12,33 +12,41 @@ import {
 } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useState } from 'react'
 
-import { activeLyricIndex } from './listenLyricParse'
-import {
-  formatProgressTimes,
-  ListenTogetherFullscreenPlayer,
-} from './ListenTogetherFullscreenPlayer'
+import { MusicDiscoveryPage } from './MusicDiscoveryPage'
+import { buildMusicDiscoveryModel } from './musicDiscoveryModel'
 import { ListenTogetherNotesFeedPage } from './ListenTogetherNotesFeedPage'
 import {
   ListenTogetherPlaylistDetailPage,
   type PlaylistDetailInfo,
 } from './ListenTogetherPlaylistDetailPage'
+import {
+  ListenTogetherArtistDetailPage,
+  type ArtistDetailInfo,
+} from './ListenTogetherArtistDetailPage'
 import { ListenTogetherSongCommentsPage } from './ListenTogetherSongCommentsPage'
 import { ListenTogetherProfilePage } from './ListenTogetherProfilePage'
 import { NeteaseQrLoginModal } from './NeteaseQrLoginModal'
-import { ListenTogetherSearchExplorePage } from './ListenTogetherSearchExplorePage'
+import { MusicSearchPage } from './MusicSearchPage'
 import { hydrateNeteaseLoginCookie, loadNeteaseCookie } from './neteaseApiClient'
 import {
+  applyNeteaseAccountLogin,
+  clearNeteaseListenSession,
+  enterGuestListenMode,
+  hydrateNeteaseListenSession,
+} from './neteaseListenSession'
+import {
   clearListenTogetherSyncCaches,
-  getCachedRecentSongs,
-  saveCachedRecentSongs,
 } from './listenTogetherPersistence'
 import { ListenTogetherPageBackground } from './listenTogetherPageBg'
+import { ListenTogetherHeaderRefreshButton } from './ListenTogetherHeaderRefreshButton'
 import { useListenTogetherPlayer } from './useListenTogetherPlayer'
+import { useMusicStore } from '../../stores/useMusicStore'
+import { useNeteaseHomeFeed } from './useNeteaseHomeFeed'
+import { useNeteaseToplists } from './useNeteaseToplists'
+import { toplistChartAsPlaylist, type NeteaseToplistChart } from './neteaseToplistApi'
 import { useNeteaseLikedSongs } from './useNeteaseLikedSongs'
 import { useNeteaseProfile } from './useNeteaseProfile'
-import { ListenNum } from './ListenNum'
-import { fetchUserRecentSongs, type NeteaseSongItem } from './neteaseMusicApi'
-import type { NeteasePlaylistItem } from './neteaseProfileApi'
+import type { NeteaseArtistItem, NeteaseSongItem } from './neteaseMusicApi'
 
 const TAB_BAR_H = 56
 const MINI_PLAYER_H = 68
@@ -93,93 +101,89 @@ export function DiscoverListenTogetherApp({
   className = '',
 }: DiscoverListenTogetherAppProps) {
   const [activeTab, setActiveTab] = useState<'home' | 'search' | 'notes' | 'me'>('home')
-  const [isFullScreen, setIsFullScreen] = useState(false)
-  const [recentSongs, setRecentSongs] = useState<NeteaseSongItem[]>([])
+  const openListenFullscreen = useMusicStore((s) => s.openListenFullscreen)
   const {
     nowPlaying: song,
     isPlaying,
     progress,
-    currentTimeMs,
-    durationMs,
-    lyrics,
     playError,
     playSong,
     playAttachedMusic,
     togglePlay,
-    playMode,
-    canUseHeartMode,
-    playNext,
-    playPrev,
-    cyclePlayMode,
-    seekTo,
-    seekToTimeMs,
+    startHeartModePlayback,
     clearPlayError,
   } = useListenTogetherPlayer()
   const [neteaseCookie, setNeteaseCookie] = useState(() => loadNeteaseCookie())
+  const [isGuestMode, setIsGuestMode] = useState(false)
   const [cookieReady, setCookieReady] = useState(false)
   const [qrLoginOpen, setQrLoginOpen] = useState(false)
   const [openPlaylist, setOpenPlaylist] = useState<PlaylistDetailInfo | null>(null)
+  const [openArtist, setOpenArtist] = useState<ArtistDetailInfo | null>(null)
   const [commentsSong, setCommentsSong] = useState<NeteaseSongItem | null>(null)
   const [syncingNetease, setSyncingNetease] = useState(false)
   const [dataSyncVersion, setDataSyncVersion] = useState(0)
-  const neteaseBound = Boolean(neteaseCookie)
+  const [homeRefreshing, setHomeRefreshing] = useState(false)
+  const [notesFeedKey, setNotesFeedKey] = useState(0)
+  const setInsideListenTogether = useMusicStore((s) => s.setInsideListenTogether)
+  const neteaseLoggedIn = Boolean(neteaseCookie)
+  const listenSessionActive = neteaseLoggedIn || isGuestMode
   const {
     data: neteaseProfile,
     loading: profileLoading,
     error: profileError,
     fromCache: profileFromCache,
     refetch: refetchProfile,
-  } = useNeteaseProfile(neteaseCookie, cookieReady)
+  } = useNeteaseProfile(neteaseCookie, cookieReady && neteaseLoggedIn)
 
-  const {
-    isLiked: isNeteaseSongLiked,
-    toggleLike: toggleNeteaseSongLike,
-    togglingId: likingSongId,
-    reloadLikedIds,
-  } = useNeteaseLikedSongs(
+  const { reloadLikedIds } = useNeteaseLikedSongs(
     neteaseCookie,
     neteaseProfile?.user.userId,
     neteaseProfile?.likedSongs.id,
   )
 
-  const currentSongLiked = song.songId ? isNeteaseSongLiked(song.songId) : false
+  const {
+    data: homeFeed,
+    loading: homeFeedLoading,
+    error: homeFeedError,
+    refetch: refetchHomeFeed,
+  } = useNeteaseHomeFeed(neteaseCookie, dataSyncVersion)
+
+  const {
+    charts: toplistCharts,
+    loading: toplistLoading,
+    error: toplistError,
+    refetch: refetchToplists,
+  } = useNeteaseToplists(neteaseCookie, dataSyncVersion)
 
   useEffect(() => {
-    void hydrateNeteaseLoginCookie().then((cookie) => {
-      setNeteaseCookie(cookie)
+    void hydrateNeteaseListenSession().then((session) => {
+      setNeteaseCookie(session.cookie)
+      setIsGuestMode(session.isGuest)
       setCookieReady(true)
     })
   }, [])
 
-  const headerUser = neteaseProfile?.user ?? null
-
   useEffect(() => {
-    const uid = neteaseProfile?.user.userId
-    if (!neteaseCookie || !uid) {
-      setRecentSongs([])
-      return
-    }
-    let cancelled = false
-    void (async () => {
-      const cached = await getCachedRecentSongs(uid)
-      if (!cancelled && cached?.songs?.length) {
-        setRecentSongs(cached.songs)
-        return
-      }
-      try {
-        const songs = await fetchUserRecentSongs(neteaseCookie, uid, 8)
-        if (!cancelled) {
-          setRecentSongs(songs)
-          await saveCachedRecentSongs(uid, songs)
-        }
-      } catch {
-        if (!cancelled) setRecentSongs([])
-      }
-    })()
-    return () => {
-      cancelled = true
-    }
-  }, [neteaseCookie, neteaseProfile?.user.userId, dataSyncVersion])
+    setInsideListenTogether(true)
+    return () => setInsideListenTogether(false)
+  }, [setInsideListenTogether])
+
+  const handleEnterGuestMode = useCallback(async () => {
+    const session = await enterGuestListenMode()
+    setNeteaseCookie(session.cookie)
+    setIsGuestMode(session.isGuest)
+    setQrLoginOpen(false)
+    setDataSyncVersion((v) => v + 1)
+  }, [])
+
+  const handleLeaveGuestMode = useCallback(async () => {
+    const session = await clearNeteaseListenSession()
+    setNeteaseCookie(session.cookie)
+    setIsGuestMode(session.isGuest)
+    setDataSyncVersion((v) => v + 1)
+  }, [])
+
+  const headerUser = neteaseProfile?.user ?? null
 
   const handleSyncNetease = useCallback(async () => {
     if (!neteaseCookie || syncingNetease) return
@@ -190,12 +194,40 @@ export function DiscoverListenTogetherApp({
       setDataSyncVersion((v) => v + 1)
       await refetchProfile({ force: true })
       await reloadLikedIds()
+      await refetchHomeFeed(true)
+      await refetchToplists(true)
     } finally {
       setSyncingNetease(false)
     }
-  }, [neteaseCookie, syncingNetease, refetchProfile, reloadLikedIds])
+  }, [neteaseCookie, syncingNetease, refetchProfile, reloadLikedIds, refetchHomeFeed, refetchToplists])
+
+  const handleHomeRefresh = useCallback(async () => {
+    if (!listenSessionActive || homeRefreshing) return
+    setHomeRefreshing(true)
+    try {
+      await Promise.all([
+        refetchHomeFeed(true),
+        refetchToplists(true),
+        neteaseLoggedIn ? refetchProfile({ force: true }) : Promise.resolve(),
+      ])
+    } finally {
+      setHomeRefreshing(false)
+    }
+  }, [
+    listenSessionActive,
+    homeRefreshing,
+    refetchHomeFeed,
+    refetchToplists,
+    neteaseLoggedIn,
+    refetchProfile,
+  ])
 
   const likedPlaylistId = neteaseProfile?.likedSongs.id ?? 0
+
+  const discoveryModel = useMemo(
+    () => buildMusicDiscoveryModel(homeFeed, neteaseProfile),
+    [homeFeed, neteaseProfile],
+  )
 
   const playSongWithContext = useCallback(
     (item: NeteaseSongItem, queue: NeteaseSongItem[], playlistId = 0) => {
@@ -212,54 +244,127 @@ export function DiscoverListenTogetherApp({
 
   const openPlaylistDetail = useCallback(
     (info: PlaylistDetailInfo) => {
-      if (!neteaseCookie) {
+      if (!listenSessionActive) {
         setQrLoginOpen(true)
         return
       }
+      setOpenArtist(null)
       setOpenPlaylist(info)
     },
-    [neteaseCookie],
+    [listenSessionActive],
+  )
+
+  const openArtistDetail = useCallback(
+    (artist: NeteaseArtistItem) => {
+      if (!listenSessionActive) {
+        setQrLoginOpen(true)
+        return
+      }
+      setOpenPlaylist(null)
+      setOpenArtist({
+        id: artist.id,
+        name: artist.name,
+        avatar: artist.avatar,
+      })
+    },
+    [listenSessionActive],
+  )
+
+  const handleHeartModePlay = useCallback(() => {
+    if (!listenSessionActive) {
+      setQrLoginOpen(true)
+      return
+    }
+    const seed =
+      discoveryModel.daily.songs[0] ??
+      discoveryModel.lovedSongs[0] ??
+      toplistCharts[0]?.songs[0]
+    if (!seed) return
+    if (neteaseLoggedIn && likedPlaylistId) {
+      void startHeartModePlayback(seed, likedPlaylistId)
+    } else {
+      const queue =
+        discoveryModel.daily.songs.length > 0 ? discoveryModel.daily.songs : [seed]
+      void playSongWithContext(seed, queue, 0)
+    }
+  }, [
+    listenSessionActive,
+    discoveryModel,
+    neteaseLoggedIn,
+    likedPlaylistId,
+    startHeartModePlayback,
+    playSongWithContext,
+    toplistCharts,
+  ])
+
+  const handleOpenDaily = useCallback(() => {
+    if (!listenSessionActive) {
+      setQrLoginOpen(true)
+      return
+    }
+    const songs = discoveryModel.daily.songs
+    if (songs.length > 0) {
+      void playSongWithContext(songs[0], songs, 0)
+      return
+    }
+    if (neteaseProfile?.likedSongs.id) {
+      openPlaylistDetail({
+        id: neteaseProfile.likedSongs.id,
+        title: neteaseProfile.likedSongs.title,
+        cover: neteaseProfile.likedSongs.cover,
+        count: neteaseProfile.likedSongs.count,
+      })
+    }
+  }, [listenSessionActive, discoveryModel, playSongWithContext, neteaseProfile, openPlaylistDetail])
+
+  const handleOpenRadar = useCallback(() => {
+    if (!listenSessionActive) {
+      setQrLoginOpen(true)
+      return
+    }
+    const pl = discoveryModel.radar.playlist
+    if (pl) {
+      openPlaylistDetail({
+        id: pl.id,
+        title: pl.title,
+        cover: pl.cover,
+        count: pl.count,
+      })
+      return
+    }
+    const songs = discoveryModel.radar.songs
+    if (songs[0]) void playSongWithContext(songs[0], songs, 0)
+  }, [listenSessionActive, discoveryModel, openPlaylistDetail, playSongWithContext])
+
+  const handleOpenToplistChart = useCallback(
+    (chart: NeteaseToplistChart) => {
+      if (!listenSessionActive) {
+        setQrLoginOpen(true)
+        return
+      }
+      const pl = toplistChartAsPlaylist(chart)
+      openPlaylistDetail({
+        id: pl.id,
+        title: pl.title,
+        cover: pl.cover,
+        count: pl.count || chart.songs.length,
+      })
+    },
+    [listenSessionActive, openPlaylistDetail],
   )
 
   const playingSongId = song.songId ?? null
 
-  const lyricIndex = useMemo(
-    () => activeLyricIndex(lyrics, currentTimeMs, durationMs),
-    [lyrics, currentTimeMs, durationMs],
-  )
-
-  const fullscreenProgress = useMemo(
-    () =>
-      isFullScreen
-        ? formatProgressTimes(progress, Math.max(1, Math.round(durationMs / 1000)))
-        : { current: '0:00', total: '0:00', percentage: 0 },
-    [isFullScreen, progress, durationMs],
-  )
-
   const openFullScreen = useCallback(() => {
-    setIsFullScreen(true)
-  }, [])
-
-  const closeFullScreen = useCallback(() => {
-    setIsFullScreen(false)
-  }, [])
-
-  const openCommentsForNowPlaying = useCallback(() => {
-    if (!song.songId || song.title === '暂无播放') return
-    setCommentsSong({
-      id: song.songId,
-      name: song.title,
-      artist: song.artist,
-      cover: song.cover ?? '',
-    })
-  }, [song.songId, song.title, song.artist, song.cover])
+    openListenFullscreen()
+  }, [openListenFullscreen])
 
   const closeComments = useCallback(() => {
     setCommentsSong(null)
   }, [])
 
   const bottomPad = `calc(${BOTTOM_STACK}px + env(safe-area-inset-bottom, 0px) + 12px)`
-  const hideTabBar = Boolean(openPlaylist)
+  const hideTabBar = Boolean(openPlaylist || openArtist)
   const miniPlayerBottom = hideTabBar
     ? 'env(safe-area-inset-bottom, 0px)'
     : `calc(${TAB_BAR_H}px + env(safe-area-inset-bottom, 0px))`
@@ -268,29 +373,36 @@ export function DiscoverListenTogetherApp({
   const isMe = activeTab === 'me'
   const isNotes = activeTab === 'notes'
   const isSearch = activeTab === 'search'
-  const usePageImageBg = isHome || isNotes || isSearch
+  const usePageImageBg = !isMe
+  const hideUnderlyingPages = Boolean(openPlaylist || openArtist)
 
   return (
     <div
-      className={`relative flex h-full min-h-0 flex-col overflow-hidden text-stone-800 ${
-        usePageImageBg ? '' : 'bg-stone-50'
+      className={`relative flex h-full min-h-0 flex-col overflow-hidden ${
+        isMe ? 'bg-stone-50 text-stone-800' : 'text-[#2D2422]'
       } ${className}`}
     >
       {usePageImageBg ? <ListenTogetherPageBackground /> : null}
       {/* —— Scroll area —— */}
       <div
-        className="relative z-[1] min-h-0 flex-1 overflow-y-auto overscroll-contain [scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden"
-        style={{ paddingBottom: isHome ? bottomPad : undefined }}
+        className={`relative z-[1] min-h-0 flex-1 overscroll-contain [scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden ${
+          hideUnderlyingPages ? 'hidden' : 'overflow-y-auto'
+        }`}
+        style={{ paddingBottom: isHome || isSearch ? bottomPad : undefined }}
+        aria-hidden={hideUnderlyingPages}
       >
         {isMe ? (
           <ListenTogetherProfilePage
             onBack={onBack}
-            neteaseBound={neteaseBound}
+            neteaseBound={neteaseLoggedIn}
+            isGuestMode={isGuestMode}
             onRequestLogin={() => setQrLoginOpen(true)}
+            onLeaveGuest={() => void handleLeaveGuestMode()}
             neteaseProfile={neteaseProfile}
-            profileLoading={neteaseBound && profileLoading}
-            profileError={neteaseBound ? profileError : null}
+            profileLoading={neteaseLoggedIn && profileLoading}
+            profileError={neteaseLoggedIn ? profileError : null}
             onOpenPlaylist={openPlaylistDetail}
+            onPlayAttachedMusic={playAttachedMusic}
             profileFromCache={profileFromCache}
             onSyncNetease={() => void handleSyncNetease()}
             syncingNetease={syncingNetease}
@@ -298,20 +410,38 @@ export function DiscoverListenTogetherApp({
         ) : null}
 
         {isNotes ? (
-          <ListenTogetherNotesFeedPage onPlayAttachedMusic={playAttachedMusic} />
+          <ListenTogetherNotesFeedPage
+            key={notesFeedKey}
+            onPlayAttachedMusic={playAttachedMusic}
+            onRefresh={() => setNotesFeedKey((k) => k + 1)}
+          />
         ) : null}
 
         {isSearch ? (
-          <ListenTogetherSearchExplorePage
+          <MusicSearchPage
             neteaseCookie={neteaseCookie}
+            sessionActive={listenSessionActive}
             onRequireLogin={() => setQrLoginOpen(true)}
-            onPlaySong={(s) => void playSongWithContext(s, [s], 0)}
+            onPlaySong={(s, queue) => void playSongWithContext(s, queue, 0)}
+            onOpenPlaylist={(pl) =>
+              openPlaylistDetail({
+                id: pl.id,
+                title: pl.title,
+                cover: pl.cover,
+                count: pl.count,
+              })
+            }
+            onOpenArtist={openArtistDetail}
+            onOpenToplistChart={handleOpenToplistChart}
+            toplistCharts={toplistCharts}
+            toplistLoading={toplistLoading}
+            onRefreshToplists={() => refetchToplists(true)}
           />
         ) : null}
 
         {isHome ? (
         <header
-          className="sticky top-0 z-10 flex items-center justify-between px-4 pb-3 pt-[max(10px,env(safe-area-inset-top))] bg-white/45 backdrop-blur-md"
+          className="sticky top-0 z-10 flex items-center justify-between border-b border-white/40 bg-white/45 px-4 pb-3 pt-[max(10px,env(safe-area-inset-top))] backdrop-blur-md"
         >
           <div className="flex min-w-0 items-center gap-2">
             {onBack ? (
@@ -319,7 +449,7 @@ export function DiscoverListenTogetherApp({
                 type="button"
                 aria-label="返回发现页"
                 onClick={onBack}
-                className="mr-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-stone-600 transition-colors hover:bg-white/60"
+                className="mr-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-[#2D2422]/70 transition-colors hover:bg-white/60"
               >
                 <ArrowLeft className="size-5" strokeWidth={1.5} />
               </button>
@@ -336,168 +466,101 @@ export function DiscoverListenTogetherApp({
               )}
             </div>
             <div className="min-w-0">
-              <p className="truncate text-[14px] font-medium text-stone-800">
+              <p className="truncate text-[14px] font-medium text-[#2D2422]">
                 {headerUser?.nickname ??
-                  (neteaseBound && profileLoading ? '同步中…' : '未登录')}
+                  (isGuestMode
+                    ? '游客'
+                    : neteaseLoggedIn && profileLoading
+                      ? '同步中…'
+                      : '未登录')}
               </p>
               <div className="flex items-center gap-1">
                 <NeteaseBadgeIcon className="h-3.5 w-3.5 shrink-0" />
-                <span className="text-[10px] tracking-wide text-stone-400">
-                  {neteaseBound ? '已连接网易云' : '点击右侧扫码连接'}
+                <span className="text-[10px] tracking-wide text-rose-300">
+                  {neteaseLoggedIn
+                    ? '已连接网易云'
+                    : isGuestMode
+                      ? '游客模式 · 可搜索播放'
+                      : '登录或游客进入'}
                 </span>
               </div>
             </div>
           </div>
-          <button
-            type="button"
-            aria-label="扫码登录或切换账号"
-            onClick={() => setQrLoginOpen(true)}
-            className={`flex h-9 w-9 items-center justify-center rounded-full border shadow-sm backdrop-blur-sm transition-colors ${
-              neteaseBound
-                ? 'border-rose-100 bg-rose-50/80 text-rose-400'
-                : 'border-white/80 bg-white/50 text-stone-500 hover:bg-white/80'
-            }`}
-          >
-            <QrCode className="size-[18px]" strokeWidth={1.5} />
-          </button>
+          <div className="flex shrink-0 items-center gap-1.5">
+            {listenSessionActive ? (
+              <ListenTogetherHeaderRefreshButton
+                variant="rose"
+                loading={homeRefreshing || homeFeedLoading || toplistLoading}
+                onClick={() => void handleHomeRefresh()}
+              />
+            ) : null}
+            <button
+              type="button"
+              aria-label="扫码登录或切换账号"
+              onClick={() => setQrLoginOpen(true)}
+              className={`flex h-9 w-9 items-center justify-center rounded-full border shadow-sm backdrop-blur-sm transition-colors ${
+                neteaseLoggedIn
+                  ? 'border-rose-100 bg-rose-50/80 text-rose-400'
+                  : isGuestMode
+                    ? 'border-stone-200 bg-white/70 text-stone-500'
+                    : 'border-white/80 bg-white/50 text-stone-500 hover:bg-white/80'
+              }`}
+            >
+              <QrCode className="size-[18px]" strokeWidth={1.5} />
+            </button>
+          </div>
         </header>
         ) : null}
 
         {isHome ? (
         <main className="px-4 pb-2">
-          <section className="mb-7">
-            <h2 className="mb-3 text-[15px] font-semibold tracking-tight text-stone-700">我的音乐库</h2>
-            {neteaseBound && neteaseProfile ? (
-              <div className="flex gap-3 overflow-x-auto pb-1 [scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden">
+          {!listenSessionActive ? (
+            <section className="mb-6 px-1 py-6 text-center">
+              <p className="font-serif text-[18px] font-medium text-[#2D2422]">开始听一听</p>
+              <p className="mt-2 text-[12px] leading-relaxed text-rose-300/90">
+                没有网易云账号也可以游客进入，搜索与播放公开歌曲
+              </p>
+              <div className="mt-5 flex flex-wrap items-center justify-center gap-2">
                 <button
                   type="button"
-                  onClick={() =>
-                    openPlaylistDetail({
-                      id: neteaseProfile.likedSongs.id,
-                      title: neteaseProfile.likedSongs.title,
-                      cover: neteaseProfile.likedSongs.cover,
-                      count: neteaseProfile.likedSongs.count,
-                    })
-                  }
-                  className="group relative h-[108px] w-[148px] shrink-0 overflow-hidden rounded-2xl bg-stone-200 text-left shadow-sm transition-transform active:scale-[0.98]"
+                  onClick={() => void handleEnterGuestMode()}
+                  className="rounded-full bg-[#2D2422] px-6 py-2.5 text-[13px] font-medium text-[#FFF5F7] shadow-[0_10px_30px_rgba(225,29,72,0.08)]"
                 >
-                  {neteaseProfile.likedSongs.cover ? (
-                    <img
-                      src={neteaseProfile.likedSongs.cover}
-                      alt=""
-                      className="absolute inset-0 h-full w-full object-cover"
-                    />
-                  ) : null}
-                  <div className="absolute inset-0 bg-gradient-to-t from-black/75 via-black/25 to-transparent" />
-                  <div className="absolute inset-x-0 bottom-0 p-3">
-                    <p className="text-[14px] font-medium leading-snug text-white">
-                      {neteaseProfile.likedSongs.title}
-                    </p>
-                    <p className="mt-0.5 text-[11px] text-white/70">
-                      <ListenNum className="text-white/70">
-                        {neteaseProfile.likedSongs.count}
-                      </ListenNum>{' '}
-                      首
-                    </p>
-                  </div>
+                  游客进入
                 </button>
-                {recentSongs.map((item) => (
-                  <button
-                    key={`recent-${item.id}`}
-                    type="button"
-                    onClick={() => void playSongWithContext(item, [item], 0)}
-                    className="group relative h-[108px] w-[148px] shrink-0 overflow-hidden rounded-2xl bg-stone-200 text-left shadow-sm transition-transform active:scale-[0.98]"
-                  >
-                    {item.cover ? (
-                      <img
-                        src={item.cover}
-                        alt=""
-                        className="absolute inset-0 h-full w-full object-cover"
-                      />
-                    ) : null}
-                    <div className="absolute inset-0 bg-gradient-to-t from-black/75 via-black/25 to-transparent" />
-                    <div className="absolute inset-x-0 bottom-0 p-3">
-                      <p className="text-[14px] font-medium leading-snug text-white">{item.name}</p>
-                      <p className="mt-0.5 line-clamp-1 text-[11px] text-white/70">{item.artist}</p>
-                    </div>
-                  </button>
-                ))}
-                {neteaseProfile.createdPlaylists.slice(0, 4).map((item: NeteasePlaylistItem) => (
-                  <button
-                    key={item.id}
-                    type="button"
-                    onClick={() =>
-                      openPlaylistDetail({
-                        id: item.id,
-                        title: item.title,
-                        cover: item.cover,
-                        count: item.count,
-                      })
-                    }
-                    className="group relative h-[108px] w-[148px] shrink-0 overflow-hidden rounded-2xl bg-stone-200 text-left shadow-sm transition-transform active:scale-[0.98]"
-                  >
-                    {item.cover ? (
-                      <img
-                        src={item.cover}
-                        alt=""
-                        className="absolute inset-0 h-full w-full object-cover"
-                      />
-                    ) : null}
-                    <div className="absolute inset-0 bg-gradient-to-t from-black/75 via-black/25 to-transparent" />
-                    <div className="absolute inset-x-0 bottom-0 p-3">
-                      <p className="text-[14px] font-medium leading-snug text-white">{item.title}</p>
-                      <p className="mt-0.5 text-[11px] text-white/70">
-                        <ListenNum className="text-white/70">{item.count}</ListenNum> 首
-                      </p>
-                    </div>
-                  </button>
-                ))}
-              </div>
-            ) : (
-              <button
-                type="button"
-                onClick={() => setQrLoginOpen(true)}
-                className="flex w-full items-center justify-center rounded-2xl border border-dashed border-stone-200 bg-white/50 py-10 text-[13px] text-stone-400"
-              >
-                {neteaseBound && profileLoading ? '正在同步音乐库…' : '登录网易云后查看我的音乐库'}
-              </button>
-            )}
-          </section>
-
-          {neteaseBound && neteaseProfile && neteaseProfile.savedPlaylists.length > 0 ? (
-            <section>
-              <h2 className="mb-3 text-[15px] font-semibold tracking-tight text-stone-700">
-                收藏的歌单
-              </h2>
-              <div className="grid grid-cols-2 gap-3">
-                {neteaseProfile.savedPlaylists.slice(0, 4).map((pl: NeteasePlaylistItem) => (
-                  <button
-                    key={pl.id}
-                    type="button"
-                    onClick={() =>
-                      openPlaylistDetail({
-                        id: pl.id,
-                        title: pl.title,
-                        cover: pl.cover,
-                        count: pl.count,
-                      })
-                    }
-                    className="overflow-hidden rounded-2xl bg-white/50 text-left shadow-sm ring-1 ring-white transition-transform active:scale-[0.98]"
-                  >
-                    <div className="relative aspect-square overflow-hidden bg-stone-100">
-                      {pl.cover ? (
-                        <img src={pl.cover} alt="" className="h-full w-full object-cover" />
-                      ) : null}
-                      <div className="absolute inset-0 bg-gradient-to-t from-black/50 to-transparent opacity-80" />
-                    </div>
-                    <p className="line-clamp-2 px-2.5 py-2 text-[12px] leading-snug text-stone-700">
-                      {pl.title}
-                    </p>
-                  </button>
-                ))}
+                <button
+                  type="button"
+                  onClick={() => setQrLoginOpen(true)}
+                  className="rounded-full px-6 py-2.5 text-[13px] text-[#2D2422]/80 ring-1 ring-rose-200/60"
+                >
+                  登录网易云
+                </button>
               </div>
             </section>
           ) : null}
+
+          <MusicDiscoveryPage
+            feed={homeFeed}
+            profile={neteaseProfile}
+            loading={homeFeedLoading}
+            error={homeFeedError}
+            onHeartModePlay={handleHeartModePlay}
+            onOpenDaily={handleOpenDaily}
+            onOpenRadar={handleOpenRadar}
+            onPlaySong={(s, queue) => void playSongWithContext(s, queue, 0)}
+            onOpenPlaylist={(pl) =>
+              openPlaylistDetail({
+                id: pl.id,
+                title: pl.title,
+                cover: pl.cover,
+                count: pl.count,
+              })
+            }
+            toplistCharts={toplistCharts}
+            toplistLoading={toplistLoading}
+            toplistError={toplistError}
+            onOpenToplistChart={handleOpenToplistChart}
+          />
         </main>
         ) : null}
 
@@ -511,20 +574,45 @@ export function DiscoverListenTogetherApp({
             animate={{ x: 0 }}
             exit={{ x: '100%' }}
             transition={{ type: 'spring', damping: 28, stiffness: 320 }}
-            className="fixed inset-0 z-[28] mx-auto max-w-[560px] bg-stone-50"
-            style={{
-              paddingBottom: overlayBottomInset,
-            }}
+            className="fixed inset-0 z-[28] mx-auto max-w-[560px] overflow-hidden"
           >
             <ListenTogetherPlaylistDetailPage
               playlist={openPlaylist}
               cookie={neteaseCookie ?? ''}
+              neteaseUserId={neteaseProfile?.user.userId}
+              onRequireLogin={() => setQrLoginOpen(true)}
+              onPlaylistSubscribeChange={() => void refetchProfile({ force: true })}
               onBack={() => setOpenPlaylist(null)}
               onPlaySong={(s, queueTracks) =>
                 void playSongWithContext(s, queueTracks, openPlaylist.id)
               }
               playingSongId={playingSongId}
               isPlaying={isPlaying}
+              contentBottomInset={overlayBottomInset}
+              className="h-full"
+            />
+          </motion.div>
+        ) : null}
+        {openArtist ? (
+          <motion.div
+            key="artist-detail"
+            initial={{ x: '100%' }}
+            animate={{ x: 0 }}
+            exit={{ x: '100%' }}
+            transition={{ type: 'spring', damping: 28, stiffness: 320 }}
+            className="fixed inset-0 z-[28] mx-auto max-w-[560px] overflow-hidden"
+          >
+            <ListenTogetherArtistDetailPage
+              artist={openArtist}
+              cookie={neteaseCookie ?? ''}
+              sessionActive={listenSessionActive}
+              onRequireLogin={() => setQrLoginOpen(true)}
+              onBack={() => setOpenArtist(null)}
+              onOpenArtist={openArtistDetail}
+              onPlaySong={(s, queueTracks) => void playSongWithContext(s, queueTracks, 0)}
+              playingSongId={playingSongId}
+              isPlaying={isPlaying}
+              contentBottomInset={overlayBottomInset}
               className="h-full"
             />
           </motion.div>
@@ -646,44 +734,6 @@ export function DiscoverListenTogetherApp({
         ) : null}
       </AnimatePresence>
 
-      {/* —— Full screen player（关闭时卸载，减轻手机 WebView 内存压力）—— */}
-      {isFullScreen ? (
-      <ListenTogetherFullscreenPlayer
-        open
-        onClose={closeFullScreen}
-        song={{
-          title: song.title,
-          artist: song.artist,
-          cover: song.cover,
-        }}
-        lyricLines={lyrics}
-        activeLyricIndex={lyricIndex}
-        durationMs={durationMs}
-        progress={fullscreenProgress}
-        isPlaying={isPlaying}
-        liked={currentSongLiked}
-        likeBusy={Boolean(song.songId && likingSongId === song.songId)}
-        onTogglePlay={togglePlay}
-        onToggleLike={
-          neteaseBound && song.songId && song.title !== '暂无播放'
-            ? () => {
-                void toggleNeteaseSongLike(song.songId!)
-              }
-            : undefined
-        }
-        onOpenComments={
-          song.songId && song.title !== '暂无播放' ? openCommentsForNowPlaying : undefined
-        }
-        playMode={playMode}
-        canUseHeartMode={canUseHeartMode}
-        onCyclePlayMode={cyclePlayMode}
-        onPrev={() => void playPrev()}
-        onNext={() => void playNext()}
-        onSeek={seekTo}
-        onSeekToTimeMs={seekToTimeMs}
-      />
-      ) : null}
-
       <ListenTogetherSongCommentsPage
         open={commentsSong !== null}
         song={commentsSong}
@@ -694,10 +744,15 @@ export function DiscoverListenTogetherApp({
       <NeteaseQrLoginModal
         open={qrLoginOpen}
         onClose={() => setQrLoginOpen(false)}
+        isGuestMode={isGuestMode}
+        onGuestEnter={() => void handleEnterGuestMode()}
         onSuccess={() => {
-          void hydrateNeteaseLoginCookie().then((cookie) => {
-            setNeteaseCookie(cookie)
+          void hydrateNeteaseLoginCookie().then(async (cookie) => {
+            const session = await applyNeteaseAccountLogin(cookie)
+            setNeteaseCookie(session.cookie)
+            setIsGuestMode(session.isGuest)
             setQrLoginOpen(false)
+            setDataSyncVersion((v) => v + 1)
             void refetchProfile({ force: true })
             void reloadLikedIds()
           })

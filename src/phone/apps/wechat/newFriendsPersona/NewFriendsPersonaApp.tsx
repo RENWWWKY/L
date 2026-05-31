@@ -1239,7 +1239,8 @@ export function NewFriendsPersonaApp({
                 return
               }
               const npcs = await personaDb.listNpcsForWechatAccount(id, acc)
-              removeWeChatPersonaContactsByCharacterIds([id, ...npcs.map((n) => n.id)])
+              const removedIds = [id, ...npcs.map((n) => n.id)]
+              removeWeChatPersonaContactsByCharacterIds(removedIds)
               const mode = await deleteCharacterPersonaForWechatAccount({
                 characterId: id,
                 wechatAccountId: acc,

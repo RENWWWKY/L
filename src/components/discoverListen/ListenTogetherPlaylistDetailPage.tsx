@@ -1,24 +1,37 @@
 import { motion } from 'framer-motion'
-import { ArrowLeft, Loader2, MessageCircle, Music2, Pause, Play, Search, X } from 'lucide-react'
+import { ArrowLeft, Bookmark, Loader2, MessageCircle, Music2, Pause, Play, Search, X } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useState } from 'react'
 
+import { ListenTogetherPlaylistCommentsPage } from './ListenTogetherPlaylistCommentsPage'
 import { ListenTogetherSongCommentsPage } from './ListenTogetherSongCommentsPage'
+import { ListenTogetherHeaderRefreshButton } from './ListenTogetherHeaderRefreshButton'
 import { ListenNum } from './ListenNum'
 import {
+  fetchAlbumDetail,
   fetchAllPlaylistTracks,
   fetchPlaylistMeta,
   fetchPlaylistTracks,
   filterPlaylistTracks,
   PLAYLIST_TRACKS_PAGE_SIZE,
+  subscribeNeteasePlaylist,
   type NeteaseSongItem,
+  type PlaylistMeta,
 } from './neteaseMusicApi'
 import { getCachedPlaylist, savePlaylistCache } from './playlistTracksCache'
+import { ListenTogetherPageBackground } from './listenTogetherPageBg'
+
+function formatPlaylistDate(ts: number): string {
+  if (!ts) return ''
+  const d = new Date(ts)
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+}
 
 export type PlaylistDetailInfo = {
   id: number
   title: string
   cover: string
   count: number
+  kind?: 'playlist' | 'album'
 }
 
 export type ListenTogetherPlaylistDetailPageProps = {
@@ -28,6 +41,11 @@ export type ListenTogetherPlaylistDetailPageProps = {
   onPlaySong: (song: NeteaseSongItem, queueTracks: NeteaseSongItem[]) => void
   playingSongId?: number | null
   isPlaying?: boolean
+  neteaseUserId?: number
+  onRequireLogin?: () => void
+  onPlaylistSubscribeChange?: () => void
+  /** 为底部迷你播放器预留空间 */
+  contentBottomInset?: string
   className?: string
 }
 
@@ -133,8 +151,13 @@ export function ListenTogetherPlaylistDetailPage({
   onPlaySong,
   playingSongId = null,
   isPlaying = false,
+  neteaseUserId = 0,
+  onRequireLogin,
+  onPlaylistSubscribeChange,
+  contentBottomInset,
   className = '',
 }: ListenTogetherPlaylistDetailPageProps) {
+  const [meta, setMeta] = useState<PlaylistMeta | null>(null)
   const [title, setTitle] = useState(playlist.title)
   const [cover, setCover] = useState(playlist.cover)
   const [count, setCount] = useState(playlist.count)
@@ -142,10 +165,19 @@ export function ListenTogetherPlaylistDetailPage({
   const [loading, setLoading] = useState(true)
   const [loadingMore, setLoadingMore] = useState(false)
   const [loadingAll, setLoadingAll] = useState(false)
+  const [pageRefreshing, setPageRefreshing] = useState(false)
+  const [subscribing, setSubscribing] = useState(false)
+  const [subscribeError, setSubscribeError] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [searchQuery, setSearchQuery] = useState('')
   const [fromCache, setFromCache] = useState(false)
   const [commentsSong, setCommentsSong] = useState<NeteaseSongItem | null>(null)
+  const [showPlaylistComments, setShowPlaylistComments] = useState(false)
+  const [descExpanded, setDescExpanded] = useState(false)
+
+  const isAlbum = playlist.kind === 'album'
+  const isOwnPlaylist = !isAlbum && neteaseUserId > 0 && meta?.creator.id === neteaseUserId
+  const subscribed = meta?.subscribed ?? false
 
   const hasMore = tracks.length < count
   const remaining = Math.max(0, count - tracks.length)
@@ -178,48 +210,97 @@ export function ListenTogetherPlaylistDetailPage({
     [playlist.id, title, cover],
   )
 
-  const load = useCallback(async () => {
+  const load = useCallback(async (force = false) => {
     if (!cookie || !playlist.id) {
       setError('请先登录网易云')
       setLoading(false)
       return
     }
 
-    const cached = await getCachedPlaylist(playlist.id)
-    if (cached?.tracks.length) {
-      setTitle(cached.title || playlist.title)
-      setCover(cached.cover || playlist.cover)
-      setCount(cached.count || playlist.count)
-      setTracks(cached.tracks)
+    setError(null)
+    setSubscribeError(null)
+    setSearchQuery('')
+
+    const cached = force ? null : await getCachedPlaylist(playlist.id)
+    const hasCachedTracks = Boolean(cached?.tracks.length)
+
+    if (hasCachedTracks) {
+      setTitle(cached!.title || playlist.title)
+      setCover(cached!.cover || playlist.cover)
+      setCount(cached!.count || playlist.count)
+      setTracks(cached!.tracks)
       setFromCache(true)
-      setError(null)
       setLoading(false)
-      return
+    } else {
+      setFromCache(false)
+      setLoading(true)
+      setTracks([])
     }
 
-    setFromCache(false)
-    setLoading(true)
-    setError(null)
-    setSearchQuery('')
     try {
-      const [meta, list] = await Promise.all([
-        fetchPlaylistMeta(cookie, playlist.id),
-        fetchPlaylistTracks(cookie, playlist.id, PLAYLIST_TRACKS_PAGE_SIZE, 0),
-      ])
-      setTitle(meta.title)
-      setCover(meta.cover)
-      const total = meta.count || list.length
-      setCount(total)
-      setTracks(list)
-      await persistCache(list, total, list.length >= total)
-      if (list.length === 0) setError('歌单暂无歌曲')
+      if (isAlbum) {
+        const { meta: albumMeta, songs } = await fetchAlbumDetail(cookie, playlist.id)
+        setMeta(albumMeta)
+        setTitle(albumMeta.title)
+        setCover(albumMeta.cover)
+        const total = albumMeta.count || songs.length
+        setCount(total)
+        setTracks(songs)
+        await persistCache(songs, total, true)
+        setFromCache(false)
+        if (songs.length === 0) setError('专辑暂无歌曲')
+        return
+      }
+
+      const metaPromise = fetchPlaylistMeta(cookie, playlist.id)
+      if (!hasCachedTracks) {
+        const [metaResult, list] = await Promise.all([
+          metaPromise,
+          fetchPlaylistTracks(cookie, playlist.id, PLAYLIST_TRACKS_PAGE_SIZE, 0),
+        ])
+        setMeta(metaResult)
+        setTitle(metaResult.title)
+        setCover(metaResult.cover)
+        const total = metaResult.count || list.length
+        setCount(total)
+        setTracks(list)
+        await persistCache(list, total, list.length >= total)
+        setFromCache(false)
+        if (list.length === 0) setError('歌单暂无歌曲')
+      } else {
+        const metaResult = await metaPromise
+        setMeta(metaResult)
+        setTitle(metaResult.title || cached!.title || playlist.title)
+        setCover(metaResult.cover || cached!.cover || playlist.cover)
+        setCount(metaResult.count || cached!.count || playlist.count)
+        if (force) {
+          const list = await fetchPlaylistTracks(cookie, playlist.id, PLAYLIST_TRACKS_PAGE_SIZE, 0)
+          const total = metaResult.count || list.length
+          setTracks(list)
+          setCount(total)
+          await persistCache(list, total, list.length >= total)
+          setFromCache(false)
+          if (list.length === 0) setError('歌单暂无歌曲')
+        }
+      }
     } catch (e) {
-      setTracks([])
-      setError(e instanceof Error ? e.message : '加载歌单失败')
+      if (!hasCachedTracks) {
+        setTracks([])
+        setError(e instanceof Error ? e.message : '加载歌单失败')
+      }
     } finally {
       setLoading(false)
     }
-  }, [cookie, playlist.id, playlist.title, playlist.cover, persistCache])
+  }, [cookie, isAlbum, playlist.id, playlist.title, playlist.cover, playlist.count, persistCache])
+
+  const handlePageRefresh = useCallback(async () => {
+    setPageRefreshing(true)
+    try {
+      await load(true)
+    } finally {
+      setPageRefreshing(false)
+    }
+  }, [load])
 
   useEffect(() => {
     void load()
@@ -234,7 +315,7 @@ export function ListenTogetherPlaylistDetailPage({
   }, [tracks, count, loading, persistCache])
 
   const loadMore = useCallback(async () => {
-    if (!cookie || !playlist.id || loadingMore || !hasMore) return
+    if (isAlbum || !cookie || !playlist.id || loadingMore || !hasMore) return
     setLoadingMore(true)
     try {
       const batch = await fetchPlaylistTracks(
@@ -264,10 +345,10 @@ export function ListenTogetherPlaylistDetailPage({
     } finally {
       setLoadingMore(false)
     }
-  }, [cookie, playlist.id, loadingMore, hasMore, tracks.length])
+  }, [isAlbum, cookie, playlist.id, loadingMore, hasMore, tracks.length])
 
   const loadAll = useCallback(async () => {
-    if (!cookie || !playlist.id || loadingAll || !hasMore) return
+    if (isAlbum || !cookie || !playlist.id || loadingAll || !hasMore) return
     setLoadingAll(true)
     try {
       const all = await fetchAllPlaylistTracks(cookie, playlist.id, count, tracks, setTracks)
@@ -280,18 +361,65 @@ export function ListenTogetherPlaylistDetailPage({
     } finally {
       setLoadingAll(false)
     }
-  }, [cookie, playlist.id, loadingAll, hasMore, count, tracks, persistCache])
+  }, [isAlbum, cookie, playlist.id, loadingAll, hasMore, count, tracks, persistCache])
 
   const playAll = useCallback(() => {
     const list = searching ? filteredTracks : tracks
     if (list[0]) onPlaySong(list[0], list)
   }, [tracks, filteredTracks, searching, onPlaySong])
 
+  const handleSubscribeToggle = useCallback(async () => {
+    if (!cookie) {
+      onRequireLogin?.()
+      return
+    }
+    if (!playlist.id || isOwnPlaylist || subscribing) return
+    setSubscribing(true)
+    setSubscribeError(null)
+    const next = !subscribed
+    try {
+      await subscribeNeteasePlaylist(cookie, playlist.id, next)
+      setMeta((prev) => (prev ? { ...prev, subscribed: next } : prev))
+      onPlaylistSubscribeChange?.()
+    } catch (e) {
+      setSubscribeError(e instanceof Error ? e.message : '操作失败')
+    } finally {
+      setSubscribing(false)
+    }
+  }, [
+    cookie,
+    playlist.id,
+    isOwnPlaylist,
+    subscribing,
+    subscribed,
+    onRequireLogin,
+    onPlaylistSubscribeChange,
+  ])
+
+  const playlistCommentsTarget = useMemo(
+    () =>
+      meta
+        ? {
+            id: meta.id,
+            title: meta.title,
+            cover: meta.cover,
+            commentCount: meta.commentCount,
+          }
+        : {
+            id: playlist.id,
+            title,
+            cover,
+            commentCount: 0,
+          },
+    [meta, playlist.id, title, cover],
+  )
+
   const listBusy = loadingMore || loadingAll
 
   return (
-    <div className={`flex h-full min-h-0 flex-col bg-stone-50 ${className}`}>
-      <header className="shrink-0 border-b border-stone-100/80 bg-stone-50/90 px-4 pb-4 pt-[max(10px,env(safe-area-inset-top))] backdrop-blur-md">
+    <div className={`relative flex h-full min-h-0 flex-col ${className}`}>
+      <ListenTogetherPageBackground />
+      <header className="relative z-[1] shrink-0 border-b border-white/40 bg-white/45 px-4 pb-4 pt-[max(10px,env(safe-area-inset-top))] backdrop-blur-md">
         <div className="mb-4 flex items-center gap-2">
           <button
             type="button"
@@ -301,7 +429,14 @@ export function ListenTogetherPlaylistDetailPage({
           >
             <ArrowLeft className="size-5" strokeWidth={1.5} />
           </button>
-          <h1 className="min-w-0 flex-1 truncate text-[17px] font-semibold text-stone-800">歌单</h1>
+          <h1 className="min-w-0 flex-1 truncate text-[17px] font-semibold text-stone-800">
+            {isAlbum ? '专辑' : '歌单'}
+          </h1>
+          <ListenTogetherHeaderRefreshButton
+            variant="ghost"
+            loading={pageRefreshing || loading}
+            onClick={() => void handlePageRefresh()}
+          />
           <button
             type="button"
             onClick={() => void playAll()}
@@ -326,8 +461,35 @@ export function ListenTogetherPlaylistDetailPage({
             <h2 className="line-clamp-2 text-[18px] font-semibold leading-snug text-stone-800">
               {title}
             </h2>
+            {meta ? (
+              <div className="mt-2 flex items-center gap-2">
+                <div className="h-6 w-6 shrink-0 overflow-hidden rounded-full bg-stone-100 ring-1 ring-stone-100">
+                  {meta.creator.avatar ? (
+                    <img
+                      src={meta.creator.avatar}
+                      alt=""
+                      className="h-full w-full object-cover"
+                      referrerPolicy="no-referrer"
+                    />
+                  ) : null}
+                </div>
+                <p className="truncate text-[13px] text-stone-500">{meta.creator.nickname}</p>
+              </div>
+            ) : null}
             <p className="mt-1.5 text-[13px] text-stone-400">
               <ListenNum>{count.toLocaleString()}</ListenNum> 首
+              {meta && meta.playCount > 0 ? (
+                <>
+                  {' '}
+                  · 播放 <ListenNum>{meta.playCount.toLocaleString()}</ListenNum> 次
+                </>
+              ) : null}
+              {meta && meta.commentCount > 0 ? (
+                <>
+                  {' '}
+                  · <ListenNum>{meta.commentCount.toLocaleString()}</ListenNum> 评论
+                </>
+              ) : null}
               {tracks.length > 0 && tracks.length < count ? (
                 <span className="text-stone-300">
                   {' '}
@@ -338,8 +500,85 @@ export function ListenTogetherPlaylistDetailPage({
                 <span className="text-stone-300"> · 已缓存（本地库）</span>
               ) : null}
             </p>
+            {meta?.createTime ? (
+              <p className="mt-1 text-[11px] text-stone-400">
+                创建于 {formatPlaylistDate(meta.createTime)}
+              </p>
+            ) : null}
+            {meta && meta.tags.length > 0 ? (
+              <div className="mt-2 flex flex-wrap gap-1.5">
+                {meta.tags.slice(0, 5).map((tag) => (
+                  <span
+                    key={tag}
+                    className="rounded-full bg-rose-50/80 px-2 py-0.5 text-[10px] text-rose-400/90"
+                  >
+                    {tag}
+                  </span>
+                ))}
+              </div>
+            ) : null}
+            {meta?.description ? (
+              <div className="mt-2">
+                <p
+                  className={`text-[12px] leading-relaxed text-stone-500 ${
+                    descExpanded ? '' : 'line-clamp-2'
+                  }`}
+                >
+                  {meta.description}
+                </p>
+                {meta.description.length > 48 ? (
+                  <button
+                    type="button"
+                    onClick={() => setDescExpanded((v) => !v)}
+                    className="mt-0.5 text-[11px] text-rose-400"
+                  >
+                    {descExpanded ? '收起' : '展开简介'}
+                  </button>
+                ) : null}
+              </div>
+            ) : null}
           </div>
         </div>
+
+        {!loading && !error && !isAlbum ? (
+          <div className="mt-3 flex gap-2">
+            {isOwnPlaylist ? (
+              <span className="inline-flex flex-1 items-center justify-center gap-1.5 rounded-full bg-stone-100 px-3 py-2 text-[12px] text-stone-500">
+                我的歌单
+              </span>
+            ) : (
+              <button
+                type="button"
+                disabled={subscribing}
+                onClick={() => void handleSubscribeToggle()}
+                className={`inline-flex flex-1 items-center justify-center gap-1.5 rounded-full px-3 py-2 text-[12px] font-medium transition-colors disabled:opacity-60 ${
+                  subscribed
+                    ? 'bg-rose-50 text-rose-500 ring-1 ring-rose-100'
+                    : 'bg-white text-stone-600 shadow-sm ring-1 ring-stone-100 hover:bg-rose-50 hover:text-rose-500'
+                }`}
+              >
+                {subscribing ? (
+                  <Loader2 className="size-3.5 animate-spin" aria-hidden />
+                ) : (
+                  <Bookmark className={`size-3.5 ${subscribed ? 'fill-current' : ''}`} strokeWidth={1.75} />
+                )}
+                {subscribed ? '已收藏' : '收藏歌单'}
+              </button>
+            )}
+            <button
+              type="button"
+              onClick={() => setShowPlaylistComments(true)}
+              className="inline-flex flex-1 items-center justify-center gap-1.5 rounded-full bg-white px-3 py-2 text-[12px] font-medium text-stone-600 shadow-sm ring-1 ring-stone-100 transition-colors hover:bg-rose-50 hover:text-rose-500"
+            >
+              <MessageCircle className="size-3.5" strokeWidth={1.75} />
+              歌单评论
+            </button>
+          </div>
+        ) : null}
+
+        {subscribeError ? (
+          <p className="mt-2 text-center text-[11px] text-rose-400">{subscribeError}</p>
+        ) : null}
 
         {!loading && !error ? (
           <label className="relative mt-4 flex items-center">
@@ -352,9 +591,9 @@ export function ListenTogetherPlaylistDetailPage({
               type="search"
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
-              placeholder="搜索歌单内歌曲…"
+              placeholder={isAlbum ? '搜索专辑内歌曲…' : '搜索歌单内歌曲…'}
               className="h-10 w-full rounded-full border-0 bg-white py-2 pl-10 pr-9 text-[14px] text-stone-800 shadow-sm outline-none placeholder:text-stone-400 focus:shadow-[0_4px_20px_rgba(251,207,232,0.2)]"
-              aria-label="搜索歌单内歌曲"
+              aria-label={isAlbum ? '搜索专辑内歌曲' : '搜索歌单内歌曲'}
             />
             {searchQuery ? (
               <button
@@ -370,7 +609,10 @@ export function ListenTogetherPlaylistDetailPage({
         ) : null}
       </header>
 
-      <div className="min-h-0 flex-1 overflow-y-auto px-4 py-4 [scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden">
+      <div
+        className="relative z-[1] min-h-0 flex-1 overflow-y-auto px-4 py-4 [scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden"
+        style={contentBottomInset ? { paddingBottom: contentBottomInset } : undefined}
+      >
         {loading ? (
           <p className="flex items-center justify-center gap-2 py-16 text-[13px] text-stone-400">
             <Loader2 className="size-4 animate-spin" aria-hidden />
@@ -519,6 +761,13 @@ export function ListenTogetherPlaylistDetailPage({
         song={commentsSong}
         cookie={cookie}
         onBack={() => setCommentsSong(null)}
+      />
+
+      <ListenTogetherPlaylistCommentsPage
+        open={showPlaylistComments}
+        playlist={playlistCommentsTarget}
+        cookie={cookie}
+        onBack={() => setShowPlaylistComments(false)}
       />
     </div>
   )

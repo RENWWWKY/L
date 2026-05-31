@@ -2,9 +2,10 @@ import { AnimatePresence, motion } from 'framer-motion'
 import { ArrowLeft, Heart, Loader2, MessageCircle } from 'lucide-react'
 import { useCallback, useEffect, useState } from 'react'
 
+import { ListenTogetherHeaderRefreshButton } from './ListenTogetherHeaderRefreshButton'
 import { ListenNum } from './ListenNum'
 import { fetchSongComments, type NeteaseSongComment, type NeteaseSongItem } from './neteaseMusicApi'
-import { getCachedSongComments, saveSongCommentsCache } from './songCommentsCache'
+import { clearSongCommentsCache, getCachedSongComments, saveSongCommentsCache } from './songCommentsCache'
 
 const COMMENT_PAGE_SIZE = 30
 
@@ -80,18 +81,21 @@ export function ListenTogetherSongCommentsPage({
   const [loading, setLoading] = useState(false)
   const [loadingMore, setLoadingMore] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [refreshing, setRefreshing] = useState(false)
 
-  const loadFirst = useCallback(async () => {
+  const loadFirst = useCallback(async (force = false) => {
     if (!song?.id || !cookie) return
-    const cached = await getCachedSongComments(song.id)
-    if (cached) {
-      setHot(cached.hot)
-      setItems(cached.items)
-      setTotal(cached.total)
-      setMore(cached.more)
-      setError(null)
-      setLoading(false)
-      return
+    if (!force) {
+      const cached = await getCachedSongComments(song.id)
+      if (cached) {
+        setHot(cached.hot)
+        setItems(cached.items)
+        setTotal(cached.total)
+        setMore(cached.more)
+        setError(null)
+        setLoading(false)
+        return
+      }
     }
     setLoading(true)
     setError(null)
@@ -117,6 +121,17 @@ export function ListenTogetherSongCommentsPage({
       setLoading(false)
     }
   }, [song?.id, cookie])
+
+  const handleRefresh = useCallback(async () => {
+    if (!song?.id) return
+    setRefreshing(true)
+    try {
+      await clearSongCommentsCache(song.id)
+      await loadFirst(true)
+    } finally {
+      setRefreshing(false)
+    }
+  }, [song?.id, loadFirst])
 
   useEffect(() => {
     if (!open || !song) return
@@ -190,6 +205,11 @@ export function ListenTogetherSongCommentsPage({
               <h1 className="min-w-0 flex-1 truncate text-[17px] font-semibold text-stone-800">
                 歌曲评论
               </h1>
+              <ListenTogetherHeaderRefreshButton
+                variant="ghost"
+                loading={refreshing || loading}
+                onClick={() => void handleRefresh()}
+              />
             </div>
 
             <div className="flex gap-4">

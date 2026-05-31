@@ -12,6 +12,7 @@ import { useEffect, useState } from 'react'
 import { AnonymousQnAApp } from './anonymousQa/AnonymousQnAApp'
 import type { AnonymousQaWechatContext } from './anonymousQa/buildAnonymousQaPersonaContext'
 import type { MockContact } from './anonymousQa/types'
+import { LISTEN_TOGETHER_NAVIGATE_EVENT } from './discoverListen/listenTogetherNavigation'
 
 type DiscoverActionId = 'moments' | 'anonymous-qa' | 'listen-together' | 'shop' | 'jubensha'
 
@@ -102,6 +103,12 @@ export function WeChatDiscoverInstagram({
   useEffect(() => {
     return () => onImmersiveViewChange?.(false)
   }, [onImmersiveViewChange])
+
+  useEffect(() => {
+    const onNavigate = () => setActiveView('listen-together')
+    window.addEventListener(LISTEN_TOGETHER_NAVIGATE_EVENT, onNavigate)
+    return () => window.removeEventListener(LISTEN_TOGETHER_NAVIGATE_EVENT, onNavigate)
+  }, [])
   if (activeView === 'moments') {
     return (
       <DiscoverFeatureUnderDev
@@ -117,7 +124,7 @@ export function WeChatDiscoverInstagram({
       <DiscoverFeatureUnderDev
         className={className}
         title="听一听"
-        hint="音乐播放、歌单、笔记流与网易云登录能力正在开发，稍后将在此接入。"
+        hint="音乐发现、一起听与网易云同步能力正在开发，稍后将在此接入。"
         onBack={() => setActiveView('list')}
       />
     )

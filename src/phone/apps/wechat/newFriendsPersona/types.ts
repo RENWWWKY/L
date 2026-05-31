@@ -181,6 +181,10 @@ export type ChatConversationSettingsRow = {
   showGroupRankBadgesInChat: boolean
   /** 聊天背景图 URL 或 dataURL，空为默认 */
   chatBackground: string
+  /** 角色每轮至少发 1 条表情包的目标概率 0–100；缺省 = 不覆写系统协议 */
+  stickerRoundTriggerPercent?: number
+  /** 角色每轮至少发 1 条语音的目标概率 0–100；缺省 = 不覆写系统协议（语音默认约 30%） */
+  voiceRoundTriggerPercent?: number
   /** 最后一条消息时间戳，用于会话列表排序（与消息表同步更新） */
   lastMessageTime: number
   updatedAt: number
@@ -535,6 +539,37 @@ export type WeChatVoicePayload = {
   transcriptText?: string
 }
 
+/** 同频共听邀约 / 回应卡片（持久化于 chatMessages.musicSync） */
+export type WeChatMusicSyncInvitePayload = {
+  kind: 'music_invite'
+  inviteId: string
+  trackId: number
+  trackTitle: string
+  trackArtist: string
+  coverUrl: string
+}
+
+export type WeChatMusicSyncAcceptPayload = {
+  kind: 'music_accept'
+  inviteId: string
+  replyText: string
+  /** 对应邀约曲目的封面（与 music_invite 一致） */
+  coverUrl?: string
+  trackTitle?: string
+  trackArtist?: string
+}
+
+export type WeChatMusicSyncDeclinePayload = {
+  kind: 'music_decline'
+  inviteId: string
+  replyText: string
+}
+
+export type WeChatMusicSyncPayload =
+  | WeChatMusicSyncInvitePayload
+  | WeChatMusicSyncAcceptPayload
+  | WeChatMusicSyncDeclinePayload
+
 export type WeChatChatMessage = {
   id: string
   characterId: string
@@ -551,6 +586,8 @@ export type WeChatChatMessage = {
   callStatus?: WeChatCallStatusPayload
   /** 语音消息：与 content 并存 */
   voice?: WeChatVoicePayload
+  /** 同频共听邀约 / 接受 / 拒绝卡片 */
+  musicSync?: WeChatMusicSyncPayload
   /** 图片消息：纯图片时 content 允许为空串 */
   images?: { base64: string; type: WeChatImageMime }[]
   /** 是否收藏 */

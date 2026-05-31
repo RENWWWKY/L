@@ -22,6 +22,8 @@ import { formatWorldBackgroundForPrompt } from './worldBackgroundFormat'
 import { generateNpcNetworkWithAi } from './npcNetworkGenerate'
 import { genderLabelZh, uid } from './utils'
 import type { ApiConfig } from '../../api/types'
+import { pruneCharacterVoiceMappings } from '../../voiceprint/characterVoiceMapStorage'
+import { isCharacterCanonicalPreservedOnOtherWechatAccounts } from '../wechatContactRemoval'
 
 /** 关系偏向：语义去重（职场含同事向、家族含亲属向、宿敌含对立向），避免胶囊列表冗长 */
 const REL_BIAS_OPTIONS = ['职场', '家族', '暗恋', '宿敌', '朋友', '同学', '恋人', '陌生人', '合作伙伴'] as const
@@ -299,7 +301,7 @@ type Props = {
 }
 
 export function PersonaNetworkSection({ main, apiConfig, onApiMissing, onOpenNpcEdit }: Props) {
-  const { state } = useCustomization()
+  const { state, removeWeChatPersonaContactsByCharacterIds } = useCustomization()
   const linkedCharacterIds = useMemo(
     () => state.wechatPersonaContacts.map((c) => c.characterId.trim()).filter(Boolean),
     [state.wechatPersonaContacts],
@@ -571,6 +573,14 @@ export function PersonaNetworkSection({ main, apiConfig, onApiMissing, onOpenNpc
   }
 
   const onDeleteNpc = async (npcId: string) => {
+    const acc = main.wechatAccountId?.trim()
+    removeWeChatPersonaContactsByCharacterIds([npcId])
+    if (acc) {
+      const preserved = await isCharacterCanonicalPreservedOnOtherWechatAccounts(npcId, acc)
+      if (!preserved) pruneCharacterVoiceMappings([npcId])
+    } else {
+      pruneCharacterVoiceMappings([npcId])
+    }
     await personaDb.deleteCharacterNpcOnly(npcId)
     await reload()
   }

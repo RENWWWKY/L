@@ -1,5 +1,5 @@
+import { Loader2, QrCode, RefreshCw, Smartphone, UserRound, X } from 'lucide-react'
 import { AnimatePresence, motion } from 'framer-motion'
-import { Loader2, QrCode, RefreshCw, Smartphone, X } from 'lucide-react'
 import { useEffect, useState } from 'react'
 
 import { isLocalNcmMode, isPhoneLoginSupported } from './neteaseApiClient'
@@ -12,12 +12,16 @@ type NeteaseQrLoginModalProps = {
   open: boolean
   onClose: () => void
   onSuccess?: () => void
+  onGuestEnter?: () => void
+  isGuestMode?: boolean
 }
 
 export function NeteaseQrLoginModal({
   open,
   onClose,
   onSuccess,
+  onGuestEnter,
+  isGuestMode = false,
 }: NeteaseQrLoginModalProps) {
   const [mode, setMode] = useState<LoginMode>('qr')
   const [phone, setPhone] = useState('')
@@ -312,6 +316,22 @@ export function NeteaseQrLoginModal({
                 )}
               </div>
             )}
+
+            {!isGuestMode && onGuestEnter ? (
+              <div className="mt-5 border-t border-stone-100 pt-4">
+                <button
+                  type="button"
+                  onClick={onGuestEnter}
+                  className="flex w-full items-center justify-center gap-2 rounded-full border border-stone-200 bg-stone-50 py-2.5 text-[14px] font-medium text-stone-700 transition-colors hover:bg-stone-100"
+                >
+                  <UserRound className="size-4" strokeWidth={1.75} />
+                  游客进入
+                </button>
+                <p className="mt-2 text-center text-[11px] leading-relaxed text-stone-400">
+                  无需网易账号，可搜索、播放公开歌曲与歌单；个人歌单与红心需登录后同步
+                </p>
+              </div>
+            ) : null}
           </motion.div>
         </motion.div>
       ) : null}

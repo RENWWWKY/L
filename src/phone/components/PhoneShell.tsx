@@ -1,4 +1,8 @@
 import { useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from 'react'
+import { FloatingMusicOrb } from '../../components/discoverListen/FloatingMusicOrb'
+import { DesktopLyricsWidget } from '../../components/discoverListen/DesktopLyricsWidget'
+import { ListenTogetherFullscreenHost } from '../../components/discoverListen/ListenTogetherFullscreenHost'
+import { ListenTogetherPlayModeToastHost } from '../../components/discoverListen/ListenTogetherPlayModeToastHost'
 import { useCustomization } from '../CustomizationContext'
 
 type Props = {
@@ -107,7 +111,13 @@ export function PhoneShell({ children }: Props) {
         : 'flex min-h-0 justify-center'
 
   const innerContent = (
-    <div className="relative flex h-full min-h-0 min-w-0 flex-1 flex-col overflow-hidden">{children}</div>
+    <div className="relative flex h-full min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
+      {children}
+      <ListenTogetherFullscreenHost />
+      <DesktopLyricsWidget />
+      <ListenTogetherPlayModeToastHost />
+      <FloatingMusicOrb />
+    </div>
   )
 
   return (

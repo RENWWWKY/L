@@ -32,6 +32,8 @@ import {
   expandCanonicalIdSet,
   runLegacyGlobalCharacterCompatibilityMigration,
 } from './wechatGlobalCharacterRegistry'
+import { getWeChatPersonaContactsUserMutationGeneration } from './wechatPersonaContactsUserMutation'
+import { markWeChatWelcomeSplashPending, resetWeChatWelcomeSplashGate } from './wechatWelcomeSplashGate'
 import {
   migrateAllLegacyWeChatConversationsToAccountScope,
   repairSplitPrivateChatHistoriesForWechatAccount,
@@ -142,6 +144,8 @@ export function WechatStoreProvider({ children }: { children: ReactNode }) {
   const accountSwitchInFlightRef = useRef(false)
   /** 启动水合完成前禁止「内存 → bundle」同步，避免空通讯录覆盖已存 bundle。 */
   const contactsReadyForBundleSyncRef = useRef(false)
+  /** 本会话内通讯录曾非空：用户主动删光后不再从 bundle 恢复最后一条 */
+  const contactsUserMutationSeenRef = useRef(0)
   const inMemoryContactsRef = useRef<WeChatPersonaContact[]>([])
   inMemoryContactsRef.current = state.wechatPersonaContacts
 
@@ -188,6 +192,7 @@ export function WechatStoreProvider({ children }: { children: ReactNode }) {
       }
       suppressContactsBundleSyncRef.current = true
       setWeChatPersonaContacts(contacts)
+      contactsUserMutationSeenRef.current = getWeChatPersonaContactsUserMutationGeneration()
       syncPhoneCustomization(accountToProfile(account))
       setProfile(accountToProfile(account))
       const sessionId = resolveAccountSessionIdentityId(account)
@@ -310,21 +315,20 @@ export function WechatStoreProvider({ children }: { children: ReactNode }) {
     const snap = state.wechatPersonaContacts
     if (personaContactsEqual(active.personaContacts, snap)) return
     const primaryId = bundle.accounts[0]?.accountId
-    // 内存尚未从 bundle/KV 恢复，但 bundle 仍有联系人 → 禁止用空 snap 覆盖 bundle
+    const userMutationGen = getWeChatPersonaContactsUserMutationGeneration()
+    const userMutatedContacts = userMutationGen > contactsUserMutationSeenRef.current
+    // 用户主动删光通讯录：只落盘空列表，绝不从 bundle 回填
     if (!snap.length && active.personaContacts.length > 0) {
       void (async () => {
-        const filtered = await filterPersonaContactsForWechatAccount(
-          active.personaContacts,
-          active,
-          primaryId,
-        )
-        suppressContactsBundleSyncRef.current = true
-        setWeChatPersonaContacts(filtered.map((c) => ({ ...c })))
+        const filtered = await filterPersonaContactsForWechatAccount(snap, active, primaryId)
+        const nextAccounts = snapshotContactsForAccount(filtered, activeAccountId)
+        await persistBundle(nextAccounts, bundle.currentAccountId)
+        contactsUserMutationSeenRef.current = userMutationGen
       })()
       return
     }
     // 多账号：bundle 为空但内存有联系人 → 仅当过滤后对本号仍为空时才视为「大号通讯录泄漏」
-    if (bundle.accounts.length > 1 && !active.personaContacts.length && snap.length > 0) {
+    if (bundle.accounts.length > 1 && !active.personaContacts.length && snap.length > 0 && !userMutatedContacts) {
       void (async () => {
         const filtered = await filterPersonaContactsForWechatAccount(snap, active, primaryId)
         suppressContactsBundleSyncRef.current = true
@@ -356,6 +360,7 @@ export function WechatStoreProvider({ children }: { children: ReactNode }) {
       }
       const nextAccounts = snapshotContactsForAccount(filtered, activeAccountId)
       await persistBundle(nextAccounts, bundle.currentAccountId)
+      contactsUserMutationSeenRef.current = getWeChatPersonaContactsUserMutationGeneration()
     })()
   }, [
     currentAccountId,
@@ -663,6 +668,7 @@ export function WechatStoreProvider({ children }: { children: ReactNode }) {
 
     await personaDb.eraseWeChatAccountCompletely()
     await personaDb.deletePhoneKv(WECHAT_ACCOUNTS_BUNDLE_KV_KEY)
+    resetWeChatWelcomeSplashGate()
     purgeAllMeetEntriesFromLoreArchive()
     resetWorldbookLoreArchiveAfterWeChatErase()
     clearWeChatPersonaContacts()
@@ -697,6 +703,7 @@ export function WechatStoreProvider({ children }: { children: ReactNode }) {
         return
       }
 
+      markWeChatWelcomeSplashPending()
       const baseIdentityId = allocateWechatAccountIdentitySlot()
       await bindFirstIdentityIfNeeded(baseIdentityId)
       const draftContacts = state.wechatPersonaContacts.map((c) => ({ ...c }))

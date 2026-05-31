@@ -1,6 +1,7 @@
 import { MessageCircle, Feather, Heart, Play } from 'lucide-react'
 import { useCallback, useState } from 'react'
 
+import { ListenTogetherHeaderRefreshButton } from './ListenTogetherHeaderRefreshButton'
 import { ListenNum } from './ListenNum'
 import {
   NOTES_FEED_MOCK,
@@ -122,22 +123,68 @@ function NoteCard({
   )
 }
 
+export function ListenNotesFeedList({
+  notes,
+  className = '',
+  onPlayAttachedMusic,
+}: {
+  notes: ListenFeedNote[]
+  className?: string
+  onPlayAttachedMusic?: (music: ListenAttachedMusic, noteId: string) => void
+}) {
+  const [likedById, setLikedById] = useState<Record<string, boolean>>({})
+
+  const toggleLike = useCallback((note: ListenFeedNote) => {
+    setLikedById((prev) => ({ ...prev, [note.id]: !prev[note.id] }))
+  }, [])
+
+  if (notes.length === 0) {
+    return (
+      <p className={`py-8 text-center text-[12px] text-stone-400 ${className}`}>还没有写过手账</p>
+    )
+  }
+
+  return (
+    <ul className={`space-y-4 ${className}`}>
+      {notes.map((note) => {
+        const liked = likedById[note.id] ?? false
+        const likeCount = note.stats.likes + (liked ? 1 : 0)
+        return (
+          <li key={note.id}>
+            <NoteCard
+              note={note}
+              liked={liked}
+              likeCount={likeCount}
+              onToggleLike={() => toggleLike(note)}
+              onPlayMusic={() => onPlayAttachedMusic?.(note.attachedMusic, note.id)}
+            />
+          </li>
+        )
+      })}
+    </ul>
+  )
+}
+
 export type ListenTogetherNotesFeedPageProps = {
   className?: string
   onCompose?: () => void
   onPlayAttachedMusic?: (music: ListenAttachedMusic, noteId: string) => void
+  onRefresh?: () => void
 }
 
 export function ListenTogetherNotesFeedPage({
   className = '',
   onCompose,
   onPlayAttachedMusic,
+  onRefresh,
 }: ListenTogetherNotesFeedPageProps) {
-  const [likedById, setLikedById] = useState<Record<string, boolean>>({})
+  const [refreshing, setRefreshing] = useState(false)
 
-  const toggleLike = useCallback((note: ListenFeedNote) => {
-    setLikedById((prev) => ({ ...prev, [note.id]: !prev[note.id] }))
-  }, [])
+  const handleRefresh = useCallback(() => {
+    setRefreshing(true)
+    onRefresh?.()
+    window.setTimeout(() => setRefreshing(false), 400)
+  }, [onRefresh])
 
   return (
     <div className={`min-h-full ${className}`}>
@@ -147,33 +194,30 @@ export function ListenTogetherNotesFeedPage({
             <h1 className="text-[17px] font-medium tracking-wide text-stone-800">音符手记</h1>
             <p className="mt-0.5 text-[10px] tracking-[0.28em] text-stone-400">NOTES</p>
           </div>
-          <button
-            type="button"
-            aria-label="发布手记"
-            onClick={onCompose}
-            className="absolute right-0 flex h-9 w-9 items-center justify-center rounded-full border border-stone-100 bg-white text-stone-500 shadow-[0_4px_16px_rgba(120,113,108,0.08)] transition-colors hover:border-rose-100 hover:bg-rose-50 hover:text-rose-400"
-          >
-            <Feather className="size-[18px]" strokeWidth={1.5} />
-          </button>
+          <div className="absolute right-0 flex items-center gap-1.5">
+            <ListenTogetherHeaderRefreshButton
+              variant="ghost"
+              loading={refreshing}
+              onClick={handleRefresh}
+              className="border border-stone-100 bg-white shadow-[0_4px_16px_rgba(120,113,108,0.08)]"
+            />
+            <button
+              type="button"
+              aria-label="发布手记"
+              onClick={onCompose}
+              className="flex h-9 w-9 items-center justify-center rounded-full border border-stone-100 bg-white text-stone-500 shadow-[0_4px_16px_rgba(120,113,108,0.08)] transition-colors hover:border-rose-100 hover:bg-rose-50 hover:text-rose-400"
+            >
+              <Feather className="size-[18px]" strokeWidth={1.5} />
+            </button>
+          </div>
         </div>
       </header>
 
-      <div className="space-y-6 px-4 pb-40 pt-5">
-        {NOTES_FEED_MOCK.notes.map((note) => {
-          const liked = likedById[note.id] ?? false
-          const likeCount = note.stats.likes + (liked ? 1 : 0)
-          return (
-            <NoteCard
-              key={note.id}
-              note={note}
-              liked={liked}
-              likeCount={likeCount}
-              onToggleLike={() => toggleLike(note)}
-              onPlayMusic={() => onPlayAttachedMusic?.(note.attachedMusic, note.id)}
-            />
-          )
-        })}
-      </div>
+      <ListenNotesFeedList
+        notes={NOTES_FEED_MOCK.notes}
+        className="px-4 pb-40 pt-5"
+        onPlayAttachedMusic={onPlayAttachedMusic}
+      />
     </div>
   )
 }
