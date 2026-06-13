@@ -1,12 +1,22 @@
 import TextareaAutosize from 'react-textarea-autosize'
 import { AnimatePresence, motion } from 'framer-motion'
-import { ChevronDown } from 'lucide-react'
+import { ChevronDown, Eye } from 'lucide-react'
 import { useState } from 'react'
 
+import { MomentsSerifNumericText } from './ArchiveTimelineDateColumn'
 import { SettingsMechanismAccordion } from './SettingsMechanismAccordion'
 import {
+  CUSTOM_ENGAGEMENT_SLIDER_SECTIONS,
   DEFAULT_USER_MOMENT_ENGAGEMENT_RULES,
   USER_MOMENT_ENGAGEMENT_PRESET_OPTIONS,
+  describeCustomEngagementHeat,
+  describeCustomSliderEffect,
+  getEngagementPresetMetricRows,
+  patchCustomEngagementSliderValue,
+  readCustomEngagementSliderValue,
+  type CustomEngagementHeatTone,
+  type CustomEngagementSliderGuide,
+  type EngagementPresetMetricRow,
   type UserMomentEngagementPresetId,
   type UserMomentEngagementRulesSettings,
 } from './userMomentEngagementRules'
@@ -15,14 +25,58 @@ import { useMomentsSettingsStore } from './useMomentsSettingsStore'
 const ENGAGEMENT_SLIDER_CLASS =
   'h-1.5 w-full cursor-pointer appearance-none rounded-full bg-[#E5E7EB] accent-[#111827] [&::-webkit-slider-thumb]:size-3.5 [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:bg-[#111827]'
 
-function clampPercentValue(value: number, fallback: number): number {
-  if (!Number.isFinite(value)) return fallback
-  return Math.max(0, Math.min(100, Math.round(value)))
+function EngagementMetricsEyeButton({
+  open,
+  onToggle,
+}: {
+  open: boolean
+  onToggle: () => void
+}) {
+  return (
+    <button
+      type="button"
+      aria-label={open ? '收起比例' : '查看比例'}
+      aria-pressed={open}
+      onClick={(event) => {
+        event.stopPropagation()
+        onToggle()
+      }}
+      className={`inline-flex size-6 shrink-0 items-center justify-center rounded-full transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-[#D1D5DB] ${
+        open ? 'text-[#6B7280]' : 'text-[#9CA3AF] hover:text-[#6B7280]'
+      }`}
+    >
+      <Eye className="size-3.5" strokeWidth={1.75} aria-hidden />
+    </button>
+  )
 }
 
-function clampMaxInteractValue(value: number, fallback: number): number {
-  if (!Number.isFinite(value)) return fallback
-  return Math.max(1, Math.min(30, Math.round(value)))
+function EngagementCustomSliderGuideRow({
+  guide,
+  rules,
+  onPatch,
+}: {
+  guide: CustomEngagementSliderGuide
+  rules: UserMomentEngagementRulesSettings
+  onPatch: (patch: Partial<UserMomentEngagementRulesSettings>) => void
+}) {
+  const value = readCustomEngagementSliderValue(rules, guide)
+
+  return (
+    <EngagementSliderRow
+      id={`user-moment-engagement-${guide.id}`}
+      label={guide.label}
+      hint={guide.hint}
+      lowLabel={guide.lowLabel}
+      highLabel={guide.highLabel}
+      effectText={describeCustomSliderEffect(guide.id, value)}
+      value={value}
+      min={guide.min}
+      max={guide.max}
+      step={guide.step}
+      valueLabel={guide.formatValueLabel(value)}
+      onChange={(next) => onPatch(patchCustomEngagementSliderValue(guide, next))}
+    />
+  )
 }
 
 function EngagementSliderRow({
@@ -34,6 +88,9 @@ function EngagementSliderRow({
   max,
   step = 1,
   valueLabel,
+  lowLabel,
+  highLabel,
+  effectText,
   onChange,
 }: {
   id: string
@@ -44,6 +101,9 @@ function EngagementSliderRow({
   max: number
   step?: number
   valueLabel: string
+  lowLabel?: string
+  highLabel?: string
+  effectText?: string
   onChange: (value: number) => void
 }) {
   return (
@@ -58,10 +118,16 @@ function EngagementSliderRow({
           ) : null}
         </div>
         <span className="shrink-0 text-[12px] font-medium tabular-nums text-[#111827]">
-          {valueLabel}
+          <MomentsSerifNumericText text={valueLabel} />
         </span>
       </div>
       <div className="mt-2 rounded-xl border border-[#E5E7EB] bg-white px-3 py-3">
+        {lowLabel || highLabel ? (
+          <div className="mb-2 flex items-center justify-between gap-2 text-[10px] text-[#9CA3AF]">
+            <span>{lowLabel ?? ''}</span>
+            <span>{highLabel ?? ''}</span>
+          </div>
+        ) : null}
         <input
           id={id}
           type="range"
@@ -72,7 +138,109 @@ function EngagementSliderRow({
           onChange={(e) => onChange(Number(e.target.value))}
           className={ENGAGEMENT_SLIDER_CLASS}
         />
+        {effectText ? (
+          <p className="mt-2 text-[11px] leading-relaxed text-[#6B7280]">{effectText}</p>
+        ) : null}
       </div>
+    </div>
+  )
+}
+
+const CUSTOM_HEAT_TONE_STYLES: Record<
+  CustomEngagementHeatTone,
+  { badge: string; bar: string }
+> = {
+  quiet: {
+    badge: 'bg-[#EEF2FF] text-[#4338CA]',
+    bar: 'from-[#CBD5E1] to-[#94A3B8]',
+  },
+  soft: {
+    badge: 'bg-[#F3F4F6] text-[#6B7280]',
+    bar: 'from-[#D1D5DB] to-[#9CA3AF]',
+  },
+  balanced: {
+    badge: 'bg-[#ECFDF5] text-[#047857]',
+    bar: 'from-[#A7F3D0] to-[#34D399]',
+  },
+  lively: {
+    badge: 'bg-[#FFF7ED] text-[#C2410C]',
+    bar: 'from-[#FDBA74] to-[#F97316]',
+  },
+  hot: {
+    badge: 'bg-[#FEF2F2] text-[#B91C1C]',
+    bar: 'from-[#FCA5A5] to-[#EF4444]',
+  },
+}
+
+function CustomEngagementHeatBanner({
+  settings,
+}: {
+  settings: UserMomentEngagementRulesSettings
+}) {
+  const heat = describeCustomEngagementHeat(settings)
+  const toneStyle = CUSTOM_HEAT_TONE_STYLES[heat.tone]
+
+  return (
+    <div className="rounded-xl border border-[#E5E7EB] bg-white px-3 py-3">
+      <div className="flex items-start justify-between gap-3">
+        <div className="min-w-0">
+          <p className="text-[12px] font-medium text-[#374151]">整体感受</p>
+          <p className="mt-1 text-[11px] leading-relaxed text-[#6B7280]">{heat.description}</p>
+        </div>
+        <span
+          className={`shrink-0 rounded-full px-2.5 py-1 text-[11px] font-semibold ${toneStyle.badge}`}
+        >
+          {heat.label}
+        </span>
+      </div>
+      <div className="mt-3 h-1.5 overflow-hidden rounded-full bg-[#F3F4F6]">
+        <div
+          className={`h-full rounded-full bg-gradient-to-r ${toneStyle.bar}`}
+          style={{ width: `${heat.heatPercent}%` }}
+        />
+      </div>
+      <div className="mt-2 flex flex-col gap-1 text-[11px] leading-relaxed text-[#9CA3AF]">
+        <p>
+          <MomentsSerifNumericText text={heat.compareText} />
+        </p>
+        <p>{heat.viewedText}</p>
+      </div>
+      <p className="mt-2 text-[10px] leading-relaxed text-[#9CA3AF]">
+        想更冷清：优先降低「参与与关系」「单条上限」；想更热闹：往右拖。浏览足迹只影响「看过」，不直接加赞评。
+      </p>
+    </div>
+  )
+}
+
+function EngagementPresetMetricsPanel({
+  rows,
+  title = '比例与上限',
+  className = 'mt-3',
+}: {
+  rows: EngagementPresetMetricRow[]
+  title?: string
+  className?: string
+}) {
+  return (
+    <div className={`rounded-xl border border-[#E5E7EB] bg-white px-3 py-3 ${className}`}>
+      <p className="text-[10px] font-medium uppercase tracking-[0.14em] text-[#9CA3AF]">
+        {title}
+      </p>
+      <dl className="mt-2 divide-y divide-[#F3F4F6]">
+        {rows.map((row) => (
+          <div key={row.label} className="flex items-start justify-between gap-3 py-2 first:pt-0 last:pb-0">
+            <dt className="min-w-0">
+              <p className="text-[12px] font-medium text-[#374151]">{row.label}</p>
+              {row.hint ? (
+                <p className="mt-0.5 text-[10px] leading-relaxed text-[#9CA3AF]">{row.hint}</p>
+              ) : null}
+            </dt>
+            <dd className="shrink-0 text-[12px] font-semibold tabular-nums text-[#111827]">
+              <MomentsSerifNumericText text={row.value} />
+            </dd>
+          </div>
+        ))}
+      </dl>
     </div>
   )
 }
@@ -82,6 +250,13 @@ export function MomentsUserEngagementRulesPanel() {
   const rules = settings.userMomentEngagement ?? DEFAULT_USER_MOMENT_ENGAGEMENT_RULES
   const isCustom = rules.presetId === 'custom'
   const [expanded, setExpanded] = useState(true)
+  const [metricsOpenPresetId, setMetricsOpenPresetId] = useState<UserMomentEngagementPresetId | null>(
+    null,
+  )
+
+  const toggleMetrics = (presetId: UserMomentEngagementPresetId) => {
+    setMetricsOpenPresetId((current) => (current === presetId ? null : presetId))
+  }
 
   const patchRules = (patch: Partial<UserMomentEngagementRulesSettings>) => {
     patchSettings({
@@ -92,8 +267,15 @@ export function MomentsUserEngagementRulesPanel() {
     })
   }
 
+  const customMetricRows = isCustom ? getEngagementPresetMetricRows('custom', rules) : []
+
   const selectPreset = (id: UserMomentEngagementPresetId) => {
     patchRules({ presetId: id })
+    if (id !== 'custom') {
+      setMetricsOpenPresetId((current) => (current === id ? current : null))
+    } else {
+      setMetricsOpenPresetId(null)
+    }
   }
 
   const selectedMeta = USER_MOMENT_ENGAGEMENT_PRESET_OPTIONS.find((p) => p.id === rules.presetId)
@@ -118,7 +300,12 @@ export function MomentsUserEngagementRulesPanel() {
             <p className="mt-2 text-[12px] leading-relaxed text-[#6B7280]">
               当前档位：
               <span className="font-medium text-[#374151]">{collapsedSummary}</span>
-              {selectedMeta ? ` — ${selectedMeta.summary}` : null}
+              {selectedMeta ? (
+                <>
+                  {' — '}
+                  <MomentsSerifNumericText text={selectedMeta.summary} />
+                </>
+              ) : null}
             </p>
           ) : (
             <p className="mt-2 text-[12px] leading-relaxed text-[#9CA3AF]">
@@ -156,35 +343,52 @@ export function MomentsUserEngagementRulesPanel() {
               <div className="mt-5 space-y-2">
                 {USER_MOMENT_ENGAGEMENT_PRESET_OPTIONS.map((preset) => {
                   const active = rules.presetId === preset.id
+                  const isCustomPreset = preset.id === 'custom'
+                  const metricsOpen = !isCustomPreset && metricsOpenPresetId === preset.id
+                  const metricRows = isCustomPreset
+                    ? []
+                    : getEngagementPresetMetricRows(preset.id)
                   return (
-                    <button
-                      key={preset.id}
-                      type="button"
-                      onClick={() => selectPreset(preset.id)}
-                      className={`w-full rounded-2xl border px-4 py-3 text-left transition-colors outline-none ${
-                        active
-                          ? 'border-2 border-[#111827] bg-white text-[#111827]'
-                          : 'border-[#E5E7EB] bg-[#FAFAFA] text-[#374151] hover:border-[#D1D5DB]'
-                      }`}
-                    >
-                      <div className="flex items-baseline justify-between gap-3">
-                        <span className="text-[14px] font-semibold">{preset.title}</span>
-                        <span
-                          className={`text-[10px] uppercase tracking-[0.16em] ${
-                            active ? 'text-[#6B7280]' : 'text-[#9CA3AF]'
-                          }`}
-                        >
-                          {preset.subtitle}
-                        </span>
-                      </div>
-                      <p
-                        className={`mt-1 text-[12px] leading-relaxed ${
-                          active ? 'text-[#374151]' : 'text-[#6B7280]'
+                    <div key={preset.id}>
+                      <button
+                        type="button"
+                        onClick={() => selectPreset(preset.id)}
+                        className={`w-full rounded-2xl border px-4 py-3 text-left transition-colors outline-none ${
+                          active
+                            ? 'border-2 border-[#111827] bg-white text-[#111827]'
+                            : 'border-[#E5E7EB] bg-[#FAFAFA] text-[#374151] hover:border-[#D1D5DB]'
                         }`}
                       >
-                        {preset.summary}
-                      </p>
-                    </button>
+                        <div className="flex items-baseline justify-between gap-3">
+                          <div className="flex min-w-0 items-center gap-0.5">
+                            <span className="text-[14px] font-semibold">{preset.title}</span>
+                            {!isCustomPreset ? (
+                              <EngagementMetricsEyeButton
+                                open={metricsOpen}
+                                onToggle={() => toggleMetrics(preset.id)}
+                              />
+                            ) : null}
+                          </div>
+                          <span
+                            className={`text-[10px] uppercase tracking-[0.16em] ${
+                              active ? 'text-[#6B7280]' : 'text-[#9CA3AF]'
+                            }`}
+                          >
+                            {preset.subtitle}
+                          </span>
+                        </div>
+                        <p
+                          className={`mt-1 text-[12px] leading-relaxed ${
+                            active ? 'text-[#374151]' : 'text-[#6B7280]'
+                          }`}
+                        >
+                          <MomentsSerifNumericText text={preset.summary} />
+                        </p>
+                      </button>
+                      {metricsOpen ? (
+                        <EngagementPresetMetricsPanel rows={metricRows} />
+                      ) : null}
+                    </div>
                   )
                 })}
               </div>
@@ -192,12 +396,12 @@ export function MomentsUserEngagementRulesPanel() {
               {selectedMeta && !isCustom ? (
                 <p className="mt-4 rounded-2xl bg-[#F9FAFB] px-4 py-3 text-[12px] leading-relaxed text-[#6B7280]">
                   当前：<span className="font-medium text-[#374151]">{selectedMeta.title}</span> —{' '}
-                  {selectedMeta.summary}
+                  <MomentsSerifNumericText text={selectedMeta.summary} />
                 </p>
               ) : null}
 
               {isCustom ? (
-                <div className="mt-5 space-y-4 rounded-2xl border border-[#E5E7EB] bg-[#FAFAFA] p-4">
+                <div className="mt-5 space-y-5 rounded-2xl border border-[#E5E7EB] bg-[#FAFAFA] p-4">
                   <div>
                     <label
                       className="text-[13px] font-medium text-[#374151]"
@@ -219,62 +423,41 @@ export function MomentsUserEngagementRulesPanel() {
                     />
                   </div>
 
-                  <div className="space-y-4">
-                    <EngagementSliderRow
-                      id="user-moment-engagement-participation"
-                      label="列表好友参与比例"
-                      hint="本条动态可见名单里，有多少好友会进入互动候选。"
-                      value={rules.customAiParticipationPercent ?? 70}
-                      min={0}
-                      max={100}
-                      valueLabel={`${rules.customAiParticipationPercent ?? 70}%`}
-                      onChange={(value) =>
-                        patchRules({
-                          customAiParticipationPercent: clampPercentValue(value, 70),
-                        })
-                      }
-                    />
-                    <EngagementSliderRow
-                      id="user-moment-engagement-fallback-like"
-                      label="保底点赞强度"
-                      value={rules.customFallbackLikePercent ?? 60}
-                      min={0}
-                      max={100}
-                      valueLabel={`${rules.customFallbackLikePercent ?? 60}%`}
-                      onChange={(value) =>
-                        patchRules({
-                          customFallbackLikePercent: clampPercentValue(value, 60),
-                        })
-                      }
-                    />
-                    <EngagementSliderRow
-                      id="user-moment-engagement-viewed"
-                      label="浏览足迹比例"
-                      value={rules.customViewedFootprintPercent ?? 80}
-                      min={0}
-                      max={100}
-                      valueLabel={`${rules.customViewedFootprintPercent ?? 80}%`}
-                      onChange={(value) =>
-                        patchRules({
-                          customViewedFootprintPercent: clampPercentValue(value, 80),
-                        })
-                      }
-                    />
-                    <EngagementSliderRow
-                      id="user-moment-engagement-max-interact"
-                      label="最多互动人数"
-                      hint="单条动态里，点赞、评论或浏览等互动最多来自多少人。"
-                      value={rules.customMaxAiCharacters ?? 18}
-                      min={1}
-                      max={30}
-                      valueLabel={`${rules.customMaxAiCharacters ?? 18} 人`}
-                      onChange={(value) =>
-                        patchRules({
-                          customMaxAiCharacters: clampMaxInteractValue(value, 18),
-                        })
-                      }
-                    />
+                  <div>
+                    <p className="text-[13px] font-medium text-[#374151]">微调参数</p>
+                    <p className="mt-1 text-[11px] leading-relaxed text-[#9CA3AF]">
+                      下方每一项与「当前生效比例」一一对应，拖动即可直接调整。
+                    </p>
+                    <div className="mt-3">
+                      <CustomEngagementHeatBanner settings={rules} />
+                    </div>
+                    <div className="mt-4 space-y-5">
+                      {CUSTOM_ENGAGEMENT_SLIDER_SECTIONS.map((section) => (
+                        <div key={section.title}>
+                          <p className="text-[12px] font-semibold text-[#374151]">{section.title}</p>
+                          <p className="mt-0.5 text-[11px] leading-relaxed text-[#9CA3AF]">
+                            {section.description}
+                          </p>
+                          <div className="mt-3 space-y-4">
+                            {section.guides.map((guide) => (
+                              <EngagementCustomSliderGuideRow
+                                key={guide.id}
+                                guide={guide}
+                                rules={rules}
+                                onPatch={patchRules}
+                              />
+                            ))}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
                   </div>
+
+                  <EngagementPresetMetricsPanel
+                    rows={customMetricRows}
+                    title="当前生效比例"
+                    className="mt-0 border-[#E5E7EB] bg-[#F9FAFB]"
+                  />
                 </div>
               ) : null}
             </div>

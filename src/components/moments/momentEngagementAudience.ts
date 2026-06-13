@@ -328,6 +328,7 @@ export function selectCharactersForMomentEngagement(params: {
   } = params
 
   const maxAi = resolveMaxAiCharacters(engagementRules)
+  const closeSample = engagementRules?.closeAiSamplePercent ?? 100
   const normalSample = engagementRules?.normalAiSamplePercent ?? 100
   const distantSample = engagementRules?.distantAiSamplePercent ?? 0
 
@@ -360,8 +361,11 @@ export function selectCharactersForMomentEngagement(params: {
       }
       continue
     }
-    if (tier === 'close') pushUnique(close, c)
-    else if (sampleByEngagementPercent(id, normalSample, 'ai-normal')) pushUnique(normal, c)
+    if (tier === 'close') {
+      if (sampleByEngagementPercent(id, closeSample, 'ai-close')) pushUnique(close, c)
+      continue
+    }
+    if (sampleByEngagementPercent(id, normalSample, 'ai-normal')) pushUnique(normal, c)
   }
 
   const out: AllowedMomentCharacter[] = []
@@ -386,6 +390,7 @@ export function buildMomentEngagementTierPromptBlock(
 ): string {
   const intensity = engagementRules?.aiIntensityPrompt?.trim()
   const intensityBlock = intensity ? `\n${intensity}` : ''
+  const quietMode = engagementRules?.presetId === 'quiet'
   const overflowMode = engagementRules?.presetId === 'overflow'
   const livelyMode = engagementRules?.presetId === 'lively'
   const highCommentMode = overflowMode || livelyMode
@@ -393,10 +398,21 @@ export function buildMomentEngagementTierPromptBlock(
   if (mentioned) {
     const mentionExtra = highCommentMode
       ? ' 被 @ 时**优先 comment**（可 like+comment），不要只点赞。'
-      : ''
+      : quietMode
+        ? ' 被 @ 时可点赞或极短评一句；不必接话。'
+        : ''
     return `- 用户 @ 提醒了你：你知晓被提及；关系熟则多半会互动，关系淡也至少考虑点赞。${mentionExtra}${intensityBlock}`
   }
   if (tier === 'close') {
+    if (quietMode) {
+      return [
+        '- 【静悄悄·熟人】刷到可能点赞，也可能完全无反应；**默认不 comment**，除非特别想关心一句。',
+        '- 禁止接话、抬杠、多人互评；别把这当群聊。',
+        intensityBlock,
+      ]
+        .filter(Boolean)
+        .join('\n')
+    }
     return [
       '- 【关系】你和用户很熟、常联络：刷到熟人圈**大概率会点赞**；有话想说就 comment 1～2 句，像真人随手评，不要表演。',
       overflowMode
@@ -422,12 +438,97 @@ export function buildMomentEngagementTierPromptBlock(
   }
   return [
     '- 【关系】与用户关系一般：平淡日常可 {"interactions":[]}；',
-    highCommentMode
-      ? '- 【高互动】有正文/配图时更倾向 comment 或 like+comment，**不要全员只点赞**；看见值得回应的内容应留一句。'
-      : '- 若内容**特别有意义、有趣、好笑、有争议、触动你、与你有关**，可以 like 或短评；别对好内容也完全冷漠。',
-    '- 不是每条都要评，但看见值得回应的内容应像真人一样伸手点赞或留一句。',
+    quietMode
+      ? '- 【静悄悄】关系一般者**默认不互动**；只有内容与你强相关且人设会破例时才考虑点赞。'
+      : highCommentMode
+        ? '- 【高互动】有正文/配图时更倾向 comment 或 like+comment，**不要全员只点赞**；看见值得回应的内容应留一句。'
+        : '- 若内容**特别有意义、有趣、好笑、有争议、触动你、与你有关**，可以 like 或短评；别对好内容也完全冷漠。',
+    quietMode
+      ? ''
+      : '- 不是每条都要评，但看见值得回应的内容应像真人一样伸手点赞或留一句。',
     intensityBlock,
   ]
     .filter(Boolean)
     .join('\n')
+}
+
+function scoreDraftForTrim(
+  draft: AiMomentInteractionDraft,
+  mentioned: ReadonlySet<string>,
+  tierByCharId: ReadonlyMap<string, MomentEngagementTier>,
+): number {
+  const id = draft.charId.trim()
+  let score = 0
+  if (mentioned.has(id)) score += 100
+  const tier = tierByCharId.get(id)
+  if (tier === 'close') score += 30
+  else if (tier === 'normal') score += 15
+  score += Math.max(0, 600 - (draft.delaySeconds ?? 0))
+  if (draft.type === 'comment' && draft.content?.trim()) score += 5
+  return score
+}
+
+/** 按档位硬上限裁剪点赞/首评/接话，防止 AI 无视静悄悄等低互动设定 */
+export function trimEngagementDraftsToPresetLimits(
+  drafts: AiMomentInteractionDraft[],
+  params: {
+    engagementRules?: ResolvedUserMomentEngagementRules
+    mentionedCharacterIds?: ReadonlySet<string>
+    playerIdentityId?: string | null
+    relationships: ReadonlyArray<Relationship>
+  },
+): AiMomentInteractionDraft[] {
+  const rules = params.engagementRules
+  if (!rules) return drafts
+
+  const maxLikes = rules.maxLikeCount
+  const maxFirst = rules.maxFirstComments
+  const maxThread = rules.maxThreadReplies
+  if (maxLikes >= 99 && maxFirst >= 99 && maxThread >= 99) return drafts
+
+  const mentioned = params.mentionedCharacterIds ?? new Set<string>()
+  const tierByCharId = new Map<string, MomentEngagementTier>()
+  for (const d of drafts) {
+    const id = d.charId.trim()
+    if (!id || tierByCharId.has(id)) continue
+    tierByCharId.set(
+      id,
+      inferMomentEngagementTier(id, params.playerIdentityId, params.relationships, 0),
+    )
+  }
+
+  const viewedAndOther = drafts.filter((d) => d.type !== 'like' && d.type !== 'comment')
+  const likes = drafts.filter((d) => d.type === 'like')
+  const firstComments = drafts.filter(
+    (d) => d.type === 'comment' && d.content?.trim() && !d.replyToCharId?.trim(),
+  )
+  const threadReplies = drafts.filter(
+    (d) => d.type === 'comment' && d.content?.trim() && d.replyToCharId?.trim(),
+  )
+
+  const sortByScore = (rows: AiMomentInteractionDraft[]) =>
+    [...rows].sort(
+      (a, b) =>
+        scoreDraftForTrim(b, mentioned, tierByCharId) -
+          scoreDraftForTrim(a, mentioned, tierByCharId) ||
+        (a.delaySeconds ?? 0) - (b.delaySeconds ?? 0),
+    )
+
+  const keptLikes = sortByScore(likes).slice(0, Math.max(0, maxLikes))
+  const keptFirst = sortByScore(firstComments).slice(0, Math.max(0, maxFirst))
+  const keptThread = sortByScore(threadReplies).slice(0, Math.max(0, maxThread))
+
+  const engagedCharIds = new Set<string>()
+  for (const d of [...keptLikes, ...keptFirst, ...keptThread]) {
+    engagedCharIds.add(d.charId.trim())
+  }
+
+  const dedupedOther = viewedAndOther.filter((d) => {
+    if (d.type !== 'viewed') return true
+    return !engagedCharIds.has(d.charId.trim())
+  })
+
+  return [...dedupedOther, ...keptLikes, ...keptFirst, ...keptThread].sort(
+    (a, b) => (a.delaySeconds ?? 0) - (b.delaySeconds ?? 0),
+  )
 }

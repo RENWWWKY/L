@@ -22,12 +22,14 @@ import {
   inferMomentEngagementTier,
   injectFallbackCommentDrafts,
   selectCharactersForMomentEngagement,
+  trimEngagementDraftsToPresetLimits,
   type MomentEngagementTier,
 } from './momentEngagementAudience'
 import { loadMomentRelationships } from './momentRelationshipGraph'
 import type { ResolvedUserMomentEngagementRules } from './userMomentEngagementRules'
 import {
   isHighCommentEngagementPreset,
+  isLowEngagementPreset,
   minimumCommentCountForEngagementPreset,
 } from './userMomentEngagementRules'
 import { finalizeMomentInteractionDrafts } from './momentVisitorFootprints'
@@ -110,6 +112,10 @@ ${MOMENT_TEXT_OUTPUT_HINT}
 function buildUserMomentInteractionSystemTask(
   engagementRules?: ResolvedUserMomentEngagementRules,
 ): string {
+  if (isLowEngagementPreset(engagementRules?.presetId)) {
+    return `${USER_MOMENT_INTERACTION_TASK}
+- 【静悄悄】默认 0 条互动；多数角色应输出 {"interactions":[]}。仅极熟/@ 时可能 like，comment 极少。`
+  }
   if (isHighCommentEngagementPreset(engagementRules?.presetId)) {
     return `${USER_MOMENT_INTERACTION_TASK}
 - 【高互动频度】关系非冷淡时**不要只点赞**：优先输出 comment，或 like+comment；禁止全员沉默或全员只赞。`
@@ -167,7 +173,9 @@ function buildSingleCharacterInteractionTask(params: {
     '输出 JSON：{"interactions":[{"type":"like"|"comment","content":"仅comment需要","delaySeconds":数字}]}',
     params.commentOnly
       ? '【强制】必须输出至少 1 条 type=comment，直接回应正文；可同时 like，但禁止只点赞。'
-      : isHighCommentEngagementPreset(params.engagementRules?.presetId)
+      : isLowEngagementPreset(params.engagementRules?.presetId)
+        ? '【静悄悄】默认 {"interactions":[]}；可 0 条。仅极熟/@ 且特别想说话时 like 或 1 句 comment。'
+        : isHighCommentEngagementPreset(params.engagementRules?.presetId)
         ? '可 0～2 条；高互动模式下优先 comment 或 like+comment，**不要只点赞**；有 comment 时须回应正文。'
         : '可 0～2 条；有 comment 时须回应正文具体内容。',
     'delaySeconds 15～600（10 分钟内），**每条须明显错开**（可 20 秒、1 分半、4 分钟等，勿整分钟机械递增）。',
@@ -319,7 +327,11 @@ async function generatePersonaBoundInteractionForCharacter(params: {
   }
 
   let drafts = await runOnce()
-  if (!drafts.length && engagementTier === 'close') {
+  if (
+    !drafts.length &&
+    engagementTier === 'close' &&
+    !isLowEngagementPreset(params.engagementRules?.presetId)
+  ) {
     drafts = await runOnce(
       '你与用户关系很熟，刷朋友圈通常至少会点赞；请输出包含 like 或简短 comment 的有效 JSON。',
     )
@@ -528,7 +540,15 @@ export async function finalizeUserMomentEngagementDrafts(params: {
     })
 
   if (!params.wechatCtx || !isMomentsChatApiConfigured(params.wechatCtx.apiConfig)) {
-    return applyFallbackComments(next)
+    const relationships = params.relationships.length
+      ? params.relationships
+      : await loadMomentRelationships()
+    return trimEngagementDraftsToPresetLimits(applyFallbackComments(next), {
+      engagementRules: params.engagementRules,
+      mentionedCharacterIds: params.mentionedCharacterIds,
+      playerIdentityId: params.playerIdentityId,
+      relationships,
+    })
   }
 
   const cfg = params.wechatCtx.apiConfig as ApiConfig
@@ -563,5 +583,12 @@ export async function finalizeUserMomentEngagementDrafts(params: {
     console.error('[momentUserInteractionAi] supplement comments failed', err)
   }
 
-  return applyFallbackComments(supplemented)
+  const trimmed = trimEngagementDraftsToPresetLimits(applyFallbackComments(supplemented), {
+    engagementRules: params.engagementRules,
+    mentionedCharacterIds: params.mentionedCharacterIds,
+    playerIdentityId: params.playerIdentityId ?? params.wechatCtx?.playerIdentityId,
+    relationships,
+  })
+
+  return trimmed
 }

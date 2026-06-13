@@ -7,7 +7,10 @@ import { clampMomentInteractionDelay, MOMENT_INTERACTION_DELAY_MAX_SECONDS } fro
 import { generatePersonaBoundUserMomentInteractions } from './momentUserInteractionAi'
 import { supplementUserMomentCharacterThreads } from './momentUserMomentPublishThreadAi'
 import type { ResolvedUserMomentEngagementRules } from './userMomentEngagementRules'
-import { buildUserMomentEngagementRulesPromptAppendix } from './userMomentEngagementRules'
+import {
+  buildUserMomentEngagementRulesPromptAppendix,
+} from './userMomentEngagementRules'
+import { trimEngagementDraftsToPresetLimits } from './momentEngagementAudience'
 import {
   buildMomentCharacterRelationshipPromptBlock,
   loadMomentRelationships,
@@ -253,8 +256,20 @@ export async function generateMomentInteractions(params: {
         allowedCharacters,
         baseDrafts,
         userDisplayName: wechatCtx.playerDisplayName.trim() || '用户',
+        engagementRules,
       })
-      if (threadDrafts.length) return [...baseDrafts, ...threadDrafts]
+      const combined =
+        threadDrafts.length > 0 ? [...baseDrafts, ...threadDrafts] : baseDrafts
+      if (engagementRules) {
+        const relationships = await loadMomentRelationships()
+        return trimEngagementDraftsToPresetLimits(combined, {
+          engagementRules,
+          mentionedCharacterIds: new Set(mentionedCharacters.map((c) => c.charId)),
+          playerIdentityId: wechatCtx.playerIdentityId,
+          relationships,
+        })
+      }
+      return combined
     } catch {
       // 接话失败时仍保留首评
     }

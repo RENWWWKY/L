@@ -18,6 +18,7 @@ import {
 import { formatUserMomentFirstCommentLine } from './momentCommentThreadContext'
 import { MOMENT_TEXT_OUTPUT_HINT, sanitizeMomentText } from './momentTextSanitize'
 import { runMomentsVisionChat } from './momentVisionChat'
+import type { ResolvedUserMomentEngagementRules } from './userMomentEngagementRules'
 
 const USER_MOMENT_THREAD_TASK = `
 【朋友圈评区接话】
@@ -40,6 +41,7 @@ function parseThreadReplyDrafts(
   payload: unknown,
   allowedCharIds: Set<string>,
   commentAuthorCharIds: Set<string>,
+  maxReplies = 6,
 ): AiMomentInteractionDraft[] {
   if (!payload || typeof payload !== 'object') return []
   const obj = payload as Record<string, unknown>
@@ -68,7 +70,7 @@ function parseThreadReplyDrafts(
       delaySeconds,
       replyToCharId,
     })
-    if (out.length >= 6) break
+    if (out.length >= maxReplies) break
   }
   return out
 }
@@ -119,7 +121,10 @@ export async function supplementUserMomentCharacterThreads(params: {
   allowedCharacters: AllowedMomentCharacter[]
   baseDrafts: AiMomentInteractionDraft[]
   userDisplayName: string
+  engagementRules?: ResolvedUserMomentEngagementRules
 }): Promise<AiMomentInteractionDraft[]> {
+  const maxThreadReplies = params.engagementRules?.maxThreadReplies ?? 4
+  if (maxThreadReplies <= 0) return []
   const userDisplayName = params.userDisplayName.trim() || '用户'
   const { lines, commentAuthorCharIds } = buildInitialCommentCatalog(
     params.baseDrafts,
@@ -143,6 +148,9 @@ export async function supplementUserMomentCharacterThreads(params: {
     `用户 ${userDisplayName} 的朋友圈正文：${params.momentContent.trim() || '（无文字）'}`,
     `配图数：${params.imageCount}`,
     `说明：一级首评默认是对用户 ${userDisplayName} 说的；评区接话时须分清「你/给你」指谁。`,
+    maxThreadReplies <= 1
+      ? `【频度】本动态评区接话最多 ${maxThreadReplies} 条；无合适接话请 {"replies":[]}。`
+      : null,
     '',
     relationshipBlock,
     relationshipBlock ? '' : null,
@@ -165,7 +173,10 @@ export async function supplementUserMomentCharacterThreads(params: {
     .join('\n')
 
   const raw = await runMomentsVisionChat(cfg, {
-    system: USER_MOMENT_THREAD_TASK,
+    system: USER_MOMENT_THREAD_TASK.replace(
+      '0～5 条',
+      `0～${Math.min(5, maxThreadReplies)} 条`,
+    ),
     userText: userTask,
     momentImages: params.momentImages,
     temperature: 0.86,
@@ -173,7 +184,12 @@ export async function supplementUserMomentCharacterThreads(params: {
   })
 
   const payload = parseModelJsonPayload(raw)
-  const parsed = parseThreadReplyDrafts(payload, allowedCharIds, commentAuthorCharIds)
+  const parsed = parseThreadReplyDrafts(
+    payload,
+    allowedCharIds,
+    commentAuthorCharIds,
+    maxThreadReplies,
+  )
   const prior = [...params.baseDrafts]
   const anchored: AiMomentInteractionDraft[] = []
   for (const [index, draft] of parsed.entries()) {
