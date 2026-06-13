@@ -223,8 +223,8 @@ export function staggerCrossCharacterDelays(
 }
 
 /**
- * 评区回复须晚于被回复角色的上一条 comment（跨角色接话时间轴）。
- * 多轮扫描：每轮先处理首评再处理接话，直到接话 delay 全部晚于被回复者。
+ * 评区接话：按全局 delay 顺序处理，子回复只须晚于被回复角色的**已有**评论，
+ * 可与无关角色的首评穿插（评论1 → 评论2 → 回复1 → 评论3 …）。
  */
 export function alignThreadedCommentDelays(
   drafts: AiMomentInteractionDraft[],
@@ -233,51 +233,65 @@ export function alignThreadedCommentDelays(
 
   const out = drafts.map((d) => ({ ...d }))
   const commentDrafts = out.filter((d) => d.type === 'comment')
-  if (!commentDrafts.length) return out
+  if (commentDrafts.length <= 1) return out
 
-  const maxPasses = Math.max(2, commentDrafts.length)
-  for (let pass = 0; pass < maxPasses; pass++) {
-    let changed = false
-    const lastCommentDelayByChar = new Map<string, number>()
+  const sorted = [...commentDrafts].sort(
+    (a, b) => a.delaySeconds - b.delaySeconds || a.charId.localeCompare(b.charId),
+  )
+  const processedDelaysByChar = new Map<string, number[]>()
 
-    const roots = commentDrafts.filter((d) => !d.replyToCharId?.trim())
-    const replies = commentDrafts.filter((d) => d.replyToCharId?.trim())
-    const ordered = [
-      ...roots.sort(
-        (a, b) => a.delaySeconds - b.delaySeconds || a.charId.localeCompare(b.charId),
-      ),
-      ...replies.sort(
-        (a, b) => a.delaySeconds - b.delaySeconds || a.charId.localeCompare(b.charId),
-      ),
-    ]
-
-    for (const d of ordered) {
-      const charId = d.charId.trim()
-      const replyTo = d.replyToCharId?.trim()
-      if (replyTo) {
-        const parentDelay = lastCommentDelayByChar.get(replyTo)
-        if (parentDelay != null) {
-          const next = clampDelay(
-            Math.max(d.delaySeconds, parentDelay + MOMENT_THREAD_REPLY_GAP_SECONDS),
-            MOMENT_INTERACTION_DELAY_MIN_SECONDS,
-          )
-          if (next !== d.delaySeconds) {
-            d.delaySeconds = next
-            changed = true
-          }
+  for (const d of sorted) {
+    const charId = d.charId.trim()
+    const replyTo = d.replyToCharId?.trim()
+    if (replyTo) {
+      const parentDelays = processedDelaysByChar.get(replyTo) ?? []
+      const parentDelay = parentDelays.length ? parentDelays[parentDelays.length - 1]! : null
+      if (parentDelay != null) {
+        const minDelay = clampDelay(
+          parentDelay + MOMENT_THREAD_REPLY_GAP_SECONDS,
+          MOMENT_INTERACTION_DELAY_MIN_SECONDS,
+        )
+        if (d.delaySeconds < minDelay) {
+          d.delaySeconds = minDelay
         }
       }
-      const prev = lastCommentDelayByChar.get(charId)
-      lastCommentDelayByChar.set(
-        charId,
-        prev != null ? Math.max(prev, d.delaySeconds) : d.delaySeconds,
-      )
     }
-
-    if (!changed) break
+    const list = processedDelaysByChar.get(charId) ?? []
+    list.push(d.delaySeconds)
+    processedDelaysByChar.set(charId, list)
   }
 
   return out
+}
+
+/** 子回复 delay：锚在被回复角色首评之后一小段，避免 AI 返回过大 delay 导致全部首评后才解锁 */
+export function anchorThreadReplyDelaySeconds(params: {
+  replyToCharId: string
+  requestedDelay: number
+  slotIndex: number
+  priorCommentDrafts: ReadonlyArray<Pick<AiMomentInteractionDraft, 'type' | 'charId' | 'delaySeconds' | 'replyToCharId'>>
+}): number {
+  const replyTo = params.replyToCharId.trim()
+  let parentDelay: number | null = null
+  for (const d of params.priorCommentDrafts) {
+    if (d.type !== 'comment') continue
+    if (d.charId.trim() !== replyTo) continue
+    parentDelay = parentDelay == null ? d.delaySeconds : Math.max(parentDelay, d.delaySeconds)
+  }
+  if (parentDelay == null) parentDelay = MOMENT_INTERACTION_DELAY_MIN_SECONDS
+
+  const gap =
+    MOMENT_THREAD_REPLY_GAP_SECONDS + (params.slotIndex % 3) * 8 + Math.min(18, params.slotIndex * 4)
+  const minDelay = parentDelay + gap
+  const maxReasonable = parentDelay + gap + 72
+  const requested = Number.isFinite(params.requestedDelay)
+    ? params.requestedDelay
+    : minDelay
+
+  if (requested >= minDelay && requested <= maxReasonable) {
+    return clampMomentInteractionDelay(requested)
+  }
+  return clampMomentInteractionDelay(minDelay)
 }
 
 /** 已物化的互动：按同角色连贯规则重算 visibleAt（保留 id 与回复链字段） */

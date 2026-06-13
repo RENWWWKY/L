@@ -1,6 +1,5 @@
 import type { MomentComment } from './mockMoments'
 import type { MomentInteraction } from './momentInteractionTypes'
-import { resolveCommentReplyAnchor } from './momentInteractionTypes'
 
 /** 紧跟在某条评论后的连续角色回复（唤起回应插入的一批） */
 export function gatherContiguousRepliesAfter(
@@ -33,56 +32,43 @@ export type MomentCommentDisplayRow = {
   replyToCommentId?: string
 }
 
-/** 展示层：子回复仅须晚于直接父评论，可与无关一级评论按时间穿插 */
-function enforceCommentThreadOrder(rows: MomentCommentDisplayRow[]): MomentCommentDisplayRow[] {
-  const adjusted = rows.map((r) => ({ ...r }))
-  let changed = true
-  let guard = 0
+const THREAD_SORT_GAP_MS = 50
 
-  while (changed && guard <= adjusted.length + 2) {
-    changed = false
-    guard++
-    for (const row of adjusted) {
-      const parent = findReplyParentRow(row, adjusted)
-      if (!parent) continue
-      if (row.sortAt > parent.sortAt) continue
-      row.sortAt = parent.sortAt + 1
-      changed = true
-    }
-  }
-
-  return adjusted.sort((a, b) => a.sortAt - b.sortAt || a.id.localeCompare(b.id))
+/** 仅按明确父评论 id 定位（不用 replyToCharId 猜，避免挂到错误父评） */
+function findExplicitParentRowById(
+  row: MomentCommentDisplayRow,
+  rowById: Map<string, MomentCommentDisplayRow>,
+): MomentCommentDisplayRow | undefined {
+  const parentId = row.replyToInteractionId?.trim() || row.replyToCommentId?.trim()
+  if (!parentId) return undefined
+  return rowById.get(parentId)
 }
 
-function findReplyParentRow(
-  row: MomentCommentDisplayRow,
-  rows: MomentCommentDisplayRow[],
-): MomentCommentDisplayRow | undefined {
-  if (row.replyToInteractionId?.trim()) {
-    return rows.find((r) => r.id === row.replyToInteractionId?.trim())
-  }
-  if (row.replyToCommentId?.trim()) {
-    return rows.find((r) => r.id === row.replyToCommentId?.trim())
-  }
-  if (row.replyToCharId?.trim()) {
-    const targetId = row.replyToCharId.trim()
-    const prior = rows.filter(
-      (r) => r.id !== row.id && r.charId?.trim() === targetId && r.sortAt <= row.sortAt,
-    )
-    if (prior.length) {
-      return prior.sort((a, b) => b.sortAt - a.sortAt || a.id.localeCompare(b.id))[0]
+/**
+ * 递归 effectiveSortAt：子回复须晚于被回复的那条父评论，可与无关首评穿插。
+ * 例：C1 → C2 → C3 → R4→C3 → R4→C1
+ */
+function applyEffectiveCommentSortAt(rows: MomentCommentDisplayRow[]): MomentCommentDisplayRow[] {
+  const rowById = new Map(rows.map((row) => [row.id, row]))
+  const cache = new Map<string, number>()
+
+  const effectiveSortAt = (row: MomentCommentDisplayRow): number => {
+    const hit = cache.get(row.id)
+    if (hit != null) return hit
+
+    let sortAt = row.sortAt
+    const parent = findExplicitParentRowById(row, rowById)
+    if (parent) {
+      sortAt = Math.max(sortAt, effectiveSortAt(parent) + THREAD_SORT_GAP_MS)
     }
+
+    cache.set(row.id, sortAt)
+    return sortAt
   }
-  if (row.replyTo?.trim()) {
-    const target = row.replyTo.trim()
-    const prior = rows.filter(
-      (r) => r.id !== row.id && r.author.trim() === target && r.sortAt <= row.sortAt,
-    )
-    if (prior.length) {
-      return prior.sort((a, b) => b.sortAt - a.sortAt || a.id.localeCompare(b.id))[0]
-    }
-  }
-  return undefined
+
+  return rows
+    .map((row) => ({ ...row, sortAt: effectiveSortAt(row) }))
+    .sort((a, b) => a.sortAt - b.sortAt || a.id.localeCompare(b.id))
 }
 
 function resolveCommentCreatedAt(
@@ -130,41 +116,55 @@ function buildCommentAuthorIndex(
   return byId
 }
 
+function inferDisplayParentInteractionId(
+  ix: MomentInteraction,
+  commentInteractions: MomentInteraction[],
+): string | undefined {
+  const explicit = ix.replyToInteractionId?.trim()
+  if (explicit) return explicit
+
+  const commentId = ix.replyToCommentId?.trim()
+  if (commentId && commentInteractions.some((row) => row.id === commentId)) {
+    return commentId
+  }
+
+  const replyToCharId = ix.replyToCharId?.trim()
+  if (!replyToCharId) return undefined
+
+  const rootComments = commentInteractions.filter(
+    (row) =>
+      row.type === 'comment' &&
+      row.id !== ix.id &&
+      row.charId.trim() === replyToCharId &&
+      !row.replyToCharId?.trim(),
+  )
+  if (rootComments.length === 1) return rootComments[0]!.id
+  if (!rootComments.length) return undefined
+
+  return [...rootComments].sort(
+    (a, b) =>
+      Math.abs(a.visibleAt - ix.visibleAt) - Math.abs(b.visibleAt - ix.visibleAt) ||
+      a.visibleAt - b.visibleAt,
+  )[0]!.id
+}
+
 function canDisplayCommentInteraction(
   ix: MomentInteraction,
   now: number,
   comments: MomentComment[],
   commentInteractions: MomentInteraction[],
-  cache: Map<string, boolean>,
 ): boolean {
   if (ix.type !== 'comment' || ix.visibleAt > now) return false
 
-  const cached = cache.get(ix.id)
-  if (cached != null) return cached
+  const parentId = inferDisplayParentInteractionId(ix, commentInteractions)
+  if (!parentId) return true
 
-  let parentOk = true
+  const stored = comments.find((c) => c.id === parentId && !c.isAuthorReply)
+  if (stored) return true
 
-  const parentInteractionId = ix.replyToInteractionId?.trim()
-  if (parentInteractionId) {
-    const parent = commentInteractions.find((row) => row.id === parentInteractionId)
-    parentOk = parent
-      ? canDisplayCommentInteraction(parent, now, comments, commentInteractions, cache)
-      : false
-  }
-
-  const parentCommentId = ix.replyToCommentId?.trim()
-  if (parentOk && parentCommentId && !parentInteractionId) {
-    const anchor = resolveCommentReplyAnchor(parentCommentId, comments, commentInteractions)
-    if (anchor?.interactionId) {
-      const parent = commentInteractions.find((row) => row.id === anchor.interactionId)
-      parentOk = parent
-        ? canDisplayCommentInteraction(parent, now, comments, commentInteractions, cache)
-        : false
-    }
-  }
-
-  cache.set(ix.id, parentOk)
-  return parentOk
+  const parent = commentInteractions.find((row) => row.id === parentId)
+  if (!parent) return true
+  return parent.visibleAt <= now
 }
 
 function resolveInteractionReplyToName(
@@ -173,13 +173,14 @@ function resolveInteractionReplyToName(
   commentInteractions: MomentInteraction[],
   resolveAuthorName: (charId: string) => string,
 ): string | undefined {
+  const parentId = inferDisplayParentInteractionId(ix, commentInteractions)
+  if (parentId) {
+    const fromId = resolveReplyTargetAuthorName(parentId, authorById)
+    if (fromId) return fromId
+  }
   if (ix.replyToCommentId?.trim()) {
     const fromId = resolveReplyTargetAuthorName(ix.replyToCommentId, authorById)
     if (fromId) return fromId
-  }
-  if (ix.replyToInteractionId?.trim()) {
-    const parent = commentInteractions.find((row) => row.id === ix.replyToInteractionId)
-    if (parent) return resolveAuthorName(parent.charId)
   }
   if (ix.replyToCharId?.trim()) {
     return resolveAuthorName(ix.replyToCharId.trim())
@@ -226,7 +227,6 @@ export function buildFlatCommentTimeline(params: {
   const { comments, commentInteractions, now, resolveAuthorName, publisherCharacterId } = params
   const commentById = new Map(comments.map((c) => [c.id, c]))
   const authorById = buildCommentAuthorIndex(comments, commentInteractions, resolveAuthorName)
-  const displayableCache = new Map<string, boolean>()
   const rows: MomentCommentDisplayRow[] = []
 
   comments.forEach((c, index) => {
@@ -259,7 +259,7 @@ export function buildFlatCommentTimeline(params: {
 
   for (const ix of commentInteractions) {
     if (ix.type !== 'comment' || !ix.content?.trim()) continue
-    if (!canDisplayCommentInteraction(ix, now, comments, commentInteractions, displayableCache)) {
+    if (!canDisplayCommentInteraction(ix, now, comments, commentInteractions)) {
       continue
     }
 
@@ -270,6 +270,8 @@ export function buildFlatCommentTimeline(params: {
       resolveAuthorName,
     )
 
+    const parentInteractionId = inferDisplayParentInteractionId(ix, commentInteractions)
+
     rows.push({
       id: ix.id,
       sortAt: ix.visibleAt,
@@ -279,13 +281,13 @@ export function buildFlatCommentTimeline(params: {
       replyTo: replyToName,
       charId: ix.charId,
       replyToCharId: ix.replyToCharId,
-      replyToInteractionId: ix.replyToInteractionId,
+      replyToInteractionId: parentInteractionId,
       replyToCommentId: ix.replyToCommentId,
     })
   }
 
   const sorted = rows.sort((a, b) => a.sortAt - b.sortAt || a.id.localeCompare(b.id))
-  const ordered = enforceCommentThreadOrder(sorted)
+  const ordered = applyEffectiveCommentSortAt(sorted)
   const publisherId = publisherCharacterId?.trim()
   if (!publisherId) return ordered
 

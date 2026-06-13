@@ -9,6 +9,7 @@ import {
   clampMomentInteractionDelay,
   MOMENT_INTERACTION_DELAY_MAX_SECONDS,
   MOMENT_THREAD_REPLY_GAP_SECONDS,
+  anchorThreadReplyDelaySeconds,
 } from './momentInteractionTiming'
 import {
   buildMomentCharacterRelationshipPromptBlock,
@@ -172,5 +173,19 @@ export async function supplementUserMomentCharacterThreads(params: {
   })
 
   const payload = parseModelJsonPayload(raw)
-  return parseThreadReplyDrafts(payload, allowedCharIds, commentAuthorCharIds)
+  const parsed = parseThreadReplyDrafts(payload, allowedCharIds, commentAuthorCharIds)
+  const prior = [...params.baseDrafts]
+  const anchored: AiMomentInteractionDraft[] = []
+  for (const [index, draft] of parsed.entries()) {
+    const delaySeconds = anchorThreadReplyDelaySeconds({
+      replyToCharId: draft.replyToCharId!,
+      requestedDelay: draft.delaySeconds,
+      slotIndex: index,
+      priorCommentDrafts: prior,
+    })
+    const next = { ...draft, delaySeconds }
+    anchored.push(next)
+    prior.push(next)
+  }
+  return anchored
 }

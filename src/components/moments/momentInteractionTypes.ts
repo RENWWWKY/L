@@ -86,32 +86,52 @@ export function materializeInteractions(
   )
 
   const interactions: MomentInteraction[] = []
-  const lastCommentIdByChar = new Map<string, string>()
+  const commentsByChar = new Map<
+    string,
+    Array<{ id: string; delaySeconds: number; visibleAt: number; isRoot: boolean }>
+  >()
 
   for (const d of sortedDrafts) {
+    let visibleAt = immediate
+      ? publishedAt
+      : publishedAt + Math.max(0, d.delaySeconds) * 1000
+
     const ix: MomentInteraction = {
       id: createInteractionId(),
       charId: d.charId,
       type: d.type,
       content: d.type === 'comment' ? d.content?.trim() : undefined,
-      visibleAt: immediate
-        ? publishedAt
-        : publishedAt + Math.max(0, d.delaySeconds) * 1000,
+      visibleAt,
       replyToCharId: d.replyToCharId,
       dwellSeconds: d.type === 'viewed' ? d.dwellSeconds : undefined,
     }
+
     if (d.type === 'comment') {
+      const charId = d.charId.trim()
       const replyToChar = d.replyToCharId?.trim()
+      const isRoot = !replyToChar
       if (replyToChar) {
-        const parentId = lastCommentIdByChar.get(replyToChar)
-        if (parentId) ix.replyToInteractionId = parentId
+        const parents = (commentsByChar.get(replyToChar) ?? []).filter((p) => p.isRoot)
+        const eligible = parents.filter((p) => p.delaySeconds <= d.delaySeconds)
+        const parentEntry = eligible.length
+          ? [...eligible].sort((a, b) => b.delaySeconds - a.delaySeconds)[0]
+          : parents[parents.length - 1]
+        if (parentEntry) {
+          ix.replyToInteractionId = parentEntry.id
+          ix.replyToCharId = replyToChar
+          visibleAt = Math.max(visibleAt, parentEntry.visibleAt + MIN_AFTER_PARENT_MS)
+          ix.visibleAt = visibleAt
+        }
       }
-      lastCommentIdByChar.set(d.charId.trim(), ix.id)
+      const list = commentsByChar.get(charId) ?? []
+      list.push({ id: ix.id, delaySeconds: d.delaySeconds, visibleAt: ix.visibleAt, isRoot })
+      commentsByChar.set(charId, list)
     }
+
     interactions.push(ix)
   }
 
-  return alignInteractionVisibleAtToParents(interactions)
+  return alignInteractionVisibleAtToParents(backfillCommentReplyLinks(interactions))
 }
 
 export type ElicitReplyInteractionDraft = {
@@ -127,23 +147,83 @@ export type ElicitReplyInteractionDraft = {
 /** 子回复解锁时间仅须严格晚于直接父评论（具体间隔由 AI delay 决定） */
 const MIN_AFTER_PARENT_MS = 1
 
+function resolveExplicitParentCommentInteraction(
+  ix: MomentInteraction,
+  interactions: ReadonlyArray<MomentInteraction>,
+): MomentInteraction | null {
+  const byId = new Map(interactions.map((row) => [row.id, row]))
+
+  const parentInteractionId = ix.replyToInteractionId?.trim()
+  if (parentInteractionId) {
+    const parent = byId.get(parentInteractionId)
+    if (parent?.type === 'comment') return parent
+  }
+
+  const parentCommentId = ix.replyToCommentId?.trim()
+  if (parentCommentId) {
+    const parent = byId.get(parentCommentId)
+    if (parent?.type === 'comment') return parent
+  }
+
+  return null
+}
+
+/** 补链：仅绑定到被回复角色的首评（非该角色的其他回复） */
+function inferReplyParentForBackfill(
+  ix: MomentInteraction,
+  interactions: ReadonlyArray<MomentInteraction>,
+): MomentInteraction | null {
+  const explicit = resolveExplicitParentCommentInteraction(ix, interactions)
+  if (explicit) return explicit
+
+  const replyToCharId = ix.replyToCharId?.trim()
+  if (!replyToCharId) return null
+
+  const rootComments = interactions.filter(
+    (row) =>
+      row.type === 'comment' &&
+      row.id !== ix.id &&
+      row.charId.trim() === replyToCharId &&
+      !row.replyToCharId?.trim(),
+  )
+  if (rootComments.length === 1) return rootComments[0]!
+  if (!rootComments.length) return null
+
+  return [...rootComments].sort(
+    (a, b) =>
+      Math.abs(a.visibleAt - ix.visibleAt) - Math.abs(b.visibleAt - ix.visibleAt) ||
+      a.visibleAt - b.visibleAt,
+  )[0]!
+}
+
+function backfillCommentReplyLinks(interactions: MomentInteraction[]): MomentInteraction[] {
+  return interactions.map((ix) => {
+    if (ix.type !== 'comment') return ix
+    if (ix.replyToInteractionId?.trim()) return ix
+    const parent = inferReplyParentForBackfill(ix, interactions)
+    if (!parent) return ix
+    return {
+      ...ix,
+      replyToInteractionId: parent.id,
+      replyToCharId: ix.replyToCharId?.trim() || parent.charId,
+    }
+  })
+}
+
 function alignInteractionVisibleAtToParents(
   interactions: MomentInteraction[],
   gapMs = MIN_AFTER_PARENT_MS,
 ): MomentInteraction[] {
-  const byId = new Map(interactions.map((ix) => [ix.id, ix]))
   let changed = true
   let guard = 0
   const out = interactions.map((ix) => ({ ...ix }))
 
-  while (changed && guard <= out.length + 2) {
+  while (changed && guard <= out.length * 2 + 2) {
     changed = false
     guard += 1
     for (const ix of out) {
       if (ix.type !== 'comment') continue
-      const parentId = ix.replyToInteractionId?.trim()
-      if (!parentId) continue
-      const parent = byId.get(parentId)
+      const parent = resolveExplicitParentCommentInteraction(ix, out)
       if (!parent) continue
       const minVisibleAt = parent.visibleAt + gapMs
       if (ix.visibleAt < minVisibleAt) {
@@ -268,19 +348,41 @@ export function getUnlockedInteractions(
   return (interactions ?? []).filter((i) => i.visibleAt <= now)
 }
 
-/** 将尚未解锁的互动全部提前到当前时刻（单条动态访客面板「直接显示」） */
+/** 直接显示：相邻互动解锁间隔（保留穿插顺序，仍几乎即时可见） */
+const REVEAL_PENDING_STAGGER_MS = 90
+
+/** 将尚未解锁的互动提前到当前时刻附近，并保留原 visibleAt 相对顺序与父子评论约束 */
 export function revealAllPendingMomentInteractions(
   interactions: MomentInteraction[] | undefined,
   now: number,
 ): MomentInteraction[] | null {
   if (!interactions?.length) return null
-  let changed = false
-  const next = interactions.map((ix) => {
-    if (ix.visibleAt <= now) return ix
-    changed = true
-    return { ...ix, visibleAt: now }
-  })
-  return changed ? next : null
+
+  const pending = interactions.filter((ix) => ix.visibleAt > now)
+  if (!pending.length) return null
+
+  const next = interactions.map((ix) => ({ ...ix }))
+  const byId = new Map(next.map((ix) => [ix.id, ix]))
+
+  const pendingSorted = [...pending].sort(
+    (a, b) => a.visibleAt - b.visibleAt || a.id.localeCompare(b.id),
+  )
+
+  const unlockedMax = next.reduce(
+    (max, ix) => (ix.visibleAt <= now ? Math.max(max, ix.visibleAt) : max),
+    now,
+  )
+
+  let cursor = Math.max(now, unlockedMax) - REVEAL_PENDING_STAGGER_MS
+  for (const src of pendingSorted) {
+    cursor += REVEAL_PENDING_STAGGER_MS
+    cursor = Math.max(cursor, now)
+    const ix = byId.get(src.id)
+    if (ix) ix.visibleAt = cursor
+  }
+
+  const linked = backfillCommentReplyLinks(next)
+  return alignInteractionVisibleAtToParents(linked, REVEAL_PENDING_STAGGER_MS)
 }
 
 function clampInteractionDelay(seconds: number): number {
