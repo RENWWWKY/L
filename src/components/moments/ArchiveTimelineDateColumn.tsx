@@ -107,6 +107,24 @@ export function MomentsSerifNumericText({
   return <span className={className}>{renderSerifNumericText(text)}</span>
 }
 
+/** 朋友圈正文：保留换行，数字走全局衬线字体 */
+export function MomentBodyText({
+  text,
+  className,
+  as: Tag = 'p',
+}: {
+  text: string
+  className?: string
+  as?: 'p' | 'span'
+}) {
+  if (!text) return null
+  return (
+    <Tag className={className}>
+      <MomentsSerifNumericText text={text} />
+    </Tag>
+  )
+}
+
 /** 朋友圈 feed：发布时间中的数字（含月份）使用与个人相册日数相同的衬线字体 */
 export function MomentPublishTimeLabel({
   timestamp,

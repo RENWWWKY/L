@@ -7,11 +7,13 @@ import { resolveProfileAvatarPreviewUrl } from '../../phone/utils/characterAvata
 import type { InteractionNotice } from './interactionNoticeTypes'
 import type { MomentsContactDirectory } from './momentsContactDirectory'
 import { isMomentThumbnailImage } from './momentPostThumbnail'
+import { useResolvedMomentImages } from './resolveMomentImageSrc'
 import { useMomentsStore } from './useMomentsStore'
-import { MomentNoticeTimeLabel } from './ArchiveTimelineDateColumn'
+import { MomentBodyText, MomentNoticeTimeLabel } from './ArchiveTimelineDateColumn'
 
 type InteractionHistoryPageProps = {
   contactDirectory: MomentsContactDirectory
+  existingMomentIds: ReadonlySet<string>
   onBack: () => void
   onOpenSettings: () => void
   onSelectMoment: (momentId: string) => void
@@ -33,19 +35,42 @@ const rowVariants = {
   },
 }
 
-function NoticeThumbnail({ thumbnail }: { thumbnail: string }) {
+function DeletedContentThumbnail() {
+  return (
+    <div className="flex size-14 shrink-0 items-center justify-center rounded-md bg-gray-100 px-1.5">
+      <p className="text-center text-[10px] leading-snug text-gray-400">已删除内容</p>
+    </div>
+  )
+}
+
+function NoticeImageThumbnail({ thumbnail }: { thumbnail: string }) {
+  const resolved = useResolvedMomentImages([thumbnail])
+  const displaySrc = resolved[0]?.trim() ?? ''
+
+  if (!displaySrc) {
+    return <div className="size-14 shrink-0 animate-pulse rounded-md bg-gray-100" />
+  }
+
+  return (
+    <img
+      src={displaySrc}
+      alt=""
+      className="size-14 shrink-0 rounded-md object-cover bg-gray-100"
+    />
+  )
+}
+
+function NoticeThumbnail({ thumbnail, deleted }: { thumbnail: string; deleted?: boolean }) {
+  if (deleted) return <DeletedContentThumbnail />
   if (isMomentThumbnailImage(thumbnail)) {
-    return (
-      <img
-        src={thumbnail}
-        alt=""
-        className="size-14 shrink-0 rounded-md object-cover bg-gray-100"
-      />
-    )
+    return <NoticeImageThumbnail thumbnail={thumbnail} />
   }
   return (
     <div className="flex size-14 shrink-0 items-center justify-center rounded-md bg-gray-100 px-1.5">
-      <p className="line-clamp-3 text-center text-[9px] leading-snug text-gray-500">{thumbnail}</p>
+      <MomentBodyText
+        text={thumbnail}
+        className="line-clamp-3 text-center text-[9px] leading-snug text-gray-500"
+      />
     </div>
   )
 }
@@ -53,10 +78,12 @@ function NoticeThumbnail({ thumbnail }: { thumbnail: string }) {
 function NoticeRow({
   notice,
   contactDirectory,
+  momentDeleted,
   onSelect,
 }: {
   notice: InteractionNotice
   contactDirectory: MomentsContactDirectory
+  momentDeleted: boolean
   onSelect: () => void
 }) {
   const actorName = contactDirectory.getDisplayName(notice.actorId)
@@ -101,13 +128,14 @@ function NoticeRow({
         <MomentNoticeTimeLabel timestamp={notice.timestamp} />
       </div>
 
-      <NoticeThumbnail thumbnail={notice.postThumbnail} />
+      <NoticeThumbnail thumbnail={notice.postThumbnail} deleted={momentDeleted} />
     </motion.button>
   )
 }
 
 export function InteractionHistoryPage({
   contactDirectory,
+  existingMomentIds,
   onBack,
   onOpenSettings,
   onSelectMoment,
@@ -183,6 +211,7 @@ export function InteractionHistoryPage({
                   <NoticeRow
                     notice={notice}
                     contactDirectory={contactDirectory}
+                    momentDeleted={!existingMomentIds.has(notice.momentId)}
                     onSelect={() => handleSelectMoment(notice.momentId)}
                   />
                 </li>

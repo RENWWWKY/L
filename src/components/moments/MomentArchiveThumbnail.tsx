@@ -1,3 +1,6 @@
+import { MomentBodyText } from './ArchiveTimelineDateColumn'
+import { useResolvedMomentImages } from './resolveMomentImageSrc'
+
 /** 个人相册时间轴 / 置顶栏：单图与多图共用同一外框尺寸 */
 export const MOMENT_ARCHIVE_THUMB_OUTER_CLASS = 'size-[88px] shrink-0'
 export const MOMENT_ARCHIVE_THUMB_BAR_CLASS = 'size-[72px] shrink-0'
@@ -24,7 +27,10 @@ export function ArchiveTextOnlyMomentStrip({
       <div
         className={`${MOMENT_ARCHIVE_THUMB_OUTER_CLASS} ${MOMENT_ARCHIVE_TEXT_STRIP_CLASS} flex items-center justify-center overflow-hidden px-1.5 ${className}`.trim()}
       >
-        <p className="line-clamp-3 text-center text-[9px] leading-snug text-[#4B5563]/90">{body}</p>
+        <MomentBodyText
+          text={body}
+          className="line-clamp-3 text-center text-[9px] leading-snug text-[#4B5563]/90"
+        />
       </div>
     )
   }
@@ -33,13 +39,19 @@ export function ArchiveTextOnlyMomentStrip({
       <div
         className={`${MOMENT_ARCHIVE_THUMB_BAR_CLASS} ${MOMENT_ARCHIVE_TEXT_STRIP_CLASS} flex items-center justify-center overflow-hidden px-1.5 ${className}`.trim()}
       >
-        <p className="line-clamp-3 text-center text-[9px] leading-snug text-[#4B5563]/90">{body}</p>
+        <MomentBodyText
+          text={body}
+          className="line-clamp-3 text-center text-[9px] leading-snug text-[#4B5563]/90"
+        />
       </div>
     )
   }
   return (
     <div className={`w-full ${MOMENT_ARCHIVE_TEXT_STRIP_CLASS} px-3.5 py-3 ${className}`.trim()}>
-      <p className="text-[14px] leading-[1.6] text-[#111827]/88 line-clamp-3">{body}</p>
+      <MomentBodyText
+        text={body}
+        className="text-[14px] leading-[1.6] text-[#111827]/88 line-clamp-3"
+      />
     </div>
   )
 }
@@ -62,7 +74,7 @@ export function MomentArchiveThumbnail({
   variant = 'timeline',
   className = '',
 }: MomentArchiveThumbnailProps) {
-  const imgs = (images ?? []).slice(0, 9)
+  const imgs = useResolvedMomentImages(images)
   const outer = variant === 'pinnedBar' ? MOMENT_ARCHIVE_THUMB_BAR_CLASS : MOMENT_ARCHIVE_THUMB_OUTER_CLASS
 
   if (!imgs.length) return null

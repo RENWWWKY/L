@@ -3,6 +3,7 @@ import { parseModelJsonPayload } from '../anonymousQa/qnaDirectedJsonParse'
 import type { AnonymousQaWechatContext } from '../anonymousQa/buildAnonymousQaPersonaContext'
 import { assertMomentsChatApiConfigured } from './momentsChatApiReady'
 import type { CommentCatalogEntry, ThreadParticipant } from './momentCommentThreadContext'
+import { formatCommentCatalogEntryLine } from './momentCommentThreadContext'
 import type { MomentComment } from './mockMoments'
 import type { Relationship } from '../../phone/apps/wechat/newFriendsPersona/types'
 import {
@@ -27,6 +28,8 @@ const THREAD_REPLY_TASK = `
 - replies 按时间顺序排列，2～6 条为宜
 - 至少 1 条来自「被用户回复的角色」(target)，直接回应用户
 - 可有多条回复同一 commentId（如多人回复用户），也可角色互怼（replyToCommentId 填对方评论 id）
+- **受众识别**：目录里标注「评用户」或受众含「一级评圈」的评论，是角色对**发朋友圈的用户**说话；其中「你/给你/您」指用户本人，不是围观角色。回复这类评论时应理解为围观/帮腔/调侃「A 对用户的狠话」，**禁止**误以为 A 在威胁或训斥你自己
+- 只有明确「回复 某角色」且被回复者也在对用户说话的二级评论，接话时仍须分清：原话里的「你」通常仍指用户
 - 发布者 publisher 是否出场由剧情决定，可护用户、拆台、和稀泥
 - 每项 1～3 句口语，禁止编号前缀
 - authorCharId 必须来自参与者列表；replyToCommentId 必须来自评论目录
@@ -87,10 +90,7 @@ export async function generateMomentThreadReplies(params: {
     .join('\n')
 
   const catalogLines = params.commentCatalog
-    .map((c) => {
-      const replyPart = c.replyTo ? `，回复 ${c.replyTo}` : ''
-      return `- id: ${c.id}，${c.author}${replyPart}：${c.content}`
-    })
+    .map((c) => formatCommentCatalogEntryLine(c))
     .join('\n')
 
   const userLine = `- id: ${params.userComment.id}，${params.userDisplayName} 回复 ${params.targetDisplayName}：${params.userComment.content}`
@@ -120,6 +120,9 @@ export async function generateMomentThreadReplies(params: {
     '→ 角色3 回复角色2：下次一定？我看没有下次了',
     '→ 角色3 回复用户：这笔账一定要记下啊！',
     '→ 发布者 回复用户：他忘了，我给你补上！',
+    '',
+    '反例（禁止）：顾琳评用户「给你纹黑眼圈」是对用户说的；司予回复顾琳时不应以为「给你」指司予自己。',
+    '正例：司予回复顾琳：琳姐你对社长太狠了吧 😅（调侃顾琳对用户的狠话）',
     '',
     '请生成 replies JSON。',
   ]

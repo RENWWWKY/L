@@ -117,7 +117,9 @@ export async function runMomentCommentReplyPipeline(
 
   for (const userComment of threadPending) {
     const momentSnapshot: MomentItemModel = { ...moment, comments }
-    const commentCatalog = buildMomentCommentCatalog(momentSnapshot, contactDirectory, now)
+    const commentCatalog = buildMomentCommentCatalog(momentSnapshot, contactDirectory, now, {
+      userDisplayName,
+    })
     const targetName = userComment.replyTo?.trim() ?? ''
     const targetCharId = resolveMomentCharacterIdByDisplayName(
       targetName,
@@ -165,7 +167,14 @@ export async function runMomentCommentReplyPipeline(
       )
     }
 
-    elicitDrafts.push(...buildThreadElicitDrafts(drafts, delayOffset))
+    elicitDrafts.push(
+      ...buildThreadElicitDrafts(drafts, delayOffset).map((draft) => ({
+        ...draft,
+        replyToCharId:
+          draft.replyToCharId ??
+          commentCatalog.find((c) => c.id === draft.replyToCommentId)?.authorCharId,
+      })),
+    )
     delayOffset += drafts.filter((d) => d.content.trim()).length
   }
 
@@ -173,7 +182,12 @@ export async function runMomentCommentReplyPipeline(
     comments,
     new Set(pendingComments.map((c) => c.id)),
   )
-  const newInteractions = materializeElicitReplyInteractions(elicitDrafts, elicitStartedAt, immediate)
+  const newInteractions = materializeElicitReplyInteractions(
+    elicitDrafts,
+    elicitStartedAt,
+    immediate,
+    { comments, interactions },
+  )
   const mergedInteractions = [...interactions, ...newInteractions]
 
   return {

@@ -4,6 +4,7 @@ import { motion } from 'framer-motion'
 import type { Relationship } from '../../phone/apps/wechat/newFriendsPersona/types'
 
 import { MomentItem } from './MomentItem'
+import type { MomentRevealPendingResult } from './MomentVisitorRecordButton'
 import type { MomentItemModel } from './mockMoments'
 import { buildMomentsContactDirectory } from './momentsContactDirectory'
 import type { MomentContactRef } from './newMomentTypes'
@@ -26,6 +27,9 @@ type MomentsFeedProps = {
   onCharacterMomentInteractionsUnlocked?: (momentId: string) => void
   onTogglePin?: (momentId: string) => void | Promise<void>
   onDelete?: (momentId: string) => void | Promise<void>
+  onRevealPendingInteractions?: (
+    momentId: string,
+  ) => void | Promise<void | MomentRevealPendingResult>
   onOpenParticipantProfile?: OnOpenMomentParticipantProfile
 }
 
@@ -45,6 +49,7 @@ export function MomentsFeed({
   onCharacterMomentInteractionsUnlocked,
   onTogglePin,
   onDelete,
+  onRevealPendingInteractions,
   onOpenParticipantProfile,
 }: MomentsFeedProps) {
   const now = useMomentInteractionClock(5000)
@@ -86,6 +91,7 @@ export function MomentsFeed({
             onCharacterMomentInteractionsUnlocked={onCharacterMomentInteractionsUnlocked}
             onTogglePin={onTogglePin}
             onDelete={onDelete}
+            onRevealPendingInteractions={onRevealPendingInteractions}
             onOpenParticipantProfile={onOpenParticipantProfile}
           />
         </motion.div>

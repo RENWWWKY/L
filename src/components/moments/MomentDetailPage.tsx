@@ -4,6 +4,7 @@ import { motion } from 'framer-motion'
 import type { Relationship } from '../../phone/apps/wechat/newFriendsPersona/types'
 
 import { MomentItem } from './MomentItem'
+import type { MomentRevealPendingResult } from './MomentVisitorRecordButton'
 import { MomentsContentBackdrop, MomentsContentBackgroundLayer } from './MomentsContentBackdrop'
 import type { MomentItemModel } from './mockMoments'
 import { buildMomentsContactDirectory } from './momentsContactDirectory'
@@ -28,6 +29,9 @@ type MomentDetailPageProps = {
   onCharacterMomentInteractionsUnlocked?: (momentId: string) => void
   onTogglePin?: (momentId: string) => void | Promise<void>
   onDelete?: (momentId: string) => void | Promise<void>
+  onRevealPendingInteractions?: (
+    momentId: string,
+  ) => void | Promise<void | MomentRevealPendingResult>
   allowSubjectPin?: boolean
   onOpenParticipantProfile?: OnOpenMomentParticipantProfile
   subjectCharacterId?: string
@@ -52,6 +56,7 @@ export function MomentDetailPage({
   onCharacterMomentInteractionsUnlocked,
   onTogglePin,
   onDelete,
+  onRevealPendingInteractions,
   allowSubjectPin,
   onOpenParticipantProfile,
   subjectCharacterId,
@@ -116,6 +121,7 @@ export function MomentDetailPage({
                 onCharacterMomentInteractionsUnlocked={onCharacterMomentInteractionsUnlocked}
                 onTogglePin={onTogglePin}
                 onDelete={onDelete}
+                onRevealPendingInteractions={onRevealPendingInteractions}
                 allowSubjectPin={allowSubjectPin}
                 onOpenParticipantProfile={onOpenParticipantProfile}
                 subjectCharacterId={subjectCharacterId}

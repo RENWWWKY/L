@@ -1,5 +1,6 @@
 import type { MomentComment } from './mockMoments'
 import type { MomentInteraction } from './momentInteractionTypes'
+import { resolveCommentReplyAnchor } from './momentInteractionTypes'
 
 /** 紧跟在某条评论后的连续角色回复（唤起回应插入的一批） */
 export function gatherContiguousRepliesAfter(
@@ -32,7 +33,26 @@ export type MomentCommentDisplayRow = {
   replyToCommentId?: string
 }
 
-const THREAD_DISPLAY_MIN_GAP_MS = 800
+/** 展示层：子回复仅须晚于直接父评论，可与无关一级评论按时间穿插 */
+function enforceCommentThreadOrder(rows: MomentCommentDisplayRow[]): MomentCommentDisplayRow[] {
+  const adjusted = rows.map((r) => ({ ...r }))
+  let changed = true
+  let guard = 0
+
+  while (changed && guard <= adjusted.length + 2) {
+    changed = false
+    guard++
+    for (const row of adjusted) {
+      const parent = findReplyParentRow(row, adjusted)
+      if (!parent) continue
+      if (row.sortAt > parent.sortAt) continue
+      row.sortAt = parent.sortAt + 1
+      changed = true
+    }
+  }
+
+  return adjusted.sort((a, b) => a.sortAt - b.sortAt || a.id.localeCompare(b.id))
+}
 
 function findReplyParentRow(
   row: MomentCommentDisplayRow,
@@ -46,50 +66,23 @@ function findReplyParentRow(
   }
   if (row.replyToCharId?.trim()) {
     const targetId = row.replyToCharId.trim()
-    const candidates = rows.filter(
-      (r) => r.id !== row.id && r.charId?.trim() === targetId,
+    const prior = rows.filter(
+      (r) => r.id !== row.id && r.charId?.trim() === targetId && r.sortAt <= row.sortAt,
     )
-    if (candidates.length) {
-      return candidates.sort(
-        (a, b) => a.sortAt - b.sortAt || a.id.localeCompare(b.id),
-      )[0]
+    if (prior.length) {
+      return prior.sort((a, b) => b.sortAt - a.sortAt || a.id.localeCompare(b.id))[0]
     }
   }
   if (row.replyTo?.trim()) {
     const target = row.replyTo.trim()
-    const candidates = rows.filter(
-      (r) => r.id !== row.id && r.author.trim() === target,
+    const prior = rows.filter(
+      (r) => r.id !== row.id && r.author.trim() === target && r.sortAt <= row.sortAt,
     )
-    if (candidates.length) {
-      return candidates.sort(
-        (a, b) => a.sortAt - b.sortAt || a.id.localeCompare(b.id),
-      )[0]
+    if (prior.length) {
+      return prior.sort((a, b) => b.sortAt - a.sortAt || a.id.localeCompare(b.id))[0]
     }
   }
   return undefined
-}
-
-/** 展示层：保证回复出现在被回复评论之后（兼容历史错序数据） */
-function enforceCommentThreadOrder(rows: MomentCommentDisplayRow[]): MomentCommentDisplayRow[] {
-  const adjusted = rows.map((r) => ({ ...r }))
-  let changed = true
-  let guard = 0
-
-  while (changed && guard <= adjusted.length + 2) {
-    changed = false
-    guard++
-    for (const row of adjusted) {
-      const parent = findReplyParentRow(row, adjusted)
-      if (!parent) continue
-      const minSortAt = parent.sortAt + THREAD_DISPLAY_MIN_GAP_MS
-      if (row.sortAt < minSortAt) {
-        row.sortAt = minSortAt
-        changed = true
-      }
-    }
-  }
-
-  return adjusted.sort((a, b) => a.sortAt - b.sortAt || a.id.localeCompare(b.id))
 }
 
 function resolveCommentCreatedAt(
@@ -117,7 +110,7 @@ type CommentAuthorRef = {
 
 function buildCommentAuthorIndex(
   comments: MomentComment[],
-  unlockedCommentInteractions: MomentInteraction[],
+  commentInteractions: MomentInteraction[],
   resolveAuthorName: (charId: string) => string,
 ): Map<string, CommentAuthorRef> {
   const byId = new Map<string, CommentAuthorRef>()
@@ -127,7 +120,7 @@ function buildCommentAuthorIndex(
       charId: c.authorCharacterId,
     })
   }
-  for (const ix of unlockedCommentInteractions) {
+  for (const ix of commentInteractions) {
     if (ix.type !== 'comment') continue
     byId.set(ix.id, {
       author: resolveAuthorName(ix.charId),
@@ -135,6 +128,63 @@ function buildCommentAuthorIndex(
     })
   }
   return byId
+}
+
+function canDisplayCommentInteraction(
+  ix: MomentInteraction,
+  now: number,
+  comments: MomentComment[],
+  commentInteractions: MomentInteraction[],
+  cache: Map<string, boolean>,
+): boolean {
+  if (ix.type !== 'comment' || ix.visibleAt > now) return false
+
+  const cached = cache.get(ix.id)
+  if (cached != null) return cached
+
+  let parentOk = true
+
+  const parentInteractionId = ix.replyToInteractionId?.trim()
+  if (parentInteractionId) {
+    const parent = commentInteractions.find((row) => row.id === parentInteractionId)
+    parentOk = parent
+      ? canDisplayCommentInteraction(parent, now, comments, commentInteractions, cache)
+      : false
+  }
+
+  const parentCommentId = ix.replyToCommentId?.trim()
+  if (parentOk && parentCommentId && !parentInteractionId) {
+    const anchor = resolveCommentReplyAnchor(parentCommentId, comments, commentInteractions)
+    if (anchor?.interactionId) {
+      const parent = commentInteractions.find((row) => row.id === anchor.interactionId)
+      parentOk = parent
+        ? canDisplayCommentInteraction(parent, now, comments, commentInteractions, cache)
+        : false
+    }
+  }
+
+  cache.set(ix.id, parentOk)
+  return parentOk
+}
+
+function resolveInteractionReplyToName(
+  ix: MomentInteraction,
+  authorById: Map<string, CommentAuthorRef>,
+  commentInteractions: MomentInteraction[],
+  resolveAuthorName: (charId: string) => string,
+): string | undefined {
+  if (ix.replyToCommentId?.trim()) {
+    const fromId = resolveReplyTargetAuthorName(ix.replyToCommentId, authorById)
+    if (fromId) return fromId
+  }
+  if (ix.replyToInteractionId?.trim()) {
+    const parent = commentInteractions.find((row) => row.id === ix.replyToInteractionId)
+    if (parent) return resolveAuthorName(parent.charId)
+  }
+  if (ix.replyToCharId?.trim()) {
+    return resolveAuthorName(ix.replyToCharId.trim())
+  }
+  return undefined
 }
 
 function resolveReplyTargetAuthorName(
@@ -164,16 +214,19 @@ function inferReplyToPublisherFromPriorRows(
   return undefined
 }
 
-/** 评论区统一按时间序在底部平铺展示（含延时解锁的互动） */
+/** 评论区按 visibleAt 平铺；子回复仅等待其直接父评论解锁，可与无关一级评论穿插 */
 export function buildFlatCommentTimeline(params: {
   comments: MomentComment[]
-  unlockedCommentInteractions: MomentInteraction[]
+  /** 全部 comment 互动（含未解锁），用于引用解析与父链校验 */
+  commentInteractions: MomentInteraction[]
+  now: number
   resolveAuthorName: (charId: string) => string
   publisherCharacterId?: string
 }): MomentCommentDisplayRow[] {
-  const { comments, unlockedCommentInteractions, resolveAuthorName, publisherCharacterId } = params
+  const { comments, commentInteractions, now, resolveAuthorName, publisherCharacterId } = params
   const commentById = new Map(comments.map((c) => [c.id, c]))
-  const authorById = buildCommentAuthorIndex(comments, unlockedCommentInteractions, resolveAuthorName)
+  const authorById = buildCommentAuthorIndex(comments, commentInteractions, resolveAuthorName)
+  const displayableCache = new Map<string, boolean>()
   const rows: MomentCommentDisplayRow[] = []
 
   comments.forEach((c, index) => {
@@ -204,19 +257,19 @@ export function buildFlatCommentTimeline(params: {
     })
   })
 
-  for (const ix of unlockedCommentInteractions) {
+  for (const ix of commentInteractions) {
     if (ix.type !== 'comment' || !ix.content?.trim()) continue
-    let replyToName: string | undefined
-    if (ix.replyToCommentId?.trim()) {
-      replyToName = resolveReplyTargetAuthorName(ix.replyToCommentId, authorById)
+    if (!canDisplayCommentInteraction(ix, now, comments, commentInteractions, displayableCache)) {
+      continue
     }
-    if (!replyToName && ix.replyToInteractionId?.trim()) {
-      const parent = unlockedCommentInteractions.find((row) => row.id === ix.replyToInteractionId)
-      if (parent) replyToName = resolveAuthorName(parent.charId)
-    }
-    if (!replyToName && ix.replyToCharId?.trim()) {
-      replyToName = resolveAuthorName(ix.replyToCharId.trim())
-    }
+
+    const replyToName = resolveInteractionReplyToName(
+      ix,
+      authorById,
+      commentInteractions,
+      resolveAuthorName,
+    )
+
     rows.push({
       id: ix.id,
       sortAt: ix.visibleAt,
@@ -227,6 +280,7 @@ export function buildFlatCommentTimeline(params: {
       charId: ix.charId,
       replyToCharId: ix.replyToCharId,
       replyToInteractionId: ix.replyToInteractionId,
+      replyToCommentId: ix.replyToCommentId,
     })
   }
 

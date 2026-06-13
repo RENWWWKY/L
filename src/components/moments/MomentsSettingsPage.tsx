@@ -9,6 +9,7 @@ import { isMomentsImageGenConfigured } from './momentsImageGenAvailability'
 import { MomentsImageGenSettingsPanel } from './MomentsImageGenSettingsPanel'
 import { MomentsMinimalSwitch } from './MomentsMinimalSwitch'
 import { MomentsProactivePublishPanel } from './MomentsProactivePublishPanel'
+import { MomentsUserEngagementRulesPanel } from './MomentsUserEngagementRulesPanel'
 import { MomentsUserMomentDataPanel } from './MomentsUserMomentDataPanel'
 import { SettingsMechanismAccordion } from './SettingsMechanismAccordion'
 import { isMomentsDedicatedImageGenEnabled } from './resolveMomentsImageGenSettings'
@@ -155,6 +156,8 @@ export function MomentsSettingsPage({ onBack, accountId, onMomentsCleared }: Pro
             <MomentsUserMomentDataPanel accountId={accountId} />
           ) : (
             <div className="space-y-8">
+          <MomentsUserEngagementRulesPanel />
+
           <SettingsBlock
             titleEn="DELAYED INTERACTION"
             titleZh="异步延时互动"

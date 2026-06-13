@@ -7,6 +7,7 @@ import {
   staggerCrossCharacterDelays,
 } from './momentInteractionTiming'
 import type { PublisherSelfCommentDraft } from './momentCharacterPublishTypes'
+import type { MomentComment } from './mockMoments'
 
 export interface MomentInteraction {
   id: string
@@ -110,7 +111,7 @@ export function materializeInteractions(
     interactions.push(ix)
   }
 
-  return interactions
+  return alignInteractionVisibleAtToParents(interactions)
 }
 
 export type ElicitReplyInteractionDraft = {
@@ -123,12 +124,88 @@ export type ElicitReplyInteractionDraft = {
   isAuthorReply?: boolean
 }
 
+/** 子回复解锁时间仅须严格晚于直接父评论（具体间隔由 AI delay 决定） */
+const MIN_AFTER_PARENT_MS = 1
+
+function alignInteractionVisibleAtToParents(
+  interactions: MomentInteraction[],
+  gapMs = MIN_AFTER_PARENT_MS,
+): MomentInteraction[] {
+  const byId = new Map(interactions.map((ix) => [ix.id, ix]))
+  let changed = true
+  let guard = 0
+  const out = interactions.map((ix) => ({ ...ix }))
+
+  while (changed && guard <= out.length + 2) {
+    changed = false
+    guard += 1
+    for (const ix of out) {
+      if (ix.type !== 'comment') continue
+      const parentId = ix.replyToInteractionId?.trim()
+      if (!parentId) continue
+      const parent = byId.get(parentId)
+      if (!parent) continue
+      const minVisibleAt = parent.visibleAt + gapMs
+      if (ix.visibleAt < minVisibleAt) {
+        ix.visibleAt = minVisibleAt
+        changed = true
+      }
+    }
+  }
+
+  return out
+}
+
+export type CommentReplyAnchor = {
+  visibleAt: number
+  charId?: string
+  interactionId?: string
+}
+
+/** 解析回复锚点（stored 评论或已物化互动），用于对齐解锁时间与引用对象 */
+export function resolveCommentReplyAnchor(
+  targetId: string,
+  comments: MomentComment[] | undefined,
+  interactions: MomentInteraction[] | undefined,
+): CommentReplyAnchor | null {
+  const id = targetId.trim()
+  if (!id) return null
+
+  for (const c of comments ?? []) {
+    if (c.id !== id || c.isAuthorReply) continue
+    const visibleAt =
+      typeof c.createdAt === 'number' && Number.isFinite(c.createdAt) ? c.createdAt : 0
+    return {
+      visibleAt,
+      charId: c.authorCharacterId,
+    }
+  }
+
+  for (const ix of interactions ?? []) {
+    if (ix.id !== id || ix.type !== 'comment') continue
+    return {
+      visibleAt: ix.visibleAt,
+      charId: ix.charId,
+      interactionId: ix.id,
+    }
+  }
+
+  return null
+}
+
 /** 唤起回应：将 AI 回复写入 interactions，支持延时解锁 */
 export function materializeElicitReplyInteractions(
   drafts: ElicitReplyInteractionDraft[],
   startedAt: number,
   immediate = false,
+  anchorContext?: {
+    comments?: MomentComment[]
+    interactions?: MomentInteraction[]
+  },
 ): MomentInteraction[] {
+  const comments = anchorContext?.comments ?? []
+  const interactions = anchorContext?.interactions ?? []
+
   return drafts
     .map((d) => ({
       ...d,
@@ -138,14 +215,31 @@ export function materializeElicitReplyInteractions(
     .map((d, index) => {
       const baseDelay = d.delaySeconds ?? 35 + index * 30
       const delay = immediate ? 0 : clampInteractionDelay(baseDelay)
+      let visibleAt = immediate ? startedAt : startedAt + delay * 1000
+
+      const anchor = resolveCommentReplyAnchor(d.replyToCommentId, comments, interactions)
+      let replyToCharId = d.replyToCharId?.trim()
+      let replyToInteractionId: string | undefined
+
+      if (anchor) {
+        visibleAt = Math.max(visibleAt, anchor.visibleAt + MIN_AFTER_PARENT_MS)
+        if (!replyToCharId && anchor.charId?.trim()) {
+          replyToCharId = anchor.charId.trim()
+        }
+        if (anchor.interactionId) {
+          replyToInteractionId = anchor.interactionId
+        }
+      }
+
       return {
         id: createInteractionId(),
         charId: d.authorCharId,
         type: 'comment' as const,
         content: d.content,
-        visibleAt: immediate ? startedAt : startedAt + delay * 1000,
+        visibleAt,
         replyToCommentId: d.replyToCommentId,
-        ...(d.replyToCharId ? { replyToCharId: d.replyToCharId } : {}),
+        ...(replyToCharId ? { replyToCharId } : {}),
+        ...(replyToInteractionId ? { replyToInteractionId } : {}),
         isAuthorReply: d.isAuthorReply ?? true,
       }
     })
@@ -172,6 +266,21 @@ export function getUnlockedInteractions(
   now: number,
 ): MomentInteraction[] {
   return (interactions ?? []).filter((i) => i.visibleAt <= now)
+}
+
+/** 将尚未解锁的互动全部提前到当前时刻（单条动态访客面板「直接显示」） */
+export function revealAllPendingMomentInteractions(
+  interactions: MomentInteraction[] | undefined,
+  now: number,
+): MomentInteraction[] | null {
+  if (!interactions?.length) return null
+  let changed = false
+  const next = interactions.map((ix) => {
+    if (ix.visibleAt <= now) return ix
+    changed = true
+    return { ...ix, visibleAt: now }
+  })
+  return changed ? next : null
 }
 
 function clampInteractionDelay(seconds: number): number {

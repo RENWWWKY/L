@@ -4,7 +4,7 @@ import { useMemo } from 'react'
 
 import type { Relationship } from '../../phone/apps/wechat/newFriendsPersona/types'
 
-import { ArchiveTimelineDateColumn } from './ArchiveTimelineDateColumn'
+import { ArchiveTimelineDateColumn, MomentBodyText } from './ArchiveTimelineDateColumn'
 import { getCalendarYear, shouldShowArchiveYearHeader } from './utils/archiveTimelineDate'
 import type { MomentItemModel } from './mockMoments'
 import { ArchiveTextOnlyMomentStrip, MomentArchiveThumbnail } from './MomentArchiveThumbnail'
@@ -72,7 +72,10 @@ function PinnedListMomentRow({
             <MomentArchiveThumbnail images={images} variant="timeline" />
             {hasText ? (
               <div className="min-w-0 flex-1">
-                <p className="text-[14px] leading-[1.55] text-[#111827] line-clamp-3">{content}</p>
+                <MomentBodyText
+                  text={content}
+                  className="text-[14px] leading-[1.55] text-[#111827] line-clamp-3"
+                />
               </div>
             ) : null}
           </div>

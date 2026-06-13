@@ -1,5 +1,6 @@
 import { personaDb, emitWeChatStorageChanged } from '../../phone/apps/wechat/newFriendsPersona/idb'
 
+import { deleteMomentUserImages, externalizeMomentUserImages } from './momentUserImageStorage'
 import { normalizeMomentLocation } from './momentLocationUtils'
 import { sanitizeMomentBodyText, sanitizeMomentText } from './momentTextSanitize'
 import type { MomentComment, MomentItemModel } from './mockMoments'
@@ -164,32 +165,98 @@ function normalizeMoment(raw: unknown): MomentItemModel | null {
   }
 }
 
+function momentHasInlineImages(moment: MomentItemModel): boolean {
+  return (moment.images ?? []).some((src) => {
+    const t = src.trim()
+    return t.startsWith('data:') || t.startsWith('blob:')
+  })
+}
+
+async function readUserMomentsFromKv(accountId: string): Promise<MomentItemModel[]> {
+  const raw = await personaDb.getPhoneKv(kvKey(accountId))
+  if (!Array.isArray(raw)) return []
+  return raw
+    .map(normalizeMoment)
+    .filter((m): m is MomentItemModel => !!m)
+    .sort((a, b) => b.timestamp - a.timestamp)
+}
+
+const migratedInlineImageAccounts = new Set<string>()
+const inlineImageMigrationJobs = new Map<string, Promise<void>>()
+
+/** 旧数据内联大图迁移：每个账号会话内只跑一次，避免浏览页反复读写 IndexedDB */
+export async function migrateUserMomentInlineImagesIfNeeded(
+  accountId: string | null | undefined,
+): Promise<void> {
+  const acc = accountId?.trim()
+  if (!acc || migratedInlineImageAccounts.has(acc)) return
+
+  const pending = inlineImageMigrationJobs.get(acc)
+  if (pending) {
+    await pending
+    return
+  }
+
+  const job = (async () => {
+    try {
+      const items = await readUserMomentsFromKv(acc)
+      if (!items.some(momentHasInlineImages)) {
+        migratedInlineImageAccounts.add(acc)
+        return
+      }
+      await saveUserMoments(acc, items)
+      migratedInlineImageAccounts.add(acc)
+    } catch (err) {
+      console.error('[momentsFeedStorage] inline image migration failed', err)
+    } finally {
+      inlineImageMigrationJobs.delete(acc)
+    }
+  })()
+
+  inlineImageMigrationJobs.set(acc, job)
+  await job
+}
+
 export async function loadUserMoments(accountId: string | null | undefined): Promise<MomentItemModel[]> {
   const acc = accountId?.trim()
   if (!acc) return []
   try {
-    const raw = await personaDb.getPhoneKv(kvKey(acc))
-    if (!Array.isArray(raw)) return []
-    return raw
-      .map(normalizeMoment)
-      .filter((m): m is MomentItemModel => !!m)
-      .sort((a, b) => b.timestamp - a.timestamp)
+    return await readUserMomentsFromKv(acc)
   } catch {
     return []
   }
 }
 
+async function prepareMomentsForPersistence(
+  accountId: string,
+  items: MomentItemModel[],
+): Promise<MomentItemModel[]> {
+  const next: MomentItemModel[] = []
+  for (const moment of items) {
+    if (!moment.images?.length) {
+      next.push(moment)
+      continue
+    }
+    const images = await externalizeMomentUserImages(accountId, moment)
+    next.push({ ...moment, images })
+  }
+  return next
+}
+
 export async function saveUserMoments(
   accountId: string | null | undefined,
   items: MomentItemModel[],
-): Promise<void> {
+): Promise<MomentItemModel[]> {
   const acc = accountId?.trim()
-  if (!acc) return
+  if (!acc) return items
+  const prepared = await prepareMomentsForPersistence(acc, items)
   try {
-    await personaDb.setPhoneKv(kvKey(acc), items)
+    await personaDb.setPhoneKv(kvKey(acc), prepared)
     emitWeChatStorageChanged()
-  } catch {
-    // ignore quota
+    return prepared
+  } catch (err) {
+    console.error('[momentsFeedStorage] saveUserMoments failed', err)
+    throw err
   }
 }
 
@@ -206,8 +273,7 @@ export async function upsertUserMoment(
   const existing = await loadUserMoments(acc)
   const withoutDup = existing.filter((m) => m.id !== item.id)
   const next = [item, ...withoutDup].sort((a, b) => b.timestamp - a.timestamp)
-  await saveUserMoments(acc, next)
-  return next
+  return await saveUserMoments(acc, next)
 }
 
 export async function deleteUserMoment(
@@ -219,8 +285,8 @@ export async function deleteUserMoment(
   if (!acc || !id) return []
   const existing = await loadUserMoments(acc)
   const next = existing.filter((m) => m.id !== id)
-  await saveUserMoments(acc, next)
-  return next
+  await deleteMomentUserImages(acc, id)
+  return await saveUserMoments(acc, next)
 }
 
 export async function patchUserMoment(
@@ -232,6 +298,5 @@ export async function patchUserMoment(
   if (!acc) return []
   const existing = await loadUserMoments(acc)
   const next = existing.map((m) => (m.id === momentId ? { ...m, ...patch } : m))
-  await saveUserMoments(acc, next)
-  return next
+  return await saveUserMoments(acc, next)
 }

@@ -4,7 +4,7 @@ import type { AiMomentInteractionDraft, MomentInteraction } from './momentIntera
 export const MOMENT_INTERACTION_DELAY_MAX_SECONDS = 600
 /** 异步延时互动：单条解锁相对发圈时刻的下限 */
 export const MOMENT_INTERACTION_DELAY_MIN_SECONDS = 30
-/** 不同角色之间至少间隔（各自刷朋友圈） */
+/** 不同角色之间至少间隔（各自刷朋友圈）— 仅作兜底下限，实际用有机间隔 */
 export const MOMENT_CROSS_CHARACTER_GAP_SECONDS = 55
 /** 评区接话：相对被回复 comment 的间隔 */
 export const MOMENT_THREAD_REPLY_GAP_SECONDS = 42
@@ -35,6 +35,67 @@ function clampDelay(
 
 function draftKey(d: Pick<AiMomentInteractionDraft, 'charId' | 'type' | 'content'>): string {
   return `${d.charId.trim()}:${d.type}:${d.content?.trim() ?? ''}`
+}
+
+function unitRandom(seed: string): number {
+  let h = 2166136261
+  for (let i = 0; i < seed.length; i += 1) {
+    h ^= seed.charCodeAt(i)
+    h = Math.imul(h, 16777619)
+  }
+  return (h >>> 0) / 4294967295
+}
+
+/** 相邻角色互动之间的有机间隔（秒）：可短至十几秒，也可跳至数分钟 */
+export function nextOrganicGapSeconds(
+  prevDelay: number,
+  charIndex: number,
+  charId: string,
+  totalChars: number,
+): number {
+  const u = unitRandom(`${charId}:gap:${charIndex}`)
+  const v = unitRandom(`${charId}:gap2:${charIndex}`)
+  const remaining = Math.max(20, MOMENT_INTERACTION_DELAY_MAX_SECONDS - prevDelay)
+  const slotsLeft = Math.max(1, totalChars - charIndex - 1)
+
+  let gap: number
+  if (u < 0.32) {
+    gap = 12 + Math.floor(v * 38)
+  } else if (u < 0.58) {
+    gap = 45 + Math.floor(v * 85)
+  } else if (u < 0.8) {
+    gap = 90 + Math.floor(v * 130)
+  } else {
+    gap = 165 + Math.floor(v * Math.min(320, remaining * 0.65))
+  }
+
+  const maxGap = Math.floor((remaining / slotsLeft) * 1.85)
+  gap = Math.min(gap, Math.max(14, maxGap))
+  return Math.max(12, gap)
+}
+
+/** 为每个角色分配不均匀的「刷到朋友圈」时刻（15 秒～10 分钟内错落） */
+export function assignOrganicCharacterAnchors(charOrder: readonly string[]): Map<string, number> {
+  const anchors = new Map<string, number>()
+  const order = charOrder.map((id) => id.trim()).filter(Boolean)
+  if (!order.length) return anchors
+
+  let cursor = 12 + Math.floor(unitRandom('moment:first-anchor') * 38)
+  for (let i = 0; i < order.length; i += 1) {
+    const id = order[i]!
+    anchors.set(id, clampMomentInteractionDelay(cursor, 10))
+    if (i < order.length - 1) {
+      cursor = clampMomentInteractionDelay(
+        cursor + nextOrganicGapSeconds(cursor, i, id, order.length),
+      )
+    }
+  }
+  return anchors
+}
+
+export function pickOrganicViewedDwellSeconds(charId: string, slotIndex: number): number {
+  const base = 8 + Math.floor(unitRandom(`${charId}:dwell:${slotIndex}`) * 34)
+  return Math.max(6, Math.min(52, base))
 }
 
 /**
@@ -121,7 +182,7 @@ export function alignCharacterInteractionTiming(
 }
 
 /**
- * 不同角色的首条互动错开，避免 A 刚评完 B 立刻接上（模拟各自刷圈）。
+ * 不同角色的首条互动错开：用有机时间轴（十几秒～数分钟不等），避免固定每分钟一条。
  */
 export function staggerCrossCharacterDelays(
   drafts: AiMomentInteractionDraft[],
@@ -144,18 +205,18 @@ export function staggerCrossCharacterDelays(
     return minA - minB || a.localeCompare(b)
   })
 
-  let nextAvailable = MOMENT_INTERACTION_DELAY_MIN_SECONDS
+  const anchors = assignOrganicCharacterAnchors(charOrder)
+
   for (const charId of charOrder) {
     const charDrafts = byChar.get(charId)!
+    const targetAnchor = anchors.get(charId) ?? MOMENT_INTERACTION_DELAY_MIN_SECONDS
     const charMin = Math.min(...charDrafts.map((d) => d.delaySeconds))
-    const shift = Math.max(0, nextAvailable - charMin)
+    const shift = Math.max(0, targetAnchor - charMin)
     if (shift > 0) {
       for (const d of charDrafts) {
         d.delaySeconds = clampMomentInteractionDelay(d.delaySeconds + shift)
       }
     }
-    const charMax = Math.max(...charDrafts.map((d) => d.delaySeconds))
-    nextAvailable = clampMomentInteractionDelay(charMax + MOMENT_CROSS_CHARACTER_GAP_SECONDS)
   }
 
   return out

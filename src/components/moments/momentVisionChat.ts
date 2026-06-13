@@ -5,6 +5,7 @@ import {
 } from '../../phone/apps/wechat/newFriendsPersona/ai'
 
 import { MAX_MOMENT_IMAGES } from './momentContentLimits'
+import { isMomentUserImageRef, loadMomentUserImageDataUrl } from './momentUserImageStorage'
 
 export const MOMENT_VISION_SYSTEM_APPENDIX = `
 【朋友圈配图识图】
@@ -24,7 +25,13 @@ type VisionChatParams = {
 function pickMomentImageUrls(raw?: string[] | null): string[] {
   return (raw ?? [])
     .map((u) => u.trim())
-    .filter((u) => u.startsWith('data:') || u.startsWith('blob:') || /^https?:\/\//i.test(u))
+    .filter(
+      (u) =>
+        u.startsWith('data:') ||
+        u.startsWith('blob:') ||
+        /^https?:\/\//i.test(u) ||
+        isMomentUserImageRef(u),
+    )
     .slice(0, MAX_MOMENT_IMAGES)
 }
 
@@ -48,6 +55,11 @@ export async function resolveMomentVisionImageUrls(raw?: string[] | null): Promi
   const picked = pickMomentImageUrls(raw)
   const out: string[] = []
   for (const url of picked) {
+    if (isMomentUserImageRef(url)) {
+      const data = await loadMomentUserImageDataUrl(url)
+      if (data) out.push(data)
+      continue
+    }
     if (url.startsWith('data:')) {
       out.push(url)
       continue

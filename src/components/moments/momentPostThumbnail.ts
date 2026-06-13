@@ -1,4 +1,5 @@
 import type { MomentItemModel } from './mockMoments'
+import { isMomentUserImageRef } from './momentUserImageStorage'
 
 const TEXT_SNIPPET_MAX = 48
 
@@ -18,6 +19,7 @@ export function isMomentThumbnailImage(thumbnail: string): boolean {
     t.startsWith('https://') ||
     t.startsWith('data:') ||
     t.startsWith('/') ||
-    t.startsWith('blob:')
+    t.startsWith('blob:') ||
+    isMomentUserImageRef(t)
   )
 }

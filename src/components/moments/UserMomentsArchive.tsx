@@ -9,7 +9,7 @@ import { resolvePublicImageUrl } from '../../publicAssetUrl'
 import { resolveProfileAvatarPreviewUrl } from '../../phone/utils/characterAvatarUrl'
 import { personaDb } from '../../phone/apps/wechat/newFriendsPersona/idb'
 
-import { ArchiveTimelineDateColumn, momentsSerifNumericStyle } from './ArchiveTimelineDateColumn'
+import { ArchiveTimelineDateColumn, MomentBodyText, momentsSerifNumericStyle } from './ArchiveTimelineDateColumn'
 import { ArchiveMomentsHeader } from './ArchiveMomentsHeader'
 import { FloatingInput } from './FloatingInput'
 import { ArchiveTextOnlyMomentStrip, MomentArchiveThumbnail, MOMENT_ARCHIVE_TEXT_STRIP_CLASS, MOMENT_ARCHIVE_THUMB_OUTER_CLASS } from './MomentArchiveThumbnail'
@@ -20,7 +20,9 @@ import { MomentsContentBackdrop, MomentsContentBackgroundLayer } from './Moments
 import { PinnedMomentsListPage } from './PinnedMomentsListPage'
 import { PublishMomentPage } from './PublishMomentPage'
 import type { MomentItemModel } from './mockMoments'
-import { generateMomentInteractions } from './momentInteractionAi'
+import { generateMomentInteractions, countAiEngagementDrafts } from './momentInteractionAi'
+import { finalizeUserMomentEngagementDrafts } from './momentUserInteractionAi'
+import type { AiMomentInteractionDraft } from './momentInteractionTypes'
 import {
   materializeInteractions,
 } from './momentInteractionTypes'
@@ -39,6 +41,7 @@ import {
 import { sanitizeMomentBodyText } from './momentTextSanitize'
 import type { NewMomentDraft } from './newMomentTypes'
 import { draftToMomentItem } from './publishMomentUtils'
+import { isElicitReplyInFlight } from './momentElicitReplyGuard'
 import type { ArchiveTimelineEntry } from './userMomentsArchiveFilters'
 import { filterMomentsForArchiveSubject } from './userMomentsArchiveFilters'
 import { getCalendarYear, shouldShowArchiveYearHeader } from './utils/archiveTimelineDate'
@@ -52,9 +55,12 @@ import { useSyncMomentInteractionNotices } from './useSyncMomentInteractionNotic
 import { useUserMomentsArchive } from './useUserMomentsArchive'
 import { useMomentInteractionClock } from './useMomentInteractionClock'
 import { useResolvedMomentsImageGenSettings } from './useResolvedMomentsImageGenSettings'
+import { resolveUserMomentEngagementRules } from './userMomentEngagementRules'
 import {
-  finalizeMomentInteractionDrafts,
-} from './momentVisitorFootprints'
+  applyQueuedRevealAfterGeneration,
+  markMomentInteractionGenerationEnd,
+  markMomentInteractionGenerationStart,
+} from './momentInteractionGenerationRegistry'
 
 type UserMomentsArchiveProps = {
   userId: string
@@ -121,7 +127,10 @@ function TimelineMomentCard({
           <MomentArchiveThumbnail images={images} variant="timeline" />
           {hasText ? (
             <div className="min-w-0 flex-1">
-              <p className="text-[14px] leading-[1.55] text-[#111827] line-clamp-3">{content}</p>
+              <MomentBodyText
+                text={content}
+                className="text-[14px] leading-[1.55] text-[#111827] line-clamp-3"
+              />
             </div>
           ) : null}
         </div>
@@ -207,6 +216,10 @@ export function UserMomentsArchive({
   const { tags } = useMomentsContactTags()
   const { settings } = useMomentsSettingsStore()
   const { effectiveImageGen: imageGenSettings } = useResolvedMomentsImageGenSettings()
+  const userMomentEngagementRules = useMemo(
+    () => resolveUserMomentEngagementRules(settings.userMomentEngagement),
+    [settings.userMomentEngagement],
+  )
 
   const displayNickname = selfProfile?.displayName.trim() || '我'
   const displayAvatarUrl = resolveProfileAvatarPreviewUrl(selfProfile?.avatarUrl)
@@ -234,6 +247,7 @@ export function UserMomentsArchive({
     handleToggleLike,
     handleTogglePin,
     handleDeleteMoment,
+    handleRevealPendingInteractions,
     openFloatingInput,
     playerIdentityId,
   } = useMomentFeedInteractions({
@@ -278,60 +292,102 @@ export function UserMomentsArchive({
         momentRelationships,
       )
       const mentionedCharacters = filterMentionedCharactersByAudience(draft.mentions, allowed)
+      const shouldGenerateInteractions =
+        allowed.length > 0 && draft.privacy.mode !== 'private'
+
+      if (shouldGenerateInteractions) {
+        markMomentInteractionGenerationStart(item.id)
+      }
+
+      setAllMoments((prev) => {
+        const merged = [item, ...prev.filter((m) => m.id !== item.id)]
+        return filterMomentsForArchiveSubject(merged, userId)
+      })
 
       void (async () => {
-        const next = await upsertUserMoment(accountId, item)
-        setAllMoments(filterMomentsForArchiveSubject(next, userId))
+        let aiDrafts: AiMomentInteractionDraft[] = []
+        try {
+          const next = await upsertUserMoment(accountId, item)
+          setAllMoments(filterMomentsForArchiveSubject(next, userId))
 
-        scheduleMomentInteractionMemoryArchive({
-          moment: item,
-          apiConfig,
-          wechatAccountId: accountId,
-          playerIdentityId: qnaWechatCtx?.playerIdentityId ?? '__none__',
-          playerDisplayName: displayNickname,
-          contactDirectory,
-          momentContacts,
-          tags,
-          now: publishedAt,
-        })
+          scheduleMomentInteractionMemoryArchive({
+            moment: item,
+            apiConfig,
+            wechatAccountId: accountId,
+            playerIdentityId: qnaWechatCtx?.playerIdentityId ?? '__none__',
+            playerDisplayName: displayNickname,
+            contactDirectory,
+            momentContacts,
+            tags,
+            now: publishedAt,
+          })
 
-        if (!allowed.length || draft.privacy.mode === 'private') return
+          if (!shouldGenerateInteractions) return
 
-        let drafts = await generateMomentInteractions({
-          apiConfig,
-          momentContent: draft.content,
-          imageCount: draft.images.length,
-          momentImages: draft.images,
-          allowedCharacters: allowed,
-          mentionedCharacters,
-          wechatCtx: qnaWechatCtx,
-          momentPublishedAt: publishedAt,
-        })
-        drafts = ensureMentionedCharacterAwarenessDrafts(
-          drafts,
-          mentionedCharacters.map((c) => c.charId),
-        )
-        drafts = finalizeMomentInteractionDrafts(drafts, allowed)
-        if (!drafts.length && !mentionedCharacters.length) return
-        const interactions = materializeInteractions(
-          drafts,
-          publishedAt,
-          !settings.enableDelayedInteraction,
-        )
-        const withInteractions = { ...item, interactions }
-        const patched = await patchUserMoment(accountId, item.id, { interactions })
-        setAllMoments(filterMomentsForArchiveSubject(patched, userId))
-        scheduleMomentInteractionMemoryArchive({
-          moment: withInteractions,
-          apiConfig,
-          wechatAccountId: accountId,
-          playerIdentityId: qnaWechatCtx?.playerIdentityId ?? '__none__',
-          playerDisplayName: displayNickname,
-          contactDirectory,
-          momentContacts,
-          tags,
-          now: publishedAt,
-        })
+          try {
+            aiDrafts = await generateMomentInteractions({
+              apiConfig,
+              momentContent: draft.content,
+              imageCount: draft.images.length,
+              momentImages: draft.images,
+              allowedCharacters: allowed,
+              mentionedCharacters,
+              wechatCtx: qnaWechatCtx,
+              momentPublishedAt: publishedAt,
+              engagementRules: userMomentEngagementRules,
+            })
+            aiDrafts = ensureMentionedCharacterAwarenessDrafts(
+              aiDrafts,
+              mentionedCharacters.map((c) => c.charId),
+            )
+          } catch (err) {
+            console.error('[UserMomentsArchive] generateMomentInteractions failed', err)
+          }
+
+          const drafts = await finalizeUserMomentEngagementDrafts({
+            drafts: aiDrafts,
+            allowed,
+            mentionedCharacterIds: new Set(mentionedCharacters.map((c) => c.charId)),
+            playerIdentityId: qnaWechatCtx?.playerIdentityId,
+            relationships: momentRelationships,
+            engagementRules: userMomentEngagementRules,
+            wechatCtx: qnaWechatCtx,
+            momentContent: draft.content,
+            momentImages: draft.images,
+            imageCount: draft.images.length,
+            momentPublishedAt: publishedAt,
+          })
+
+          if (!drafts.length && !mentionedCharacters.length) return
+
+          let interactions = materializeInteractions(
+            drafts,
+            publishedAt,
+            !settings.enableDelayedInteraction,
+          )
+          interactions = applyQueuedRevealAfterGeneration(item.id, interactions)
+          const withInteractions = { ...item, interactions }
+          const patched = await patchUserMoment(accountId, item.id, { interactions })
+          if (shouldGenerateInteractions) {
+            markMomentInteractionGenerationEnd(item.id, countAiEngagementDrafts(aiDrafts))
+          }
+          setAllMoments(filterMomentsForArchiveSubject(patched, userId))
+          scheduleMomentInteractionMemoryArchive({
+            moment: withInteractions,
+            apiConfig,
+            wechatAccountId: accountId,
+            playerIdentityId: qnaWechatCtx?.playerIdentityId ?? '__none__',
+            playerDisplayName: displayNickname,
+            contactDirectory,
+            momentContacts,
+            tags,
+            now: publishedAt,
+          })
+        } finally {
+          if (shouldGenerateInteractions) {
+            markMomentInteractionGenerationEnd(item.id, countAiEngagementDrafts(aiDrafts))
+          }
+        }
       })()
     },
     [
@@ -342,11 +398,12 @@ export function UserMomentsArchive({
       displayNickname,
       momentContacts,
       momentRelationships,
-      qnaWechatCtx?.playerIdentityId,
+      qnaWechatCtx,
       setAllMoments,
       settings.enableDelayedInteraction,
       tags,
       userId,
+      userMomentEngagementRules,
     ],
   )
 
@@ -409,6 +466,7 @@ export function UserMomentsArchive({
     onCharacterMomentInteractionsUnlocked: handleCharacterMomentArchiveTrigger,
     onTogglePin: handleTogglePin,
     onDelete: handleDeleteMoment,
+    onRevealPendingInteractions: handleRevealPendingInteractions,
     onOpenParticipantProfile,
     allowSubjectPin: false,
     pinnedTitle: profile?.isCurrentUser ? '我的置顶' : `${nickname}的置顶`,
@@ -662,7 +720,10 @@ export function UserMomentsArchive({
           <FloatingInput
             open
             canElicit={canElicitActive}
-            busy={replyingMomentId === floatingTarget.momentId}
+            busy={
+              replyingMomentId === floatingTarget.momentId ||
+              isElicitReplyInFlight(floatingTarget.momentId)
+            }
             targetLabel={
               activeMoment
                 ? floatingTarget.replyTo?.trim()

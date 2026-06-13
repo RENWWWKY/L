@@ -19,6 +19,10 @@ import {
 import { PrivacySettingsModal } from './PrivacySettingsModal'
 import { useMomentsContactTags } from './momentsContactTagsStore'
 import { filterMentionableMomentContacts } from './publishMomentUtils'
+import {
+  compressChatImageToJpeg,
+  loadImageFromFile,
+} from '../../phone/apps/wechat/wechatChatImageCompress'
 
 const MAX_IMAGES = MAX_MOMENT_IMAGES
 
@@ -83,21 +87,26 @@ export function PublishMomentPage({ open, contacts = [], onClose, onPublish }: P
     if (!files?.length) return
     const room = MAX_IMAGES - draft.images.length
     if (room <= 0) return
-    Array.from(files)
-      .slice(0, room)
-      .forEach((file) => {
-        if (!file.type.startsWith('image/')) return
-        const reader = new FileReader()
-        reader.onload = () => {
-          const src = typeof reader.result === 'string' ? reader.result : ''
-          if (!src) return
+    void (async () => {
+      for (const file of Array.from(files).slice(0, room)) {
+        if (!file.type.startsWith('image/')) continue
+        try {
+          const img = await loadImageFromFile(file)
+          const base64 = await compressChatImageToJpeg({
+            source: img,
+            width: img.naturalWidth,
+            height: img.naturalHeight,
+          })
+          const src = `data:image/jpeg;base64,${base64}`
           setDraft((prev) => {
             if (prev.images.length >= MAX_IMAGES) return prev
             return { ...prev, images: [...prev.images, src] }
           })
+        } catch {
+          /* 单张失败跳过 */
         }
-        reader.readAsDataURL(file)
-      })
+      }
+    })()
   }
 
   const removeImage = (index: number) => {

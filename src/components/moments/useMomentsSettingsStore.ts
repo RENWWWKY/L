@@ -21,6 +21,11 @@ import {
   type ProactiveCharacterMomentsSettings,
   type ProactiveCharacterMomentSchedule,
 } from './proactiveCharacterMomentTypes'
+import {
+  DEFAULT_USER_MOMENT_ENGAGEMENT_RULES,
+  normalizeUserMomentEngagementRules,
+  type UserMomentEngagementRulesSettings,
+} from './userMomentEngagementRules'
 
 export interface MomentsImageGenSettings {
   /** 是否启用朋友圈 AI 配图（全局预设侧：关闭后朋友圈与聊天室均不调用生图） */
@@ -60,6 +65,8 @@ export interface MomentsSettings {
   enableDelayedInteraction: boolean
   /** 仅提醒朋友与我的直接互动（关闭共同好友吃瓜提醒） */
   onlyDirectInteraction: boolean
+  /** 用户本人发朋友圈的角色互动频繁度 */
+  userMomentEngagement: UserMomentEngagementRulesSettings
   imageGen: MomentsImageGenSettings
   proactiveCharacterMoments: ProactiveCharacterMomentsSettings
 }
@@ -69,6 +76,7 @@ const STORAGE_KEY = 'wechat-moments-settings-v1'
 export const DEFAULT_MOMENTS_SETTINGS: MomentsSettings = {
   enableDelayedInteraction: true,
   onlyDirectInteraction: false,
+  userMomentEngagement: { ...DEFAULT_USER_MOMENT_ENGAGEMENT_RULES },
   proactiveCharacterMoments: { ...DEFAULT_PROACTIVE_CHARACTER_MOMENTS_SETTINGS },
   imageGen: {
     enabled: true,
@@ -298,6 +306,7 @@ function normalizeSettings(raw: unknown): MomentsSettings {
       typeof o.onlyDirectInteraction === 'boolean'
         ? o.onlyDirectInteraction
         : DEFAULT_MOMENTS_SETTINGS.onlyDirectInteraction,
+    userMomentEngagement: normalizeUserMomentEngagementRules(o.userMomentEngagement),
     proactiveCharacterMoments: normalizeProactiveCharacterMoments(o.proactiveCharacterMoments),
     imageGen: normalizeImageGenSettings(imageRaw),
   }

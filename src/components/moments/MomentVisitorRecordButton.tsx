@@ -8,6 +8,7 @@ import type { MomentsContactDirectory } from './momentsContactDirectory'
 import {
   buildMomentVisitorRecords,
   countMomentVisitorRecords,
+  countPendingMomentVisitorCharacters,
   type MomentVisitorRecord,
 } from './momentVisitorRecordUtils'
 import {
@@ -15,11 +16,109 @@ import {
   MomentsSerifNumericValue,
 } from './ArchiveTimelineDateColumn'
 import { formatNoticeTimestamp } from './utils/noticeTimeFormat'
+import { useMomentsSettingsStore } from './useMomentsSettingsStore'
+import { useMomentInteractionGenerationPending } from './useMomentInteractionGenerationPending'
+
+export type MomentRevealPendingResult = 'queued' | 'revealed' | 'noop'
 
 type MomentVisitorRecordButtonProps = {
+  momentId: string
   interactions?: MomentInteraction[]
   now: number
   contactDirectory: MomentsContactDirectory
+  onRevealPendingInteractions?: () =>
+    | void
+    | Promise<void | MomentRevealPendingResult>
+}
+
+function GeneratingInteractionsBanner({
+  revealQueued,
+  revealBusy,
+  onReveal,
+  centered = false,
+}: {
+  revealQueued: boolean
+  revealBusy: boolean
+  onReveal?: () => void | Promise<void>
+  centered?: boolean
+}) {
+  return (
+    <div
+      className={`rounded-2xl border border-[#E5E7EB] bg-[#FAFAFA] px-4 py-3 ${
+        centered ? 'text-center' : ''
+      }`}
+    >
+      <div
+        className={`flex gap-3 ${
+          centered ? 'flex-col items-center' : 'items-center justify-between'
+        }`}
+      >
+        <div className="min-w-0">
+          <p className="text-[13px] font-medium text-[#374151]">角色互动正在生成中…</p>
+          <p className="mt-1 text-[12px] leading-relaxed text-[#9CA3AF]">
+            {revealQueued
+              ? '已排队：生成完成后将自动全部显示。'
+              : '模型还在写点赞与评论，此时「直接显示」会排队到生成结束。'}
+          </p>
+        </div>
+        {onReveal ? (
+          <button
+            type="button"
+            disabled={revealBusy || revealQueued}
+            onClick={() => void onReveal()}
+            className="shrink-0 rounded-full bg-[#111827] px-3.5 py-1.5 text-[12px] font-medium text-white transition-opacity hover:bg-[#1F2937] disabled:opacity-50"
+          >
+            {revealQueued ? '已排队' : revealBusy ? '处理中…' : '生成完立即显示'}
+          </button>
+        ) : null}
+      </div>
+    </div>
+  )
+}
+
+function PendingBrowsingBanner({
+  pendingCount,
+  revealBusy,
+  onReveal,
+  centered = false,
+}: {
+  pendingCount: number
+  revealBusy: boolean
+  onReveal?: () => void | Promise<void>
+  centered?: boolean
+}) {
+  return (
+    <div
+      className={`rounded-2xl bg-[#F9FAFB] px-4 py-3 ${
+        centered ? 'text-center' : ''
+      }`}
+    >
+      <div
+        className={`flex gap-3 ${
+          centered ? 'flex-col items-center' : 'items-center justify-between'
+        }`}
+      >
+        <p className="text-[13px] leading-relaxed text-[#6B7280]">
+          还有{' '}
+          <MomentsSerifNumericValue
+            value={pendingCount}
+            className="font-medium tabular-nums text-[#374151]"
+          />{' '}
+          个角色正在刷朋友圈
+        </p>
+        {onReveal ? (
+          <button
+            type="button"
+            disabled={revealBusy}
+            onClick={() => void onReveal()}
+            className="shrink-0 rounded-full bg-[#111827] px-3.5 py-1.5 text-[12px] font-medium text-white transition-opacity hover:bg-[#1F2937] disabled:opacity-50"
+          >
+            {revealBusy ? '显示中…' : '直接显示互动'}
+          </button>
+        ) : null}
+      </div>
+    </div>
+  )
 }
 
 function findMomentsPageShell(start: HTMLElement | null): HTMLElement | null {
@@ -55,21 +154,59 @@ function VisitorActionLabel({ record }: { record: MomentVisitorRecord }) {
 }
 
 export function MomentVisitorRecordButton({
+  momentId,
   interactions,
   now,
   contactDirectory,
+  onRevealPendingInteractions,
 }: MomentVisitorRecordButtonProps) {
   const [open, setOpen] = useState(false)
   const [portalTarget, setPortalTarget] = useState<HTMLElement | null>(null)
+  const [revealBusy, setRevealBusy] = useState(false)
+  const [revealQueued, setRevealQueued] = useState(false)
   const wrapRef = useRef<HTMLDivElement>(null)
+  const isGenerating = useMomentInteractionGenerationPending(momentId)
+  const { settings } = useMomentsSettingsStore()
   const count = useMemo(
     () => countMomentVisitorRecords(interactions, now),
     [interactions, now],
+  )
+  const pendingCount = useMemo(
+    () =>
+      settings.enableDelayedInteraction
+        ? countPendingMomentVisitorCharacters(interactions, now)
+        : 0,
+    [interactions, now, settings.enableDelayedInteraction],
   )
   const records = useMemo(
     () => buildMomentVisitorRecords(interactions, now, contactDirectory),
     [contactDirectory, interactions, now],
   )
+  const interactionCount = interactions?.length ?? 0
+  const hasStoredInteractions = interactionCount > 0
+  const showGeneratingBanner = isGenerating
+  const showPendingBanner =
+    settings.enableDelayedInteraction &&
+    !isGenerating &&
+    hasStoredInteractions &&
+    pendingCount > 0
+
+  const handleRevealPending = async () => {
+    if (!onRevealPendingInteractions || revealBusy) return
+    setRevealBusy(true)
+    try {
+      const result = await onRevealPendingInteractions()
+      if (result === 'queued') setRevealQueued(true)
+    } finally {
+      setRevealBusy(false)
+    }
+  }
+
+  useEffect(() => {
+    if (!isGenerating && revealQueued) {
+      setRevealQueued(false)
+    }
+  }, [isGenerating, revealQueued])
 
   const pageShell = portalTarget
 
@@ -167,12 +304,50 @@ export function MomentVisitorRecordButton({
                   ))}
                 </ul>
               ) : (
-                <p className="py-16 text-center text-[13px] leading-relaxed text-[#9CA3AF]">
-                  还没有访客记录
-                  <br />
-                  <span className="text-[12px]">解锁后将显示浏览、点赞与评论的角色</span>
-                </p>
+                <div className="py-10">
+                  {showGeneratingBanner ? (
+                    <GeneratingInteractionsBanner
+                      revealQueued={revealQueued}
+                      revealBusy={revealBusy}
+                      onReveal={onRevealPendingInteractions ? handleRevealPending : undefined}
+                      centered
+                    />
+                  ) : showPendingBanner ? (
+                    <PendingBrowsingBanner
+                      pendingCount={pendingCount}
+                      revealBusy={revealBusy}
+                      onReveal={onRevealPendingInteractions ? handleRevealPending : undefined}
+                      centered
+                    />
+                  ) : (
+                    <p className="py-6 text-center text-[13px] leading-relaxed text-[#9CA3AF]">
+                      还没有访客记录
+                      <br />
+                      <span className="text-[12px]">解锁后将显示浏览、点赞与评论的角色</span>
+                    </p>
+                  )}
+                </div>
               )}
+
+              {showGeneratingBanner && records.length > 0 ? (
+                <div className="mt-2 mb-3">
+                  <GeneratingInteractionsBanner
+                    revealQueued={revealQueued}
+                    revealBusy={revealBusy}
+                    onReveal={onRevealPendingInteractions ? handleRevealPending : undefined}
+                  />
+                </div>
+              ) : null}
+
+              {showPendingBanner && records.length > 0 ? (
+                <div className="mt-2 mb-3">
+                  <PendingBrowsingBanner
+                    pendingCount={pendingCount}
+                    revealBusy={revealBusy}
+                    onReveal={onRevealPendingInteractions ? handleRevealPending : undefined}
+                  />
+                </div>
+              ) : null}
             </div>
           </motion.div>
         </motion.div>
@@ -189,15 +364,21 @@ export function MomentVisitorRecordButton({
           setPortalTarget(findMomentsPageShell(wrapRef.current))
           setOpen(true)
         }}
-        className="flex h-7 items-center gap-1 rounded-md px-1.5 text-[12px] text-[#6B7280] transition-colors hover:bg-black/[0.04]"
-        aria-label="查看访客记录"
+        className="flex h-7 items-center gap-1 rounded-md px-1.5 text-[12px] text-[#6B7280] transition-colors hover:bg-black/[0.04] disabled:opacity-100"
+        aria-label={isGenerating ? '访客记录，互动生成中' : '查看访客记录'}
       >
-        <Eye className="size-3.5" />
+        <Eye className={`size-3.5 ${isGenerating ? 'animate-pulse text-[#576B95]' : ''}`} />
         <span className="flex items-center gap-0.5">
-          访客
-          {count > 0 ? (
-            <MomentsSerifNumericValue value={count} className="tabular-nums" />
-          ) : null}
+          {isGenerating ? (
+            <span className="text-[11px] font-medium text-[#576B95]">生成中…</span>
+          ) : (
+            <>
+              访客
+              {count > 0 ? (
+                <MomentsSerifNumericValue value={count} className="tabular-nums" />
+              ) : null}
+            </>
+          )}
         </span>
       </motion.button>
 

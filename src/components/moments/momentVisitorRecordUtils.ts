@@ -72,6 +72,21 @@ export function countMomentVisitorRecords(
   return charIds.size
 }
 
+/** 延时解锁：尚未到 visibleAt 的角色数（将产生点赞/评论/浏览互动） */
+export function countPendingMomentVisitorCharacters(
+  interactions: MomentInteraction[] | undefined,
+  now: number,
+): number {
+  const charIds = new Set<string>()
+  for (const ix of interactions ?? []) {
+    if (ix.visibleAt <= now) continue
+    if (ix.type !== 'like' && ix.type !== 'comment' && ix.type !== 'viewed') continue
+    const id = ix.charId.trim()
+    if (id) charIds.add(id)
+  }
+  return charIds.size
+}
+
 export function describeMomentVisitorAction(record: MomentVisitorRecord): string {
   if (record.commented && record.liked) return '赞了并评论了'
   if (record.commented) return '评论了'

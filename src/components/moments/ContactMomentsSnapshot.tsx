@@ -1,15 +1,16 @@
 import { ChevronRight } from 'lucide-react'
 import { useCallback, useEffect, useState } from 'react'
 
-import { PHONE_NUM_FONT_FAMILY } from '../../phone/types'
 import { Pressable } from '../../phone/components/Pressable'
 
+import { MomentBodyText } from './ArchiveTimelineDateColumn'
 import {
   pickContactMomentSnapshots,
   type ContactMomentSnapshotCell,
 } from './contactMomentsSnapshotUtils'
 import { loadUserMoments } from './momentsFeedStorage'
 import type { MomentContactRef } from './newMomentTypes'
+import { useResolvedMomentImages } from './resolveMomentImageSrc'
 
 type ContactMomentsSnapshotProps = {
   characterId: string
@@ -19,23 +20,32 @@ type ContactMomentsSnapshotProps = {
   onOpenArchive: () => void
 }
 
+function SnapshotImageCell({ src }: { src: string }) {
+  const resolved = useResolvedMomentImages([src])
+  const displaySrc = resolved[0]?.trim() ?? ''
+
+  return (
+    <div className="relative size-16 shrink-0 overflow-hidden rounded-lg bg-gray-100 shadow-[inset_0_0_10px_rgba(0,0,0,0.02)]">
+      {displaySrc ? (
+        <img src={displaySrc} alt="" className="size-full object-cover" />
+      ) : (
+        <div className="size-full animate-pulse bg-gray-100" />
+      )}
+    </div>
+  )
+}
+
 function SnapshotCell({ cell }: { cell: ContactMomentSnapshotCell }) {
   if (cell.kind === 'image') {
-    return (
-      <div className="relative size-16 shrink-0 overflow-hidden rounded-lg shadow-[inset_0_0_10px_rgba(0,0,0,0.02)]">
-        <img src={cell.src} alt="" className="size-full object-cover" />
-      </div>
-    )
+    return <SnapshotImageCell src={cell.src} />
   }
 
   return (
     <div className="flex size-16 shrink-0 items-center justify-center rounded-lg bg-gray-50 px-1.5 shadow-[inset_0_0_10px_rgba(0,0,0,0.02)]">
-      <p
+      <MomentBodyText
+        text={cell.preview}
         className="line-clamp-2 text-center text-[10px] leading-relaxed text-gray-600"
-        style={{ fontFamily: PHONE_NUM_FONT_FAMILY }}
-      >
-        {cell.preview}
-      </p>
+      />
     </div>
   )
 }

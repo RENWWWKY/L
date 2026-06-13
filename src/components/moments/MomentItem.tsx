@@ -4,7 +4,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 
 import type { Relationship } from '../../phone/apps/wechat/newFriendsPersona/types'
 
-import { MomentPublishTimeLabel } from './ArchiveTimelineDateColumn'
+import { MomentBodyText, MomentPublishTimeLabel } from './ArchiveTimelineDateColumn'
 import { MomentInteractionArea } from './MomentInteractionArea'
 import type { MomentItemModel } from './mockMoments'
 import { MOMENT_BODY_COLLAPSE_CHARS } from './momentContentLimits'
@@ -18,7 +18,11 @@ import type { MomentContactRef } from './newMomentTypes'
 import type { OnOpenMomentParticipantProfile } from './momentProfileNavigation'
 import { profilePayloadFromMomentAuthor } from './momentProfileNavigation'
 import { UserMomentEditMenu } from './UserMomentEditMenu'
-import { MomentVisitorRecordButton } from './MomentVisitorRecordButton'
+import { MomentVisitorRecordButton, type MomentRevealPendingResult } from './MomentVisitorRecordButton'
+import { MomentInteractionGeneratingStrip } from './MomentInteractionGeneratingStrip'
+import { useMomentInteractionGenerationState } from './useMomentInteractionGenerationPending'
+import { MomentImageViewer } from './MomentImageViewer'
+import { useResolvedMomentImages } from './resolveMomentImageSrc'
 
 type MomentItemProps = {
   item: MomentItemModel
@@ -40,6 +44,9 @@ type MomentItemProps = {
   onCharacterMomentInteractionsUnlocked?: (momentId: string) => void
   onTogglePin?: (momentId: string) => void | Promise<void>
   onDelete?: (momentId: string) => void | Promise<void>
+  onRevealPendingInteractions?: (
+    momentId: string,
+  ) => void | Promise<void | MomentRevealPendingResult>
   /** 个人相册页：允许角色主体置顶自己的动态 */
   allowSubjectPin?: boolean
   /** 详情页：在发布日期旁显示「提到了你」 */
@@ -78,6 +85,7 @@ export function MomentItem({
   onCharacterMomentInteractionsUnlocked,
   onTogglePin,
   onDelete,
+  onRevealPendingInteractions,
   allowSubjectPin = false,
   showMentionLabel = false,
   onOpenParticipantProfile,
@@ -89,9 +97,17 @@ export function MomentItem({
   const [liked, setLiked] = useState(() => (item.likes ?? []).includes(currentUserName))
   const [actionOpen, setActionOpen] = useState(false)
   const [likeBurst, setLikeBurst] = useState(false)
+  const [imageViewerIndex, setImageViewerIndex] = useState<number | null>(null)
   const likeCloseTimerRef = useRef<number | null>(null)
-
   const isUserAuthored = !!item.isUserAuthored
+  const generationState = useMomentInteractionGenerationState(item.id)
+  const showGeneratingStrip = isUserAuthored && generationState.pending
+  const showFallbackStrip =
+    isUserAuthored &&
+    !generationState.pending &&
+    generationState.outcome === 'fallback_only' &&
+    now - generationState.outcomeAt < 60_000
+
   const showUserEditMenu = isUserAuthored && onTogglePin && onDelete
   const showCharacterPinMenu = allowSubjectPin && !isUserAuthored && onTogglePin
   const cleanedContent = sanitizeMomentBodyText(item.content)
@@ -101,7 +117,7 @@ export function MomentItem({
     hasLongText && !expanded
       ? `${cleanedContent.slice(0, MOMENT_BODY_COLLAPSE_CHARS)}...`
       : cleanedContent
-  const images = (item.images ?? []).slice(0, 9)
+  const images = useResolvedMomentImages(item.images)
   const locationLabel = formatMomentLocationDisplay(item.location)
   const feedComments = !isUserAuthored ? (item.comments ?? []) : undefined
   const legacyComments = isUserAuthored ? [] : []
@@ -182,9 +198,15 @@ export function MomentItem({
             {showUserEditMenu ? (
               <div className="flex shrink-0 items-center gap-0.5">
                 <MomentVisitorRecordButton
+                  momentId={item.id}
                   interactions={item.interactions}
                   now={now}
                   contactDirectory={contactDirectory}
+                  onRevealPendingInteractions={
+                    onRevealPendingInteractions
+                      ? () => onRevealPendingInteractions(item.id)
+                      : undefined
+                  }
                 />
                 <UserMomentEditMenu
                   isPinned={item.isPinned}
@@ -208,9 +230,10 @@ export function MomentItem({
             ) : null}
           </div>
           {hasBodyText ? (
-            <p className="mt-1 whitespace-pre-wrap break-words text-[14px] leading-relaxed text-[#111827]">
-              {content}
-            </p>
+            <MomentBodyText
+              text={content}
+              className="mt-1 whitespace-pre-wrap break-words text-[14px] leading-relaxed text-[#111827]"
+            />
           ) : null}
           {hasBodyText && hasLongText ? (
             <button
@@ -232,13 +255,13 @@ export function MomentItem({
                     : 'max-w-[280px]'
               }`}
             >
-              {images.map((src) => (
+              {images.map((src, imageIndex) => (
                 <motion.button
-                  key={src}
+                  key={`${item.id}-img-${imageIndex}`}
                   type="button"
                   whileTap={{ scale: 0.97 }}
                   className="overflow-hidden rounded-lg"
-                  onClick={() => window.alert('Image preview mock')}
+                  onClick={() => setImageViewerIndex(imageIndex)}
                 >
                   <img
                     src={src}
@@ -353,6 +376,12 @@ export function MomentItem({
             </div>
           </div>
 
+          {showGeneratingStrip ? (
+            <MomentInteractionGeneratingStrip className="mt-2" mode="generating" />
+          ) : showFallbackStrip ? (
+            <MomentInteractionGeneratingStrip className="mt-2" mode="fallback_only" />
+          ) : null}
+
           <MomentInteractionArea
             momentId={item.id}
             now={now}
@@ -379,6 +408,14 @@ export function MomentItem({
           />
         </div>
       </div>
+
+      <MomentImageViewer
+        open={imageViewerIndex !== null}
+        images={images}
+        initialIndex={imageViewerIndex ?? 0}
+        allowSave={!isUserAuthored}
+        onClose={() => setImageViewerIndex(null)}
+      />
     </article>
   )
 }

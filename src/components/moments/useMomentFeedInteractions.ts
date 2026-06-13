@@ -25,7 +25,11 @@ import {
 import { isMomentsChatApiConfigured, MOMENTS_CHAT_API_NOT_CONFIGURED_MESSAGE } from './momentsChatApiReady'
 import { scheduleMomentInteractionMemoryArchive } from './momentInteractionMemoryBridge'
 import { buildUserMomentLikePatch } from './momentInteractionNoticeEngine'
-import { reanchorPendingInteractionsAfterUserComment } from './momentInteractionTypes'
+import { reanchorPendingInteractionsAfterUserComment, revealAllPendingMomentInteractions } from './momentInteractionTypes'
+import {
+  isMomentInteractionGenerationPending,
+  queueRevealWhenInteractionReady,
+} from './momentInteractionGenerationRegistry'
 import { loadMomentRelationships } from './momentRelationshipGraph'
 import {
   deleteUserMoment,
@@ -484,6 +488,28 @@ export function useMomentFeedInteractions({
     [accountId, floatingTarget?.momentId, onMomentDeleted, setUserMoments, userMoments],
   )
 
+  const handleRevealPendingInteractions = useCallback(
+    async (momentId: string) => {
+      const existing = userMoments.find((m) => m.id === momentId)
+      if (!existing?.isUserAuthored) return
+
+      if (isMomentInteractionGenerationPending(momentId)) {
+        queueRevealWhenInteractionReady(momentId)
+        return 'queued' as const
+      }
+
+      const now = Date.now()
+      const interactions = revealAllPendingMomentInteractions(existing.interactions, now)
+      if (!interactions) return 'noop' as const
+      const updated = { ...existing, interactions }
+      setUserMoments((prev) => prev.map((m) => (m.id === momentId ? updated : m)))
+      await patchUserMoment(accountId, momentId, { interactions })
+      archiveCharacterMoment(updated)
+      return 'revealed' as const
+    },
+    [accountId, archiveCharacterMoment, setUserMoments, userMoments],
+  )
+
   const openFloatingInput = useCallback((momentId: string, replyTo?: string) => {
     setFloatingTarget({ momentId, replyTo })
   }, [])
@@ -506,6 +532,7 @@ export function useMomentFeedInteractions({
     handleToggleLike,
     handleTogglePin,
     handleDeleteMoment,
+    handleRevealPendingInteractions,
     openFloatingInput,
     playerIdentityId: qnaWechatCtx?.playerIdentityId,
   }

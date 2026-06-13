@@ -24,6 +24,7 @@ import {
   getUnrepliedUserComments,
 } from './momentCommentUtils'
 import {
+  isElicitReplyInFlight,
   notifyElicitReplyBlocked,
   releaseElicitReplyLock,
   resolveElicitReplyBlockReason,
@@ -33,11 +34,14 @@ import {
 import { buildMomentsContactDirectory, enrichMomentContactsWithLiveCharacterAvatars } from './momentsContactDirectory'
 import { isMomentsChatApiConfigured, MOMENTS_CHAT_API_NOT_CONFIGURED_MESSAGE } from './momentsChatApiReady'
 import { resolveMomentsCoverDisplayUrl } from './momentsCoverDefaults'
-import { generateMomentInteractions } from './momentInteractionAi'
+import type { AiMomentInteractionDraft } from './momentInteractionTypes'
+import { generateMomentInteractions, countAiEngagementDrafts } from './momentInteractionAi'
+import { finalizeUserMomentEngagementDrafts } from './momentUserInteractionAi'
 import { buildUserMomentLikePatch } from './momentInteractionNoticeEngine'
 import {
   materializeInteractions,
   reanchorPendingInteractionsAfterUserComment,
+  revealAllPendingMomentInteractions,
 } from './momentInteractionTypes'
 import { filterMomentsForUserFeed } from './momentFeedVisibility'
 import { filterAllowedMomentCharacters } from './momentPrivacyAudience'
@@ -48,6 +52,7 @@ import {
 import type { Relationship } from '../../phone/apps/wechat/newFriendsPersona/types'
 import {
   loadUserMoments,
+  migrateUserMomentInlineImagesIfNeeded,
   deleteUserMoment,
   patchUserMoment,
   upsertUserMoment,
@@ -72,11 +77,18 @@ import { scheduleMomentInteractionMemoryArchive } from './momentInteractionMemor
 import { deleteUserMomentDistributionForMoment } from './userMomentDistributionArchiveService'
 import {
   appendVisitorFootprintInteractions,
-  finalizeMomentInteractionDrafts,
   mergeMomentInteractions,
   momentNeedsVisitorFootprintBackfill,
   privacyMetaToDraftPrivacy,
 } from './momentVisitorFootprints'
+import { resolveUserMomentEngagementRules } from './userMomentEngagementRules'
+import {
+  applyQueuedRevealAfterGeneration,
+  isMomentInteractionGenerationPending,
+  markMomentInteractionGenerationEnd,
+  markMomentInteractionGenerationStart,
+  queueRevealWhenInteractionReady,
+} from './momentInteractionGenerationRegistry'
 
 type FloatingInputTarget = {
   momentId: string
@@ -143,6 +155,10 @@ export function WeChatMomentsPage({
   const { tags } = useMomentsContactTags()
   const { settings } = useMomentsSettingsStore()
   const { effectiveImageGen: imageGenSettings } = useResolvedMomentsImageGenSettings()
+  const userMomentEngagementRules = useMemo(
+    () => resolveUserMomentEngagementRules(settings.userMomentEngagement),
+    [settings.userMomentEngagement],
+  )
   const bindNoticeAccount = useMomentsStore((s) => s.bindAccount)
   const interactionUnreadCount = useMomentsStore((s) => s.notices.filter((n) => !n.isRead).length)
   const interactionNow = useMomentInteractionClock(5000)
@@ -163,9 +179,11 @@ export function WeChatMomentsPage({
       return
     }
     let cancelled = false
-    void loadUserMoments(currentAccountId).then((items) => {
+    void (async () => {
+      await migrateUserMomentInlineImagesIfNeeded(currentAccountId)
+      const items = await loadUserMoments(currentAccountId)
       if (!cancelled) setUserMoments(items)
-    })
+    })()
     return () => {
       cancelled = true
     }
@@ -245,8 +263,16 @@ export function WeChatMomentsPage({
           continue
         }
 
+        const stored = await loadUserMoments(currentAccountId)
+        if (cancelled) return
+        const live = stored.find((m) => m.id === moment.id) ?? moment
+        if (!momentNeedsVisitorFootprintBackfill(live)) {
+          visitorBackfillDoneRef.current.add(moment.id)
+          continue
+        }
+
         const extra = appendVisitorFootprintInteractions(
-          moment,
+          live,
           allowed,
           !settings.enableDelayedInteraction,
         )
@@ -255,12 +281,22 @@ export function WeChatMomentsPage({
           continue
         }
 
-        const merged = mergeMomentInteractions(moment.interactions, extra)
+        const merged = mergeMomentInteractions(live.interactions, extra)
         const patched = await patchUserMoment(currentAccountId, moment.id, {
           interactions: merged,
         })
         if (cancelled) return
-        setUserMoments(patched)
+        setUserMoments((prev) => {
+          const fromStorage = patched.find((m) => m.id === moment.id)
+          const fromPrev = prev.find((m) => m.id === moment.id)
+          if (!fromStorage || !fromPrev) return patched
+          const storageCount = fromStorage.interactions?.length ?? 0
+          const prevCount = fromPrev.interactions?.length ?? 0
+          if (storageCount >= prevCount) return patched
+          return patched.map((m) =>
+            m.id === moment.id ? { ...m, interactions: fromPrev.interactions } : m,
+          )
+        })
         visitorBackfillDoneRef.current.add(moment.id)
       }
     })()
@@ -286,6 +322,11 @@ export function WeChatMomentsPage({
   const detailMoment = useMemo(
     () => (detailMomentId ? userMoments.find((m) => m.id === detailMomentId) : undefined),
     [detailMomentId, userMoments],
+  )
+
+  const existingMomentIds = useMemo(
+    () => new Set(userMoments.map((m) => m.id)),
+    [userMoments],
   )
 
   const contactDirectory = useMemo(
@@ -378,61 +419,100 @@ export function WeChatMomentsPage({
         momentRelationships,
       )
       const mentionedCharacters = filterMentionedCharactersByAudience(draft.mentions, allowed)
+      const shouldGenerateInteractions =
+        allowed.length > 0 && draft.privacy.mode !== 'private'
+
+      if (shouldGenerateInteractions) {
+        markMomentInteractionGenerationStart(item.id)
+      }
+
+      setUserMoments((prev) => [item, ...prev.filter((m) => m.id !== item.id)])
+      scrollerRef.current?.scrollTo({ top: 0, behavior: 'smooth' })
 
       void (async () => {
-        const next = await upsertUserMoment(currentAccountId, item)
-        setUserMoments(next)
-        scrollerRef.current?.scrollTo({ top: 0, behavior: 'smooth' })
+        let aiDrafts: AiMomentInteractionDraft[] = []
+        try {
+          const next = await upsertUserMoment(currentAccountId, item)
+          setUserMoments(next)
 
-        scheduleMomentInteractionMemoryArchive({
-          moment: item,
-          apiConfig,
-          wechatAccountId: currentAccountId,
-          playerIdentityId: qnaWechatCtx?.playerIdentityId ?? '__none__',
-          playerDisplayName: displayNickname,
-          contactDirectory,
-          momentContacts,
-          tags,
-          now: publishedAt,
-        })
+          scheduleMomentInteractionMemoryArchive({
+            moment: item,
+            apiConfig,
+            wechatAccountId: currentAccountId,
+            playerIdentityId: qnaWechatCtx?.playerIdentityId ?? '__none__',
+            playerDisplayName: displayNickname,
+            contactDirectory,
+            momentContacts,
+            tags,
+            now: publishedAt,
+          })
 
-        if (!allowed.length || draft.privacy.mode === 'private') return
+          if (!shouldGenerateInteractions) return
 
-        let drafts = await generateMomentInteractions({
-          apiConfig,
-          momentContent: draft.content,
-          imageCount: draft.images.length,
-          momentImages: draft.images,
-          allowedCharacters: allowed,
-          mentionedCharacters,
-          wechatCtx: qnaWechatCtx,
-          momentPublishedAt: publishedAt,
-        })
-        drafts = ensureMentionedCharacterAwarenessDrafts(
-          drafts,
-          mentionedCharacters.map((c) => c.charId),
-        )
-        drafts = finalizeMomentInteractionDrafts(drafts, allowed)
-        if (!drafts.length && !mentionedCharacters.length) return
-        const interactions = materializeInteractions(
-          drafts,
-          publishedAt,
-          !settings.enableDelayedInteraction,
-        )
-        const withInteractions = { ...item, interactions }
-        const patched = await patchUserMoment(currentAccountId, item.id, { interactions })
-        setUserMoments(patched)
-        scheduleMomentInteractionMemoryArchive({
-          moment: withInteractions,
-          apiConfig,
-          wechatAccountId: currentAccountId,
-          playerIdentityId: qnaWechatCtx?.playerIdentityId ?? '__none__',
-          playerDisplayName: displayNickname,
-          contactDirectory,
-          momentContacts,
-          tags,
-          now: publishedAt,
-        })
+          try {
+            aiDrafts = await generateMomentInteractions({
+              apiConfig,
+              momentContent: draft.content,
+              imageCount: draft.images.length,
+              momentImages: draft.images,
+              allowedCharacters: allowed,
+              mentionedCharacters,
+              wechatCtx: qnaWechatCtx,
+              momentPublishedAt: publishedAt,
+              engagementRules: userMomentEngagementRules,
+            })
+            aiDrafts = ensureMentionedCharacterAwarenessDrafts(
+              aiDrafts,
+              mentionedCharacters.map((c) => c.charId),
+            )
+          } catch (err) {
+            console.error('[WeChatMomentsPage] generateMomentInteractions failed', err)
+          }
+
+          const drafts = await finalizeUserMomentEngagementDrafts({
+            drafts: aiDrafts,
+            allowed,
+            mentionedCharacterIds: new Set(mentionedCharacters.map((c) => c.charId)),
+            playerIdentityId: qnaWechatCtx?.playerIdentityId,
+            relationships: momentRelationships,
+            engagementRules: userMomentEngagementRules,
+            wechatCtx: qnaWechatCtx,
+            momentContent: draft.content,
+            momentImages: draft.images,
+            imageCount: draft.images.length,
+            momentPublishedAt: publishedAt,
+          })
+
+          if (!drafts.length && !mentionedCharacters.length) return
+
+          let interactions = materializeInteractions(
+            drafts,
+            publishedAt,
+            !settings.enableDelayedInteraction,
+          )
+          interactions = applyQueuedRevealAfterGeneration(item.id, interactions)
+          const withInteractions = { ...item, interactions }
+          const patched = await patchUserMoment(currentAccountId, item.id, { interactions })
+          if (shouldGenerateInteractions) {
+            markMomentInteractionGenerationEnd(item.id, countAiEngagementDrafts(aiDrafts))
+          }
+          setUserMoments(patched)
+          scheduleMomentInteractionMemoryArchive({
+            moment: withInteractions,
+            apiConfig,
+            wechatAccountId: currentAccountId,
+            playerIdentityId: qnaWechatCtx?.playerIdentityId ?? '__none__',
+            playerDisplayName: displayNickname,
+            contactDirectory,
+            momentContacts,
+            tags,
+            now: publishedAt,
+          })
+        } finally {
+          if (shouldGenerateInteractions) {
+            markMomentInteractionGenerationEnd(item.id, countAiEngagementDrafts(aiDrafts))
+          }
+        }
       })()
     },
     [
@@ -443,9 +523,10 @@ export function WeChatMomentsPage({
       displayNickname,
       momentContacts,
       momentRelationships,
-      qnaWechatCtx?.playerIdentityId,
+      qnaWechatCtx,
       tags,
       settings.enableDelayedInteraction,
+      userMomentEngagementRules,
     ],
   )
 
@@ -726,6 +807,28 @@ export function WeChatMomentsPage({
     [currentAccountId, detailMomentId, floatingTarget?.momentId, userMoments],
   )
 
+  const handleRevealPendingInteractions = useCallback(
+    async (momentId: string) => {
+      const existing = userMoments.find((m) => m.id === momentId)
+      if (!existing?.isUserAuthored) return
+
+      if (isMomentInteractionGenerationPending(momentId)) {
+        queueRevealWhenInteractionReady(momentId)
+        return 'queued' as const
+      }
+
+      const now = Date.now()
+      const interactions = revealAllPendingMomentInteractions(existing.interactions, now)
+      if (!interactions) return 'noop' as const
+      const updated = { ...existing, interactions }
+      setUserMoments((prev) => prev.map((m) => (m.id === momentId ? updated : m)))
+      await patchUserMoment(currentAccountId, momentId, { interactions })
+      archiveCharacterMoment(updated)
+      return 'revealed' as const
+    },
+    [archiveCharacterMoment, currentAccountId, userMoments],
+  )
+
   const handleCharacterMomentPublished = useCallback(
     async (item: MomentItemModel) => {
       const next = await upsertUserMoment(currentAccountId, item)
@@ -823,6 +926,7 @@ export function WeChatMomentsPage({
               onCharacterMomentInteractionsUnlocked={handleCharacterMomentArchiveTrigger}
               onTogglePin={handleTogglePin}
               onDelete={handleDeleteMoment}
+              onRevealPendingInteractions={handleRevealPendingInteractions}
               onOpenParticipantProfile={onOpenParticipantProfile}
             />
           </MomentsContentBackdrop>
@@ -858,6 +962,7 @@ export function WeChatMomentsPage({
         {subView === 'interaction-history' ? (
           <InteractionHistoryPage
             contactDirectory={contactDirectory}
+            existingMomentIds={existingMomentIds}
             onBack={() => setSubView('feed')}
             onOpenSettings={() => setSubView('interaction-settings')}
             onSelectMoment={(momentId) => {
@@ -891,6 +996,7 @@ export function WeChatMomentsPage({
               onCharacterMomentInteractionsUnlocked={handleCharacterMomentArchiveTrigger}
               onTogglePin={handleTogglePin}
               onDelete={handleDeleteMoment}
+              onRevealPendingInteractions={handleRevealPendingInteractions}
               onOpenParticipantProfile={onOpenParticipantProfile}
             />
           ) : (
@@ -944,7 +1050,10 @@ export function WeChatMomentsPage({
           <FloatingInput
             open
             canElicit={canElicitActive}
-            busy={replyingMomentId === floatingTarget.momentId}
+            busy={
+              replyingMomentId === floatingTarget.momentId ||
+              isElicitReplyInFlight(floatingTarget.momentId)
+            }
             targetLabel={
               activeMoment
                 ? floatingTarget.replyTo?.trim()

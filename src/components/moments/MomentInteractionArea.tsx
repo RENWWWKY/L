@@ -205,14 +205,15 @@ function MomentInteractionAreaInner({
   ])
 
   const commentTimeline = useMemo((): MomentCommentDisplayRow[] => {
-    const commentInteractions = unlocked.filter((ix) => ix.type === 'comment')
+    const commentInteractions = interactions.filter((ix) => ix.type === 'comment')
     return buildFlatCommentTimeline({
       comments: orderedComments,
-      unlockedCommentInteractions: commentInteractions,
+      commentInteractions,
+      now,
       resolveAuthorName: (charId) => contactDirectory.getDisplayName(charId),
       publisherCharacterId: publisherId,
     })
-  }, [contactDirectory, orderedComments, publisherId, unlocked])
+  }, [contactDirectory, now, orderedComments, publisherId, interactions])
 
   const flatDisplayComments = useMemo((): DisplayComment[] => {
     return commentTimeline.map((row) => {
