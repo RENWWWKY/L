@@ -80,6 +80,9 @@ export type ListenTogetherFullscreenPlayerProps = {
   onSeek?: (percentage: number) => void
   onMore?: () => void
   onOpenComments?: () => void
+  /** 点击歌手名跳转歌手页 */
+  onOpenArtist?: () => void
+  artistLinkBusy?: boolean
   playMode?: ListenPlayMode
   canUseHeartMode?: boolean
   onCyclePlayMode?: () => void
@@ -686,6 +689,8 @@ export function ListenTogetherFullscreenPlayer({
   onSeek,
   onMore,
   onOpenComments,
+  onOpenArtist,
+  artistLinkBusy = false,
   playMode = 'repeatAll',
   canUseHeartMode = false,
   onCyclePlayMode,
@@ -758,7 +763,19 @@ export function ListenTogetherFullscreenPlayer({
                 <h1 className="truncate text-xl font-semibold tracking-wide text-stone-800">
                   {song.title}
                 </h1>
-                <p className="mt-1 truncate text-sm font-light text-stone-500">{song.artist}</p>
+                {onOpenArtist ? (
+                  <button
+                    type="button"
+                    disabled={artistLinkBusy}
+                    onClick={onOpenArtist}
+                    className="mt-1 max-w-full truncate text-sm font-light text-stone-500 underline decoration-stone-300/70 underline-offset-2 transition-colors hover:text-rose-500 hover:decoration-rose-300 disabled:opacity-60"
+                    aria-label={`查看歌手 ${song.artist}`}
+                  >
+                    {artistLinkBusy ? '正在打开歌手…' : song.artist}
+                  </button>
+                ) : (
+                  <p className="mt-1 truncate text-sm font-light text-stone-500">{song.artist}</p>
+                )}
               </div>
 
               <button

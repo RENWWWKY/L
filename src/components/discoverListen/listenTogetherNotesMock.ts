@@ -11,6 +11,8 @@ export type ListenAttachedMusic = {
   cover: string
   /** 网易云歌曲 id，有值时可调用 /song/url/v1 播放 */
   songId?: number
+  /** 主唱歌手 id，用于跳转歌手页 */
+  artistId?: number
 }
 
 export type ListenFeedNote = {

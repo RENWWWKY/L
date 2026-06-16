@@ -2,9 +2,9 @@ import type { MemoryCoachStep } from './memoryCoachTypes'
 
 export type MemoryArchiveCoachTargetId =
   | 'search'
-  | 'kind'
+  | 'type-filter'
   | 'source'
-  | 'focus'
+  | 'roster'
   | 'align'
   | 'create'
   | 'list'
@@ -15,27 +15,27 @@ export const MEMORY_ARCHIVE_COACH_STEPS: MemoryCoachStep[] = [
     target: null,
     centered: true,
     title: '欢迎来到记忆档案馆',
-    body: '这里汇总各联系人的长期记忆：可检索、分轨查看角色记忆与关联记忆，并手动刻录或对齐 {{user}} 占位符。接下来用高亮带你认一圈，约半分钟；可随时跳过。',
+    body: '记忆已按角色分类：先选一位联系人或群聊，再进入查看其名下各类长期记忆。接下来用高亮带你认一圈，约半分钟；可随时跳过。',
+  },
+  {
+    target: 'roster',
+    title: '按角色浏览',
+    body: '列表展示当前查看账号下有记忆的角色与群聊。卡片上的数字是条数，彩色标签表示常见场景（私聊、遇见、线下、关联等）。点选进入详情。',
   },
   {
     target: 'search',
-    title: '检索记忆切片',
-    body: '按正文、角色名、标签或触发词搜索。适合在记忆变多后快速定位某条线索。',
-  },
-  {
-    target: 'kind',
-    title: '角色记忆 / 关联记忆',
-    body: '「角色记忆」挂在联系人名下，私聊时注入。「关联记忆」来自主角约会里对人脉 NPC 的摘录，分轨存储，其它角色不会自动看见。',
+    title: '检索',
+    body: '在角色列表可搜角色名或场景；进入某角色后可搜该角色记忆正文、触发词等。',
   },
   {
     target: 'source',
-    title: '身份来源',
-    body: '按主号微信、伪装小号或 Lumi Meet 分线筛选。与写入时的来源线一致，便于多马甲叙事不串线。',
+    title: '查看账号',
+    body: '选择用哪个微信账号浏览角色记忆。Lumi Meet 的遇见记忆不按账号分线，请用下方「遇见应用」标签筛选。',
   },
   {
-    target: 'focus',
-    title: '角色焦点',
-    body: '横向滑动选择「全部」或某位联系人，列表只显示其名下记忆。点卡片可进入编辑。',
+    target: 'type-filter',
+    title: '记忆分类',
+    body: '可按私聊、群聊、朋友圈、遇见应用、线下等场景多选筛选。标签颜色与下方记忆卡片一致。',
   },
   {
     target: 'align',
@@ -45,12 +45,12 @@ export const MEMORY_ARCHIVE_COACH_STEPS: MemoryCoachStep[] = [
   {
     target: 'create',
     title: '刻录新记忆',
-    body: '手动写入一条长期记忆。若已选中某位角色焦点，新建时会默认归属该联系人。',
+    body: '手动写入一条长期记忆。若已打开某位角色，新建时会默认归属该联系人。',
   },
   {
     target: 'list',
     title: '记忆列表',
-    body: '每张卡片展示展开预览、场景标签与触发方式。左滑或点按即可修订、删除。',
+    body: '每张卡片展示展开预览、场景标签与触发方式。点按即可修订、删除。',
   },
   {
     target: 'archive-tutorial',

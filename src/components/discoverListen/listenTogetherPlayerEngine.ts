@@ -20,7 +20,26 @@ import { formatPlaybackError } from './playbackError'
 import type { ParsedLyricLine } from './listenLyricParse'
 import { clearSongPlaybackCache } from './listenTogetherPersistence'
 import type { ListenAttachedMusic } from './listenTogetherNotesMock'
+import { pauseMusicWidgetSharedAudio } from '../../phone/components/MusicWidget'
+import { isKeepAliveAudioElement } from '../../phone/apps/backgroundNotify/backgroundAudioCoexistence'
 import { useMusicStore, type MusicTrack } from '../../stores/useMusicStore'
+
+const ENGINE_GLOBAL_KEY = '__listenTogetherPlayerEngine__'
+
+type EngineGlobalState = {
+  audio: HTMLAudioElement | null
+  listenersBound: boolean
+}
+
+function getEngineGlobal(): EngineGlobalState {
+  const root = globalThis as typeof globalThis & {
+    [ENGINE_GLOBAL_KEY]?: EngineGlobalState
+  }
+  if (!root[ENGINE_GLOBAL_KEY]) {
+    root[ENGINE_GLOBAL_KEY] = { audio: null, listenersBound: false }
+  }
+  return root[ENGINE_GLOBAL_KEY]!
+}
 
 const EMPTY_TRACK: ListenAttachedMusic = {
   title: '暂无播放',
@@ -36,7 +55,9 @@ const DEFAULT_QUEUE_META: PlayQueueMeta = {
 const PROGRESS_THROTTLE_MS = 280
 const AUDIO_LOAD_TIMEOUT_MS = 18_000
 
-let audioRef: HTMLAudioElement | null = null
+let audioRef: HTMLAudioElement | null = getEngineGlobal().audio
+/** 每次切歌递增；过期的异步加载/播放流程必须放弃，避免多首叠播 */
+let playEpoch = 0
 let queueRef: NeteaseSongItem[] = []
 let queueIndexRef = 0
 let queueMetaRef: PlayQueueMeta = { ...DEFAULT_QUEUE_META }
@@ -125,6 +146,7 @@ function attachedToTrack(music: ListenAttachedMusic): MusicTrack | null {
     title: music.title,
     artist: music.artist,
     cover: music.cover,
+    artistId: music.artistId,
   }
 }
 
@@ -161,7 +183,43 @@ function pushStateToStore() {
   notifyEngineListeners()
 }
 
-function waitForAudioCanPlay(audio: HTMLAudioElement): Promise<void> {
+function isPlaybackEpochStale(epoch: number): boolean {
+  return epoch !== playEpoch
+}
+
+/** 立刻停止当前音频，并作废尚未完成的加载/播放流程 */
+function beginNewPlaybackEpoch(): number {
+  playEpoch += 1
+  const epoch = playEpoch
+  const audio = audioRef
+  if (audio) {
+    audio.pause()
+    try {
+      audio.currentTime = 0
+    } catch {
+      /* 部分流媒体在切换 src 前不可 seek */
+    }
+    pauseOtherPageAudio(audio)
+  }
+  isPlaying = false
+  pushStateToStore()
+  return epoch
+}
+
+function pauseOtherPageAudio(self: HTMLAudioElement): void {
+  pauseMusicWidgetSharedAudio()
+  if (typeof document === 'undefined') return
+  for (const el of document.querySelectorAll('audio')) {
+    if (!(el instanceof HTMLAudioElement)) continue
+    if (el === self || isKeepAliveAudioElement(el)) continue
+    if (!el.paused) el.pause()
+  }
+}
+
+function waitForAudioCanPlay(audio: HTMLAudioElement, epoch: number): Promise<void> {
+  if (isPlaybackEpochStale(epoch)) {
+    return Promise.reject(new Error('playback superseded'))
+  }
   if (audio.readyState >= HTMLMediaElement.HAVE_FUTURE_DATA) {
     return Promise.resolve()
   }
@@ -172,6 +230,10 @@ function waitForAudioCanPlay(audio: HTMLAudioElement): Promise<void> {
     }, AUDIO_LOAD_TIMEOUT_MS)
     const onReady = () => {
       cleanup()
+      if (isPlaybackEpochStale(epoch)) {
+        reject(new Error('playback superseded'))
+        return
+      }
       resolve()
     }
     const onErr = () => {
@@ -188,12 +250,20 @@ function waitForAudioCanPlay(audio: HTMLAudioElement): Promise<void> {
   })
 }
 
-async function loadAndPlayUrl(audio: HTMLAudioElement, url: string): Promise<void> {
+async function loadAndPlayUrl(audio: HTMLAudioElement, url: string, epoch: number): Promise<void> {
+  if (isPlaybackEpochStale(epoch)) return
   audio.pause()
   audio.src = url
   audio.load()
-  await waitForAudioCanPlay(audio)
+  await waitForAudioCanPlay(audio, epoch)
+  if (isPlaybackEpochStale(epoch)) {
+    audio.pause()
+    return
+  }
   await audio.play()
+  if (isPlaybackEpochStale(epoch)) {
+    audio.pause()
+  }
 }
 
 async function resolveNextSong(): Promise<NeteaseSongItem | null> {
@@ -249,6 +319,8 @@ async function playSongInternal(
   song: NeteaseSongItem,
   opts?: { advanceQueueIndex?: number },
 ): Promise<boolean> {
+  const epoch = beginNewPlaybackEpoch()
+
   const session = getNeteaseListenSessionSync()
   if (!session.isActive) {
     playError = '请先登录网易云或选择游客进入'
@@ -265,16 +337,23 @@ async function playSongInternal(
   if (track.name === '未知歌曲' || track.artist === '未知歌手') {
     try {
       const enriched = await fetchNeteaseSongDetails(cookie, [track.id])
+      if (isPlaybackEpochStale(epoch)) return false
       if (enriched[0]) track = enriched[0]
     } catch {
       /* 保留原 track */
     }
   }
+  if (isPlaybackEpochStale(epoch)) return false
+
   nowPlaying = songToAttached(track)
+  progress = 0
+  currentTimeMs = 0
+  durationMs = 0
   pushStateToStore()
 
   try {
     let { playUrl: url, lyrics: lyricLines } = await resolveSongPlayback(cookie, track.id)
+    if (isPlaybackEpochStale(epoch)) return false
     if (!url) {
       playError = '无法获取播放地址（可能无版权或需会员）'
       isPlaying = false
@@ -282,19 +361,21 @@ async function playSongInternal(
       return false
     }
     lyrics = lyricLines.length > 0 ? lyricLines : [{ timeMs: 0, text: '暂无歌词' }]
-    currentTimeMs = 0
-    durationMs = 0
-    progress = 0
     const audio = audioRef
     if (!audio) return false
 
-    const tryPlay = async (playUrl: string) => loadAndPlayUrl(audio, playUrl)
+    const tryPlay = async (playUrl: string) => loadAndPlayUrl(audio, playUrl, epoch)
 
     try {
       await tryPlay(url)
-    } catch {
+    } catch (firstErr) {
+      if (isPlaybackEpochStale(epoch)) return false
+      if (firstErr instanceof Error && firstErr.message === 'playback superseded') {
+        return false
+      }
       await clearSongPlaybackCache(track.id)
       const fresh = await resolveSongPlayback(cookie, track.id)
+      if (isPlaybackEpochStale(epoch)) return false
       url = fresh.playUrl
       if (lyricLines.length === 0 && fresh.lyrics.length > 0) {
         lyrics = fresh.lyrics
@@ -302,8 +383,11 @@ async function playSongInternal(
       if (!url) throw new Error('no url')
       await tryPlay(url)
     }
+    if (isPlaybackEpochStale(epoch)) return false
     return true
   } catch (e) {
+    if (isPlaybackEpochStale(epoch)) return false
+    if (e instanceof Error && e.message === 'playback superseded') return false
     playError = formatPlaybackError(e)
     isPlaying = false
     pushStateToStore()
@@ -333,15 +417,28 @@ function applyPlayContext(song: NeteaseSongItem, context?: PlaySongContext) {
   playModeRef = playMode
 }
 
-export function ensureListenTogetherPlayerEngine(): void {
-  if (engineReady) return
-  engineReady = true
-
+function createListenAudioElement(): HTMLAudioElement {
   const audio = new Audio()
   audio.preload = 'auto'
   audio.setAttribute('playsinline', 'true')
   audio.setAttribute('webkit-playsinline', 'true')
-  audioRef = audio
+  return audio
+}
+
+export function ensureListenTogetherPlayerEngine(): void {
+  const global = getEngineGlobal()
+  if (!global.audio) {
+    global.audio = createListenAudioElement()
+  }
+  audioRef = global.audio
+
+  if (engineReady && global.listenersBound) return
+  engineReady = true
+  if (global.listenersBound) return
+
+  const audio = audioRef
+  if (!audio) return
+  global.listenersBound = true
 
   let lastProgressEmit = 0
   let lastProgressValue = -1

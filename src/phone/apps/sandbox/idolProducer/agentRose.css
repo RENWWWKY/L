@@ -1,0 +1,88 @@
+/* 金牌经纪人模拟器 — 柔和粉色乙女风视觉令牌 */
+
+.agent-rose-root {
+  --agent-bg: #fff5f7;
+  --agent-text: #2d2422;
+  --agent-text-muted: #8a7a75;
+  --agent-rose: #f9a8c4;
+  --agent-rose-deep: #e879a9;
+  --agent-card: rgba(255, 255, 255, 0.88);
+  --agent-shadow: 0 8px 32px rgba(249, 168, 212, 0.22);
+  --agent-shadow-sm: 0 4px 16px rgba(249, 168, 212, 0.15);
+  --agent-ring: rgba(251, 207, 232, 0.6);
+}
+
+.agent-serif {
+  font-family: ui-serif, 'Songti SC', 'Noto Serif SC', Georgia, serif;
+}
+
+/* 数字走全局衬线数字栈（与 --phone-num-font 一致） */
+.agent-num,
+.agent-rose-root .tabular-nums {
+  font-family: var(--phone-num-font, var(--wx-num-font));
+  font-variant-numeric: tabular-nums lining-nums;
+  font-weight: 700;
+}
+
+.agent-rose-card {
+  background: var(--agent-card);
+  border-radius: 20px;
+  box-shadow: var(--agent-shadow-sm);
+  border: 1px solid rgba(255, 255, 255, 0.9);
+}
+
+.agent-glass-nav {
+  background: rgba(255, 245, 247, 0.82);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  border-top: 1px solid rgba(251, 207, 232, 0.45);
+  box-shadow: 0 -4px 24px rgba(249, 168, 212, 0.12);
+}
+
+.agent-tab-glow {
+  box-shadow: 0 0 20px rgba(249, 168, 212, 0.55), 0 0 40px rgba(251, 207, 232, 0.35);
+}
+
+.agent-story-dialog {
+  background: rgba(255, 255, 255, 0.78);
+  backdrop-filter: blur(12px);
+  border-radius: 20px;
+  box-shadow: var(--agent-shadow);
+  border: 1px solid rgba(255, 255, 255, 0.95);
+}
+
+.agent-hot-badge-boil {
+  background: linear-gradient(135deg, #fb7185, #f472b6);
+  color: white;
+  font-size: 10px;
+  padding: 1px 4px;
+  border-radius: 4px;
+  font-weight: 700;
+}
+
+.agent-hot-badge-hot {
+  background: linear-gradient(135deg, #f97316, #fb923c);
+  color: white;
+  font-size: 10px;
+  padding: 1px 4px;
+  border-radius: 4px;
+  font-weight: 700;
+}
+
+.agent-stat-bar {
+  height: 6px;
+  border-radius: 999px;
+  background: rgba(251, 207, 232, 0.45);
+}
+
+.agent-stat-bar-fill {
+  height: 100%;
+  border-radius: 999px;
+  background: linear-gradient(90deg, #fbcfe8, #f9a8c4);
+  transition: width 0.6s cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.agent-artist-avatar {
+  background: linear-gradient(145deg, #fce7f3, #fbcfe8);
+  color: #9d174d;
+}

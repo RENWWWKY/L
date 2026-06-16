@@ -1,4 +1,4 @@
-import { ncmApiGet } from './neteaseApiClient'
+import { isNetStartPublicApi, ncmApiGet, ncmApiGetOptional } from './neteaseApiClient'
 
 export type NeteasePlaylistItem = {
   id: number
@@ -23,8 +23,10 @@ export type NeteaseProfileBundle = {
     neteaseLevel: number
     following: number
     followers: number
-    /** 累计听歌时长（小时），来自 /listen/data/total */
+    /** 累计听歌时长（小时）；NetStart 无此接口时为 0 */
     listenHours: number
+    /** 累计听歌首数（/user/detail 的 listenSongs，NetStart 可显示） */
+    listenSongs: number
     vip: NeteaseVipInfo
   }
   likedSongs: NeteasePlaylistItem
@@ -98,12 +100,17 @@ const EMPTY_LIKED: NeteasePlaylistItem = {
 }
 
 /** 文档：GET /user/playlist?uid= — 创建与收藏的歌单均在此列表（无 /playlist/sublist） */
-async function fetchAllUserPlaylists(cookie: string, uid: number) {
+async function fetchAllUserPlaylists(
+  cookie: string,
+  uid: number,
+  opts?: { maxPages?: number },
+) {
   const all: Record<string, unknown>[] = []
   const limit = 50
+  const maxPages = opts?.maxPages ?? 20
   let offset = 0
 
-  for (let page = 0; page < 20; page += 1) {
+  for (let page = 0; page < maxPages; page += 1) {
     const body = await ncmApiGet('/user/playlist', cookie, {
       uid: String(uid),
       limit: String(limit),
@@ -118,16 +125,15 @@ async function fetchAllUserPlaylists(cookie: string, uid: number) {
   return all
 }
 
-async function ncmApiGetOptional(
-  path: string,
-  cookie: string,
-  params?: Record<string, string>,
-): Promise<Record<string, unknown> | null> {
-  try {
-    return await ncmApiGet(path, cookie, params)
-  } catch {
-    return null
+function parseListenSongsFromSources(
+  ...sources: Array<Record<string, unknown> | null | undefined>
+): number {
+  for (const src of sources) {
+    if (!src || typeof src !== 'object') continue
+    const n = Number(src.listenSongs ?? src.c_listenSongs ?? src.nowPlayCount ?? 0)
+    if (Number.isFinite(n) && n > 0) return Math.round(n)
   }
+  return 0
 }
 
 /** 解析 /user/level 返回的听歌等级 */
@@ -238,6 +244,23 @@ function collectListenHourCandidates(node: unknown, depth = 0, out: number[] = [
 /** 解析听歌足迹等接口返回的累计收听时长（小时），取可信候选中的最大值 */
 export function parseListenTotalHours(body: Record<string, unknown> | null): number {
   if (!body) return 0
+
+  const data =
+    body.data && typeof body.data === 'object' && !Array.isArray(body.data)
+      ? (body.data as Record<string, unknown>)
+      : null
+
+  const explicitHours = [
+    data?.totalListenHours,
+    data?.listenHours,
+    data?.totalHours,
+    body.totalListenHours,
+    body.listenHours,
+  ]
+    .map((v) => Number(v))
+    .filter((n) => Number.isFinite(n) && n > 0)
+  if (explicitHours.length > 0) return Math.round(Math.max(...explicitHours))
+
   const candidates = collectListenHourCandidates(body)
   if (candidates.length === 0) return 0
   return Math.max(...candidates)
@@ -265,6 +288,10 @@ export function normalizeNeteaseProfileBundle(
         typeof user.listenHours === 'number'
           ? user.listenHours
           : 0,
+      listenSongs:
+        typeof user.listenSongs === 'number'
+          ? user.listenSongs
+          : 0,
     },
   }
 }
@@ -277,16 +304,19 @@ export async function fetchNeteaseProfile(cookie: string): Promise<NeteaseProfil
       ? (accountBody.profile as Record<string, unknown>)
       : null
   if (!accountProfile) {
-    throw new Error('未获取到账号信息，请重新扫码登录')
+    throw new Error('未获取到账号信息，请重新登录')
   }
 
   const uid = Number(accountProfile.userId ?? accountProfile.id ?? 0)
   if (!uid) throw new Error('账号 ID 无效')
 
+  const netStart = isNetStartPublicApi()
+  const playlistMaxPages = netStart ? 3 : 12
+
   const [detailBody, rawPlaylists, levelBody, listenTotalBody, listenYearBody] =
     await Promise.all([
       ncmApiGet('/user/detail', cookie, { uid: String(uid) }),
-      fetchAllUserPlaylists(cookie, uid),
+      fetchAllUserPlaylists(cookie, uid, { maxPages: playlistMaxPages }),
       ncmApiGetOptional('/user/level', cookie),
       ncmApiGetOptional('/listen/data/total', cookie),
       ncmApiGetOptional('/listen/data/year/report', cookie),
@@ -323,7 +353,23 @@ export async function fetchNeteaseProfile(cookie: string): Promise<NeteaseProfil
   const listenLevel =
     parseNeteaseLevelFromBody(levelBody) ||
     Number(detail.level ?? accountProfile.level ?? 0)
-  const listenHours = resolveCumulativeListenHours(listenTotalBody, listenYearBody, detailBody)
+  const listenHours = resolveCumulativeListenHours(
+    listenTotalBody,
+    listenYearBody,
+    detailBody,
+    detail,
+    accountProfile,
+    levelBody,
+  )
+  const listenSongs = parseListenSongsFromSources(
+    detailBody,
+    detail,
+    accountProfile,
+    levelBody,
+    levelBody && typeof levelBody.data === 'object' && !Array.isArray(levelBody.data)
+      ? (levelBody.data as Record<string, unknown>)
+      : null,
+  )
   const vip = parseNeteaseVipInfo(accountProfile, detail)
 
   return {
@@ -336,6 +382,71 @@ export async function fetchNeteaseProfile(cookie: string): Promise<NeteaseProfil
       following: Number(detail.follows ?? 0),
       followers: Number(detail.followeds ?? 0),
       listenHours,
+      listenSongs,
+      vip,
+    },
+    likedSongs: likedRaw ? mapPlaylist(likedRaw) : EMPTY_LIKED,
+    createdPlaylists,
+    savedPlaylists,
+  }
+}
+
+/** 按 uid 拉取任意用户的资料与歌单（用于他人主页） */
+export async function fetchNeteaseUserProfileById(
+  cookie: string,
+  uid: number,
+): Promise<NeteaseProfileBundle> {
+  if (!uid) throw new Error('用户 ID 无效')
+
+  const netStart = isNetStartPublicApi()
+  const playlistMaxPages = netStart ? 3 : 12
+
+  const [detailBody, rawPlaylists] = await Promise.all([
+    ncmApiGet('/user/detail', cookie, { uid: String(uid) }),
+    fetchAllUserPlaylists(cookie, uid, { maxPages: playlistMaxPages }),
+  ])
+
+  const detail =
+    detailBody.profile && typeof detailBody.profile === 'object'
+      ? (detailBody.profile as Record<string, unknown>)
+      : {}
+
+  const likedRaw =
+    rawPlaylists.find((raw) => Number(raw.specialType) === 5) ??
+    rawPlaylists.find((raw) => String(raw.name ?? '').includes('喜欢的音乐'))
+
+  const createdPlaylists = rawPlaylists
+    .filter((raw) => {
+      if (raw === likedRaw) return false
+      if (Number(raw.specialType) === 5) return false
+      return playlistCreatorId(raw) === uid
+    })
+    .map(mapPlaylist)
+
+  const savedPlaylists = rawPlaylists
+    .filter((raw) => {
+      if (raw === likedRaw) return false
+      if (Number(raw.specialType) === 5) return false
+      return playlistCreatorId(raw) !== uid
+    })
+    .map(mapPlaylist)
+
+  const nickname = String(detail.nickname ?? '网易云用户')
+  const avatar = coverUrl(detail.avatarUrl ?? detail.avatar)
+  const listenLevel = Number(detail.level ?? 0)
+  const listenSongs = parseListenSongsFromSources(detailBody, detail)
+  const vip = parseNeteaseVipInfo(detail)
+
+  return {
+    user: {
+      userId: uid,
+      nickname,
+      avatar: avatar || 'https://api.dicebear.com/7.x/notionists/svg?seed=netease',
+      neteaseLevel: Number.isFinite(listenLevel) && listenLevel > 0 ? listenLevel : 0,
+      following: Number(detail.follows ?? 0),
+      followers: Number(detail.followeds ?? 0),
+      listenHours: 0,
+      listenSongs,
       vip,
     },
     likedSongs: likedRaw ? mapPlaylist(likedRaw) : EMPTY_LIKED,

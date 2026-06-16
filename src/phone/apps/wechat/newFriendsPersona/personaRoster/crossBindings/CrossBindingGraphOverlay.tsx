@@ -1,5 +1,5 @@
 import { AnimatePresence, motion } from 'framer-motion'
-import { ArrowLeft, Save } from 'lucide-react'
+import { ArrowLeft, RotateCcw, Save } from 'lucide-react'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { personaDb } from '../../idb'
 import { MemoryCoachPortal } from '../../../memory/MemoryCoachPortal'
@@ -52,6 +52,9 @@ export function CrossBindingGraphOverlay({
   const [saveBusy, setSaveBusy] = useState(false)
   const [exitConfirmOpen, setExitConfirmOpen] = useState(false)
   const [saveToast, setSaveToast] = useState<string | null>(null)
+  const [resetLayoutSignal, setResetLayoutSignal] = useState(0)
+  const [graphInFocus, setGraphInFocus] = useState(false)
+  const [graphHighlighted, setGraphHighlighted] = useState(false)
 
   const committedSnapshotRef = useRef<CrossBindingGraphLayoutSnapshot | null>(null)
   const currentSnapshotRef = useRef<CrossBindingGraphLayoutSnapshot | null>(null)
@@ -88,6 +91,8 @@ export function CrossBindingGraphOverlay({
       setExitConfirmOpen(false)
       setDirty(false)
       setLayoutReady(false)
+      setGraphInFocus(false)
+      setGraphHighlighted(false)
       setInitialLayout(null)
       committedSnapshotRef.current = null
       currentSnapshotRef.current = null
@@ -123,6 +128,16 @@ export function CrossBindingGraphOverlay({
     setDirty(true)
   }, [])
 
+  const handleResetLayout = useCallback(() => {
+    setInitialLayout(null)
+    committedSnapshotRef.current = null
+    currentSnapshotRef.current = null
+    setLayoutSessionKey((v) => v + 1)
+    setResetLayoutSignal((v) => v + 1)
+    setDirty(true)
+    showSaveToast('已恢复默认布局')
+  }, [showSaveToast])
+
   const persistLayout = useCallback(async () => {
     if (!anchor || !currentSnapshotRef.current) return false
     setSaveBusy(true)
@@ -136,6 +151,7 @@ export function CrossBindingGraphOverlay({
         updatedAt: Date.now(),
       })
       committedSnapshotRef.current = snapshot
+      setInitialLayout(snapshot)
       setDirty(false)
       showSaveToast('布局已保存')
       return true
@@ -225,10 +241,27 @@ export function CrossBindingGraphOverlay({
                     {anchor.label}
                   </p>
                   <p className="text-[10px] uppercase tracking-[0.16em] text-[#9CA3AF]">
-                    关系图谱 · {linkEditMode ? '连线模式' : '聚焦 · 已绑定关系'}
+                    关系图谱 ·{' '}
+                    {linkEditMode
+                      ? '连线模式'
+                      : graphInFocus
+                        ? '聚焦 · 已绑定关系'
+                        : graphHighlighted
+                          ? '全景 · 当前角色高亮'
+                          : '全景'}
                     {dirty ? ' · 未保存' : ''}
                   </p>
                 </div>
+                <button
+                  type="button"
+                  data-graph-ui-control
+                  onClick={handleResetLayout}
+                  className="inline-flex shrink-0 items-center gap-1 rounded-full border border-[#E5E7EB] bg-white px-2.5 py-1.5 text-[10px] font-semibold text-[#374151] transition-colors hover:bg-[#FAFAFB]"
+                  aria-label="重置布局"
+                >
+                  <RotateCcw className="size-3" />
+                  重置
+                </button>
                 <button
                   type="button"
                   data-graph-ui-control
@@ -260,7 +293,9 @@ export function CrossBindingGraphOverlay({
                   store={store}
                   onEditEdge={onEditEdge}
                   onCreateEdge={onCreateEdge}
-                  initialFocusKey={focusKey}
+                  initialHighlightKey={focusKey}
+                  onFocusIdChange={(id) => setGraphInFocus(!!id)}
+                  onHighlightKeyChange={(highlightKey) => setGraphHighlighted(!!highlightKey)}
                   linkEditMode={linkEditMode}
                   onLinkEditModeChange={setLinkEditMode}
                   coachAssistActive={coachOpen}
@@ -269,6 +304,7 @@ export function CrossBindingGraphOverlay({
                   layoutSessionKey={layoutSessionKey}
                   onLayoutSnapshotChange={handleLayoutSnapshotChange}
                   onLayoutDirty={handleLayoutDirty}
+                  resetLayoutSignal={resetLayoutSignal}
                   className="h-full min-h-[360px] flex-1 rounded-2xl shadow-none"
                 />
               ) : (

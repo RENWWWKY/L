@@ -274,7 +274,7 @@ export function PlayerIdentityApp({
 }) {
   void _onOpenCharacter
   const apiConfig = useCurrentApiConfig()
-  const { currentAccountId, setActivePlayerIdentityForCurrentAccount } = useWechatStore()
+  const { currentAccountId, accountSwitchRevision, setActivePlayerIdentityForCurrentAccount } = useWechatStore()
   const [page, setPage] = useState<
     | { name: 'list' }
     | { name: 'edit'; id: string; isNew: boolean; draft?: PlayerIdentity }
@@ -294,7 +294,7 @@ export function PlayerIdentityApp({
   useEffect(() => {
     const t = window.setTimeout(() => void refresh(), 0)
     return () => window.clearTimeout(t)
-  }, [])
+  }, [currentAccountId, accountSwitchRevision])
 
   if (page.name === 'edit') {
     return (

@@ -1,6 +1,6 @@
 import { create } from 'zustand'
 
-import { PLAY_MODE_TOAST_MS } from '../components/discoverListen/PlayModeSwitchToast'
+import { LISTEN_TOGETHER_TOAST_MS } from '../components/discoverListen/ListenTogetherActionToast'
 import type { ParsedLyricLine } from '../components/discoverListen/listenLyricParse'
 import type { ListenPlayMode } from '../components/discoverListen/listenPlayMode'
 
@@ -11,6 +11,8 @@ export type MusicTrack = {
   title: string
   artist: string
   cover: string
+  /** 主唱歌手 id（有则全屏页可跳转歌手主页） */
+  artistId?: number
 }
 
 export type SyncListeningProfile = {
@@ -170,7 +172,7 @@ export const useMusicStore = create<MusicStoreState>((set, get) => ({
     playModeToastTimer = window.setTimeout(() => {
       set({ playModeToast: null })
       playModeToastTimer = null
-    }, PLAY_MODE_TOAST_MS)
+    }, LISTEN_TOGETHER_TOAST_MS)
   },
 
   _syncEngineState: (payload) => {

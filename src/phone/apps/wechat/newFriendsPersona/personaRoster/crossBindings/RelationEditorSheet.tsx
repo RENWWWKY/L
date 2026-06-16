@@ -89,12 +89,25 @@ function draftsFromPairForm(form: PairEdgeForm, mutual: boolean): RelationshipEd
 const fieldInputClass =
   'mt-1.5 w-full rounded-xl border border-transparent bg-white px-3 py-2.5 text-[13px] text-[#111827] outline-none focus:border-[#111827]/15'
 const sectionClass = 'rounded-xl border border-[#F0F0F3] bg-[#FAFAFB] p-3'
-function FormSection({ title, children }: { title: string; children: ReactNode }) {
+function FormSection({
+  title,
+  hint,
+  children,
+}: {
+  title: string
+  hint?: string
+  children: ReactNode
+}) {
   return (
     <div className={sectionClass}>
-      <div className="flex items-center gap-2 border-b border-[#E5E7EB] pb-2.5">
-        <span className="h-3.5 w-1 shrink-0 rounded-full bg-[#111827]" aria-hidden />
-        <p className="text-[14px] font-semibold tracking-wide text-[#111827]">{title}</p>
+      <div className="border-b border-[#E5E7EB] pb-2.5">
+        <div className="flex items-center gap-2">
+          <span className="h-3.5 w-1 shrink-0 rounded-full bg-[#111827]" aria-hidden />
+          <p className="text-[14px] font-semibold tracking-wide text-[#111827]">{title}</p>
+        </div>
+        {hint ? (
+          <p className="mt-1.5 pl-3 text-[11px] leading-relaxed text-[#9CA3AF]">{hint}</p>
+        ) : null}
       </div>
       <div className="mt-3 space-y-3">{children}</div>
     </div>
@@ -120,6 +133,35 @@ function PersonChip({ node, name }: { node: CrossBindingNode; name: string }) {
         {name}
       </span>
     </span>
+  )
+}
+
+function RelationWordFieldLabel({
+  viewer,
+  viewerName,
+  subject,
+  subjectName,
+}: {
+  viewer: CrossBindingNode
+  viewerName: string
+  subject: CrossBindingNode
+  subjectName: string
+}) {
+  return (
+    <div className="space-y-1.5">
+      <p className="text-[13px] leading-snug text-[#374151]">
+        <span className="font-semibold text-[#111827]">「{subjectName}」</span>
+        <span className="text-[#6B7280]"> 是 </span>
+        <span className="font-semibold text-[#111827]">「{viewerName}」</span>
+        <span className="text-[#6B7280]"> 的</span>
+      </p>
+      <div className="flex flex-wrap items-center gap-1.5">
+        <PersonChip node={viewer} name={viewerName} />
+        <span className="text-[11px] font-medium text-[#9CA3AF]">→</span>
+        <PersonChip node={subject} name={subjectName} />
+        <span className="text-[10px] text-[#9CA3AF]">（连线上显示此关系词）</span>
+      </div>
+    </div>
   )
 }
 
@@ -314,16 +356,18 @@ export function RelationEditorSheet({
                 <p className="py-6 text-center text-[12px] text-[#9CA3AF]">加载关系详情…</p>
               ) : (
                 <div className="space-y-4">
-                  <FormSection title="关系词">
+                  <FormSection
+                    title="关系词"
+                    hint="箭头 A→B 表示：B 是 A 的什么关系，填写后会显示在两人之间的连线上。"
+                  >
                     {sourceNode && targetNode ? (
                       <>
                         <label className="block">
-                          <DirectionLabel
-                            from={sourceNode}
-                            fromName={sourceName}
-                            to={targetNode}
-                            toName={targetName}
-                            suffix="连线中间"
+                          <RelationWordFieldLabel
+                            viewer={sourceNode}
+                            viewerName={sourceName}
+                            subject={targetNode}
+                            subjectName={targetName}
                           />
                           <input
                             value={form.sourceToTargetRel}
@@ -334,12 +378,11 @@ export function RelationEditorSheet({
                         </label>
                         {showBidirectional ? (
                           <label className="block">
-                            <DirectionLabel
-                              from={targetNode}
-                              fromName={targetName}
-                              to={sourceNode}
-                              toName={sourceName}
-                              suffix="连线中间"
+                            <RelationWordFieldLabel
+                              viewer={targetNode}
+                              viewerName={targetName}
+                              subject={sourceNode}
+                              subjectName={sourceName}
                             />
                             <input
                               value={form.targetToSourceRel}

@@ -10,6 +10,7 @@ import { splitDatingAssistantOutput } from './dating/plotCoT'
 import { extractVnVoiceParamsBlock } from './dating/vnVoiceParamsStrip'
 import { findGroupMember } from './groupChatUtils'
 import { buildNpcLinkedOfflineExcerptUserBlock } from './memory/linkedOfflineExcerptsForAutoSummary'
+import { resolveAutoSummaryApiConfig } from './memory/memorySummaryApi'
 import {
   listAllLinkedMemoryEligibleCharacters,
 } from './memory/linkedMemoryEligiblePeers'
@@ -335,17 +336,20 @@ export async function runDatingLinkedMemoryFallbackWhenNoJsonTail(params: {
   /** 本轮 AI 剧情正文（去思维链），补救请求必带 */
   latestAiPlotBody?: string
 }): Promise<{ applied: boolean; linkedNpcNamesWritten: string[] }> {
-  const cfg = params.apiConfig
-  if (!cfg?.apiUrl?.trim() || !cfg.apiKey?.trim() || !cfg.modelId?.trim()) {
+  const summaryApi = await resolveAutoSummaryApiConfig(params.apiConfig)
+  if (!summaryApi?.apiUrl?.trim() || !summaryApi.apiKey?.trim() || !summaryApi.modelId?.trim()) {
     return { applied: false, linkedNpcNamesWritten: [] }
   }
   const memSettings = await personaDb.getMemorySettings()
-  if (memSettings.linkedMemoryAutoSummaryEnabled === false) {
+  if (
+    memSettings.autoSummaryEnabled === false ||
+    memSettings.linkedMemoryAutoSummaryEnabled === false
+  ) {
     return { applied: false, linkedNpcNamesWritten: [] }
   }
   try {
     const summary = await requestDatingLinkedMemoryFallbackSummary({
-      apiConfig: cfg,
+      apiConfig: summaryApi,
       offlineTextBlock: params.gather.offlineBlock,
       npcLinkedExcerptsBlock: params.gather.npcLinked.block,
       eligibleLinkedNpcRoster: params.eligibleLinkedNpcRoster,
@@ -473,7 +477,9 @@ export async function applyUnifiedMemoryFromParsedSummary(
   }
 
   const memSettingsForLinked = await personaDb.getMemorySettings()
-  const linkedMemoryPersistEnabled = memSettingsForLinked.linkedMemoryAutoSummaryEnabled !== false
+  const linkedMemoryPersistEnabled =
+    memSettingsForLinked.autoSummaryEnabled !== false &&
+    memSettingsForLinked.linkedMemoryAutoSummaryEnabled !== false
   const linkedWritesToPersist = linkedMemoryPersistEnabled ? linkedWrites : []
 
   const hadOfflineTag = gather.hadOfflinePrior || opts.tagOfflineIncludesNewAiTurn
@@ -749,13 +755,19 @@ export async function runUnifiedAutoMemorySummaryAfterThreshold(params: {
   if (!gather) return
   const ck = gather.conversationKey
 
+  const summaryApi = await resolveAutoSummaryApiConfig(params.apiConfig)
+  if (!summaryApi) {
+    if (!skipBump) await rollbackMemoryAiRoundCountForChannel(ck, roundChannel)
+    return
+  }
+
   if (!gather.hadOnline && !gather.hadOfflinePrior && !gather.hadMeet) {
     if (!skipBump) await rollbackMemoryAiRoundCountForChannel(ck, roundChannel)
     return
   }
 
   const summary = await requestUnifiedMemorySummaryWithLinked({
-    apiConfig: params.apiConfig,
+    apiConfig: summaryApi,
     onlineTranscript: gather.onlineTranscript,
     meetTranscript: gather.hadMeet ? gather.meetTranscript : [],
     offlineTextBlock: gather.hadOfflinePrior ? gather.offlineBlock : '',
@@ -862,6 +874,12 @@ export async function runGroupChatMemorySummaryAfterThreshold(params: {
   const pid = params.playerIdentityId.trim()
   if (!gid || !ck) return
 
+  const summaryApi = await resolveAutoSummaryApiConfig(params.apiConfig)
+  if (!summaryApi) {
+    await personaDb.rollbackMemoryAiRoundCountForRetry(ck)
+    return
+  }
+
   const group = await personaDb.getGroupChat(gid)
   if (group && group.playerIdentityId.trim() && pid && group.playerIdentityId.trim() !== pid) {
     await personaDb.rollbackMemoryAiRoundCountForRetry(ck)
@@ -887,7 +905,7 @@ export async function runGroupChatMemorySummaryAfterThreshold(params: {
   }
 
   const summary = await requestGroupChatMemorySummary({
-    apiConfig: params.apiConfig,
+    apiConfig: summaryApi,
     onlineTranscript,
     groupArchiveBlock: hadArchive ? archiveBlock : '',
     group,

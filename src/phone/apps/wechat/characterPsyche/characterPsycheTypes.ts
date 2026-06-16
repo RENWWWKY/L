@@ -118,23 +118,6 @@ export type CharacterPsycheSnapshotRow = {
 /** 可对比的纯数值快照（不含 relationshipDef / summaries） */
 export type CharacterPsycheMetricsSnapshot = Record<CharacterPsycheMetricKey, number>
 
-const METRIC_KEYS: CharacterPsycheMetricKey[] = [
-  'affection',
-  'mood',
-  'heartbeat',
-  'security',
-  'trust',
-  'calmness',
-  'possessiveness',
-  'jealousy',
-  'disgust',
-  'rebellion',
-  'health',
-  'satiety',
-  'sleepiness',
-  'arousal',
-]
-
 export function extractCharacterPsycheMetrics(state: CharacterPsycheState): CharacterPsycheMetricsSnapshot {
   return {
     affection: clampPct(state.affection),
@@ -236,22 +219,4 @@ export function normalizeCharacterPsycheSnapshotRow(input: unknown): CharacterPs
     previousMetrics,
     updatedAt: typeof r.updatedAt === 'number' && Number.isFinite(r.updatedAt) ? r.updatedAt : Date.now(),
   }
-}
-
-/** 从会话 id 派生稳定演示数值（无持久化记录时使用） */
-export function buildDefaultCharacterPsycheState(seed: string): CharacterPsycheState {
-  const hash = (s: string, salt: number) => {
-    let h = 2166136261 ^ salt
-    for (let i = 0; i < s.length; i += 1) {
-      h ^= s.charCodeAt(i)
-      h = Math.imul(h, 16777619)
-    }
-    return (h >>> 0) % 101
-  }
-  const base = normalizeCharacterPsycheState({})
-  for (const key of METRIC_KEYS) {
-    base[key] = hash(seed, key.charCodeAt(0))
-  }
-  base.affection = clampPct(base.affection * 0.55 + 38)
-  return applyAffectionDerivedRelationship(base)
 }

@@ -37,6 +37,14 @@ type DraftRow = {
   isNew?: boolean
 }
 
+function anchorDisplayName(anchor: CrossBindingNode): string {
+  return anchor.type === 'user' ? '你' : anchor.label
+}
+
+function peerDisplayName(peer: CrossBindingNode): string {
+  return peer.type === 'user' ? '你' : peer.label
+}
+
 function isCharCharDraftRow(row: DraftRow): boolean {
   return row.edge.sourceType !== 'user' && row.edge.targetType !== 'user'
 }
@@ -342,9 +350,19 @@ export function AnchorRelationsEditorSheet({
 
                       <div className="mt-4 border-t border-dashed border-[#ECECF0] pt-4">
                         <label className="block">
-                          <span className="text-[9px] font-semibold uppercase tracking-[0.2em] text-[#9CA3AF]">
-                            当前视角的关系词
-                          </span>
+                          <p className="text-[13px] leading-snug text-[#374151]">
+                            <span className="font-semibold text-[#111827]">
+                              「{peerDisplayName(row.peer)}」
+                            </span>
+                            <span className="text-[#6B7280]"> 是 </span>
+                            <span className="font-semibold text-[#111827]">
+                              「{anchorDisplayName(anchor)}」
+                            </span>
+                            <span className="text-[#6B7280]"> 的</span>
+                          </p>
+                          <p className="mt-1 text-[10px] leading-relaxed text-[#9CA3AF]">
+                            {anchorDisplayName(anchor)} → {peerDisplayName(row.peer)}：填写后会显示在两人之间的连线上
+                          </p>
                           <input
                             value={row.label}
                             onChange={(e) => updateRow(row.edgeId, { label: e.target.value })}

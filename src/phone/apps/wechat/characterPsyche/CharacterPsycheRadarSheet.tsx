@@ -328,9 +328,9 @@ export function CharacterPsycheRadarSheet({
                 <div className="text-right">
                   <div className="flex items-end justify-end gap-1.5">
                     <p className="font-mono text-3xl font-medium tabular-nums leading-none" style={{ color: INK }}>
-                      {loading ? '—' : affection}
+                      {loading || !state ? '—' : affection}
                     </p>
-                    {!loading ? <MetricDeltaBadge delta={affectionDelta} /> : null}
+                    {!loading && state ? <MetricDeltaBadge delta={affectionDelta} /> : null}
                   </div>
                   <p className="mt-1 text-[10px] tracking-wide" style={{ color: MUTED }}>
                     好感度
@@ -413,9 +413,16 @@ export function CharacterPsycheRadarSheet({
                   </motion.div>
                 </div>
               ) : (
-                <p className="py-10 text-center text-[13px]" style={{ color: MUTED }}>
-                  暂无体征数据
-                </p>
+                <div className="py-10 text-center">
+                  <p className="text-[13px]" style={{ color: MUTED }}>
+                    暂无体征数据
+                  </p>
+                  {onGenerate ? (
+                    <p className="mt-2 text-[12px] leading-relaxed" style={{ color: '#D1D5DB' }}>
+                      点击右上角「生成状态」，基于最近一轮对话生成读数
+                    </p>
+                  ) : null}
+                </div>
               )}
 
               <p className="mt-6 text-center text-[10px] tracking-wide" style={{ color: '#D1D5DB' }}>

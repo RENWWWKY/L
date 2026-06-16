@@ -17,12 +17,7 @@ import {
   memoryEntryToPersistPayload,
   memorySceneTagsFromRow,
 } from './memoryArchiveMapper'
-import type {
-  MemoryArchiveKind,
-  MemoryEntry,
-  MemorySceneTag,
-  MemorySourceIdentity,
-} from './memoryArchiveTypes'
+import type { MemoryArchiveKind, MemoryEntry, MemorySceneTag } from './memoryArchiveTypes'
 import { MemoryEditorBindingSummary } from './MemoryEditorBindingSummary'
 import { MemoryEditorIdentityPicker } from './MemoryEditorIdentityPicker'
 import {
@@ -68,7 +63,7 @@ export function MemoryEditorSheet({
   entry,
   raw,
   contacts,
-  sourceIdentity,
+  archiveSelectedAccountId,
   editorKind = 'own',
   currentWechatAccountId,
   playerIdentityId,
@@ -84,7 +79,7 @@ export function MemoryEditorSheet({
   contacts: WeChatContactRow[]
   /** 档案馆角色焦点：新建时默认归属该联系人 */
   initialCharId?: string
-  sourceIdentity: MemorySourceIdentity
+  archiveSelectedAccountId?: string
   /** 档案馆当前 Tab：角色自有记忆 vs 线下关联记忆 */
   editorKind?: MemoryArchiveKind
   currentWechatAccountId?: string
@@ -199,15 +194,13 @@ export function MemoryEditorSheet({
     const first = initialCharId?.trim() || attributionRoster[0]?.id || allContacts[0]?.id || ''
     setCharId(first)
     setGroupId(groupOptions[0]?.groupId ?? '')
-    setTags(
-      isLinkedEditor ? ['私聊'] : sourceIdentity === 'lumi_meet' ? ['遇见'] : ['私聊'],
-    )
+    setTags(isLinkedEditor ? ['私聊'] : ['私聊'])
     setTriggerType('keyword')
     setKeywords([])
     setContent('')
     setUserBindings([])
     setKwKey((k) => k + 1)
-  }, [open, mode, entry, raw, attributionRoster, allContacts, initialCharId, groupOptions, sourceIdentity, isLinkedEditor])
+  }, [open, mode, entry, raw, attributionRoster, allContacts, initialCharId, groupOptions, isLinkedEditor])
 
   useEffect(() => {
     if (!open) {
@@ -374,9 +367,12 @@ export function MemoryEditorSheet({
         ? (['关联线下', ...tags.filter((t) => t === '私聊' || t === '线下')] as MemorySceneTag[])
         : tags.filter((t) => t !== '关联线下')
 
+      const meetOnly =
+        tags.includes('遇见') && !tags.includes('私聊') && !tags.includes('群聊')
+
       const draftEntry: MemoryEntry = {
         id: entry?.id ?? uid('mem'),
-        sourceIdentity,
+        sourceIdentity: 'main_wechat',
         charId: charId.trim() || storageCharacterId,
         storageCharacterId,
         charDisplayName: allContacts.find((c) => c.id === charId)?.remarkName ?? charId,
@@ -410,7 +406,7 @@ export function MemoryEditorSheet({
         {
           sourceWechatAccountId:
             raw?.sourceWechatAccountId ??
-            (sourceIdentity === 'lumi_meet' ? undefined : currentWechatAccountId),
+            (meetOnly ? undefined : archiveSelectedAccountId ?? currentWechatAccountId),
           sourceSessionPlayerIdentityId:
             raw?.sourceSessionPlayerIdentityId ?? playerIdentityId ?? undefined,
         },

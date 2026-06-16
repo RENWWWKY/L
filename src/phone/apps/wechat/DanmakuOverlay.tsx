@@ -1,6 +1,8 @@
 import { useMemo } from 'react'
 import type { CSSProperties } from 'react'
 
+import { WeChatChatMixedText } from './WeChatChatMixedText'
+
 export type DanmakuOverlayBullet = {
   id: string
   text: string
@@ -90,7 +92,7 @@ export function DanmakuOverlay({
                   ...tokenStyle,
                 }}
               >
-                {it.text}
+                {it.text ? <WeChatChatMixedText text={it.text} /> : null}
               </span>
             )
           })}

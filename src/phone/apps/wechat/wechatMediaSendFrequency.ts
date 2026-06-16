@@ -96,7 +96,7 @@ export function isRoundTriggerCustomized(stored: number | undefined): boolean {
   return stored !== undefined
 }
 
-/** 本会话已定制概率时：按百分比决定本轮是否允许至少一条语音/表情包 */
+/** 本会话已定制概率时：按百分比决定本轮回复是否允许出现语音/表情包（非条数上限） */
 export function rollRoundMediaTriggerAllowed(storedPercent: number | undefined): boolean {
   if (storedPercent === undefined) return true
   if (storedPercent <= 0) return false
@@ -146,7 +146,8 @@ export function buildMediaSendFrequencyPromptBlock(params: {
   const lines: string[] = [
     '---------------------',
     '【本会话发送概率（用户在聊天信息中设定 · 优先于上文通用频率）】',
-    '「每轮」指你方每一次完整回复；下列百分比表示该轮回复中**至少出现 1 条**对应类型消息的目标概率。',
+    '「每轮」指你方每一次完整回复。下列百分比表示：**该轮回复里会不会出现**对应类型消息（门槛概率，不是条数上限）。',
+    '一旦该轮「允许/应发」某类型，同一轮内可发**多条**（如多行 `[语音]` 与文字穿插），仍须贴合语境，禁止机械刷屏。',
   ]
 
   if (sticker !== undefined) {
@@ -172,11 +173,11 @@ export function buildMediaSendFrequencyPromptBlock(params: {
       )
     } else if (voice >= 100) {
       lines.push(
-        '- **语音消息**：概率 **100%**，每轮回复**须**包含至少 1 条 `[语音]` 行（可多条但勿机械刷屏）。',
+        '- **语音消息**：概率 **100%**，该轮回复**须**包含语音（至少 1 行 `[语音]`）；**可多条** `[语音]` 与文字穿插混排，勿机械刷屏。',
       )
     } else {
       lines.push(
-        `- **语音消息**：每轮约 **${voice}%** 概率包含至少 1 条 \`[语音]\` 行；约 **${100 - voice}%** 轮次只用文字。用户明确要求信息点时仍优先文字承载关键信息。`,
+        `- **语音消息**：约 **${voice}%** 的回复轮次会出现语音（至少 1 行 \`[语音]\`）；约 **${100 - voice}%** 轮次纯文字。一旦该轮发语音，**可多条** \`[语音]\` 与文字交替，不限 1 条。用户明确要求信息点时仍优先文字承载关键信息。`,
       )
     }
   }

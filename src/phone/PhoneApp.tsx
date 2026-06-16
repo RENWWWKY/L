@@ -18,6 +18,7 @@ import { BackgroundNotifyApp } from './apps/backgroundNotify/BackgroundNotifyApp
 import { personaDb } from './apps/wechat/newFriendsPersona/idb'
 import { WeChatApp } from './apps/wechat/WeChatApp'
 import { LumiMeetApp } from './apps/lumiMeet/LumiMeetApp'
+import { SandboxApp } from './apps/sandbox/SandboxApp'
 import { LumiMeetProvider } from './apps/lumiMeet/LumiMeetStore'
 import { WorldbookLoreProvider } from './worldbook/worldbookLoreStore'
 import type { AppSlot } from './types'
@@ -194,6 +195,8 @@ export function PhoneApp() {
                   <RecycleBinApp onBack={goHome} />
                 ) : route.id === 'backgroundNotify' ? (
                   <BackgroundNotifyApp onBack={goHome} />
+                ) : route.id === 'sandbox' ? (
+                  <SandboxApp onBack={goHome} />
                 ) : (
                   <AppPlaceholderScreen appId={route.id} onBack={goHome} />
                 )}

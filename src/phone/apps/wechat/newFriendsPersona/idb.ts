@@ -33,6 +33,7 @@ import type {
   WeChatCallStatusPayload,
   WeChatVoicePayload,
   WeChatMusicSyncPayload,
+  WeChatListenCommentSharePayload,
   WeChatTimeConfig,
   WeChatGlobalSettingsRow,
   WeChatMessageSearchIndexRow,
@@ -116,9 +117,11 @@ import {
 } from '../wechatConversationKey'
 import { preserveCharacterBoundPlayerIdentity } from '../wechatCharacterPlayerIdentity'
 import { formatWeChatNotifyPreviewFromStoredMessage } from '../wechatThreadPreviewText'
+import { resolveAutoSummaryIntervalForConversationKey } from '../memory/memoryAutoSummaryInterval'
 import { resolveOsNotificationIconUrl } from '../../backgroundNotify/notificationIconUrl'
 import { supportsPerNotificationCustomIcon } from '../../../utils/platform'
 import { maybeNotifyWeChatCharacterMessage } from '../wechatSystemNotify'
+import { maybeEmitWeChatInAppCharacterMessage } from '../globalMessage/wechatGlobalMessageGuard'
 import { getWeChatBuiltInNotifySoundMeta, playWeChatNotifySound } from '../wechatNotifySound'
 import { normalizeWeChatTimeConfig } from '../time/wechatTimeUtils'
 import {
@@ -1074,6 +1077,39 @@ function normalizeWeChatChatMessage(input: unknown): WeChatChatMessage | null {
     }
     return undefined
   })()
+  const rawListenCommentShare = (m as { listenCommentShare?: unknown }).listenCommentShare
+  const listenCommentShare: WeChatListenCommentSharePayload | undefined = (() => {
+    if (!rawListenCommentShare || typeof rawListenCommentShare !== 'object') return undefined
+    const r = rawListenCommentShare as Record<string, unknown>
+    const kind = typeof r.kind === 'string' ? r.kind.trim() : ''
+    if (kind !== 'listen_comment_share') return undefined
+    const shareId = typeof r.shareId === 'string' ? r.shareId.trim() : ''
+    const commentText = typeof r.commentText === 'string' ? r.commentText.trim().slice(0, 2000) : ''
+    const commentAuthor = typeof r.commentAuthor === 'string' ? r.commentAuthor.trim().slice(0, 80) : ''
+    const targetTitle = typeof r.targetTitle === 'string' ? r.targetTitle.trim().slice(0, 120) : ''
+    const targetType = r.targetType === 'playlist' ? 'playlist' : r.targetType === 'song' ? 'song' : null
+    const commentIdRaw = typeof r.commentId === 'number' ? r.commentId : Number(r.commentId)
+    const targetIdRaw = typeof r.targetId === 'number' ? r.targetId : Number(r.targetId)
+    if (!shareId || !commentText || !commentAuthor || !targetTitle || !targetType) return undefined
+    if (!Number.isFinite(commentIdRaw) || !Number.isFinite(targetIdRaw)) return undefined
+    const commentAuthorAvatar =
+      typeof r.commentAuthorAvatar === 'string' ? r.commentAuthorAvatar.trim().slice(0, 2000) : ''
+    const targetArtist = typeof r.targetArtist === 'string' ? r.targetArtist.trim().slice(0, 120) : ''
+    const targetCover = typeof r.targetCover === 'string' ? r.targetCover.trim().slice(0, 2000) : ''
+    return {
+      kind: 'listen_comment_share',
+      shareId,
+      commentId: Math.floor(commentIdRaw),
+      commentText,
+      commentAuthor,
+      ...(commentAuthorAvatar ? { commentAuthorAvatar } : {}),
+      targetType,
+      targetId: Math.floor(targetIdRaw),
+      targetTitle,
+      ...(targetArtist ? { targetArtist } : {}),
+      ...(targetCover ? { targetCover } : {}),
+    }
+  })()
   const originalContent =
     typeof (m as { originalContent?: unknown }).originalContent === 'string'
       ? String((m as { originalContent?: unknown }).originalContent).slice(0, 8000)
@@ -1123,6 +1159,7 @@ function normalizeWeChatChatMessage(input: unknown): WeChatChatMessage | null {
     callStatus,
     voice,
     musicSync,
+    listenCommentShare,
     images: images.length ? images : undefined,
     isFavorite,
     replyTo,
@@ -1745,6 +1782,30 @@ function normalizeMemorySettingsRow(input: unknown): MemorySettingsRow {
   const memCollRaw = (r as { memoryVectorCollection?: unknown }).memoryVectorCollection
   const memoryVectorCollection: MemorySettingsRow['memoryVectorCollection'] =
     typeof memCollRaw === 'string' && memCollRaw.trim() ? memCollRaw.trim().slice(0, 128) : undefined
+  const memSummaryUrlRaw = (r as { memorySummaryApiUrl?: unknown }).memorySummaryApiUrl
+  const memorySummaryApiUrl: MemorySettingsRow['memorySummaryApiUrl'] =
+    typeof memSummaryUrlRaw === 'string' && memSummaryUrlRaw.trim()
+      ? memSummaryUrlRaw.trim().slice(0, 512)
+      : undefined
+  const memSummaryKeyRaw = (r as { memorySummaryApiKey?: unknown }).memorySummaryApiKey
+  const memorySummaryApiKey: MemorySettingsRow['memorySummaryApiKey'] =
+    typeof memSummaryKeyRaw === 'string' && memSummaryKeyRaw.trim()
+      ? memSummaryKeyRaw.trim().slice(0, 2048)
+      : undefined
+  const memSummaryModelRaw = (r as { memorySummaryModelId?: unknown }).memorySummaryModelId
+  const memorySummaryModelId: MemorySettingsRow['memorySummaryModelId'] =
+    typeof memSummaryModelRaw === 'string' && memSummaryModelRaw.trim()
+      ? memSummaryModelRaw.trim().slice(0, 120)
+      : undefined
+  const memSummaryDedicatedRaw = (r as { memorySummaryUseDedicatedApi?: unknown }).memorySummaryUseDedicatedApi
+  const memorySummaryUseDedicatedApi: MemorySettingsRow['memorySummaryUseDedicatedApi'] =
+    memSummaryDedicatedRaw === true
+      ? true
+      : memSummaryDedicatedRaw === false
+        ? false
+        : memorySummaryApiUrl?.trim() || memorySummaryApiKey?.trim()
+          ? true
+          : undefined
   const linkedMemRaw = (r as { linkedMemoryAutoSummaryEnabled?: unknown }).linkedMemoryAutoSummaryEnabled
   const linkedMemoryAutoSummaryEnabled: MemorySettingsRow['linkedMemoryAutoSummaryEnabled'] =
     linkedMemRaw === false ? false : linkedMemRaw === true ? true : undefined
@@ -1768,10 +1829,25 @@ function normalizeMemorySettingsRow(input: unknown): MemorySettingsRow {
       }
     }
   }
+  const scopeRaw = (r as { autoSummaryIntervalScope?: unknown }).autoSummaryIntervalScope
+  const autoSummaryIntervalScope: MemorySettingsRow['autoSummaryIntervalScope'] =
+    scopeRaw === 'per_character' ? 'per_character' : scopeRaw === 'global' ? 'global' : undefined
+  const byCharRaw = (r as { autoSummaryIntervalByCharacterId?: unknown }).autoSummaryIntervalByCharacterId
+  const autoSummaryIntervalByCharacterId: Record<string, number> = {}
+  if (byCharRaw && typeof byCharRaw === 'object' && !Array.isArray(byCharRaw)) {
+    for (const [k, v] of Object.entries(byCharRaw as Record<string, unknown>)) {
+      const cid = k.trim()
+      if (!cid || typeof v !== 'number' || !Number.isFinite(v)) continue
+      autoSummaryIntervalByCharacterId[cid] = Math.max(1, Math.min(100, Math.floor(v)))
+    }
+  }
   return {
     id: 'default',
     autoSummaryEnabled,
     autoSummaryInterval: n,
+    autoSummaryIntervalScope,
+    autoSummaryIntervalByCharacterId:
+      Object.keys(autoSummaryIntervalByCharacterId).length > 0 ? autoSummaryIntervalByCharacterId : undefined,
     autoSummaryDefaultMemoryTriggerMode,
     linkedMemoryAutoSummaryEnabled,
     datingAutoSummaryEnabled,
@@ -1783,6 +1859,10 @@ function normalizeMemorySettingsRow(input: unknown): MemorySettingsRow {
     memoryEmbeddingApiUrl,
     memoryEmbeddingApiKey,
     memoryVectorCollection,
+    memorySummaryUseDedicatedApi,
+    memorySummaryApiUrl,
+    memorySummaryApiKey,
+    memorySummaryModelId,
     aiRoundCountByConversation:
       Object.keys(aiRoundCountByConversation).length > 0 ? aiRoundCountByConversation : undefined,
     summaryCursorTimestampByConversation:
@@ -2867,6 +2947,7 @@ export class PersonaDb {
       if (!canonical || seen.has(canonical)) continue
       const ch = await this.getCharacterWithoutCanonicalRedirect(canonical)
       if (!ch || ch.generatedForCharacterId) continue
+      if (!characterBelongsToWechatAccount(ch, acc)) continue
       seen.add(ch.id)
       out.push(ch)
     }
@@ -2877,17 +2958,14 @@ export class PersonaDb {
   async listNpcsForAccessibleRoot(
     mainCharacterId: string,
     wechatAccountId: string,
-    linkedCharacterIds: string[] = [],
+    _linkedCharacterIds: string[] = [],
   ): Promise<Stored[]> {
     const root = mainCharacterId.trim()
     const acc = wechatAccountId.trim()
     if (!root || !acc) return []
     const rootRow = await this.getCharacter(root)
     if (!rootRow) return []
-    const linked = new Set(linkedCharacterIds.map((x) => x.trim()))
-    const canAccess =
-      characterBelongsToWechatAccount(rootRow, acc) || linked.has(root) || linked.has(rootRow.id)
-    if (!canAccess) return []
+    if (!characterBelongsToWechatAccount(rootRow, acc)) return []
     return this.listNpcsFor(root)
   }
 
@@ -3963,6 +4041,14 @@ export class PersonaDb {
           iconUrl: notifyIcon,
           isMuted: !!st?.isMuted,
         })
+        maybeEmitWeChatInAppCharacterMessage({
+          conversationKey,
+          title: payload.title,
+          preview: formatWeChatNotifyPreviewFromStoredMessage(normalized),
+          avatarUrl: payload.iconUrl,
+          messageId: normalized.id,
+          isMuted: !!st?.isMuted,
+        })
       }
     }
 
@@ -4804,7 +4890,8 @@ export class PersonaDb {
       if (m) maxTs = Math.max(maxTs, m.timestamp)
     }
     const prev = await this.getWechatReadCursor(conversationKey)
-    const next = Math.max(prev, maxTs, Date.now())
+    // 勿用 Date.now()：微信内消息时间戳可能来自自定义时间轴或 AI 落库时刻，用真实时钟会把游标推到未来，导致之后的新消息永远不计未读。
+    const next = Math.max(prev, maxTs)
     await this.setWechatReadCursor(conversationKey, next)
   }
 
@@ -5214,7 +5301,7 @@ export class PersonaDb {
     if (settings.autoSummaryEnabled === false) {
       return { shouldSummarize: false }
     }
-    const interval = Math.max(1, Math.floor(settings.autoSummaryInterval))
+    const interval = resolveAutoSummaryIntervalForConversationKey(settings, conversationKey)
     const map = { ...(settings.aiRoundCountByConversation ?? {}) }
     const prev = map[conversationKey] ?? 0
     const next = prev + 1
@@ -5233,7 +5320,7 @@ export class PersonaDb {
    */
   async rollbackMemoryAiRoundCountForRetry(conversationKey: string): Promise<void> {
     const settings = await this.getMemorySettings()
-    const interval = Math.max(1, settings.autoSummaryInterval)
+    const interval = resolveAutoSummaryIntervalForConversationKey(settings, conversationKey)
     const map = { ...(settings.aiRoundCountByConversation ?? {}) }
     map[conversationKey] = Math.max(0, interval - 1)
     await this.putMemorySettings({ aiRoundCountByConversation: map }, { emit: false })

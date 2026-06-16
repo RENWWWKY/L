@@ -1,5 +1,6 @@
 import { motion } from 'framer-motion'
 
+import { WeChatChatMixedText } from './WeChatChatMixedText'
 import { Pressable } from '../../components/Pressable'
 
 export function RecallNotice({
@@ -20,11 +21,11 @@ export function RecallNotice({
     >
       {onClick ? (
         <Pressable type="button" className={pillClass} onClick={onClick}>
-          {text}
+          <WeChatChatMixedText text={text} />
         </Pressable>
       ) : (
         <span className={pillClass} role="status">
-          {text}
+          <WeChatChatMixedText text={text} />
         </span>
       )}
     </motion.div>

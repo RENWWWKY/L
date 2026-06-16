@@ -11,6 +11,7 @@ import {
   normalizeVoiceScriptForTts,
   sanitizeVoiceControlForTextBubble,
   sanitizeVoiceTranscriptDisplay,
+  voiceTranscriptDuplicatesPlainTexts,
 } from './wechatVoiceScript'
 
 export type PlannedProactiveBubble = {
@@ -119,6 +120,7 @@ export async function planProactiveRevealBubblesAsync(
   const imageGen = { enabled: imageGenEnabled, settings: imageGenSettings }
 
   const out: PlannedProactiveBubble[] = []
+  const plainTextsThisBatch: string[] = []
   for (const bubble of bubbles) {
     const lines = flattenProactiveBubbleContent(bubble.content)
     if (!lines.length) continue
@@ -132,7 +134,19 @@ export async function planProactiveRevealBubblesAsync(
         },
         imageGen,
       )
-      if (planned) out.push(planned)
+      if (!planned) continue
+      if (planned.voice) {
+        const transcript = planned.voice.transcriptText?.trim() || planned.content.trim()
+        if (voiceTranscriptDuplicatesPlainTexts(transcript, plainTextsThisBatch)) continue
+      } else if (!planned.images?.length) {
+        const plain = planned.content.trim()
+        if (plain) plainTextsThisBatch.push(plain)
+      }
+      out.push(planned)
+      if (planned.voice) {
+        const transcript = planned.voice.transcriptText?.trim() || planned.content.trim()
+        if (transcript) plainTextsThisBatch.push(transcript)
+      }
     }
   }
   return out

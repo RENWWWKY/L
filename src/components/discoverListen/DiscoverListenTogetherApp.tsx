@@ -2,11 +2,8 @@ import { AnimatePresence, motion } from 'framer-motion'
 import {
   ArrowLeft,
   Home,
-  Music2,
-  Pause,
-  Play,
-  QrCode,
   Search,
+  Smartphone,
   StickyNote,
   User,
 } from 'lucide-react'
@@ -23,7 +20,10 @@ import {
   ListenTogetherArtistDetailPage,
   type ArtistDetailInfo,
 } from './ListenTogetherArtistDetailPage'
+import { ListenTogetherUserProfilePage } from './ListenTogetherUserProfilePage'
+import type { UserDetailInfo } from './listenTogetherProfileTypes'
 import { ListenTogetherSongCommentsPage } from './ListenTogetherSongCommentsPage'
+import type { ListenCommentAuthor } from './ListenCommentComposer'
 import { ListenTogetherProfilePage } from './ListenTogetherProfilePage'
 import { NeteaseQrLoginModal } from './NeteaseQrLoginModal'
 import { MusicSearchPage } from './MusicSearchPage'
@@ -36,7 +36,9 @@ import {
 } from './neteaseListenSession'
 import {
   clearListenTogetherSyncCaches,
+  hydrateListenTogetherDataCaches,
 } from './listenTogetherPersistence'
+import { hydrateListenTogetherPageCaches } from './listenTogetherPageCache'
 import { ListenTogetherPageBackground } from './listenTogetherPageBg'
 import { ListenTogetherHeaderRefreshButton } from './ListenTogetherHeaderRefreshButton'
 import { useListenTogetherPlayer } from './useListenTogetherPlayer'
@@ -48,9 +50,9 @@ import { useNeteaseLikedSongs } from './useNeteaseLikedSongs'
 import { useNeteaseProfile } from './useNeteaseProfile'
 import type { NeteaseArtistItem, NeteaseSongItem } from './neteaseMusicApi'
 
-const TAB_BAR_H = 56
-const MINI_PLAYER_H = 68
-const BOTTOM_STACK = TAB_BAR_H + MINI_PLAYER_H
+import { ListenTogetherMiniPlayerBar, LISTEN_MINI_PLAYER_H, LISTEN_TAB_BAR_H, listenOverlayBottomInset } from './ListenTogetherMiniPlayerBar'
+
+const BOTTOM_STACK = LISTEN_TAB_BAR_H + LISTEN_MINI_PLAYER_H
 
 type DiscoverListenTogetherAppProps = {
   onBack?: () => void
@@ -77,25 +79,6 @@ function NeteaseBadgeIcon({ className = '' }: { className?: string }) {
   )
 }
 
-function SpinningCover({ src, playing }: { src?: string; playing: boolean }) {
-  return (
-    <div className="relative h-11 w-11 shrink-0">
-      <div
-        className={`flex h-11 w-11 items-center justify-center overflow-hidden rounded-full bg-stone-200 shadow-sm ring-1 ring-stone-200/80 ${
-          playing ? 'animate-[spin_8s_linear_infinite]' : ''
-        }`}
-      >
-        {src ? (
-          <img src={src} alt="" className="h-full w-full object-cover" />
-        ) : (
-          <Music2 className="size-5 text-stone-400" strokeWidth={1.5} aria-hidden />
-        )}
-      </div>
-      <div className="pointer-events-none absolute -right-0.5 top-1/2 h-5 w-1.5 -translate-y-1/2 rounded-sm bg-stone-300/90 shadow-sm" aria-hidden />
-    </div>
-  )
-}
-
 export function DiscoverListenTogetherApp({
   onBack,
   className = '',
@@ -119,6 +102,7 @@ export function DiscoverListenTogetherApp({
   const [qrLoginOpen, setQrLoginOpen] = useState(false)
   const [openPlaylist, setOpenPlaylist] = useState<PlaylistDetailInfo | null>(null)
   const [openArtist, setOpenArtist] = useState<ArtistDetailInfo | null>(null)
+  const [openUser, setOpenUser] = useState<UserDetailInfo | null>(null)
   const [commentsSong, setCommentsSong] = useState<NeteaseSongItem | null>(null)
   const [syncingNetease, setSyncingNetease] = useState(false)
   const [dataSyncVersion, setDataSyncVersion] = useState(0)
@@ -134,6 +118,16 @@ export function DiscoverListenTogetherApp({
     fromCache: profileFromCache,
     refetch: refetchProfile,
   } = useNeteaseProfile(neteaseCookie, cookieReady && neteaseLoggedIn)
+
+  const commentAuthor = useMemo((): ListenCommentAuthor | undefined => {
+    const user = neteaseProfile?.user
+    if (!user?.nickname) return undefined
+    return {
+      nickname: user.nickname,
+      avatar: user.avatar,
+      userId: user.userId,
+    }
+  }, [neteaseProfile?.user])
 
   const { reloadLikedIds } = useNeteaseLikedSongs(
     neteaseCookie,
@@ -154,6 +148,10 @@ export function DiscoverListenTogetherApp({
     error: toplistError,
     refetch: refetchToplists,
   } = useNeteaseToplists(neteaseCookie, dataSyncVersion)
+
+  useEffect(() => {
+    void Promise.all([hydrateListenTogetherDataCaches(), hydrateListenTogetherPageCaches()])
+  }, [])
 
   useEffect(() => {
     void hydrateNeteaseListenSession().then((session) => {
@@ -192,10 +190,12 @@ export function DiscoverListenTogetherApp({
     try {
       await clearListenTogetherSyncCaches()
       setDataSyncVersion((v) => v + 1)
-      await refetchProfile({ force: true })
-      await reloadLikedIds()
-      await refetchHomeFeed(true)
-      await refetchToplists(true)
+      await Promise.all([
+        refetchProfile({ force: true }),
+        reloadLikedIds(),
+        refetchHomeFeed(true),
+        refetchToplists(true),
+      ])
     } finally {
       setSyncingNetease(false)
     }
@@ -249,6 +249,7 @@ export function DiscoverListenTogetherApp({
         return
       }
       setOpenArtist(null)
+      setOpenUser(null)
       setOpenPlaylist(info)
     },
     [listenSessionActive],
@@ -261,10 +262,27 @@ export function DiscoverListenTogetherApp({
         return
       }
       setOpenPlaylist(null)
+      setOpenUser(null)
       setOpenArtist({
         id: artist.id,
         name: artist.name,
         avatar: artist.avatar,
+      })
+    },
+    [listenSessionActive],
+  )
+
+  const openUserProfile = useCallback(
+    (user: UserDetailInfo) => {
+      if (!listenSessionActive) {
+        setQrLoginOpen(true)
+        return
+      }
+      setOpenPlaylist(null)
+      setOpenUser({
+        userId: user.userId,
+        nickname: user.nickname,
+        avatar: user.avatar,
       })
     },
     [listenSessionActive],
@@ -363,12 +381,16 @@ export function DiscoverListenTogetherApp({
     setCommentsSong(null)
   }, [])
 
+  const handleRequireLogin = useCallback(() => {
+    setQrLoginOpen(true)
+  }, [])
+
   const bottomPad = `calc(${BOTTOM_STACK}px + env(safe-area-inset-bottom, 0px) + 12px)`
-  const hideTabBar = Boolean(openPlaylist || openArtist)
+  const hideTabBar = Boolean(openPlaylist || openArtist || openUser)
   const miniPlayerBottom = hideTabBar
     ? 'env(safe-area-inset-bottom, 0px)'
-    : `calc(${TAB_BAR_H}px + env(safe-area-inset-bottom, 0px))`
-  const overlayBottomInset = `calc(${MINI_PLAYER_H}px + env(safe-area-inset-bottom, 0px))`
+    : `calc(${LISTEN_TAB_BAR_H}px + env(safe-area-inset-bottom, 0px))`
+  const overlayBottomInset = listenOverlayBottomInset()
   const isHome = activeTab === 'home'
   const isMe = activeTab === 'me'
   const isNotes = activeTab === 'notes'
@@ -396,7 +418,7 @@ export function DiscoverListenTogetherApp({
             onBack={onBack}
             neteaseBound={neteaseLoggedIn}
             isGuestMode={isGuestMode}
-            onRequestLogin={() => setQrLoginOpen(true)}
+            onRequestLogin={handleRequireLogin}
             onLeaveGuest={() => void handleLeaveGuestMode()}
             neteaseProfile={neteaseProfile}
             profileLoading={neteaseLoggedIn && profileLoading}
@@ -406,6 +428,9 @@ export function DiscoverListenTogetherApp({
             profileFromCache={profileFromCache}
             onSyncNetease={() => void handleSyncNetease()}
             syncingNetease={syncingNetease}
+            cookie={neteaseCookie ?? ''}
+            onOpenArtist={openArtistDetail}
+            onOpenUser={openUserProfile}
           />
         ) : null}
 
@@ -421,7 +446,7 @@ export function DiscoverListenTogetherApp({
           <MusicSearchPage
             neteaseCookie={neteaseCookie}
             sessionActive={listenSessionActive}
-            onRequireLogin={() => setQrLoginOpen(true)}
+            onRequireLogin={handleRequireLogin}
             onPlaySong={(s, queue) => void playSongWithContext(s, queue, 0)}
             onOpenPlaylist={(pl) =>
               openPlaylistDetail({
@@ -496,7 +521,7 @@ export function DiscoverListenTogetherApp({
             ) : null}
             <button
               type="button"
-              aria-label="扫码登录或切换账号"
+              aria-label="登录或切换账号"
               onClick={() => setQrLoginOpen(true)}
               className={`flex h-9 w-9 items-center justify-center rounded-full border shadow-sm backdrop-blur-sm transition-colors ${
                 neteaseLoggedIn
@@ -506,7 +531,7 @@ export function DiscoverListenTogetherApp({
                     : 'border-white/80 bg-white/50 text-stone-500 hover:bg-white/80'
               }`}
             >
-              <QrCode className="size-[18px]" strokeWidth={1.5} />
+              <Smartphone className="size-[18px]" strokeWidth={1.5} />
             </button>
           </div>
         </header>
@@ -580,7 +605,8 @@ export function DiscoverListenTogetherApp({
               playlist={openPlaylist}
               cookie={neteaseCookie ?? ''}
               neteaseUserId={neteaseProfile?.user.userId}
-              onRequireLogin={() => setQrLoginOpen(true)}
+              commentAuthor={commentAuthor}
+              onRequireLogin={handleRequireLogin}
               onPlaylistSubscribeChange={() => void refetchProfile({ force: true })}
               onBack={() => setOpenPlaylist(null)}
               onPlaySong={(s, queueTracks) =>
@@ -606,12 +632,37 @@ export function DiscoverListenTogetherApp({
               artist={openArtist}
               cookie={neteaseCookie ?? ''}
               sessionActive={listenSessionActive}
-              onRequireLogin={() => setQrLoginOpen(true)}
+              commentAuthor={commentAuthor}
+              onRequireLogin={handleRequireLogin}
               onBack={() => setOpenArtist(null)}
               onOpenArtist={openArtistDetail}
+              onOpenUser={openUserProfile}
               onPlaySong={(s, queueTracks) => void playSongWithContext(s, queueTracks, 0)}
               playingSongId={playingSongId}
               isPlaying={isPlaying}
+              contentBottomInset={overlayBottomInset}
+              className="h-full"
+            />
+          </motion.div>
+        ) : null}
+        {openUser ? (
+          <motion.div
+            key={`user-profile-${openUser.userId}`}
+            initial={{ x: '100%' }}
+            animate={{ x: 0 }}
+            exit={{ x: '100%' }}
+            transition={{ type: 'spring', damping: 28, stiffness: 320 }}
+            className="fixed inset-0 z-[115] mx-auto max-w-[560px] overflow-hidden bg-stone-50"
+          >
+            <ListenTogetherUserProfilePage
+              user={openUser}
+              cookie={neteaseCookie ?? ''}
+              sessionActive={listenSessionActive}
+              onBack={() => setOpenUser(null)}
+              onRequireLogin={handleRequireLogin}
+              onOpenPlaylist={openPlaylistDetail}
+              onOpenArtist={openArtistDetail}
+              onOpenUser={openUserProfile}
               contentBottomInset={overlayBottomInset}
               className="h-full"
             />
@@ -624,7 +675,7 @@ export function DiscoverListenTogetherApp({
           className="fixed left-0 right-0 z-[35] mx-auto max-w-[560px] px-4"
           style={{
             bottom: hideTabBar
-              ? `calc(${MINI_PLAYER_H}px + env(safe-area-inset-bottom, 0px) + 8px)`
+              ? `calc(${LISTEN_MINI_PLAYER_H}px + env(safe-area-inset-bottom, 0px) + 8px)`
               : `calc(${BOTTOM_STACK}px + env(safe-area-inset-bottom, 0px) + 8px)`,
           }}
         >
@@ -638,56 +689,16 @@ export function DiscoverListenTogetherApp({
         </div>
       ) : null}
 
-      {/* —— Mini player (above tab bar) —— */}
-      <div
-        role="button"
-        tabIndex={0}
-        onClick={openFullScreen}
-        onKeyDown={(e) => {
-          if (e.key === 'Enter' || e.key === ' ') {
-            e.preventDefault()
-            openFullScreen()
-          }
-        }}
-        className="fixed left-0 right-0 z-30 mx-auto max-w-[560px] cursor-pointer border-t border-stone-100/50 bg-white/80 shadow-lg backdrop-blur-md"
-        style={{
-          bottom: miniPlayerBottom,
-          height: MINI_PLAYER_H,
-        }}
-        aria-label="打开全屏播放器"
-      >
-        <div
-          className="absolute inset-x-0 top-0 h-0.5 bg-stone-100"
-          aria-hidden
-        >
-          <div
-            className="h-full bg-rose-300 transition-[width] duration-300"
-            style={{ width: `${progress}%` }}
-          />
-        </div>
-        <div className="flex h-full items-center gap-3 px-4 pt-0.5">
-          <SpinningCover src={song.cover || undefined} playing={isPlaying} />
-          <div className="min-w-0 flex-1 text-left">
-            <p className="truncate text-[14px] font-medium text-stone-800">{song.title}</p>
-            <p className="truncate text-[12px] text-stone-400">{song.artist}</p>
-          </div>
-          <button
-            type="button"
-            aria-label={isPlaying ? '暂停' : '播放'}
-            onClick={(e) => {
-              e.stopPropagation()
-              togglePlay()
-            }}
-            className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full text-rose-400 transition-colors hover:bg-rose-50/80"
-          >
-            {isPlaying ? (
-              <Pause className="size-5 fill-current" strokeWidth={0} />
-            ) : (
-              <Play className="size-5 fill-current" strokeWidth={0} />
-            )}
-          </button>
-        </div>
-      </div>
+      <ListenTogetherMiniPlayerBar
+        title={song.title}
+        artist={song.artist}
+        cover={song.cover || undefined}
+        progress={progress}
+        isPlaying={isPlaying}
+        bottom={miniPlayerBottom}
+        onOpenFullscreen={openFullScreen}
+        onTogglePlay={togglePlay}
+      />
 
       {/* —— Bottom tab bar（歌单详情页隐藏，仅保留迷你播放器）—— */}
       <AnimatePresence>
@@ -700,7 +711,7 @@ export function DiscoverListenTogetherApp({
             transition={{ duration: 0.22, ease: 'easeOut' }}
             className="fixed bottom-0 left-0 right-0 z-40 mx-auto max-w-[560px] border-t border-stone-100 bg-white shadow-[0_-1px_0_rgba(0,0,0,0.03)]"
             style={{
-              height: `calc(${TAB_BAR_H}px + env(safe-area-inset-bottom, 0px))`,
+              height: `calc(${LISTEN_TAB_BAR_H}px + env(safe-area-inset-bottom, 0px))`,
               paddingBottom: 'env(safe-area-inset-bottom, 0px)',
             }}
             aria-label="主导航"
@@ -738,7 +749,9 @@ export function DiscoverListenTogetherApp({
         open={commentsSong !== null}
         song={commentsSong}
         cookie={neteaseCookie}
+        author={commentAuthor}
         onBack={closeComments}
+        onRequireLogin={handleRequireLogin}
       />
 
       <NeteaseQrLoginModal
@@ -747,7 +760,10 @@ export function DiscoverListenTogetherApp({
         isGuestMode={isGuestMode}
         onGuestEnter={() => void handleEnterGuestMode()}
         onSuccess={() => {
-          void hydrateNeteaseLoginCookie().then(async (cookie) => {
+          void (async () => {
+            const cookie =
+              loadNeteaseCookie().trim() || (await hydrateNeteaseLoginCookie()).trim()
+            if (!cookie) return
             const session = await applyNeteaseAccountLogin(cookie)
             setNeteaseCookie(session.cookie)
             setIsGuestMode(session.isGuest)
@@ -755,7 +771,7 @@ export function DiscoverListenTogetherApp({
             setDataSyncVersion((v) => v + 1)
             void refetchProfile({ force: true })
             void reloadLikedIds()
-          })
+          })()
         }}
       />
     </div>

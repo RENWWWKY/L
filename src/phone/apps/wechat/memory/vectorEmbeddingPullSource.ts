@@ -46,16 +46,5 @@ export function resolveEmbeddingPullSource(params: {
     }
   }
 
-  const mainUrl = params.chatApi?.apiUrl?.trim() || ''
-  const mainKey = params.chatApi?.apiKey?.trim() || ''
-  if (mainUrl && mainKey) {
-    return {
-      apiUrl: mainUrl,
-      apiKey: mainKey,
-      kind: 'main',
-      label: '将按当前聊天主接口（全局 API 配置）去拉模型',
-    }
-  }
-
   return null
 }

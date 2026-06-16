@@ -3,6 +3,7 @@ import { Heart, Loader2, Play } from 'lucide-react'
 import { useMemo } from 'react'
 
 import { buildMusicDiscoveryModel } from './musicDiscoveryModel'
+import { ListenNumericText } from './ListenNum'
 import type { NeteaseToplistChart } from './neteaseToplistApi'
 import type { NeteaseHomeFeed } from './neteaseHomeApi'
 import type { NeteaseSongItem } from './neteaseMusicApi'
@@ -338,7 +339,7 @@ export function MusicDiscoveryPage({
                     </p>
                     {chart.songs[0] ? (
                       <p className="mt-1 line-clamp-1 text-[10px] text-white/65">
-                        No.1 {chart.songs[0].name}
+                        <ListenNumericText text={`No.1 ${chart.songs[0].name}`} />
                       </p>
                     ) : null}
                   </div>

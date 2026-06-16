@@ -139,6 +139,7 @@ export function characterMemoryToMemoryEntry(
       m.memoryTriggerMode === 'keyword' ? flattenMemoryTriggerKeywords(m) : undefined,
     timestamp: resolveMemoryEntryTimestamp(m),
     ...(gid ? { groupId: gid, groupDisplayName: lookup.groupNameById.get(gid) } : {}),
+    ...(m.sourceWechatAccountId?.trim() ? { sourceWechatAccountId: m.sourceWechatAccountId.trim() } : {}),
     memoryScope: m.memoryScope,
     linkedFromCharacterId: m.linkedFromCharacterId,
     ...(m.momentPayload ? { momentPayload: m.momentPayload } : {}),

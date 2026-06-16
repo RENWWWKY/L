@@ -1,6 +1,7 @@
 import { useCallback, useLayoutEffect, useRef, useState, type CSSProperties, type ReactNode, type RefObject } from 'react'
 
 import type { WeChatBubbleTheme } from '../../types'
+import { WeChatChatMixedText } from './WeChatChatMixedText'
 import {
   ChatGroupSenderNicknameWithRank,
   ChatGroupSpeakerRankOnAvatar,
@@ -37,7 +38,7 @@ function ChatBubbleReplyPreview({
           {preview.senderName}：
         </span>
         <span className="line-clamp-2 block text-[13px] leading-[1.35]" style={{ color: muted }}>
-          {preview.content || '…'}
+          <WeChatChatMixedText text={preview.content || '…'} />
         </span>
       </span>
     </span>
@@ -268,6 +269,11 @@ export function WeChatMessageBubbleRow({
 
   const textCls = variant === 'chat' ? 'text-[15px]' : 'text-[14px]'
   const messageBodyVisible = messageText.replace(/\u200b/g, '').trim().length > 0
+  const messageBody = messageBodyVisible ? (
+    <span className="whitespace-pre-wrap break-words">
+      <WeChatChatMixedText text={messageText} />
+    </span>
+  ) : null
 
   const avatarMotionCls =
     avatarTapMotion && variant === 'chat'
@@ -344,10 +350,10 @@ export function WeChatMessageBubbleRow({
           messagePrefixIcon ? (
             <span className="inline-flex items-center gap-1.5 align-middle">
               <span className="inline-flex shrink-0">{messagePrefixIcon}</span>
-              <span>{messageText}</span>
+              {messageBody}
             </span>
           ) : (
-            messageText
+            messageBody
           )
         ) : null}
         {variant === 'chat' && bubbleSelected ? (

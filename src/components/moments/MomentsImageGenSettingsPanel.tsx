@@ -3,6 +3,7 @@ import { Check, Eye, EyeOff, ImageIcon, Loader2, RefreshCw, Wand2 } from 'lucide
 import { useCallback, useEffect, useMemo, useState } from 'react'
 
 import { InlineDropdown } from '../../phone/apps/wechat/newFriendsPersona/InlineDropdown'
+import { MemoryModelIdText } from '../../phone/apps/wechat/memory/MemoryModelIdText'
 import {
   fetchMomentsImageModelCatalog,
   findMomentsImageModel,
@@ -624,8 +625,13 @@ export function MomentsImageGenSettingsPanel({
                     <div className="min-w-0">
                       <p className="truncate text-[14px] font-semibold text-[#111827]">{selected.labelZh}</p>
                       <p className="mt-0.5 text-[11px] text-[#9CA3AF]">
-                        {selected.brand}
-                        {selected.modelName ? ` · ${selected.modelName}` : ''}
+                        {selected.brand ? <MemoryModelIdText text={selected.brand} /> : null}
+                        {selected.modelName ? (
+                          <>
+                            {selected.brand ? ' · ' : null}
+                            <MemoryModelIdText text={selected.modelName} />
+                          </>
+                        ) : null}
                       </p>
                     </div>
                     <div className="flex shrink-0 flex-col items-end gap-1">
@@ -989,10 +995,15 @@ function ModelRow({
       <div className="flex items-start justify-between gap-2">
         <div className="min-w-0">
           <p className="truncate text-[13px] font-semibold text-[#111827]">{model.labelZh}</p>
-          <p className="mt-0.5 truncate text-[11px] text-[#9CA3AF]">
-            {model.brand}
-            {model.modelName ? ` · ${model.modelName}` : ''}
-          </p>
+                      <p className="mt-0.5 truncate text-[11px] text-[#9CA3AF]">
+                        {model.brand ? <MemoryModelIdText text={model.brand} /> : null}
+                        {model.modelName ? (
+                          <>
+                            {model.brand ? ' · ' : null}
+                            <MemoryModelIdText text={model.modelName} />
+                          </>
+                        ) : null}
+                      </p>
         </div>
         <div className="flex shrink-0 flex-col items-end gap-1">
           <ModelBadge free={model.free} priceLabel={model.priceLabel} />

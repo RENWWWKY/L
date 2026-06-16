@@ -1,9 +1,17 @@
+import { AnimatePresence, motion } from 'framer-motion'
 import { useCallback, useEffect, useMemo, useState } from 'react'
 
 import { sendMusicSyncInvite } from '../../phone/apps/wechat/musicSync/sendMusicSyncInvite'
 import { useMusicStore } from '../../stores/useMusicStore'
-import { InviteListenerDrawer } from './InviteListenerDrawer'
+import { ListenTogetherMiniPlayerBar, listenOverlayBottomInset } from './ListenTogetherMiniPlayerBar'
+import {
+  ListenTogetherArtistDetailPage,
+  type ArtistDetailInfo,
+} from './ListenTogetherArtistDetailPage'
+import { ListenTogetherUserProfilePage } from './ListenTogetherUserProfilePage'
+import type { UserDetailInfo } from './listenTogetherProfileTypes'
 import { ListenTogetherActionToast } from './ListenTogetherActionToast'
+import { InviteListenerDrawer } from './InviteListenerDrawer'
 import { activeLyricIndex } from './listenLyricParse'
 import {
   formatProgressTimes,
@@ -11,8 +19,13 @@ import {
 } from './ListenTogetherFullscreenPlayer'
 import { ListenTogetherSongActionDrawer } from './ListenTogetherSongActionDrawer'
 import { ListenTogetherSongCommentsPage } from './ListenTogetherSongCommentsPage'
+import type { ListenCommentAuthor } from './ListenCommentComposer'
 import { hydrateNeteaseListenSession } from './neteaseListenSession'
-import type { NeteaseSongItem } from './neteaseMusicApi'
+import {
+  resolveSongPrimaryArtist,
+  type NeteaseArtistItem,
+  type NeteaseSongItem,
+} from './neteaseMusicApi'
 import { useListenTogetherPlayer } from './useListenTogetherPlayer'
 import type { InviteableContact } from './useInviteableWeChatContacts'
 import { useNeteaseLikedSongs } from './useNeteaseLikedSongs'
@@ -26,8 +39,12 @@ export function ListenTogetherFullscreenHost() {
   const syncListening = useMusicStore((s) => s.syncListening)
 
   const [neteaseCookie, setNeteaseCookie] = useState('')
+  const [isGuestMode, setIsGuestMode] = useState(false)
   const [cookieReady, setCookieReady] = useState(false)
   const [commentsSong, setCommentsSong] = useState<NeteaseSongItem | null>(null)
+  const [openArtist, setOpenArtist] = useState<ArtistDetailInfo | null>(null)
+  const [openUser, setOpenUser] = useState<UserDetailInfo | null>(null)
+  const [resolvingArtist, setResolvingArtist] = useState(false)
   const [actionDrawerOpen, setActionDrawerOpen] = useState(false)
   const [inviteDrawerOpen, setInviteDrawerOpen] = useState(false)
   const [inviteSending, setInviteSending] = useState(false)
@@ -48,10 +65,21 @@ export function ListenTogetherFullscreenHost() {
     cyclePlayMode,
     seekTo,
     seekToTimeMs,
+    playSong,
   } = useListenTogetherPlayer()
 
   const neteaseLoggedIn = Boolean(neteaseCookie.trim())
+  const listenSessionActive = neteaseLoggedIn || isGuestMode
   const { data: neteaseProfile } = useNeteaseProfile(neteaseCookie, cookieReady && neteaseLoggedIn)
+  const commentAuthor = useMemo((): ListenCommentAuthor | undefined => {
+    const user = neteaseProfile?.user
+    if (!user?.nickname) return undefined
+    return {
+      nickname: user.nickname,
+      avatar: user.avatar,
+      userId: user.userId,
+    }
+  }, [neteaseProfile?.user])
   const {
     isLiked: isNeteaseSongLiked,
     toggleLike: toggleNeteaseSongLike,
@@ -65,12 +93,16 @@ export function ListenTogetherFullscreenHost() {
   useEffect(() => {
     void hydrateNeteaseListenSession().then((session) => {
       setNeteaseCookie(session.cookie)
+      setIsGuestMode(session.isGuest)
       setCookieReady(true)
     })
   }, [])
 
   useEffect(() => {
-    if (!open) {
+    if (open) {
+      setOpenArtist(null)
+      setOpenUser(null)
+    } else {
       setCommentsSong(null)
     }
   }, [open])
@@ -114,6 +146,90 @@ export function ListenTogetherFullscreenHost() {
   const showToast = useCallback((message: string) => {
     setToastMessage(message)
   }, [])
+
+  const playSongFromArtist = useCallback(
+    (item: NeteaseSongItem, queue: NeteaseSongItem[]) => {
+      const list = queue.length > 0 ? queue : [item]
+      void playSong(item, {
+        queue: list,
+        index: Math.max(0, list.findIndex((t) => t.id === item.id)),
+      })
+    },
+    [playSong],
+  )
+
+  const openArtistDetail = useCallback((artist: NeteaseArtistItem) => {
+    setListenFullscreenOpen(false)
+    setOpenUser(null)
+    setOpenArtist({ id: artist.id, name: artist.name, avatar: artist.avatar })
+  }, [setListenFullscreenOpen])
+
+  const openUserProfile = useCallback((user: UserDetailInfo) => {
+    setListenFullscreenOpen(false)
+    setOpenArtist(null)
+    setOpenUser({
+      userId: user.userId,
+      nickname: user.nickname,
+      avatar: user.avatar,
+    })
+  }, [setListenFullscreenOpen])
+
+  const handleOpenArtist = useCallback(async () => {
+    const songId = song.songId ?? track?.id
+    if (!songId || !canInteractWithSong) {
+      showToast('当前歌曲无法跳转歌手页')
+      return
+    }
+    if (!listenSessionActive) {
+      showToast('请先登录或进入游客模式')
+      return
+    }
+
+    const knownArtistId = song.artistId ?? track?.artistId
+    if (knownArtistId) {
+      setListenFullscreenOpen(false)
+      setOpenArtist({
+        id: knownArtistId,
+        name: song.artist || track?.artist || '歌手',
+        avatar: '',
+      })
+      return
+    }
+
+    if (!neteaseCookie.trim()) {
+      showToast('请先登录网易云账号')
+      return
+    }
+
+    setResolvingArtist(true)
+    try {
+      const resolved = await resolveSongPrimaryArtist(
+        neteaseCookie,
+        songId,
+        song.artist || track?.artist,
+      )
+      if (!resolved) {
+        showToast('未找到该歌手')
+        return
+      }
+      setListenFullscreenOpen(false)
+      setOpenArtist(resolved)
+    } catch {
+      showToast('打开歌手页失败')
+    } finally {
+      setResolvingArtist(false)
+    }
+  }, [
+    song.songId,
+    song.artistId,
+    song.artist,
+    track,
+    canInteractWithSong,
+    listenSessionActive,
+    neteaseCookie,
+    showToast,
+    setListenFullscreenOpen,
+  ])
 
   const handleInviteConfirm = useCallback(
     async (contact: InviteableContact) => {
@@ -186,6 +302,8 @@ export function ListenTogetherFullscreenHost() {
             : undefined
         }
         onOpenComments={canInteractWithSong ? openCommentsForNowPlaying : undefined}
+        onOpenArtist={canInteractWithSong ? () => void handleOpenArtist() : undefined}
+        artistLinkBusy={resolvingArtist}
         playMode={playMode}
         canUseHeartMode={canUseHeartMode}
         onCyclePlayMode={cyclePlayMode}
@@ -228,9 +346,75 @@ export function ListenTogetherFullscreenHost() {
         open={commentsSong !== null}
         song={commentsSong}
         cookie={neteaseCookie}
+        author={commentAuthor}
         onBack={closeComments}
         className="!z-[10020]"
       />
+
+      <AnimatePresence>
+        {openArtist ? (
+          <motion.div
+            key={`fullscreen-artist-${openArtist.id}`}
+            initial={{ x: '100%' }}
+            animate={{ x: 0 }}
+            exit={{ x: '100%' }}
+            transition={{ type: 'spring', damping: 28, stiffness: 320 }}
+            className="fixed inset-0 z-[10020] mx-auto max-w-[560px] overflow-hidden"
+          >
+            <ListenTogetherArtistDetailPage
+              artist={openArtist}
+              cookie={neteaseCookie}
+              sessionActive={listenSessionActive}
+              commentAuthor={commentAuthor}
+              onBack={() => setOpenArtist(null)}
+              onRequireLogin={() => showToast('请先登录或进入游客模式')}
+              onOpenArtist={openArtistDetail}
+              onOpenUser={openUserProfile}
+              onPlaySong={playSongFromArtist}
+              playingSongId={song.songId ?? track?.id ?? null}
+              isPlaying={isPlaying}
+              contentBottomInset={listenOverlayBottomInset()}
+              className="h-full"
+            />
+          </motion.div>
+        ) : null}
+        {openUser ? (
+          <motion.div
+            key={`fullscreen-user-${openUser.userId}`}
+            initial={{ x: '100%' }}
+            animate={{ x: 0 }}
+            exit={{ x: '100%' }}
+            transition={{ type: 'spring', damping: 28, stiffness: 320 }}
+            className="fixed inset-0 z-[10021] mx-auto max-w-[560px] overflow-hidden bg-stone-50"
+          >
+            <ListenTogetherUserProfilePage
+              user={openUser}
+              cookie={neteaseCookie}
+              sessionActive={listenSessionActive}
+              onBack={() => setOpenUser(null)}
+              onRequireLogin={() => showToast('请先登录或进入游客模式')}
+              onOpenArtist={openArtistDetail}
+              onOpenUser={openUserProfile}
+              contentBottomInset={listenOverlayBottomInset()}
+              className="h-full"
+            />
+          </motion.div>
+        ) : null}
+      </AnimatePresence>
+
+      {openArtist || openUser ? (
+        <ListenTogetherMiniPlayerBar
+          title={song.title || track.title}
+          artist={song.artist || track.artist}
+          cover={song.cover || track.cover || undefined}
+          progress={progress}
+          isPlaying={isPlaying}
+          bottom="env(safe-area-inset-bottom, 0px)"
+          onOpenFullscreen={() => setListenFullscreenOpen(true)}
+          onTogglePlay={togglePlay}
+          zIndexClass="z-[10025]"
+        />
+      ) : null}
     </>
   )
 }

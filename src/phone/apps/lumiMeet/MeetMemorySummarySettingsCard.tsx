@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from 'react'
+import { listenPlainNumStyle } from '../../../components/discoverListen/listenTogetherTypography'
 import { MemoryEngineSoftSwitch } from '../wechat/memory/MemoryEngineSoftSwitch'
 import { personaDb } from '../wechat/newFriendsPersona/idb'
 import {
@@ -14,12 +15,12 @@ function clampInterval(n: number): number {
 export function MeetMemorySummarySettingsCard() {
   const [hydrated, setHydrated] = useState(false)
   const [autoSummaryEnabled, setAutoSummaryEnabled] = useState(true)
-  const [intervalN, setIntervalN] = useState(10)
+  const [intervalDraft, setIntervalDraft] = useState('10')
 
   const reload = useCallback(async () => {
     const settings = await personaDb.getMemorySettings()
     setAutoSummaryEnabled(resolveMeetAutoSummaryEnabled(settings))
-    setIntervalN(resolveMeetAutoSummaryInterval(settings))
+    setIntervalDraft(String(resolveMeetAutoSummaryInterval(settings)))
     setHydrated(true)
   }, [])
 
@@ -39,9 +40,10 @@ export function MeetMemorySummarySettingsCard() {
     await personaDb.putMemorySettings({ meetAutoSummaryEnabled: next })
   }
 
-  const commitInterval = async (raw: number) => {
-    const n = clampInterval(raw)
-    setIntervalN(n)
+  const commitInterval = async (raw: string | number) => {
+    const parsed = typeof raw === 'number' ? raw : parseInt(String(raw).trim(), 10)
+    const n = clampInterval(Number.isFinite(parsed) ? parsed : 10)
+    setIntervalDraft(String(n))
     await personaDb.putMemorySettings({ meetAutoSummaryInterval: n })
   }
 
@@ -85,14 +87,18 @@ export function MeetMemorySummarySettingsCard() {
           }`}
         >
           <input
-            type="number"
-            min={1}
-            max={100}
-            value={intervalN}
+            type="text"
+            inputMode="numeric"
+            pattern="[0-9]*"
+            value={intervalDraft}
             disabled={!autoSummaryEnabled}
-            onChange={(e) => setIntervalN(Number(e.target.value))}
-            onBlur={() => void commitInterval(intervalN)}
-            className="w-12 border-0 bg-transparent text-center text-[15px] font-medium text-[#2c2a26] outline-none disabled:cursor-not-allowed"
+            onChange={(e) => {
+              const digits = e.target.value.replace(/\D/g, '').slice(0, 3)
+              setIntervalDraft(digits)
+            }}
+            onBlur={() => void commitInterval(intervalDraft)}
+            className="w-10 min-w-[1.5ch] border-0 bg-transparent text-center text-[15px] font-medium text-[#2c2a26] outline-none disabled:cursor-not-allowed"
+            style={listenPlainNumStyle}
             aria-label="遇见自动总结间隔轮数"
           />
         </div>

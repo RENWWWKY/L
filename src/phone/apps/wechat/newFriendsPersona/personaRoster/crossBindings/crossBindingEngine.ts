@@ -1,7 +1,7 @@
 import { personaDb } from '../../idb'
 import type { Character, PlayerIdentity, Relationship } from '../../types'
 import { uid } from '../../utils'
-import { formatPlayerIdentityDisplayName } from '../../../wechatCharacterPlayerIdentity'
+import { formatPlayerIdentityDisplayName, isWechatAccountSessionSlotIdentityId } from '../../../wechatCharacterPlayerIdentity'
 import { playerIdentityProfessionTag } from '../personaRosterDisplay'
 import { boundMainCharId, isMainCharacter } from '../personaRosterTypes'
 import type {
@@ -34,7 +34,7 @@ export function buildCrossBindingRegistry(params: {
   const map = new Map<string, CrossBindingNode>()
   for (const u of params.identityList) {
     const id = u.id.trim()
-    if (!id) continue
+    if (!id || id === '__none__' || isWechatAccountSessionSlotIdentityId(id)) continue
     map.set(nodeKey('user', id), {
       id,
       type: 'user',
@@ -241,6 +241,41 @@ export function graphRelationLabel(edge: RelationshipEdge, focusNodeKey: string 
   return relationLabelFromAnchor(edge, parsed.id)
 }
 
+export type GraphEdgeRelationLine = {
+  short: string
+  full: string
+}
+
+function graphNodeDisplayName(node: CrossBindingNode | undefined, fallback: string): string {
+  if (!node) return fallback
+  return node.type === 'user' ? '你' : node.label
+}
+
+/** 编辑面板预览：从 anchor 视角列出可见的关系词（A→B = B 是 A 的什么） */
+export function graphEdgeRelationLines(
+  edge: RelationshipEdge,
+  registry: Map<string, CrossBindingNode>,
+  anchorNodeKey: string,
+): GraphEdgeRelationLine[] {
+  const parsed = parseNodeKey(anchorNodeKey)
+  const sourceKey = nodeKey(edge.sourceType, edge.sourceId)
+  const targetKey = nodeKey(edge.targetType, edge.targetId)
+  const peerKey = sourceKey === anchorNodeKey ? targetKey : sourceKey
+
+  const anchorNode = registry.get(anchorNodeKey)
+  const peerNode = registry.get(peerKey)
+  const anchorName = graphNodeDisplayName(anchorNode, 'A')
+  const peerName = graphNodeDisplayName(peerNode, 'B')
+
+  const anchorId = parsed?.id
+  if (anchorId && !edgeVisibleToAnchor(edge, anchorId)) {
+    return []
+  }
+
+  const short = (anchorId ? relationLabelFromAnchor(edge, anchorId) : edge.forwardRelationLabel).trim() || '关系'
+  return [{ short, full: `「${peerName}」是「${anchorName}」的 ${short}` }]
+}
+
 export function applyAnchorRelationEdit(
   edge: RelationshipEdge,
   anchorId: string,
@@ -368,6 +403,16 @@ export function neighborNodeKeysForGraphFocus(
   for (const edge of edges) {
     const involves = edge.sourceId === anchorId || edge.targetId === anchorId
     if (!involves || !edgeVisibleToAnchor(edge, anchorId)) continue
+    keys.add(nodeKey(edge.sourceType, edge.sourceId))
+    keys.add(nodeKey(edge.targetType, edge.targetId))
+  }
+  return keys
+}
+
+/** 关系图谱只应展示至少参与一条连线的节点，避免孤立「我的身份」头像混入角色关系图 */
+export function connectedNodeKeysFromEdges(edges: readonly RelationshipEdge[]): Set<string> {
+  const keys = new Set<string>()
+  for (const edge of edges) {
     keys.add(nodeKey(edge.sourceType, edge.sourceId))
     keys.add(nodeKey(edge.targetType, edge.targetId))
   }

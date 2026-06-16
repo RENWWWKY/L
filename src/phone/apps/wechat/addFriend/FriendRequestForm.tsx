@@ -11,9 +11,11 @@ import {
 import { personaDb } from '../newFriendsPersona/idb'
 import type { PlayerIdentity } from '../newFriendsPersona/types'
 import { PlatinumSwitch } from '../newFriendsPersona/PlatinumSwitch'
+import { resolveAccountSessionIdentityId } from '../wechatAccountPersistence'
 import {
   arePlayerIdentitiesBasicsEquivalent,
   getCharacterBoundPlayerIdentityId,
+  isWechatAccountSessionSlotIdentityId,
 } from '../wechatCharacterPlayerIdentity'
 import { submitUserOutgoingFriendRequest } from './submitUserOutgoingFriendRequest'
 import { useWechatStore } from '../useWechatStore'
@@ -50,7 +52,12 @@ export function FriendRequestForm({
   const [meetMaskNick, setMeetMaskNick] = useState('')
   const [boundPrimaryIdentityId, setBoundPrimaryIdentityId] = useState<string | null>(null)
   const [altMaskHint, setAltMaskHint] = useState(false)
-  const { currentAccountId } = useWechatStore()
+  const { currentAccountId, accounts } = useWechatStore()
+
+  const sessionSlotIdentityId = useMemo(() => {
+    const acc = accounts.find((a) => a.accountId === currentAccountId)
+    return acc ? resolveAccountSessionIdentityId(acc).trim() : ''
+  }, [accounts, currentAccountId])
 
   useEffect(() => {
     let cancelled = false
@@ -70,13 +77,18 @@ export function FriendRequestForm({
       const list = ids.filter((i) => i.id !== '__none__')
       setIdentities(list)
 
-      const preferred = playerIdentityId?.trim() || curId.trim() || list[0]?.id || ''
-      setSelectedIdentityId(list.some((i) => i.id === preferred) ? preferred : list[0]?.id ?? '')
+      const slot = sessionSlotIdentityId
+      const preferred =
+        playerIdentityId?.trim() || curId.trim() || list[0]?.id || slot || ''
+      const usable =
+        list.some((i) => i.id === preferred) ||
+        (!!slot && preferred === slot && isWechatAccountSessionSlotIdentityId(preferred))
+      setSelectedIdentityId(usable ? preferred : list[0]?.id ?? slot)
     })()
     return () => {
       cancelled = true
     }
-  }, [characterId, currentAccountId, playerIdentityId])
+  }, [characterId, currentAccountId, playerIdentityId, sessionSlotIdentityId])
 
   useEffect(() => {
     let cancelled = false
@@ -130,7 +142,7 @@ export function FriendRequestForm({
 
   const send = () => {
     if (sending) return
-    const pid = selectedIdentityId.trim()
+    const pid = selectedIdentityId.trim() || sessionSlotIdentityId
     if (!pid || pid === '__none__') {
       window.alert('请先选择要绑定的微信身份')
       return
@@ -257,6 +269,13 @@ export function FriendRequestForm({
                 </p>
               </motion.div>
             ) : null}
+          </section>
+        ) : sessionSlotIdentityId ? (
+          <section className="mb-8">
+            <p className="mb-2 text-[10px] font-medium tracking-[0.2em] text-[#8A8A8A]">验证身份</p>
+            <p className="text-[12px] leading-relaxed text-[#6B6B6B]">
+              将使用当前微信账号资料发起申请；可在「我的身份」中创建马甲后再切换。
+            </p>
           </section>
         ) : null}
 

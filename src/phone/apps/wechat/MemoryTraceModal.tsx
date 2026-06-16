@@ -605,9 +605,9 @@ export function MemoryTraceModal({ open, onClose, data }: MemoryTraceModalProps)
                         条（滑动窗口；与「未总结」块并列服务于本轮推理）
                       </p>
                       <div>
-                        <p className="text-[11px] font-medium uppercase tracking-[0.2em] text-neutral-400">尚未总结 · 线下剧情</p>
+                        <p className="text-[11px] font-medium uppercase tracking-[0.2em] text-neutral-400">待总结的约会剧情</p>
                         <p className="mt-1 text-[11px] leading-relaxed text-neutral-500">
-                          仅展示注入模型的剧情正文摘录；节选规则与禁止编造等说明仅写入 prompt，不在此重复。
+                          尚未写入长期记忆的约会页剧情摘录；满「总结间隔」后会合并进主角记忆。
                         </p>
                         <ul className="mt-2 space-y-3">
                           {matrix.recentContext.unsummarizedOfflinePlots.map((row, i) => (

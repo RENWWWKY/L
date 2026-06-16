@@ -22,15 +22,15 @@ export function characterBelongsToWechatAccount(
   return owner === acc
 }
 
-/** 本账号可访问：自建人设，或通讯录已添加的全局 canonical 角色（跨马甲共享同微信号人设/记忆） */
+/** 本账号可访问：仅归属当前微信账号的人设（多账号间不共享、不同步）。 */
 export function characterAccessibleToWechatAccount(
   character: { id: string; wechatAccountId?: string },
   wechatAccountId: string | null | undefined,
-  linkedCanonicalCharacterIds: ReadonlySet<string>,
+  _linkedCanonicalCharacterIds?: ReadonlySet<string>,
 ): boolean {
+  void _linkedCanonicalCharacterIds
   const id = character.id.trim()
   if (!id) return false
-  if (linkedCanonicalCharacterIds.has(id)) return true
   return characterBelongsToWechatAccount(character, wechatAccountId)
 }
 

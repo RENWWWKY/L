@@ -5,12 +5,15 @@ export function MemoryList({
   entries,
   loading,
   emptyHint,
+  inCharacterContext = false,
   onEdit,
   onDelete,
 }: {
   entries: MemoryEntry[]
   loading: boolean
   emptyHint?: string
+  /** 已在某角色详情页内：卡片不再重复显示角色名 */
+  inCharacterContext?: boolean
   onEdit: (entry: MemoryEntry) => void
   onDelete: (entry: MemoryEntry) => void
 }) {
@@ -48,13 +51,21 @@ export function MemoryList({
     <motion.ul
       data-memory-coach="list"
       layout
-      className="mx-auto flex w-full max-w-xl flex-col px-5 py-6"
+      className={`mx-auto flex w-full max-w-xl flex-col ${inCharacterContext ? 'px-4 py-4' : 'px-5 py-6'}`}
     >
+      {inCharacterContext && entries.length ? (
+        <li className="mb-3 px-1">
+          <p className="text-[11px] font-medium tracking-wide text-gray-400">
+            记忆列表 · {entries.length} 条
+          </p>
+        </li>
+      ) : null}
       <AnimatePresence mode="popLayout" initial={false}>
         {entries.map((entry) => (
           <li key={entry.id}>
             <MemoryCloudCard
               entry={entry}
+              hideCharacterLabel={inCharacterContext}
               onEdit={() => onEdit(entry)}
               onDelete={() => onDelete(entry)}
             />

@@ -3,7 +3,7 @@ import { resolveCharacterAvatarUrl } from '../../utils/characterAvatarUrl'
 import { countWeChatPersonaCoreStoreRecords } from '../dataArchive/scanWeChatPersonaIndexedDb'
 import { personaDb, pullPhoneKvWithLocalStorageLegacy } from './newFriendsPersona/idb'
 import type { Character } from './newFriendsPersona/types'
-import { characterAccessibleToWechatAccount } from './wechatAccountScope'
+import { characterBelongsToWechatAccount } from './wechatAccountScope'
 import { cloneAccount, findAccountById, loadAccountsBundle, resolveAccountSessionIdentityId } from './wechatAccountPersistence'
 import type { UserAccount, WechatAccountsBundle } from './wechatAccountTypes'
 import { resolveCanonicalCharacterId } from './wechatGlobalCharacterRegistry'
@@ -264,7 +264,7 @@ export async function repairMultiAccountPersonaContactsBundle(
 }
 
 /**
- * 剔除归属其它微信马甲的人设；无 wechatAccountId 的孤儿仅保留在主账号通讯录。
+ * 剔除归属其它微信账号的人设；仅保留 wechatAccountId 与当前账号一致的角色。
  */
 export async function filterPersonaContactsToWechatAccount(
   contacts: readonly WeChatPersonaContact[],
@@ -275,13 +275,6 @@ export async function filterPersonaContactsToWechatAccount(
   void primaryWechatAccountId
   if (!acc) return contacts.map((c) => ({ ...c }))
 
-  const linkedCanon = new Set<string>()
-  for (const c of contacts) {
-    const cid = c.characterId.trim()
-    if (!cid) continue
-    linkedCanon.add((await resolveCanonicalCharacterId(cid)) || cid)
-  }
-
   const out: WeChatPersonaContact[] = []
   for (const c of contacts) {
     const cid = c.characterId.trim()
@@ -289,7 +282,7 @@ export async function filterPersonaContactsToWechatAccount(
     const canon = (await resolveCanonicalCharacterId(cid)) || cid
     const ch = await personaDb.getCharacter(canon)
     if (!ch) continue
-    if (!characterAccessibleToWechatAccount(ch, acc, linkedCanon)) continue
+    if (!characterBelongsToWechatAccount(ch, acc)) continue
     out.push({ ...c, characterId: canon })
   }
   return out

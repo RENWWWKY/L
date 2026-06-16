@@ -197,7 +197,7 @@ export type ChatConversationSettingsRow = {
   chatBackground: string
   /** 角色每轮至少发 1 条表情包的目标概率 0–100；缺省 = 不覆写系统协议 */
   stickerRoundTriggerPercent?: number
-  /** 角色每轮至少发 1 条语音的目标概率 0–100；缺省 = 不覆写系统协议（语音默认约 30%） */
+  /** 角色每轮回复是否出现语音的目标概率 0–100（门槛，非条数上限；命中后仍可多条 [语音]）；缺省 = 不覆写系统协议（约 30%） */
   voiceRoundTriggerPercent?: number
   /** 角色每轮至少发 1 条 AI 配图（`[图片]`）的目标概率 0–100；缺省 = 0%（不发，用户直接要求除外） */
   imageRoundTriggerPercent?: number
@@ -507,6 +507,10 @@ export type MemorySettingsRow = {
   /** 自动总结总开关：关闭后仅支持手动总结 */
   autoSummaryEnabled: boolean
   autoSummaryInterval: number
+  /** 总结间隔：`global` 全员同一值；`per_character` 见 {@link autoSummaryIntervalByCharacterId} */
+  autoSummaryIntervalScope?: 'global' | 'per_character'
+  /** 按角色单独配置的总结间隔（轮）；缺省回退 {@link autoSummaryInterval} */
+  autoSummaryIntervalByCharacterId?: Record<string, number>
   /**
    * 自动总结写入「新记忆」时的默认 `memoryTriggerMode`；缺省为 `keyword`。
    * 不论此项为何，入库时仍会写入模型提炼的 category / precise / emotion_need，并合并写入 `memoryKeywords` 备份，便于日后从「始终触发」改为「关键词触发」时不丢词。
@@ -532,8 +536,8 @@ export type MemorySettingsRow = {
    */
   linkedMemoryAutoSummaryEnabled?: boolean
   /**
-   * 约会线下每段剧情是否触发合并自动总结（与微信私聊「间隔轮数」无关）。
-   * 显式 `false` 关闭后，仅在与该角色微信聊满间隔轮数时才跑合并总结；缺省为开启。
+   * 约会 AI 回复是否计入与私聊共用的「总结间隔」轮数；满间隔时合并微信 + 线下剧情写入主角长期记忆。
+   * 显式 `false` 关闭后，仅微信私聊计轮；缺省为开启。
    */
   datingAutoSummaryEnabled?: boolean
   /**
@@ -570,6 +574,17 @@ export type MemorySettingsRow = {
   memoryEmbeddingApiKey?: string
   /** 外部向量库集合 / 命名空间（UI：记忆切片簇） */
   memoryVectorCollection?: string
+  /**
+   * 自动总结是否启用专用 chat/completions 接口；显式 `false` 时沿用聊天主接口。
+   * 若本地曾保存过专用 url/key 且无显式 `false`，读取时兼容为 `true`。
+   */
+  memorySummaryUseDedicatedApi?: boolean
+  /** 自动总结专用 API 根地址（OpenAI 兼容 chat/completions） */
+  memorySummaryApiUrl?: string
+  /** 自动总结专用 API Key；留空则回落聊天 apiKey（仅当未开专用或专用未填时） */
+  memorySummaryApiKey?: string
+  /** 自动总结使用的 chat 模型；留空则回落全局聊天主模型 */
+  memorySummaryModelId?: string
 }
 
 /** 微信私聊持久化消息（IndexedDB `chatMessages`） */
@@ -648,6 +663,21 @@ export type WeChatMusicSyncPayload =
   | WeChatMusicSyncAcceptPayload
   | WeChatMusicSyncDeclinePayload
 
+/** 听一听评论分享卡片（持久化于 chatMessages.listenCommentShare） */
+export type WeChatListenCommentSharePayload = {
+  kind: 'listen_comment_share'
+  shareId: string
+  commentId: number
+  commentText: string
+  commentAuthor: string
+  commentAuthorAvatar?: string
+  targetType: 'song' | 'playlist'
+  targetId: number
+  targetTitle: string
+  targetArtist?: string
+  targetCover?: string
+}
+
 export type WeChatChatMessage = {
   id: string
   characterId: string
@@ -666,6 +696,8 @@ export type WeChatChatMessage = {
   voice?: WeChatVoicePayload
   /** 同频共听邀约 / 接受 / 拒绝卡片 */
   musicSync?: WeChatMusicSyncPayload
+  /** 听一听评论分享卡片 */
+  listenCommentShare?: WeChatListenCommentSharePayload
   /** 图片消息：纯图片时 content 允许为空串 */
   images?: { base64: string; type: WeChatImageMime }[]
   /** 是否收藏 */

@@ -19,7 +19,7 @@ export function InlineDropdown({
   children,
 }: {
   label: string
-  valueText: string
+  valueText: ReactNode
   open: boolean
   onToggle: () => void
   /** 为 true 时不展开，样式与禁用一致（如无数据时） */

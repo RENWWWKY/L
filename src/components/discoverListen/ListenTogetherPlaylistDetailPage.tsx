@@ -4,8 +4,9 @@ import { useCallback, useEffect, useMemo, useState } from 'react'
 
 import { ListenTogetherPlaylistCommentsPage } from './ListenTogetherPlaylistCommentsPage'
 import { ListenTogetherSongCommentsPage } from './ListenTogetherSongCommentsPage'
+import type { ListenCommentAuthor } from './ListenCommentComposer'
 import { ListenTogetherHeaderRefreshButton } from './ListenTogetherHeaderRefreshButton'
-import { ListenNum } from './ListenNum'
+import { ListenNum, ListenNumericText } from './ListenNum'
 import {
   fetchAlbumDetail,
   fetchAllPlaylistTracks,
@@ -42,6 +43,7 @@ export type ListenTogetherPlaylistDetailPageProps = {
   playingSongId?: number | null
   isPlaying?: boolean
   neteaseUserId?: number
+  commentAuthor?: ListenCommentAuthor
   onRequireLogin?: () => void
   onPlaylistSubscribeChange?: () => void
   /** 为底部迷你播放器预留空间 */
@@ -78,7 +80,7 @@ function SongRow({
       className="flex min-w-0 flex-1 items-center gap-3 rounded-2xl px-3 py-2.5 text-left active:scale-[0.99]"
     >
       <span
-        className={`flex h-6 w-6 shrink-0 items-center justify-center text-[12px] tabular-nums ${
+        className={`flex h-6 w-6 shrink-0 items-center justify-center text-[12px] ${
           active ? 'font-medium text-rose-400' : 'text-stone-400'
         }`}
       >
@@ -116,9 +118,11 @@ function SongRow({
             active ? 'font-medium text-stone-800' : 'text-stone-700'
           }`}
         >
-          {song.name}
+          <ListenNumericText text={song.name} />
         </p>
-        <p className="mt-0.5 truncate text-[12px] text-stone-400">{song.artist}</p>
+        <p className="mt-0.5 truncate text-[12px] text-stone-400">
+          <ListenNumericText text={song.artist} />
+        </p>
       </div>
       <span
         className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-full transition-colors ${
@@ -152,6 +156,7 @@ export function ListenTogetherPlaylistDetailPage({
   playingSongId = null,
   isPlaying = false,
   neteaseUserId = 0,
+  commentAuthor,
   onRequireLogin,
   onPlaylistSubscribeChange,
   contentBottomInset,
@@ -196,7 +201,12 @@ export function ListenTogetherPlaylistDetailPage({
   }, [tracks])
 
   const persistCache = useCallback(
-    async (nextTracks: NeteaseSongItem[], nextCount: number, fullyLoaded?: boolean) => {
+    async (
+      nextTracks: NeteaseSongItem[],
+      nextCount: number,
+      fullyLoaded?: boolean,
+      nextMeta?: PlaylistMeta | null,
+    ) => {
       if (!playlist.id || nextTracks.length === 0) return
       await savePlaylistCache({
         playlistId: playlist.id,
@@ -205,9 +215,23 @@ export function ListenTogetherPlaylistDetailPage({
         count: nextCount,
         tracks: nextTracks,
         fullyLoaded: fullyLoaded ?? nextTracks.length >= nextCount,
+        meta: nextMeta ?? meta ?? undefined,
       })
     },
-    [playlist.id, title, cover],
+    [playlist.id, title, cover, meta],
+  )
+
+  const applyPlaylistCache = useCallback(
+    (cached: NonNullable<Awaited<ReturnType<typeof getCachedPlaylist>>>) => {
+      setTitle(cached.title || playlist.title)
+      setCover(cached.cover || playlist.cover)
+      setCount(cached.count || playlist.count)
+      setTracks(cached.tracks)
+      if (cached.meta) setMeta(cached.meta)
+      setFromCache(true)
+      setLoading(false)
+    },
+    [playlist.title, playlist.cover, playlist.count],
   )
 
   const load = useCallback(async (force = false) => {
@@ -225,12 +249,10 @@ export function ListenTogetherPlaylistDetailPage({
     const hasCachedTracks = Boolean(cached?.tracks.length)
 
     if (hasCachedTracks) {
-      setTitle(cached!.title || playlist.title)
-      setCover(cached!.cover || playlist.cover)
-      setCount(cached!.count || playlist.count)
-      setTracks(cached!.tracks)
-      setFromCache(true)
-      setLoading(false)
+      applyPlaylistCache(cached!)
+      if (cached!.fullyLoaded && !force) {
+        return
+      }
     } else {
       setFromCache(false)
       setLoading(true)
@@ -246,7 +268,7 @@ export function ListenTogetherPlaylistDetailPage({
         const total = albumMeta.count || songs.length
         setCount(total)
         setTracks(songs)
-        await persistCache(songs, total, true)
+        await persistCache(songs, total, true, albumMeta)
         setFromCache(false)
         if (songs.length === 0) setError('专辑暂无歌曲')
         return
@@ -264,7 +286,7 @@ export function ListenTogetherPlaylistDetailPage({
         const total = metaResult.count || list.length
         setCount(total)
         setTracks(list)
-        await persistCache(list, total, list.length >= total)
+        await persistCache(list, total, list.length >= total, metaResult)
         setFromCache(false)
         if (list.length === 0) setError('歌单暂无歌曲')
       } else {
@@ -278,9 +300,11 @@ export function ListenTogetherPlaylistDetailPage({
           const total = metaResult.count || list.length
           setTracks(list)
           setCount(total)
-          await persistCache(list, total, list.length >= total)
+          await persistCache(list, total, list.length >= total, metaResult)
           setFromCache(false)
           if (list.length === 0) setError('歌单暂无歌曲')
+        } else {
+          await persistCache(cached!.tracks, metaResult.count || cached!.count, cached!.fullyLoaded, metaResult)
         }
       }
     } catch (e) {
@@ -291,7 +315,7 @@ export function ListenTogetherPlaylistDetailPage({
     } finally {
       setLoading(false)
     }
-  }, [cookie, isAlbum, playlist.id, playlist.title, playlist.cover, playlist.count, persistCache])
+  }, [cookie, isAlbum, playlist.id, playlist.title, playlist.cover, playlist.count, persistCache, applyPlaylistCache])
 
   const handlePageRefresh = useCallback(async () => {
     setPageRefreshing(true)
@@ -309,10 +333,10 @@ export function ListenTogetherPlaylistDetailPage({
   useEffect(() => {
     if (loading || tracks.length === 0) return
     const timer = window.setTimeout(() => {
-      void persistCache(tracks, count)
+      void persistCache(tracks, count, tracks.length >= count, meta)
     }, 900)
     return () => window.clearTimeout(timer)
-  }, [tracks, count, loading, persistCache])
+  }, [tracks, count, loading, persistCache, meta])
 
   const loadMore = useCallback(async () => {
     if (isAlbum || !cookie || !playlist.id || loadingMore || !hasMore) return
@@ -337,6 +361,7 @@ export function ListenTogetherPlaylistDetailPage({
             merged.push(song)
           }
         }
+        void persistCache(merged, count, merged.length >= count, meta)
         return merged
       })
       setFromCache(false)
@@ -345,7 +370,7 @@ export function ListenTogetherPlaylistDetailPage({
     } finally {
       setLoadingMore(false)
     }
-  }, [isAlbum, cookie, playlist.id, loadingMore, hasMore, tracks.length])
+  }, [isAlbum, cookie, playlist.id, loadingMore, hasMore, tracks.length, persistCache, count, meta])
 
   const loadAll = useCallback(async () => {
     if (isAlbum || !cookie || !playlist.id || loadingAll || !hasMore) return
@@ -354,14 +379,14 @@ export function ListenTogetherPlaylistDetailPage({
       const all = await fetchAllPlaylistTracks(cookie, playlist.id, count, tracks, setTracks)
       setTracks(all)
       setCount(all.length)
-      await persistCache(all, all.length, true)
+      await persistCache(all, all.length, true, meta)
       setFromCache(false)
     } catch {
       /* ignore */
     } finally {
       setLoadingAll(false)
     }
-  }, [isAlbum, cookie, playlist.id, loadingAll, hasMore, count, tracks, persistCache])
+  }, [isAlbum, cookie, playlist.id, loadingAll, hasMore, count, tracks, persistCache, meta])
 
   const playAll = useCallback(() => {
     const list = searching ? filteredTracks : tracks
@@ -459,7 +484,7 @@ export function ListenTogetherPlaylistDetailPage({
           </div>
           <div className="flex min-w-0 flex-1 flex-col justify-center">
             <h2 className="line-clamp-2 text-[18px] font-semibold leading-snug text-stone-800">
-              {title}
+              <ListenNumericText text={title} />
             </h2>
             {meta ? (
               <div className="mt-2 flex items-center gap-2">
@@ -473,7 +498,9 @@ export function ListenTogetherPlaylistDetailPage({
                     />
                   ) : null}
                 </div>
-                <p className="truncate text-[13px] text-stone-500">{meta.creator.nickname}</p>
+                <p className="truncate text-[13px] text-stone-500">
+                  <ListenNumericText text={meta.creator.nickname} />
+                </p>
               </div>
             ) : null}
             <p className="mt-1.5 text-[13px] text-stone-400">
@@ -502,7 +529,7 @@ export function ListenTogetherPlaylistDetailPage({
             </p>
             {meta?.createTime ? (
               <p className="mt-1 text-[11px] text-stone-400">
-                创建于 {formatPlaylistDate(meta.createTime)}
+                创建于 <ListenNumericText text={formatPlaylistDate(meta.createTime)} />
               </p>
             ) : null}
             {meta && meta.tags.length > 0 ? (
@@ -524,7 +551,7 @@ export function ListenTogetherPlaylistDetailPage({
                     descExpanded ? '' : 'line-clamp-2'
                   }`}
                 >
-                  {meta.description}
+                  <ListenNumericText text={meta.description} />
                 </p>
                 {meta.description.length > 48 ? (
                   <button
@@ -667,7 +694,13 @@ export function ListenTogetherPlaylistDetailPage({
                       onClick={() => void loadMore()}
                       className="rounded-full bg-white px-4 py-2 text-[13px] text-stone-600 shadow-sm ring-1 ring-stone-100 disabled:opacity-50"
                     >
-                      {loadingMore ? '加载中…' : `加载更多（还剩 ${remaining} 首）`}
+                      {loadingMore ? (
+                        '加载中…'
+                      ) : (
+                        <>
+                          加载更多（还剩 <ListenNum>{remaining}</ListenNum> 首）
+                        </>
+                      )}
                     </button>
                     <button
                       type="button"
@@ -739,8 +772,8 @@ export function ListenTogetherPlaylistDetailPage({
             {searching && hasMore && filteredTracks.length > 0 ? (
               <div className="flex flex-col items-center gap-2 border-t border-stone-100/80 pb-4 pt-4">
                 <p className="text-[11px] text-stone-400">
-                  搜索范围：已加载的 <ListenNum>{tracks.length}</ListenNum> /{' '}
-                  <ListenNum>{count}</ListenNum> 首
+                  搜索范围：已加载的 <ListenNum>{tracks.length.toLocaleString()}</ListenNum> /{' '}
+                  <ListenNum>{count.toLocaleString()}</ListenNum> 首
                 </p>
                 <button
                   type="button"
@@ -760,14 +793,18 @@ export function ListenTogetherPlaylistDetailPage({
         open={commentsSong !== null}
         song={commentsSong}
         cookie={cookie}
+        author={commentAuthor}
         onBack={() => setCommentsSong(null)}
+        onRequireLogin={onRequireLogin}
       />
 
       <ListenTogetherPlaylistCommentsPage
         open={showPlaylistComments}
         playlist={playlistCommentsTarget}
         cookie={cookie}
+        author={commentAuthor}
         onBack={() => setShowPlaylistComments(false)}
+        onRequireLogin={onRequireLogin}
       />
     </div>
   )

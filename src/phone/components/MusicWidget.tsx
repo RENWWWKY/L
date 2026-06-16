@@ -8,6 +8,11 @@ import type { MusicPlayMode } from '../types'
 const sharedAudio = new Audio()
 let sharedNowPlaying: PlayingTrack | null = null
 
+/** 听一听切歌时暂停桌面音乐小组件，避免与全局引擎叠播 */
+export function pauseMusicWidgetSharedAudio(): void {
+  if (!sharedAudio.paused) sharedAudio.pause()
+}
+
 type SearchTrack = {
   id: number
   trackName: string

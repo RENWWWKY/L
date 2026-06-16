@@ -3,10 +3,17 @@ import { ArrowLeft, Heart, Loader2, Music2, RefreshCw, User } from 'lucide-react
 import { useMemo, useState } from 'react'
 
 import { ListenNotesFeedList } from './ListenTogetherNotesFeedPage'
-import { ListenNum } from './ListenNum'
-import { listenNumStatClass } from './listenTogetherTypography'
+import { ListenNum, ListenNumericText } from './ListenNum'
+import { listenNumClass, listenNumStatClass } from './listenTogetherTypography'
 import { NOTES_FEED_MOCK, type ListenAttachedMusic } from './listenTogetherNotesMock'
+import { getNeteaseApiBase } from './neteaseApiClient'
 import type { NeteaseProfileBundle } from './neteaseProfileApi'
+import {
+  ListenTogetherFollowListPage,
+  type ListenTogetherFollowListTarget,
+} from './ListenTogetherFollowListPage'
+import type { NeteaseArtistItem } from './neteaseMusicApi'
+import type { PlaylistOpenInfo, UserDetailInfo } from './listenTogetherProfileTypes'
 
 type ProfileTab = 'created' | 'saved' | 'notes'
 
@@ -21,7 +28,7 @@ function AvatarCornerBadges({ vipLabel, isVip }: { vipLabel: string; isVip: bool
         }`}
         title={vipLabel}
       >
-        {isVip ? vipLabel : '非会员'}
+        {isVip ? <ListenNumericText text={vipLabel} /> : '非会员'}
       </span>
     </div>
   )
@@ -59,9 +66,11 @@ function PlaylistCard({
         <div className="absolute inset-0 bg-stone-900/10 transition-colors group-hover:bg-stone-900/20" />
       </div>
       <div className="px-2.5 py-2.5">
-        <p className="line-clamp-1 text-[13px] font-medium text-stone-800">{title}</p>
-        <p className="mt-0.5 text-[11px] text-stone-400">
-          <ListenNum>{count}</ListenNum> 首
+        <p className="line-clamp-1 text-[13px] font-medium text-stone-800">
+          <ListenNumericText text={title} />
+        </p>
+        <p className={`mt-0.5 text-[11px] text-stone-400 ${listenNumClass}`}>
+          <ListenNum>{count.toLocaleString()}</ListenNum> 首
         </p>
       </div>
     </button>
@@ -82,6 +91,7 @@ const GUEST_USER = {
   following: 0,
   followers: 0,
   listenHours: 0,
+  listenSongs: 0,
   vip: EMPTY_VIP,
 }
 
@@ -92,15 +102,11 @@ const VISITOR_USER = {
   following: 0,
   followers: 0,
   listenHours: 0,
+  listenSongs: 0,
   vip: EMPTY_VIP,
 }
 
-export type PlaylistOpenInfo = {
-  id: number
-  title: string
-  cover: string
-  count: number
-}
+export type { PlaylistOpenInfo } from './listenTogetherProfileTypes'
 
 export type ListenTogetherProfilePageProps = {
   className?: string
@@ -117,6 +123,9 @@ export type ListenTogetherProfilePageProps = {
   profileFromCache?: boolean
   onSyncNetease?: () => void
   syncingNetease?: boolean
+  cookie?: string
+  onOpenArtist?: (artist: NeteaseArtistItem) => void
+  onOpenUser?: (user: UserDetailInfo) => void
 }
 
 export function ListenTogetherProfilePage({
@@ -134,8 +143,14 @@ export function ListenTogetherProfilePage({
   profileFromCache = false,
   onSyncNetease,
   syncingNetease = false,
+  cookie = '',
+  onOpenArtist,
+  onOpenUser,
 }: ListenTogetherProfilePageProps) {
   const [profileTab, setProfileTab] = useState<ProfileTab>('created')
+  const [followListTarget, setFollowListTarget] = useState<ListenTogetherFollowListTarget | null>(
+    null,
+  )
 
   const myNotes = useMemo(
     () => NOTES_FEED_MOCK.notes.filter((note) => note.author.type === 'user'),
@@ -154,6 +169,7 @@ export function ListenTogetherProfilePage({
           following: neteaseProfile.user.following,
           followers: neteaseProfile.user.followers,
           listenHours: neteaseProfile.user.listenHours,
+          listenSongs: neteaseProfile.user.listenSongs,
           vip: neteaseProfile.user.vip,
         }
       : {
@@ -163,8 +179,24 @@ export function ListenTogetherProfilePage({
           following: 0,
           followers: 0,
           listenHours: 0,
+          listenSongs: 0,
           vip: EMPTY_VIP,
         }
+
+  const listenStat =
+    user.listenHours > 0
+      ? { value: user.listenHours.toLocaleString(), suffix: '小时' as const }
+      : user.listenSongs > 0
+        ? { value: user.listenSongs.toLocaleString(), suffix: '首' as const }
+        : { value: '0', suffix: '小时' as const }
+
+  const apiHostLabel = useMemo(() => {
+    try {
+      return new URL(getNeteaseApiBase()).host
+    } catch {
+      return getNeteaseApiBase()
+    }
+  }, [])
 
   const musicAssets = neteaseProfile
     ? {
@@ -190,6 +222,33 @@ export function ListenTogetherProfilePage({
     : profileLoading
       ? '加载中…'
       : '暂无数据'
+
+  const openFollowList = (listKind: 'following' | 'followers') => {
+    if (!neteaseBound) {
+      onRequestLogin?.()
+      return
+    }
+    const userId = neteaseProfile?.user.userId
+    if (!userId) return
+    setFollowListTarget({
+      listKind,
+      subject: {
+        type: 'user',
+        userId,
+        title: user.nickname,
+      },
+    })
+  }
+
+  const handleOpenArtistFromList = (artist: NeteaseArtistItem) => {
+    setFollowListTarget(null)
+    onOpenArtist?.(artist)
+  }
+
+  const handleOpenUserFromList = (next: UserDetailInfo) => {
+    setFollowListTarget(null)
+    onOpenUser?.(next)
+  }
 
   return (
     <div className={`bg-stone-50 ${className}`}>
@@ -243,7 +302,7 @@ export function ListenTogetherProfilePage({
           </div>
           <div className="mt-4 flex flex-wrap items-center justify-center gap-2">
             <h1 className="text-[22px] font-medium tracking-wide text-stone-800">
-              {user.nickname}
+              <ListenNumericText text={user.nickname} />
             </h1>
           </div>
           <p className="mt-1 text-[11px] tracking-[0.2em] text-stone-400">LISTEN · BOND</p>
@@ -254,7 +313,7 @@ export function ListenTogetherProfilePage({
                 onClick={onRequestLogin}
                 className="rounded-full bg-rose-50 px-4 py-1.5 text-[12px] text-rose-500"
               >
-                {isGuestMode ? '登录网易云账号' : '扫码登录网易云'}
+                {isGuestMode ? '登录网易云账号' : '登录网易云'}
               </button>
               {isGuestMode && onLeaveGuest ? (
                 <button
@@ -273,13 +332,21 @@ export function ListenTogetherProfilePage({
             </p>
           ) : null}
           {profileLoading || syncingNetease ? (
-            <p className="mt-2 flex items-center justify-center gap-1.5 text-[11px] text-stone-400">
-              <Loader2 className="size-3 animate-spin" aria-hidden />
-              {syncingNetease ? '正在同步网易云最新数据…' : '正在同步网易云资料…'}
+            <p className="mt-2 flex flex-col items-center justify-center gap-0.5 text-[11px] text-stone-400">
+              <span className="flex items-center gap-1.5">
+                <Loader2 className="size-3 animate-spin" aria-hidden />
+                {syncingNetease ? '正在同步网易云最新数据…' : '正在同步网易云资料…'}
+              </span>
+              <span className="text-[10px] text-stone-300">
+                API · <ListenNumericText text={apiHostLabel} />
+              </span>
             </p>
           ) : profileFromCache && neteaseBound ? (
             <p className="mt-2 text-center text-[10px] text-stone-400">
               资料来自本地缓存 · 点击右上角刷新可同步
+              <span className="block text-stone-300">
+                API · <ListenNumericText text={apiHostLabel} />
+              </span>
             </p>
           ) : null}
           {profileError ? (
@@ -293,8 +360,8 @@ export function ListenTogetherProfilePage({
                 { label: '粉丝', value: user.followers.toLocaleString(), suffix: '' },
                 {
                   label: '累计听歌',
-                  value: user.listenHours.toLocaleString(),
-                  suffix: '小时',
+                  value: listenStat.value,
+                  suffix: listenStat.suffix,
                 },
                 {
                   label: '听歌等级',
@@ -303,17 +370,34 @@ export function ListenTogetherProfilePage({
                 },
               ] as const
             ).map((item) => (
-              <div key={item.label} className="text-center">
-                <p className={`${listenNumStatClass} text-[15px] sm:text-base`}>
-                  {item.value}
+              <button
+                key={item.label}
+                type="button"
+                disabled={item.label !== '关注' && item.label !== '粉丝'}
+                onClick={() => {
+                  if (item.label === '关注') openFollowList('following')
+                  if (item.label === '粉丝') openFollowList('followers')
+                }}
+                className={`text-center ${
+                  item.label === '关注' || item.label === '粉丝'
+                    ? 'rounded-xl px-1 py-1 transition-colors hover:bg-white/60 active:scale-[0.98]'
+                    : ''
+                }`}
+              >
+                <p className={`${listenNumStatClass} text-[15px] text-stone-800 sm:text-base`}>
+                  {item.label === '听歌等级' ? (
+                    <ListenNumericText text={item.value} />
+                  ) : (
+                    <ListenNum>{item.value}</ListenNum>
+                  )}
                   {item.suffix ? (
-                    <ListenNum className="ml-0.5 text-[11px] font-normal text-stone-500 sm:text-xs">
+                    <span className="ml-0.5 text-[11px] font-normal text-stone-500 sm:text-xs">
                       {item.suffix}
-                    </ListenNum>
+                    </span>
                   ) : null}
                 </p>
                 <p className="mt-0.5 text-[10px] text-stone-400 sm:text-xs">{item.label}</p>
-              </div>
+              </button>
             ))}
           </div>
         </div>
@@ -353,7 +437,7 @@ export function ListenTogetherProfilePage({
             </div>
             <div className="flex min-w-0 flex-1 flex-col justify-center px-4 py-3">
               <p className="text-[16px] font-medium text-stone-800">我喜欢的音乐</p>
-              <p className="mt-1 text-[13px] text-stone-400">
+              <p className={`mt-1 text-[13px] text-stone-400 ${listenNumClass}`}>
                 {neteaseBound ? (
                   <>
                     <ListenNum>{musicAssets.likedSongs.count.toLocaleString()}</ListenNum> 首
@@ -442,6 +526,15 @@ export function ListenTogetherProfilePage({
           </div>
         </section>
       </div>
+      <ListenTogetherFollowListPage
+        open={followListTarget !== null}
+        target={followListTarget}
+        cookie={cookie}
+        onBack={() => setFollowListTarget(null)}
+        onOpenArtist={handleOpenArtistFromList}
+        onOpenUser={handleOpenUserFromList}
+        onRequireLogin={onRequestLogin}
+      />
     </div>
   )
 }

@@ -6,18 +6,11 @@ import { isLocalNcmMode } from './neteaseApiClient'
 
 export function useNeteaseHomeFeed(cookie: string, refreshKey = 0) {
   const [data, setData] = useState<NeteaseHomeFeed | null>(null)
-  const [loading, setLoading] = useState(false)
+  const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
 
   const refetch = useCallback(
     async (refresh = false) => {
-      if (!isLocalNcmMode()) {
-        setData(null)
-        setError(null)
-        setLoading(false)
-        return
-      }
-
       if (!refresh) {
         const cached = await getCachedHomeFeed()
         if (cached) {
@@ -30,6 +23,13 @@ export function useNeteaseHomeFeed(cookie: string, refreshKey = 0) {
           setLoading(false)
           return
         }
+      }
+
+      if (!isLocalNcmMode()) {
+        setData(null)
+        setError(null)
+        setLoading(false)
+        return
       }
 
       setLoading(true)

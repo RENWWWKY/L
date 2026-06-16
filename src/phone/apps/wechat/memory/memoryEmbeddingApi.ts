@@ -5,17 +5,21 @@ import type { MemorySettingsRow } from '../newFriendsPersona/types'
 export const DEFAULT_MEMORY_EMBEDDING_MODEL = 'text-embedding-3-small'
 
 /**
- * 解析向量请求用的 url / key：记忆设置中的「专用」项优先，缺省回落到聊天 `apiConfig`。
+ * 解析向量请求用的 url / key：专用副接口开启时仅走专用项，否则走聊天 `apiConfig`。
  */
 export function resolveEmbeddingApiCredentials(
   settings: MemorySettingsRow,
   chatFallback: Pick<ApiConfig, 'apiUrl' | 'apiKey'> | null | undefined,
 ): { apiUrl: string; apiKey: string } | null {
   const useDedicated = settings.memoryEmbeddingUseDedicatedApi === true
-  const dedicatedUrl = useDedicated ? settings.memoryEmbeddingApiUrl?.trim() : ''
-  const dedicatedKey = useDedicated ? settings.memoryEmbeddingApiKey?.trim() : ''
-  const url = (dedicatedUrl || chatFallback?.apiUrl?.trim() || '').trim()
-  const key = (dedicatedKey || chatFallback?.apiKey?.trim() || '').trim()
+  if (useDedicated) {
+    const url = settings.memoryEmbeddingApiUrl?.trim() || ''
+    const key = settings.memoryEmbeddingApiKey?.trim() || ''
+    if (!url || !key) return null
+    return { apiUrl: url, apiKey: key }
+  }
+  const url = chatFallback?.apiUrl?.trim() || ''
+  const key = chatFallback?.apiKey?.trim() || ''
   if (!url || !key) return null
   return { apiUrl: url, apiKey: key }
 }

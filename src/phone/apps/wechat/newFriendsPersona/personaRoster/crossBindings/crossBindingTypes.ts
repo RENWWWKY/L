@@ -35,9 +35,9 @@ export interface RelationshipEdge {
   targetId: string
   sourceType: CrossBindingNodeType
   targetType: CrossBindingNodeType
-  /** source → target 方向的关系词 */
+  /** source → target：target 是 source 的「关系词」 */
   forwardRelationLabel: string
-  /** target → source 方向的关系词（双向时有值） */
+  /** target → source：source 是 target 的「关系词」（双向时有值） */
   reverseRelationLabel?: string
   forwardRelId: string
   reverseRelId?: string

@@ -6,21 +6,45 @@ export type MemoryEngineCoachTargetId =
   | 'trigger-mode'
   | 'linked-summary'
   | 'dating-summary'
+  | 'summary-api'
   | 'vector-recall'
   | 'extra-api'
   | 'vector-model'
-  | 'save-settings'
   | 'engine-tutorial'
 
 export const MEMORY_ENGINE_START_COACH_EVENT = 'memory-engine-start-coach'
 export const MEMORY_ENGINE_OPEN_TUTORIAL_EVENT = 'memory-engine-open-tutorial'
+
+export type MemoryConfigSubTab = 'summary' | 'summary-model' | 'vector'
+
+/** 引导高亮目标 → 配置子 Tab */
+export function memoryEngineCoachTargetSubTab(
+  target: string | null | undefined,
+): MemoryConfigSubTab | null {
+  if (!target) return null
+  if (
+    target === 'auto-summary' ||
+    target === 'summary-interval' ||
+    target === 'trigger-mode' ||
+    target === 'linked-summary' ||
+    target === 'dating-summary' ||
+    target === 'engine-tutorial'
+  ) {
+    return 'summary'
+  }
+  if (target === 'summary-api') return 'summary-model'
+  if (target === 'vector-recall' || target === 'extra-api' || target === 'vector-model') {
+    return 'vector'
+  }
+  return null
+}
 
 export const MEMORY_ENGINE_COACH_STEPS: MemoryCoachStep[] = [
   {
     target: null,
     centered: true,
     title: '记忆配置一览',
-    body: '这里决定自动总结、约会关联记忆与向量语义召回如何工作。接下来用高亮带你认一圈，约半分钟；可随时跳过。',
+    body: '上方小 Tab 分为「自动总结」「总结模型」「向量召回」三类。接下来用高亮带你认一圈，约半分钟；可随时跳过。',
   },
   {
     target: 'auto-summary',
@@ -28,24 +52,29 @@ export const MEMORY_ENGINE_COACH_STEPS: MemoryCoachStep[] = [
     body: '总开关：关闭后不再按轮数自动合并总结，你仍可在「记忆管理」手动刻录。',
   },
   {
-    target: 'summary-interval',
-    title: '总结间隔',
-    body: '与该角色私聊每满 N 轮 AI 回复后触发一次合并总结。数字可在 1～100 之间调整，失焦后自动保存。',
+    target: 'trigger-mode',
+    title: '自动总结的类型',
+    body: '新自动总结的记忆默认「关键词」或「始终」参与聊天召回。不论选哪种，入库时仍会保存模型提炼的触发词备份。',
   },
   {
-    target: 'trigger-mode',
-    title: '默认触发方式',
-    body: '自动写入的新记忆默认「关键词触发」或「始终触发」。不论选哪种，入库时仍会保存模型提炼的触发词备份。',
+    target: 'summary-interval',
+    title: '总结间隔',
+    body: '可选全局统一或按角色单独配置；与该角色私聊每满 N 轮 AI 回复后触发一次合并总结。数字可在 1～100 之间调整，失焦后自动保存。',
   },
   {
     target: 'linked-summary',
     title: '关联记忆总结',
-    body: '约会推剧情时，是否给人脉配角顺带记一条「关联记忆」。关闭后不再自动写入关联条，私聊按间隔总结不受影响。',
+    body: '开启后：约会推剧情时，相关人脉配角会自动收到「关联记忆」摘录，之后私聊该配角时单独注入。关闭后：主角自有约会记忆不受影响，但配角不会自动知晓线下剧情，需手动刻录。玩约会+人脉网建议开启；只要主角私聊记忆可关闭。',
   },
   {
     target: 'dating-summary',
-    title: '约会推剧情时自动记记忆',
-    body: '关闭后，约会线下段落本身不再跑合并总结；仅在与该角色私聊聊满「总结间隔」时才总结。',
+    title: '约会剧情计入总结轮数',
+    body: '与私聊共用「总结间隔」：开启后约会 AI 回复也计轮，满间隔时把微信 + 线下剧情合并入库；关闭则只在微信私聊里计轮。',
+  },
+  {
+    target: 'summary-api',
+    title: '总结接口',
+    body: '滑动胶囊在「聊天主接口」与「专用副接口」间切换。选主接口时沿用全局聊天 API；选副接口后填写专用地址与密钥，或只换一个总结模型。',
   },
   {
     target: 'vector-recall',
@@ -54,23 +83,18 @@ export const MEMORY_ENGINE_COACH_STEPS: MemoryCoachStep[] = [
   },
   {
     target: 'extra-api',
-    title: '额外接口',
-    body: '需要单独向量化网关时开启，填写专用地址与密钥；关闭则沿用全局聊天主接口，并在下方拉取主接口上的 embedding 模型。',
+    title: '向量化接口',
+    body: '与总结类似：胶囊选「聊天主接口」或「专用副接口」。选副接口时填写专用地址与密钥，并在下方测试连通、拉取 embedding 模型。',
   },
   {
     target: 'vector-model',
     title: '向量模型',
-    body: '拉取可用模型列表后，选一个 embedding 模型。未开额外接口时，此区从主接口拉列表；开启后可在专用配置区测试连通再拉取。',
-  },
-  {
-    target: 'save-settings',
-    title: '写入档案库',
-    body: '汇总保存本页开关、间隔与向量模型等设置。部分开关已即时写入，点此可确保向量专用字段一并落库。',
+    body: '拉取可用模型列表后，选一个 embedding 模型。选主接口时从聊天 API 拉列表；选副接口时建议先测连通再拉取。改动会自动保存。',
   },
   {
     target: 'engine-tutorial',
     title: '随时回看',
-    body: '「自动总结与关联」卡片右上角「教程」可打开文字说明，也能再开一遍高亮引导。',
+    body: '顶栏右侧「教程」可打开文字说明，也能再开一遍高亮引导；上方小 Tab 可在自动总结、总结模型与向量召回之间切换。',
   },
   {
     target: null,

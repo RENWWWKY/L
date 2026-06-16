@@ -20,6 +20,7 @@ import {
   consumeWeChatFocusPersonaChatId,
   type WeChatFocusPersonaChatDetail,
 } from './wechatFocusChatNavigation'
+import { WeChatTitleUnreadText, WeChatThreadPreviewText, WeChatThreadTimeText, WeChatUnreadBadgeText } from './wechatUnreadCountText'
 import { Pressable } from '../../components/Pressable'
 import {
   DEFAULT_CUSTOMIZATION,
@@ -106,6 +107,7 @@ import {
   wechatGroupPeerCharacterId,
 } from './wechatConversationKey'
 import {
+  countUnreadPrivateMessagesForAccountCharacter,
   ensureAccountScopedGroupConversation,
   ensureAccountScopedPrivateConversation,
   markPrivateChatConversationReadForAccountCharacter,
@@ -131,8 +133,12 @@ import { WeChatForwardSelectChatScreen, type WeChatForwardMode } from './WeChatF
 import type { GroupChatRow, WeChatChatMessage } from './newFriendsPersona/types'
 import { useMuteStatus } from './hooks/useMuteStatus'
 import { setWeChatForegroundConversationKey } from './wechatSystemNotify'
+import { GlobalMessageListener } from './globalMessage/GlobalMessageListener'
+import { setWeChatGlobalMessageGuardState } from './globalMessage/wechatGlobalMessageGuard'
+import type { WeChatQuickReplyChat } from './globalMessage/wechatGlobalMessageGuard'
 import { useCurrentApiConfig } from '../api/ApiSettingsContext'
 import { requestWeChatMemorySummary, requestWeChatPeerReplyBubbles, type ChatTranscriptTurn } from './wechatChatAi'
+import { resolveAutoSummaryApiConfig } from './memory/memorySummaryApi'
 import { sanitizePrivateMemorySummaryBody } from './memory/autoSummaryPlaceholderSanitize'
 import { resolveMemoryUserInsertContextFromSource } from './memoryUserPlaceholderBindings'
 import { buildAutoSummaryMemoryKeywordsBackup } from './memory/memoryTriggerUtils'
@@ -815,18 +821,10 @@ function Header({
                   >
                     <span className="truncate">{title}</span>
                     {showTitleUnread ? (
-                      <span
+                      <WeChatTitleUnreadText
+                        count={titleUnreadCount}
                         className="shrink-0 text-[15px] font-medium leading-[36px] tracking-normal"
-                        style={{
-                          color: 'var(--wx-text-muted)',
-                          fontFamily: 'var(--wx-num-font)',
-                          fontVariantNumeric: 'tabular-nums lining-nums',
-                          fontFeatureSettings: '"tnum" 1, "lnum" 1',
-                        }}
-                        aria-label={`未读 ${titleUnreadCount}`}
-                      >
-                        （{titleUnreadCount > 99 ? '99+' : titleUnreadCount}）
-                      </span>
+                      />
                     ) : null}
                   </h1>
                   {trailing ? (
@@ -895,18 +893,10 @@ function Header({
           >
             <span className="truncate">{title}</span>
             {showTitleUnread ? (
-              <span
+              <WeChatTitleUnreadText
+                count={titleUnreadCount}
                 className="shrink-0 text-[15px] font-medium leading-[36px] tracking-normal"
-                style={{
-                  color: 'var(--wx-text-muted)',
-                  fontFamily: 'var(--wx-num-font)',
-                  fontVariantNumeric: 'tabular-nums lining-nums',
-                  fontFeatureSettings: '"tnum" 1, "lnum" 1',
-                }}
-                aria-label={`未读 ${titleUnreadCount}`}
-              >
-                （{titleUnreadCount > 99 ? '99+' : titleUnreadCount}）
-              </span>
+              />
             ) : null}
           </h1>
           {trailing ? (
@@ -1141,13 +1131,13 @@ function TabBar({
                 <span className="relative inline-flex shrink-0">
                   {iconNode}
                   <span
-                    className="pointer-events-none absolute -right-1 -top-1 z-[1] flex min-h-[18px] min-w-[18px] items-center justify-center rounded-full px-[5px] text-[10px] font-semibold leading-none tabular-nums text-white"
+                    className="pointer-events-none absolute -right-1 -top-1 z-[1] flex min-h-[18px] min-w-[18px] items-center justify-center rounded-full px-[5px] text-[10px] leading-none text-white"
                     style={{
                       background: '#fa5151',
                       boxShadow: '0 0 0 1.5px var(--wx-surface, #fff)',
                     }}
                   >
-                    {badgeCount > 99 ? '99+' : badgeCount}
+                    <WeChatUnreadBadgeText count={badgeCount} />
                   </span>
                 </span>
               ) : (
@@ -1521,7 +1511,7 @@ function MessageThreadListItem({
                 title={`未读 ${t.unread} 条`}
                 aria-label={`未读 ${t.unread} 条`}
               >
-                {muted ? null : t.unread > 99 ? '99+' : t.unread}
+                {muted ? null : <WeChatUnreadBadgeText count={t.unread} />}
               </span>
             ) : null}
           </span>
@@ -1529,21 +1519,12 @@ function MessageThreadListItem({
             <div className="flex items-start justify-between gap-2">
               <p className="truncate text-[16px] font-normal text-black transition-opacity duration-200">{t.name}</p>
               <span className="shrink-0 text-[12px] leading-none transition-opacity duration-200" style={{ color: '#b2b2b2' }}>
-                <span
-                  style={{
-                    fontFamily: 'var(--wx-num-font)',
-                    fontVariantNumeric: 'tabular-nums lining-nums',
-                    fontFeatureSettings: '"tnum" 1, "lnum" 1',
-                    display: 'inline-block',
-                  }}
-                >
-                  {t.time}
-                </span>
+                <WeChatThreadTimeText text={t.time} />
               </span>
             </div>
             <div className="mt-1 flex items-center justify-between gap-2">
               <p className="min-w-0 flex-1 truncate text-[14px] leading-snug transition-opacity duration-200" style={{ color: '#666666' }}>
-                {t.preview}
+                <WeChatThreadPreviewText text={t.preview} />
               </p>
               <div className="flex shrink-0 flex-row items-center gap-2">
                 {muted ? (
@@ -4402,8 +4383,16 @@ function WeChatAppInner({ onBack }: Props) {
           characterAvatar = ch?.avatarUrl?.trim()
         }
         const avatarResolved = resolveWeChatContactAvatarUrl(c.avatarUrl, characterAvatar) || undefined
+        const unread = acc
+          ? await countUnreadPrivateMessagesForAccountCharacter({
+              wechatAccountId: acc,
+              characterId: c.characterId,
+              appSessionPlayerIdentityId: sessionSid,
+              fallbackConversationKey: convKey,
+            })
+          : await personaDb.countUnreadWeChatCharacterMessages(convKey)
         const row = await buildOne(convKey, 'persona', c.remarkName, avatarResolved, c.characterId)
-        return row
+        return { ...row, unread }
       }),
     )
 
@@ -4533,6 +4522,17 @@ function WeChatAppInner({ onBack }: Props) {
       cancelled = true
     }
   }, [wxDockChat, currentAccountId, playerIdentityId, chatRouteIdentityId, activeConversationCharacterId])
+
+  useEffect(() => {
+    setWeChatGlobalMessageGuardState({
+      isMessagesTab: messagesListTabActive,
+      activeConversationKey: route.name === 'chat' ? activeConversationKey : null,
+    })
+  }, [messagesListTabActive, route.name, activeConversationKey])
+
+  const openChatFromGlobalMessage = useCallback((chat: WeChatQuickReplyChat) => {
+    setRoute({ name: 'chat', chat })
+  }, [])
 
   // 转发：选择聊天页当前待转发消息（单条/多条）
   const [forwardPendingMessages, setForwardPendingMessages] = useState<WeChatChatMessage[] | null>(null)
@@ -4855,11 +4855,22 @@ function WeChatAppInner({ onBack }: Props) {
 
   const exitChatToMessages = useCallback(() => {
     const convKey = activeConversationKey
+    const layer = wxDockChat
+    const acc = currentAccountId?.trim()
+    const sessionPid = (chatRouteIdentityId ?? playerIdentityId ?? '__none__').trim()
+    const personaCid =
+      layer?.kind === 'persona' ? layer.characterId.trim() : activeConversationCharacterId?.trim() || ''
     chatMarkOnceForConvKeyRef.current = null
     setRoute({ name: 'tabs', tab: 'messages' })
     void (async () => {
       try {
-        if (convKey) {
+        if (layer?.kind === 'persona' && acc && personaCid) {
+          await markPrivateChatConversationReadForAccountCharacter({
+            wechatAccountId: acc,
+            characterId: personaCid,
+            appSessionPlayerIdentityId: sessionPid,
+          })
+        } else if (convKey) {
           await personaDb.markWeChatConversationReadToLatest(convKey)
         }
         await refreshMessageThreadsMeta()
@@ -4867,7 +4878,15 @@ function WeChatAppInner({ onBack }: Props) {
         // 读游标/列表刷新失败不阻断已完成的返回
       }
     })()
-  }, [activeConversationKey, refreshMessageThreadsMeta])
+  }, [
+    activeConversationKey,
+    activeConversationCharacterId,
+    chatRouteIdentityId,
+    currentAccountId,
+    playerIdentityId,
+    refreshMessageThreadsMeta,
+    wxDockChat,
+  ])
 
   const title = useMemo(() => {
     if (route.name === 'new-friends-persona') return '新的朋友'
@@ -5679,8 +5698,9 @@ function WeChatAppInner({ onBack }: Props) {
             roundTranscript.push({ from: 'other', text: seg })
           }
           try {
+            const summaryApi = await resolveAutoSummaryApiConfig(apiConfig)
             const memParsed = await requestWeChatMemorySummary({
-              apiConfig,
+              apiConfig: summaryApi,
               transcript: roundTranscript,
               peerCharacterId: target.characterId,
             })
@@ -7232,6 +7252,14 @@ function WeChatAppInner({ onBack }: Props) {
         userDisplayName={momentsDisplayName}
         playerIdentityId={playerIdentityId}
         momentContacts={momentContactsForNotices}
+      />
+
+      <GlobalMessageListener
+        playerIdentityId={playerIdentityId}
+        playerDisplayName={state.profile.displayName}
+        playerAvatarUrl={state.profile.avatarImageUrl}
+        personaContacts={state.wechatPersonaContacts}
+        onOpenChat={openChatFromGlobalMessage}
       />
 
       <AnimatePresence>

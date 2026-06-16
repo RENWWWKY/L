@@ -8,7 +8,7 @@ import {
   type VibeCategory,
 } from './listenTogetherSearchMock'
 import { ListenTogetherHeaderRefreshButton } from './ListenTogetherHeaderRefreshButton'
-import { ListenNum } from './ListenNum'
+import { ListenNum, ListenNumericText } from './ListenNum'
 import {
   getCachedSearchResult,
   saveCachedSearchResult,
@@ -769,12 +769,12 @@ export function MusicSearchPage({
                         onClick={() => onOpenToplistChart?.(chart)}
                         className="relative flex w-full items-center gap-3 py-1 text-left"
                       >
-                        <span
-                          className="pointer-events-none absolute left-0 top-1/2 -translate-y-1/2 font-serif text-[56px] leading-none text-rose-900/5 select-none"
+                        <ListenNum
+                          className="pointer-events-none absolute left-0 top-1/2 -translate-y-1/2 text-[56px] leading-none text-rose-900/5 select-none"
                           aria-hidden
                         >
                           {rank}
-                        </span>
+                        </ListenNum>
                         <div
                           className={`relative z-[1] ml-5 h-[64px] w-[64px] shrink-0 overflow-hidden rounded-[16px] ${COVER_SHADOW}`}
                         >
@@ -799,7 +799,7 @@ export function MusicSearchPage({
                                 key={`${chart.id}-top-${s.id}`}
                                 className="truncate text-[10px] font-extralight text-[#2D2422]/45"
                               >
-                                {i + 1}. {s.name} — {s.artist}
+                                <ListenNumericText text={`${i + 1}. ${s.name} — ${s.artist}`} />
                               </p>
                             ))}
                           </div>

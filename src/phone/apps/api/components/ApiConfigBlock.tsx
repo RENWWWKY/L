@@ -1,5 +1,6 @@
 import { Eye, EyeOff } from 'lucide-react'
 import { useEffect, useMemo, useState, type ReactNode } from 'react'
+import { MemoryModelIdText } from '../../wechat/memory/MemoryModelIdText'
 import { InlineDropdown } from '../../wechat/newFriendsPersona/InlineDropdown'
 import { apiTheme } from '../theme'
 import { fetchModels, testConnectionSim } from '../apiSim'
@@ -65,6 +66,10 @@ export function ApiConfigBlock({
 
   const asrMode = mode === 'asr'
 
+  const selectedModelLabel = config.modelList.length
+    ? (config.modelId || config.modelList[0] || '').trim() || '请选择'
+    : '请先拉取模型'
+
   return (
     <div className="mx-4 mt-4 rounded-2xl bg-white p-5" style={{ boxShadow: apiTheme.shadow }}>
       <p className="text-[16px] font-semibold" style={{ color: apiTheme.text }}>
@@ -119,9 +124,11 @@ export function ApiConfigBlock({
                 <InlineDropdown
                   label="选择模型"
                   valueText={
-                    config.modelList.length
-                      ? (config.modelId || config.modelList[0] || '').trim() || '请选择'
-                      : '请先拉取模型'
+                    config.modelList.length ? (
+                      <MemoryModelIdText text={selectedModelLabel} />
+                    ) : (
+                      selectedModelLabel
+                    )
                   }
                   open={modelOpen}
                   disabled={!config.modelList.length}
@@ -145,7 +152,7 @@ export function ApiConfigBlock({
                             setModelOpen(false)
                           }}
                         >
-                          <span className="break-all">{m}</span>
+                          <MemoryModelIdText text={m} className="break-all" />
                         </button>
                       )
                     })}

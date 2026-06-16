@@ -4,6 +4,9 @@ import { publicAssetUrl } from '../publicAssetUrl'
 export const PHONE_NUM_FONT_FAMILY =
   '"Songti SC", "STSong", "Noto Serif SC", "Georgia", "Times New Roman", serif'
 
+/** 全局拉丁字母字体栈（仅用于显式混排组件，如模型 id、聊天英文片段） */
+export const PHONE_LATIN_FONT_FAMILY = '"DejaVu Math TeX Gyre", "DejaVu Sans", sans-serif'
+
 export type PhoneTheme = {
   background: string
   /** 桌面壁纸（URL 或 dataURL） */
@@ -113,6 +116,7 @@ export type AppSlot = {
     | 'loreArchive'
     | 'recycleBin'
     | 'backgroundNotify'
+    | 'sandbox'
     | 'appearance'
   label: string
   /** 可选：自定义图标图片 URL（优先于线框 SVG） */
@@ -467,9 +471,10 @@ export const DEFAULT_CUSTOMIZATION: CustomizationState = {
     { id: 'loreArchive', label: '档案室', iconImageUrl: '', iconRadius: 18 },
     { id: 'recycleBin', label: '回收站', iconImageUrl: '', iconRadius: 18 },
     { id: 'backgroundNotify', label: '后台通知', iconImageUrl: '', iconRadius: 18 },
+    { id: 'sandbox', label: '幻境引擎', iconImageUrl: '', iconRadius: 18 },
     { id: 'appearance', label: '外观', iconImageUrl: '', iconRadius: 18 },
   ],
-  desktopLayout: ['voiceprint', 'dataArchive', 'appearance', 'recycleBin', 'backgroundNotify', null, null, null],
+  desktopLayout: ['voiceprint', 'dataArchive', 'appearance', 'recycleBin', 'sandbox', null, null, null],
   ui: {
     showStatusBar: true,
     fullScreen: false,
@@ -502,6 +507,14 @@ export const DEFAULT_CUSTOMIZATION: CustomizationState = {
     loreArchive: { ...DEFAULT_APP_PAGE_STYLE, pageBg: '#fafafa' },
     recycleBin: { ...DEFAULT_APP_PAGE_STYLE, pageBg: '#f4f4f5' },
     backgroundNotify: { ...DEFAULT_APP_PAGE_STYLE, pageBg: '#f2f2f4' },
+    sandbox: {
+      ...DEFAULT_APP_PAGE_STYLE,
+      pageBg: '#fafafa',
+      headerBg: 'rgba(255,255,255,0.94)',
+      cardBg: '#ffffff',
+      fontFamily:
+        '"Cormorant Garamond", "Noto Serif SC", "STSong", "Songti SC", serif',
+    },
     /** 「外观与文案」页本身底图：与微信默认聊天壁纸一致，避免与微信 Tab 纯色底冲突观感 */
     appearance: {
       ...DEFAULT_APP_PAGE_STYLE,

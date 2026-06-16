@@ -1,5 +1,26 @@
 @import 'tailwindcss';
 
+@font-face {
+  font-family: 'DejaVu Math TeX Gyre';
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src:
+    local('DejaVu Math TeX Gyre'),
+    url('https://cdn.jsdelivr.net/npm/dejavu-fonts-ttf@2.37.3/ttf/DejaVuMathTeXGyre.ttf')
+      format('truetype');
+}
+
+/** 聊天输入框：仅 0–9 走 Corbel Light，其余字符仍用 --wx-font 衬线栈 */
+@font-face {
+  font-family: 'WeChatChatComposerDigits';
+  font-style: normal;
+  font-weight: 300;
+  font-display: swap;
+  src: local('Corbel Light'), local('Corbel');
+  unicode-range: U+0030-0039;
+}
+
 :root {
   --phone-bg: #f2f2f4;
   --phone-surface: #ffffff;

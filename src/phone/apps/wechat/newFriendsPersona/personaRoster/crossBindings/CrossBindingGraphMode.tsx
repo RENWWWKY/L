@@ -1,5 +1,4 @@
-import { motion } from 'framer-motion'
-import { GitBranch, Move } from 'lucide-react'
+import { GitBranch, Move, RotateCcw } from 'lucide-react'
 import { PERSONA_COACH_TARGET_ATTR } from '../../../memory/memoryCoachTypes'
 import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from 'react'
 import { uid } from '../../utils'
@@ -9,6 +8,7 @@ import {
   edgeVisibleToAnchor,
   graphRelationLabel,
   neighborNodeKeysForGraphFocus,
+  connectedNodeKeysFromEdges,
   nodeKey,
   parseNodeKey,
 } from './crossBindingEngine'
@@ -22,12 +22,54 @@ import { buildCrossBindingGraphLayoutSnapshot } from './crossBindingGraphLayout'
 
 type NodePos = { x: number; y: number }
 
-const DRAG_THRESHOLD_PX = 10
-const NODE_SNAP_RADIUS = 58
-const NODE_RELEASE_SNAP_RADIUS = 80
+const DRAG_THRESHOLD_PX = 8
+const NODE_SNAP_RADIUS = 52
+const NODE_RELEASE_SNAP_RADIUS = 72
+const MIN_NODE_SEPARATION = 92
 const MIN_VIEWPORT_ZOOM = 0.35
 const MAX_VIEWPORT_ZOOM = 2.5
 const VIEWPORT_GRID_SIZE = 20
+
+function refineGraphLayoutSpacing(
+  layout: Record<string, NodePos>,
+  w: number,
+  h: number,
+  minDist = MIN_NODE_SEPARATION,
+): Record<string, NodePos> {
+  const keys = Object.keys(layout)
+  if (keys.length < 2) return layout
+  const out: Record<string, NodePos> = {}
+  for (const key of keys) {
+    out[key] = { ...layout[key]! }
+  }
+  const pad = 52
+  for (let iter = 0; iter < 48; iter++) {
+    for (let i = 0; i < keys.length; i++) {
+      for (let j = i + 1; j < keys.length; j++) {
+        const ki = keys[i]!
+        const kj = keys[j]!
+        const a = out[ki]!
+        const b = out[kj]!
+        const dx = b.x - a.x
+        const dy = b.y - a.y
+        const d = Math.hypot(dx, dy) || 1
+        if (d >= minDist) continue
+        const push = (minDist - d) / 2
+        const nx = dx / d
+        const ny = dy / d
+        out[ki] = { x: a.x - nx * push, y: a.y - ny * push }
+        out[kj] = { x: b.x + nx * push, y: b.y + ny * push }
+      }
+    }
+  }
+  for (const key of keys) {
+    out[key] = {
+      x: Math.min(w - pad, Math.max(pad, out[key]!.x)),
+      y: Math.min(h - pad, Math.max(pad, out[key]!.y)),
+    }
+  }
+  return out
+}
 /** 关系词标签沿连线可移动区间（避免压住两端头像） */
 const LABEL_ALONG_MIN = 0.1
 const LABEL_ALONG_MAX = 0.9
@@ -85,13 +127,55 @@ function touchPairCenterViewport(a: Touch, b: Touch, rect: DOMRect): NodePos {
 function layoutNodes(nodes: CrossBindingNode[], w: number, h: number): Record<string, NodePos> {
   const cx = w / 2
   const cy = h / 2
-  const r = Math.min(w, h) * 0.34
+  const r = Math.min(w, h) * (nodes.length > 8 ? 0.36 : 0.32)
   const out: Record<string, NodePos> = {}
   nodes.forEach((n, i) => {
     const a = (i / Math.max(1, nodes.length)) * Math.PI * 2 - Math.PI / 2
     out[nodeKey(n.type, n.id)] = { x: cx + Math.cos(a) * r, y: cy + Math.sin(a) * r }
   })
-  return out
+  return refineGraphLayoutSpacing(out, w, h)
+}
+
+/** 聚焦视角：中心 + 邻居均匀绕圈，避免沿用全景坐标导致标签堆叠 */
+function layoutFocusNeighborhood(
+  focusKey: string,
+  neighborKeys: ReadonlySet<string>,
+  w: number,
+  h: number,
+): Record<string, NodePos> {
+  const cx = w / 2
+  const cy = h / 2
+  const ringR = Math.min(w, h) * 0.3
+  const out: Record<string, NodePos> = {}
+  const orbitals = [...neighborKeys].filter((k) => k !== focusKey).sort()
+  out[focusKey] = { x: cx, y: cy }
+  orbitals.forEach((key, i) => {
+    const a = (i / Math.max(1, orbitals.length)) * Math.PI * 2 - Math.PI / 2
+    out[key] = { x: cx + Math.cos(a) * ringR, y: cy + Math.sin(a) * ringR }
+  })
+  return refineGraphLayoutSpacing(out, w, h, Math.min(w, h) * 0.22)
+}
+
+function truncateGraphRelationLabel(text: string, maxLen = 8): string {
+  const t = text.trim()
+  if (!t) return '关系'
+  if (t.length <= maxLen) return t
+  return `${t.slice(0, maxLen)}…`
+}
+
+function spreadLabelAlongForEdge(
+  edgeId: string,
+  sk: string,
+  tk: string,
+  focusKey: string | null,
+  customAlong?: number,
+): number {
+  if (customAlong !== undefined) return customAlong
+  if (!focusKey) return 0.5
+  if (sk === focusKey) return 0.62
+  if (tk === focusKey) return 0.38
+  const hash = edgeId.split('').reduce((acc, ch) => acc + ch.charCodeAt(0), 0)
+  return 0.42 + (hash % 17) * 0.01
 }
 
 function findEdgeBetween(
@@ -119,7 +203,9 @@ export function CrossBindingGraphMode({
   store,
   onEditEdge,
   onCreateEdge,
-  initialFocusKey = null,
+  initialHighlightKey = null,
+  onFocusIdChange,
+  onHighlightKeyChange,
   linkEditMode: linkEditModeProp,
   onLinkEditModeChange,
   coachAssistActive = false,
@@ -128,12 +214,18 @@ export function CrossBindingGraphMode({
   layoutSessionKey = 0,
   onLayoutSnapshotChange,
   onLayoutDirty,
+  resetLayoutSignal = 0,
   className,
 }: {
   store: CrossBindingStore
   onEditEdge: (edge: RelationshipEdge, anchorId: string) => void
   onCreateEdge: (draft: RelationshipEdge, anchorId: string) => void
-  initialFocusKey?: string | null
+  /** 进入图谱时高亮当前角色/身份，但不进入聚焦布局 */
+  initialHighlightKey?: string | null
+  /** 用户轻点头像进入/退出聚焦时通知外层 */
+  onFocusIdChange?: (focusId: string | null) => void
+  /** 进入高亮是否仍生效（退出聚焦后会清掉） */
+  onHighlightKeyChange?: (highlightKey: string | null) => void
   linkEditMode?: boolean
   onLinkEditModeChange?: (active: boolean) => void
   /** 引导进行中：无可用关系词时展示示例标签供高亮 */
@@ -147,6 +239,8 @@ export function CrossBindingGraphMode({
   onLayoutSnapshotChange?: (snapshot: CrossBindingGraphLayoutSnapshot) => void
   /** 用户主动移动节点/平移/缩放画布 */
   onLayoutDirty?: () => void
+  /** 递增时恢复默认环形布局并重置视口 */
+  resetLayoutSignal?: number
   className?: string
 }) {
   const wrapRef = useRef<HTMLDivElement>(null)
@@ -156,7 +250,8 @@ export function CrossBindingGraphMode({
   const linkDragActiveRef = useRef(false)
   const hoverDropKeyRef = useRef<string | null>(null)
   const [size, setSize] = useState({ w: 320, h: 420 })
-  const [focusId, setFocusId] = useState<string | null>(initialFocusKey)
+  const [highlightKey, setHighlightKey] = useState<string | null>(initialHighlightKey)
+  const [focusId, setFocusId] = useState<string | null>(null)
   const [linkEditModeInternal, setLinkEditModeInternal] = useState(false)
   const linkEditMode = linkEditModeProp ?? linkEditModeInternal
   const setLinkEditMode = useCallback(
@@ -190,15 +285,61 @@ export function CrossBindingGraphMode({
   const canvasPanLastClientRef = useRef<{ x: number; y: number } | null>(null)
   const canvasPanPointerIdRef = useRef<number | null>(null)
   const pinchTouchRef = useRef<{ distance: number; zoom: number } | null>(null)
+  const graphBoundsRef = useRef({ minX: 0, minY: 0, width: 320, height: 420 })
+  const dragLivePosRef = useRef<NodePos | null>(null)
 
   const nodes = useMemo(() => [...store.registry.values()], [store.registry])
 
+  const connectedKeys = useMemo(
+    () => connectedNodeKeysFromEdges(store.edges),
+    [store.edges],
+  )
+
+  /** 连线模式需展示全部节点以便新建关系；平时只画有连线的节点，避免多余身份头像 */
+  const nodesInGraph = useMemo(() => {
+    if (linkEditMode) return nodes
+    return nodes.filter((n) => connectedKeys.has(nodeKey(n.type, n.id)))
+  }, [connectedKeys, linkEditMode, nodes])
+
   const baseLayout = useMemo(
-    () => layoutNodes(nodes, size.w, size.h),
-    [nodes, size.h, size.w],
+    () => layoutNodes(nodesInGraph, size.w, size.h),
+    [nodesInGraph, size.h, size.w],
   )
 
   const pos = useMemo(() => ({ ...baseLayout, ...positions }), [baseLayout, positions])
+
+  /** 关系词方向 / 连线高亮视角：聚焦时以聚焦点为准，否则以进入时的高亮角色为准 */
+  const perspectiveKey = focusId ?? highlightKey
+
+  const focusNeighborKeys = useMemo(
+    () => neighborNodeKeysForGraphFocus(focusId, store.edges),
+    [focusId, store.edges],
+  )
+
+  const focusLayout = useMemo(() => {
+    if (!focusId || linkEditMode || !focusNeighborKeys) return null
+    return layoutFocusNeighborhood(focusId, focusNeighborKeys, size.w, size.h)
+  }, [focusId, focusNeighborKeys, linkEditMode, size.h, size.w])
+
+  const displayPos = useMemo(() => {
+    if (!focusLayout || !focusNeighborKeys) return pos
+    const merged: Record<string, NodePos> = {}
+    for (const key of focusNeighborKeys) {
+      merged[key] = positions[key] ?? focusLayout[key] ?? pos[key]
+    }
+    return merged
+  }, [focusLayout, focusNeighborKeys, pos, positions])
+
+  const renderPos = useMemo(() => {
+    const dragKey = dragFrom
+    if (!dragKey || !dragPoint || linkEditMode) return displayPos
+    return { ...displayPos, [dragKey]: dragPoint }
+  }, [displayPos, dragFrom, dragPoint, linkEditMode])
+
+  const renderCanvasBounds = useMemo(
+    () => ({ minX: 0, minY: 0, width: size.w, height: size.h }),
+    [size.h, size.w],
+  )
 
   const measure = useCallback(() => {
     const el = wrapRef.current
@@ -219,32 +360,18 @@ export function CrossBindingGraphMode({
   }, [viewportZoom])
 
   useEffect(() => {
-    if (initialLayout) {
-      setPositions(initialLayout.positions)
-      setViewportPan(initialLayout.viewportPan)
-      setViewportZoom(initialLayout.viewportZoom)
-      return
-    }
-    setPositions({})
-    setViewportPan({ x: 0, y: 0 })
-    setViewportZoom(1)
-  }, [initialLayout, layoutSessionKey])
+    graphBoundsRef.current = renderCanvasBounds
+  }, [renderCanvasBounds])
 
   const notifyLayoutDirty = useCallback(() => {
     onLayoutDirty?.()
   }, [onLayoutDirty])
 
-  useEffect(() => {
-    if (!onLayoutSnapshotChange) return
-    onLayoutSnapshotChange(
-      buildCrossBindingGraphLayoutSnapshot(nodes, pos, viewportPan, viewportZoom),
-    )
-  }, [nodes, onLayoutSnapshotChange, pos, viewportPan, viewportZoom])
-
   const clearDrag = useCallback(() => {
     dragFromRef.current = null
     dragMovedRef.current = false
     dragStartRef.current = null
+    dragLivePosRef.current = null
     linkDragActiveRef.current = false
     setLinkDragActive(false)
     setLinkSourceKey(null)
@@ -252,6 +379,52 @@ export function CrossBindingGraphMode({
     setDragPoint(null)
     setHoverDropKey(null)
   }, [])
+
+  const resetGraphLayout = useCallback(
+    (opts?: { markDirty?: boolean }) => {
+      dragLivePosRef.current = null
+      labelOffsetsRef.current = {}
+      setPositions({})
+      setLabelOffsets({})
+      setViewportPan({ x: 0, y: 0 })
+      setViewportZoom(1)
+      clearDrag()
+      if (opts?.markDirty !== false) notifyLayoutDirty()
+    },
+    [clearDrag, notifyLayoutDirty],
+  )
+
+  useEffect(() => {
+    if (initialLayout) {
+      setPositions(initialLayout.positions)
+      setViewportPan(initialLayout.viewportPan)
+      setViewportZoom(initialLayout.viewportZoom)
+      labelOffsetsRef.current = {}
+      setLabelOffsets({})
+      dragLivePosRef.current = null
+      clearDrag()
+      return
+    }
+    dragLivePosRef.current = null
+    labelOffsetsRef.current = {}
+    setPositions({})
+    setLabelOffsets({})
+    setViewportPan({ x: 0, y: 0 })
+    setViewportZoom(1)
+    clearDrag()
+  }, [clearDrag, initialLayout, layoutSessionKey])
+
+  useEffect(() => {
+    if (!resetLayoutSignal) return
+    resetGraphLayout({ markDirty: true })
+  }, [resetLayoutSignal, resetGraphLayout])
+
+  useEffect(() => {
+    if (!onLayoutSnapshotChange) return
+    onLayoutSnapshotChange(
+      buildCrossBindingGraphLayoutSnapshot(nodesInGraph, pos, viewportPan, viewportZoom),
+    )
+  }, [nodesInGraph, onLayoutSnapshotChange, pos, viewportPan, viewportZoom])
 
   const toggleLinkEditMode = useCallback(() => {
     if (linkEditMode) {
@@ -299,9 +472,10 @@ export function CrossBindingGraphMode({
     if (!rect) return null
     const pan = viewportPanRef.current
     const zoom = viewportZoomRef.current
+    const { minX, minY } = graphBoundsRef.current
     return {
-      x: (clientX - rect.left - pan.x) / zoom,
-      y: (clientY - rect.top - pan.y) / zoom,
+      x: (clientX - rect.left - pan.x) / zoom - minX,
+      y: (clientY - rect.top - pan.y) / zoom - minY,
     }
   }, [])
 
@@ -370,13 +544,14 @@ export function CrossBindingGraphMode({
 
       const zoom = viewportZoomRef.current
       const pan = viewportPanRef.current
+      const { minX, minY } = graphBoundsRef.current
       const clamped = clampViewportZoom(nextZoom)
-      const worldX = (center.x - pan.x) / zoom
-      const worldY = (center.y - pan.y) / zoom
+      const worldX = (center.x - minX - pan.x) / zoom
+      const worldY = (center.y - minY - pan.y) / zoom
       setViewportZoom(clamped)
       setViewportPan({
-        x: center.x - worldX * clamped,
-        y: center.y - worldY * clamped,
+        x: center.x - minX - worldX * clamped,
+        y: center.y - minY - worldY * clamped,
       })
       notifyLayoutDirty()
     }
@@ -473,8 +648,45 @@ export function CrossBindingGraphMode({
   }, [notifyLayoutDirty])
 
   useEffect(() => {
-    setFocusId(initialFocusKey ?? null)
-  }, [initialFocusKey])
+    setHighlightKey(initialHighlightKey ?? null)
+    setFocusId(null)
+  }, [initialHighlightKey])
+
+  useEffect(() => {
+    onFocusIdChange?.(focusId)
+  }, [focusId, onFocusIdChange])
+
+  useEffect(() => {
+    onHighlightKeyChange?.(highlightKey)
+  }, [highlightKey, onHighlightKeyChange])
+
+  const exitFocus = useCallback(() => {
+    setFocusId(null)
+    setHighlightKey(null)
+  }, [])
+
+  const prevFocusIdRef = useRef<string | null>(null)
+  const prevLinkEditModeRef = useRef(linkEditMode)
+
+  /** 仅在用户主动切换聚焦 / 退出连线模式时重置视口；勿在初次加载时清空已保存布局 */
+  useEffect(() => {
+    const prevFocus = prevFocusIdRef.current
+    const prevLink = prevLinkEditModeRef.current
+    prevFocusIdRef.current = focusId
+    prevLinkEditModeRef.current = linkEditMode
+
+    if (!focusId || linkEditMode) return
+
+    const focusChanged = prevFocus !== null && prevFocus !== focusId
+    const exitedLinkEdit = prevLink && !linkEditMode
+    if (!focusChanged && !exitedLinkEdit) return
+
+    setViewportPan({ x: 0, y: 0 })
+    setViewportZoom(1)
+    setLabelOffsets({})
+    labelOffsetsRef.current = {}
+    dragLivePosRef.current = null
+  }, [focusId, linkEditMode])
 
   useEffect(() => {
     measure()
@@ -488,17 +700,20 @@ export function CrossBindingGraphMode({
       .map((edge) => {
         const sk = nodeKey(edge.sourceType, edge.sourceId)
         const tk = nodeKey(edge.targetType, edge.targetId)
-        const s = pos[sk]
-        const t = pos[tk]
+        const s = renderPos[sk]
+        const t = renderPos[tk]
         if (!s || !t) return null
-        const along =
-          labelOffsetsRef.current[edge.id] ?? labelOffsets[edge.id] ?? 0.5
+        const perspectiveNodeId = perspectiveKey ? parseNodeKey(perspectiveKey)?.id ?? null : null
+        const involvesPerspective =
+          !!perspectiveNodeId &&
+          (edge.sourceId === perspectiveNodeId || edge.targetId === perspectiveNodeId)
+        const related =
+          !perspectiveNodeId ||
+          (involvesPerspective && edgeVisibleToAnchor(edge, perspectiveNodeId))
+        if (focusId && !related) return null
+        const customAlong = labelOffsetsRef.current[edge.id] ?? labelOffsets[edge.id]
+        const along = spreadLabelAlongForEdge(edge.id, sk, tk, perspectiveKey, customAlong)
         const labelPos = pointOnEdge(s, t, along)
-        const focusNodeId = focusId ? parseNodeKey(focusId)?.id ?? null : null
-        const involvesFocus =
-          !!focusNodeId && (edge.sourceId === focusNodeId || edge.targetId === focusNodeId)
-        if (involvesFocus && !edgeVisibleToAnchor(edge, focusNodeId!)) return null
-        const related = !focusNodeId || involvesFocus
         return { edge, s, t, labelPos, along, related, sk, tk }
       })
       .filter(Boolean) as Array<{
@@ -511,7 +726,7 @@ export function CrossBindingGraphMode({
       sk: string
       tk: string
     }>
-  }, [focusId, labelOffsets, pos, store.edges])
+  }, [focusId, labelOffsets, perspectiveKey, renderPos, store.edges])
 
   const coachEdgeLabelId = useMemo(
     () => edgeLines.find((line) => line.related)?.edge.id ?? null,
@@ -523,10 +738,11 @@ export function CrossBindingGraphMode({
     onCoachLayoutReady?.()
   }, [coachAssistActive, coachEdgeLabelId, onCoachLayoutReady, size.h, size.w])
 
-  const focusNeighborKeys = useMemo(
-    () => neighborNodeKeysForGraphFocus(focusId, store.edges),
-    [focusId, store.edges],
-  )
+  const visibleNodes = useMemo(() => {
+    const pool = nodesInGraph
+    if (!focusId || linkEditMode || !focusNeighborKeys) return pool
+    return pool.filter((node) => focusNeighborKeys.has(nodeKey(node.type, node.id)))
+  }, [focusId, focusNeighborKeys, linkEditMode, nodesInGraph])
 
   const updateDragPoint = useCallback(
     (clientX: number, clientY: number) => {
@@ -541,37 +757,24 @@ export function CrossBindingGraphMode({
       const p = pointInWorld(clientX, clientY)
       if (!p) return
 
-      const layout = { ...baseLayout, ...positions }
-
       if (linkEditMode && linkDragActiveRef.current) {
+        const layout = { ...renderPos }
         const dropTarget = findSnapTarget(clientX, clientY, key, layout)
         setHoverDropKey(dropTarget)
         setDragPoint(p)
         return
       }
 
-      const dropTarget = findSnapTarget(clientX, clientY, key, layout)
-      setHoverDropKey(dropTarget)
-
-      if (dropTarget) {
+      if (linkEditMode) {
         setDragPoint(p)
         return
       }
 
-      if (dragMovedRef.current) {
-        setDragPoint(null)
-        setHoverDropKey(null)
-        setPositions((prev) => ({
-          ...prev,
-          [key]: p,
-        }))
-        notifyLayoutDirty()
-        return
-      }
-
+      setHoverDropKey(null)
+      dragLivePosRef.current = p
       setDragPoint(p)
     },
-    [baseLayout, findSnapTarget, linkEditMode, notifyLayoutDirty, pointInWorld, positions],
+    [findSnapTarget, linkEditMode, pointInWorld, renderPos],
   )
 
   const completeLinkToTarget = useCallback(
@@ -620,14 +823,30 @@ export function CrossBindingGraphMode({
       }
 
       if (!moved) {
-        setFocusId((prev) => (prev === fromKey ? null : fromKey))
+        if (focusId === fromKey) {
+          exitFocus()
+        } else {
+          setFocusId(fromKey)
+        }
         clearDrag()
         return
       }
 
+      const p =
+        dragLivePosRef.current ??
+        pointInWorld(e.clientX, e.clientY) ??
+        renderPos[fromKey] ??
+        null
+      if (p) {
+        setPositions((prev) => ({
+          ...prev,
+          [fromKey]: p,
+        }))
+        notifyLayoutDirty()
+      }
       clearDrag()
     },
-    [clearDrag],
+    [clearDrag, exitFocus, focusId, notifyLayoutDirty, pointInWorld, renderPos],
   )
 
   const onNodePointerDown = (key: string) => (e: React.PointerEvent<HTMLButtonElement>) => {
@@ -663,7 +882,7 @@ export function CrossBindingGraphMode({
     (e: React.PointerEvent<HTMLDivElement>) => {
       if (!linkEditMode || e.button !== 0 || isGraphUiControlTarget(e.target)) return
 
-      const layout = { ...baseLayout, ...positions }
+      const layout = { ...renderPos }
       const sourceKey = findSnapTarget(e.clientX, e.clientY, null, layout)
       if (!sourceKey) return
 
@@ -680,7 +899,7 @@ export function CrossBindingGraphMode({
 
       wrapRef.current?.setPointerCapture(e.pointerId)
     },
-    [baseLayout, findSnapTarget, linkEditMode, positions, updateDragPoint],
+    [renderPos, findSnapTarget, linkEditMode, updateDragPoint],
   )
 
   const onWrapLinkPointerMove = useCallback(
@@ -704,7 +923,7 @@ export function CrossBindingGraphMode({
       }
 
       if (linkDragActiveRef.current) {
-        const layout = { ...baseLayout, ...positions }
+        const layout = { ...renderPos }
         const hovered = hoverDropKeyRef.current
         const targetKey =
           findSnapTarget(e.clientX, e.clientY, fromKey, layout, NODE_RELEASE_SNAP_RADIUS) ??
@@ -716,7 +935,7 @@ export function CrossBindingGraphMode({
 
       clearDrag()
     },
-    [baseLayout, clearDrag, completeLinkToTarget, findSnapTarget, positions],
+    [renderPos, clearDrag, completeLinkToTarget, findSnapTarget],
   )
 
   const onWrapLinkPointerUp = useCallback(
@@ -857,17 +1076,17 @@ export function CrossBindingGraphMode({
         setLabelOffsets((prev) => ({ ...prev, [edge.id]: along }))
       }
       if (!moved) {
-        const parsed = focusId ? parseNodeKey(focusId) : null
+        const parsed = perspectiveKey ? parseNodeKey(perspectiveKey) : null
         onEditEdge(edge, parsed?.id ?? edge.sourceId)
       }
     }
 
-  if (!nodes.length) {
+  if (!nodesInGraph.length) {
     return (
       <div
         className={`flex h-[420px] items-center justify-center rounded-3xl bg-white text-[12px] text-[#9CA3AF] ${className ?? ''}`}
       >
-        暂无可绘制的节点
+        {nodes.length ? '暂无可绘制的连线关系' : '暂无可绘制的节点'}
       </div>
     )
   }
@@ -892,14 +1111,25 @@ export function CrossBindingGraphMode({
       onPointerCancel={onWrapPointerCancel}
     >
       <div
-        className="absolute inset-0"
+        className="absolute"
         style={{
+          left: renderCanvasBounds.minX,
+          top: renderCanvasBounds.minY,
+          width: renderCanvasBounds.width,
+          height: renderCanvasBounds.height,
           transform: `translate3d(${viewportPan.x}px, ${viewportPan.y}px, 0) scale(${viewportZoom})`,
           transformOrigin: '0 0',
-          willChange: canvasPanning || pinchZooming ? 'transform' : undefined,
+          willChange: canvasPanning || pinchZooming || dragFrom ? 'transform' : undefined,
         }}
       >
-      <svg className="pointer-events-none absolute inset-0 z-0 h-full w-full">
+      <svg
+        className="pointer-events-none absolute left-0 top-0 z-0"
+        width={renderCanvasBounds.width}
+        height={renderCanvasBounds.height}
+        viewBox={`${renderCanvasBounds.minX} ${renderCanvasBounds.minY} ${renderCanvasBounds.width} ${renderCanvasBounds.height}`}
+        style={{ overflow: 'visible' }}
+        aria-hidden
+      >
         {edgeLines.map(({ edge, s, t, related }) => (
           <line
             key={edge.id}
@@ -910,25 +1140,27 @@ export function CrossBindingGraphMode({
             stroke={related ? '#111827' : '#E5E7EB'}
             strokeWidth={related ? 1 : 0.75}
             strokeOpacity={related ? 0.35 : 0.2}
+            vectorEffect="non-scaling-stroke"
           />
         ))}
-        {linkEditMode && linkDragActive && dragFrom && pos[dragFrom] ? (
+        {linkEditMode && linkDragActive && dragFrom && renderPos[dragFrom] ? (
           <line
-            x1={pos[dragFrom].x}
-            y1={pos[dragFrom].y}
+            x1={renderPos[dragFrom].x}
+            y1={renderPos[dragFrom].y}
             x2={
-              hoverDropKey && pos[hoverDropKey]
-                ? pos[hoverDropKey].x
-                : dragPoint?.x ?? pos[dragFrom].x
+              hoverDropKey && renderPos[hoverDropKey]
+                ? renderPos[hoverDropKey].x
+                : dragPoint?.x ?? renderPos[dragFrom].x
             }
             y2={
-              hoverDropKey && pos[hoverDropKey]
-                ? pos[hoverDropKey].y
-                : dragPoint?.y ?? pos[dragFrom].y
+              hoverDropKey && renderPos[hoverDropKey]
+                ? renderPos[hoverDropKey].y
+                : dragPoint?.y ?? renderPos[dragFrom].y
             }
             stroke="#111827"
             strokeWidth={1.5}
             strokeDasharray="4 4"
+            vectorEffect="non-scaling-stroke"
           />
         ) : null}
       </svg>
@@ -937,18 +1169,21 @@ export function CrossBindingGraphMode({
         const draggingLabel =
           labelDragEdgeIdRef.current === edge.id || labelDragEdgeId === edge.id
         const coachEdgeLabel = edge.id === coachEdgeLabelId
+        const fullLabel = graphRelationLabel(edge, perspectiveKey) || '关系'
+        const shortLabel = truncateGraphRelationLabel(fullLabel)
         return (
           <button
             key={`lbl-${edge.id}`}
             type="button"
             data-graph-edge-label
+            title={fullLabel !== shortLabel ? fullLabel : undefined}
             {...(coachEdgeLabel ? { [PERSONA_COACH_TARGET_ATTR]: 'graph-edge-label' } : {})}
             style={{
               left: labelPos.x,
               top: labelPos.y,
               transform: 'translate3d(-50%, -50%, 0)',
             }}
-            className={`absolute z-[15] min-h-[28px] min-w-[44px] cursor-grab rounded-full border border-gray-100 bg-white px-2.5 py-1 text-[10px] text-[#374151] shadow-sm active:cursor-grabbing ${
+            className={`absolute z-[15] max-w-[88px] min-h-[28px] cursor-grab rounded-full border border-gray-100 bg-white px-2.5 py-1 text-center text-[10px] leading-tight text-[#374151] shadow-sm active:cursor-grabbing ${
               related ? 'opacity-100' : 'opacity-35'
             } ${draggingLabel ? 'z-[25] ring-2 ring-[#111827]/15 shadow-md' : ''}`}
             onPointerDown={onLabelPointerDown(edge)}
@@ -956,7 +1191,7 @@ export function CrossBindingGraphMode({
             onPointerUp={finishLabelPointer(edge)}
             onPointerCancel={finishLabelPointer(edge)}
           >
-            {graphRelationLabel(edge, focusId) || '关系'}
+            <span className="block truncate">{shortLabel}</span>
           </button>
         )
       })}
@@ -970,43 +1205,34 @@ export function CrossBindingGraphMode({
         </div>
       ) : null}
 
-      {nodes.map((node) => {
+      {visibleNodes.map((node) => {
         const key = nodeKey(node.type, node.id)
-        const p = pos[key]
+        const p = renderPos[key]
         if (!p) return null
-        const focused =
-          linkEditMode || !focusNeighborKeys || focusNeighborKeys.has(key)
         const isFocusCenter = focusId === key
-        const isFocusNeighbor = !!focusNeighborKeys?.has(key) && !isFocusCenter
+        const isEntryHighlight = !focusId && highlightKey === key
+        const isFocusNeighbor = !!focusId && !!focusNeighborKeys?.has(key) && !isFocusCenter
         const isLinkSource = linkEditMode && linkSourceKey === key
         const isSnapTarget = linkEditMode && linkDragActive && hoverDropKey === key
         const isDropTarget = isSnapTarget
         const isDragging = !linkEditMode && dragFrom === key
+        const nodeScale =
+          isLinkSource || isFocusCenter || isEntryHighlight || isDropTarget
+            ? 1.08
+            : isFocusNeighbor || isDragging
+              ? 1.04
+              : 1
         return (
-          <motion.div
+          <div
             key={key}
-            className="absolute z-20 flex w-[72px] flex-col items-center"
+            className={`absolute z-20 flex w-[72px] flex-col items-center will-change-transform ${
+              isDragging ? '' : 'transition-transform duration-200 ease-out'
+            }`}
             style={{
               left: p.x,
               top: p.y,
-              x: '-50%',
-              y: '-50%',
+              transform: `translate(-50%, -50%) scale(${nodeScale})`,
               pointerEvents: linkEditMode ? 'none' : undefined,
-            }}
-            animate={{
-              scale:
-                isLinkSource || isFocusCenter || isDropTarget
-                  ? 1.08
-                  : isFocusNeighbor
-                    ? 1.04
-                    : isDragging
-                      ? 1.04
-                      : 1,
-              opacity: focused || isDropTarget || isDragging || isLinkSource ? 1 : 0.18,
-            }}
-            transition={{
-              duration: isDragging ? 0 : 0.35,
-              ease: [0.22, 1, 0.36, 1],
             }}
           >
             <button
@@ -1018,7 +1244,7 @@ export function CrossBindingGraphMode({
               } ${
                 isLinkSource
                   ? 'ring-2 ring-[#111827] shadow-[0_8px_24px_rgba(0,0,0,0.14)]'
-                  : isFocusCenter
+                  : isFocusCenter || isEntryHighlight
                     ? 'ring-2 ring-[#111827] shadow-[0_8px_24px_rgba(0,0,0,0.12)]'
                     : isFocusNeighbor
                       ? 'ring-2 ring-[#111827]/25'
@@ -1045,7 +1271,7 @@ export function CrossBindingGraphMode({
                 {node.label}
               </span>
             </button>
-          </motion.div>
+          </div>
         )
       })}
 
@@ -1069,17 +1295,29 @@ export function CrossBindingGraphMode({
           <GitBranch className="size-3.5" />
           {linkEditMode ? '退出连线模式' : '编辑关系连线'}
         </button>
-        {focusId && !linkEditMode ? (
+        <div className="flex flex-wrap items-center gap-2">
           <button
             type="button"
             data-graph-ui-control
-            {...{ [PERSONA_COACH_TARGET_ATTR]: 'graph-exit-focus' }}
-            className="rounded-full border border-[#E5E7EB] bg-white px-3 py-1.5 text-[10px] text-[#374151]"
-            onClick={() => setFocusId(null)}
+            onClick={() => resetGraphLayout({ markDirty: true })}
+            className="inline-flex items-center gap-1.5 rounded-full border border-[#E5E7EB] bg-white px-3 py-1.5 text-[11px] font-semibold text-[#111827] shadow-sm transition-colors hover:bg-[#FAFAFB]"
+            aria-label="重置布局"
           >
-            退出聚焦
+            <RotateCcw className="size-3.5" />
+            重置布局
           </button>
-        ) : null}
+          {focusId && !linkEditMode ? (
+            <button
+              type="button"
+              data-graph-ui-control
+              {...{ [PERSONA_COACH_TARGET_ATTR]: 'graph-exit-focus' }}
+              className="rounded-full border border-[#E5E7EB] bg-white px-3 py-1.5 text-[10px] text-[#374151]"
+              onClick={exitFocus}
+            >
+              退出聚焦
+            </button>
+          ) : null}
+        </div>
       </div>
 
       <div className="pointer-events-none absolute left-3 right-3 top-3 z-30 space-y-1 pr-24">
@@ -1098,7 +1336,16 @@ export function CrossBindingGraphMode({
               聚焦视角
             </p>
             <p className="text-[9px] leading-relaxed text-[#6B7280]">
-              高亮：当前角色/身份及其已绑定关系对象；关系词可沿连线拖动。轻点头像切换聚焦。
+              仅显示与中心角色有绑定关系的对象；关系词可沿连线拖动。轻点头像切换聚焦。
+            </p>
+          </>
+        ) : highlightKey ? (
+          <>
+            <p className="text-[9px] font-medium uppercase tracking-[0.14em] text-[#111827]">
+              全景 · 当前角色高亮
+            </p>
+            <p className="text-[9px] leading-relaxed text-[#6B7280]">
+              显示完整关系网；与当前角色可见的关系连线会加亮。轻点头像可进入聚焦视角。
             </p>
           </>
         ) : (

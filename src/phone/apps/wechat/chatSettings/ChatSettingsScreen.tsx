@@ -899,8 +899,8 @@ export function ChatSettingsScreen({
             <div>
               <span className="text-[16px] text-black">语音消息每轮触发概率</span>
               <p className="mt-1 text-[12px] leading-relaxed text-[#8e8e8e]">
-                拖动滑块设定角色每轮回复中至少发 1 条语音的目标概率（未定制时系统默认约{' '}
-                <span style={roundTriggerNumStyle}>{VOICE_PROTOCOL_DEFAULT_ROUND_TRIGGER_PERCENT}%</span>）。
+                设定该轮回复<strong className="font-normal text-[#666]">会不会出现</strong>语音（门槛概率，不是条数上限）。命中后同一轮可发<strong className="font-normal text-[#666]">多条</strong>语音并与文字穿插。未定制时系统默认约{' '}
+                <span style={roundTriggerNumStyle}>{VOICE_PROTOCOL_DEFAULT_ROUND_TRIGGER_PERCENT}%</span>。
               </p>
               <RoundTriggerPercentControl
                 kind="voice"

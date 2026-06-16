@@ -1,6 +1,7 @@
 import { AnimatePresence, motion } from 'framer-motion'
 import { Eye, EyeOff } from 'lucide-react'
 import { useCallback, useMemo, useState } from 'react'
+import { MemoryModelIdText } from './MemoryModelIdText'
 import { Pressable } from '../../../components/Pressable'
 import { InlineDropdown } from '../newFriendsPersona/InlineDropdown'
 import { MemoryEngineSoftField, MemoryEngineSoftInput } from './MemoryEngineSoftField'
@@ -12,7 +13,7 @@ const STATUS_COPY: Record<
   ConnectionStatus,
   { text: string; showDot: boolean; dotPulse: boolean; dotClass: string }
 > = {
-  idle: { text: '还没测过，填好接口后点「测试连通」', showDot: false, dotPulse: false, dotClass: 'bg-gray-300' },
+  idle: { text: '', showDot: false, dotPulse: false, dotClass: 'bg-gray-300' },
   pinging: { text: '正在连一下，稍等…', showDot: true, dotPulse: true, dotClass: 'bg-gray-900' },
   connected: { text: '连上了，可以拉模型、开语义召回', showDot: true, dotPulse: false, dotClass: 'bg-gray-900' },
   failed: { text: '没连上，检查地址和密钥是否正确', showDot: true, dotPulse: false, dotClass: 'bg-red-900/40' },
@@ -65,8 +66,6 @@ function VectorEmbeddingModelSection({
   onPullModels,
   embeddingModelDropdownOpen,
   onEmbeddingModelDropdownToggle,
-  defaultModelHint,
-  suggestTestFirst,
 }: {
   mode: 'dedicated' | 'main'
   pullSource: EmbeddingPullSource | null
@@ -79,8 +78,6 @@ function VectorEmbeddingModelSection({
   onPullModels: () => void
   embeddingModelDropdownOpen: boolean
   onEmbeddingModelDropdownToggle: () => void
-  defaultModelHint?: string
-  suggestTestFirst?: boolean
 }) {
   const pullHint = useMemo(() => {
     if (!pullSource) {
@@ -95,25 +92,11 @@ function VectorEmbeddingModelSection({
 
   return (
     <div className={mode === 'dedicated' ? 'mt-6 border-t border-gray-100/80 pt-5' : ''}>
-      <p className="text-[14px] font-medium text-gray-900">选一个向量模型</p>
-      <p className="mt-1.5 text-[11px] leading-relaxed text-gray-500">
-        {mode === 'main'
-          ? '将从聊天主接口拉取模型列表；名字里常带 embed、embedding 的才是向量化模型。'
-          : '名字里常带 embed、embedding 的才是干「向量化」的；别选成聊天模型。'}
-        {suggestTestFirst ? '拉取前建议先点上面的「测试连通」。' : null}
-      </p>
-
-      <div
-        className={`mt-3 rounded-2xl px-3.5 py-2.5 text-[11px] leading-relaxed ${
-          pullSource?.kind === 'dedicated'
-            ? 'bg-gray-900/5 text-gray-700'
-            : pullSource?.kind === 'main'
-              ? 'bg-gray-100 text-gray-600'
-              : 'bg-amber-50/80 text-amber-900/70'
-        }`}
-      >
-        {pullHint}
-      </div>
+      {!pullSource ? (
+        <div className="rounded-2xl bg-amber-50/80 px-3.5 py-2.5 text-[11px] leading-relaxed text-amber-900/70">
+          {pullHint}
+        </div>
+      ) : null}
 
       <Pressable
         type="button"
@@ -137,11 +120,13 @@ function VectorEmbeddingModelSection({
         <InlineDropdown
           label="选择向量模型"
           valueText={
-            embeddingModelDraft.trim()
-              ? embeddingModelDraft.trim()
-              : embeddingModelList.length
-                ? embeddingModelList[0] || '请选一个'
-                : '请先拉取模型列表'
+            embeddingModelDraft.trim() ? (
+              <MemoryModelIdText text={embeddingModelDraft.trim()} />
+            ) : embeddingModelList.length ? (
+              <MemoryModelIdText text={embeddingModelList[0] || '请选一个'} />
+            ) : (
+              '请先拉取模型列表'
+            )
           }
           open={embeddingModelDropdownOpen}
           disabled={!embeddingModelList.length || disabled}
@@ -159,17 +144,13 @@ function VectorEmbeddingModelSection({
                   }`}
                   onClick={() => onEmbeddingModelChange(m)}
                 >
-                  <span className="break-all">{m}</span>
+                  <MemoryModelIdText text={m} className="break-all" />
                 </button>
               )
             })}
           </div>
         </InlineDropdown>
       </div>
-
-      {defaultModelHint ? (
-        <p className="mt-2 text-[10px] text-gray-400">没选时默认用：{defaultModelHint}</p>
-      ) : null}
     </div>
   )
 }
@@ -192,7 +173,6 @@ export function VectorBridgeConfig({
   onPullModels,
   embeddingModelDropdownOpen,
   onEmbeddingModelDropdownToggle,
-  defaultModelHint,
   onVectorFieldsBlur,
 }: {
   mode?: 'dedicated' | 'main'
@@ -212,7 +192,6 @@ export function VectorBridgeConfig({
   onPullModels: () => void
   embeddingModelDropdownOpen: boolean
   onEmbeddingModelDropdownToggle: () => void
-  defaultModelHint?: string
   /** 专用接口地址 / 记忆库名称失焦时写入本机 */
   onVectorFieldsBlur?: () => void
 }) {
@@ -250,8 +229,6 @@ export function VectorBridgeConfig({
     onPullModels,
     embeddingModelDropdownOpen,
     onEmbeddingModelDropdownToggle,
-    defaultModelHint,
-    suggestTestFirst: mode === 'dedicated',
   }
 
   if (mode === 'main') {
@@ -261,10 +238,9 @@ export function VectorBridgeConfig({
         style={{ opacity: disabled ? 0.55 : 1 }}
       >
         <h3 className="text-[17px] font-semibold tracking-tight text-gray-900">向量模型</h3>
-        <p className="mt-1.5 text-[12px] leading-relaxed text-gray-500">
-          未开启额外接口时，向量化请求沿用全局聊天主接口。请先拉取主接口上的可用模型，再选一个 embedding 模型。
-        </p>
-        <VectorEmbeddingModelSection {...modelSectionProps} />
+        <div className="mt-4">
+          <VectorEmbeddingModelSection {...modelSectionProps} />
+        </div>
       </div>
     )
   }
@@ -277,15 +253,9 @@ export function VectorBridgeConfig({
       style={{ opacity: disabled ? 0.55 : 1 }}
     >
       <h3 className="text-[17px] font-semibold tracking-tight text-gray-900">向量接口与模型</h3>
-      <p className="mt-1.5 text-[12px] leading-relaxed text-gray-500">
-        语义召回要把聊天内容变成向量，需要单独的「向量化」服务（和平时对话用的聊天模型不是一回事）。地址和密钥只存在本机，不会上传到别处。
-      </p>
-      <p className="mt-2 text-[11px] leading-relaxed text-gray-400">
-        已开启额外接口，向量请求将使用下面填写的专用地址与密钥（不再回落到聊天主接口）。
-      </p>
 
       <div className="mt-5 space-y-4">
-        <MemoryEngineSoftField label="向量专用 · 接口地址" hint="OpenAI 兼容根地址，例如 …/v1">
+        <MemoryEngineSoftField label="接口地址">
           <MemoryEngineSoftInput
             value={config.endpoint}
             onChange={(v) => onConfigChange({ endpoint: v })}
@@ -295,7 +265,7 @@ export function VectorBridgeConfig({
           />
         </MemoryEngineSoftField>
 
-        <MemoryEngineSoftField label="向量专用 · 密钥" hint="与上面地址配套的 API Key">
+        <MemoryEngineSoftField label="密钥">
           <div className="flex items-stretch gap-2">
             <div className="min-w-0 flex-1 rounded-2xl bg-gray-50 px-4 py-3 transition-colors focus-within:bg-gray-100">
               <input
@@ -303,6 +273,7 @@ export function VectorBridgeConfig({
                 value={config.apiKey}
                 disabled={disabled}
                 onChange={(e) => onConfigChange({ apiKey: e.target.value })}
+                onBlur={onVectorFieldsBlur}
                 placeholder={hasSavedKey ? '已保存过密钥，输入新内容可覆盖' : '请输入密钥'}
                 className="w-full border-0 bg-transparent text-[14px] text-gray-900 outline-none placeholder:text-gray-400"
                 spellCheck={false}
@@ -322,7 +293,7 @@ export function VectorBridgeConfig({
           </div>
         </MemoryEngineSoftField>
 
-        <MemoryEngineSoftField label="记忆库名称" hint="选填，给自家向量库分区用">
+        <MemoryEngineSoftField label="记忆库名称">
           <MemoryEngineSoftInput
             value={config.collection}
             onChange={(v) => onConfigChange({ collection: v })}
@@ -345,7 +316,7 @@ export function VectorBridgeConfig({
           >
             {pinging ? '测试中…' : '测试连通'}
           </motion.button>
-          <ConnectionStatusLine status={connectionStatus} />
+          {connectionStatus !== 'idle' ? <ConnectionStatusLine status={connectionStatus} /> : null}
         </div>
       ) : null}
 

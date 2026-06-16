@@ -29,12 +29,7 @@ export function useNeteasePhoneLogin() {
   }, [])
 
   const login = useCallback(
-    async (opts: {
-      phone: string
-      password?: string
-      captcha?: string
-      ctcode?: string
-    }) => {
+    async (opts: { phone: string; captcha: string; ctcode?: string }) => {
       setPhase('logging')
       setError(null)
       try {

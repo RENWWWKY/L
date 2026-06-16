@@ -1,7 +1,8 @@
 import type { ReactNode } from 'react'
 import { Heart, MessageCircle, User } from 'lucide-react'
 
-import { ListenNum } from './ListenNum'
+import { ListenNum, ListenNumericText } from './ListenNum'
+import { ListenNeteaseCommentText } from './ListenNeteaseCommentText'
 import type { NeteaseArtistNote } from './neteaseMusicApi'
 
 export function formatNoteTime(ts: number): string {
@@ -38,15 +39,16 @@ export function NoteText({ text }: { text: string }) {
         const parts = line.split(/(#[^#\s]+#|#[^\s#]+)/g)
         return (
           <p key={lineIndex} className="text-[14px] leading-[1.65] text-stone-700">
-            {parts.map((part, partIndex) =>
-              part.startsWith('#') ? (
-                <span key={partIndex} className="font-medium text-rose-500">
-                  {part}
-                </span>
-              ) : (
-                <span key={partIndex}>{part}</span>
-              ),
-            )}
+            {parts.map((part, partIndex) => {
+              if (part.startsWith('#')) {
+                return (
+                  <span key={partIndex} className="font-medium text-rose-500">
+                    <ListenNeteaseCommentText text={part} emojiScale={1.05} />
+                  </span>
+                )
+              }
+              return <ListenNeteaseCommentText key={partIndex} text={part} emojiScale={1.05} />
+            })}
           </p>
         )
       })}
@@ -189,7 +191,9 @@ export function ArtistNoteBody({
         </div>
         <div className="min-w-0 flex-1">
           <p className="truncate text-[14px] font-medium text-stone-800">{artistName}</p>
-          <p className="mt-0.5 text-[12px] text-stone-400">{formatNoteTime(note.time)}</p>
+          <p className="mt-0.5 text-[12px] text-stone-400">
+            <ListenNumericText text={formatNoteTime(note.time)} />
+          </p>
         </div>
       </header>
 

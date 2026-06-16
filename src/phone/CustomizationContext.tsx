@@ -434,6 +434,7 @@ function normalizeAppPageStyles(parsed: unknown): CustomizationState['appPageSty
     loreArchive: migrateAppPage({ ...def.loreArchive, ...record.loreArchive }),
     recycleBin: migrateAppPage({ ...DEFAULT_APP_PAGE_STYLE, ...def.recycleBin, ...record.recycleBin }),
     backgroundNotify: migrateAppPage({ ...def.backgroundNotify, ...record.backgroundNotify }),
+    sandbox: migrateAppPage({ ...def.sandbox, ...record.sandbox }),
     appearance: migrateAppPage(appearanceMerged),
     lumiMeet: migrateAppPage({ ...def.lumiMeet, ...record.lumiMeet }),
   }

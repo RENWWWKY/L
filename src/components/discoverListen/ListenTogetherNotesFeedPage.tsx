@@ -2,7 +2,7 @@ import { MessageCircle, Feather, Heart, Play } from 'lucide-react'
 import { useCallback, useState } from 'react'
 
 import { ListenTogetherHeaderRefreshButton } from './ListenTogetherHeaderRefreshButton'
-import { ListenNum } from './ListenNum'
+import { ListenNum, ListenNumericText } from './ListenNum'
 import {
   NOTES_FEED_MOCK,
   type ListenAttachedMusic,
@@ -92,10 +92,15 @@ function NoteCard({
             ) : null}
           </div>
         </div>
-        <ListenNum className="shrink-0 text-[11px] text-stone-400/90">{note.time}</ListenNum>
+        <ListenNumericText
+          text={note.time}
+          className="shrink-0 text-[11px] text-stone-400/90"
+        />
       </header>
 
-      <p className="mt-4 text-[14px] leading-relaxed text-stone-700">{note.content}</p>
+      <p className="mt-4 text-[14px] leading-relaxed text-stone-700">
+        <ListenNumericText text={note.content} />
+      </p>
 
       <MusicCapsule music={note.attachedMusic} onPlay={onPlayMusic} />
 

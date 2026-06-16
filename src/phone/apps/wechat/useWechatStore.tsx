@@ -384,28 +384,10 @@ export function WechatStoreProvider({ children }: { children: ReactNode }) {
       })()
       return
     }
-    // 多账号：bundle 为空但内存有联系人 → 仅当过滤后对本号仍为空时才视为「大号通讯录泄漏」
+    // 多账号：bundle 为空但内存仍是大号通讯录 → 勿把大号联系人写入小号
     if (bundle.accounts.length > 1 && !active.personaContacts.length && snap.length > 0 && !userMutatedContacts) {
-      void (async () => {
-        const filtered = await filterPersonaContactsForWechatAccount(snap, active, primaryId)
-        suppressContactsBundleSyncRef.current = true
-        if (!filtered.length) {
-          const restored = await filterPersonaContactsForWechatAccount(
-            active.personaContacts,
-            active,
-            primaryId,
-          )
-          setWeChatPersonaContacts(restored.map((c) => ({ ...c })))
-          return
-        }
-        setWeChatPersonaContacts(filtered.map((c) => ({ ...c })))
-        const nextAccounts = bundle.accounts.map((a) =>
-          a.accountId === activeAccountId
-            ? { ...cloneAccount(a), personaContacts: filtered, lastActive: Date.now() }
-            : cloneAccount(a),
-        )
-        await persistBundle(nextAccounts, bundle.currentAccountId)
-      })()
+      suppressContactsBundleSyncRef.current = true
+      setWeChatPersonaContacts([])
       return
     }
     void (async () => {
@@ -542,10 +524,17 @@ export function WechatStoreProvider({ children }: { children: ReactNode }) {
         { accounts: bundle.accounts, currentAccountId: account.accountId },
         account,
       )
-      await persistBundle(merged.accounts, account.accountId)
-      await applyActiveAccount(account, { contactsOverride: [], bumpRevision: true })
+      accountSwitchInFlightRef.current = true
+      suppressContactsBundleSyncRef.current = true
+      try {
+        await persistBundle(merged.accounts, account.accountId)
+        setWeChatPersonaContacts([])
+        await applyActiveAccount(account, { contactsOverride: [], bumpRevision: true })
+      } finally {
+        accountSwitchInFlightRef.current = false
+      }
     },
-    [applyActiveAccount, persistBundle],
+    [applyActiveAccount, persistBundle, setWeChatPersonaContacts],
   )
 
   const setActivePlayerIdentityForCurrentAccount = useCallback(

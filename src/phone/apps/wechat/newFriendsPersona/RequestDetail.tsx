@@ -2,6 +2,7 @@ import { AnimatePresence, motion } from 'framer-motion'
 import { useEffect, useMemo, useRef, useState, type CSSProperties } from 'react'
 
 import type { FriendRequest } from './friendRequestTypes'
+import { WeChatChatMixedText } from '../WeChatChatMixedText'
 import { formatWeChatChatTimestamp, shouldRenderWeChatTimestamp } from '../time/wechatTimeUtils'
 
 type CeremonyState = null | 'accepted' | 'declined'
@@ -176,17 +177,13 @@ export function RequestDetail({
                       className="rounded-full bg-[#F0F0F0] px-3 py-1 text-[12px] text-[#8A8A8A]"
                       style={{ lineHeight: 1.1 }}
                     >
-                      {left ? <span style={{ fontFamily: 'var(--wx-font)' }}>{left}&nbsp;</span> : null}
-                      <span
-                        style={{
-                          fontFamily: 'var(--wx-num-font)',
-                          fontVariantNumeric: 'tabular-nums lining-nums',
-                          fontFeatureSettings: '"tnum" 1, "lnum" 1',
-                          display: 'inline-block',
-                        }}
-                      >
-                        {time}
-                      </span>
+                      {left ? (
+                        <>
+                          <WeChatChatMixedText text={left} />
+                          &nbsp;
+                        </>
+                      ) : null}
+                      <WeChatChatMixedText text={time} />
                     </span>
                   </div>
                 </div>
@@ -200,7 +197,9 @@ export function RequestDetail({
                     className="inline-block max-w-full whitespace-pre-wrap break-words px-3.5 py-2.5 text-[14px] leading-[1.55]"
                     style={verificationBubbleStyle(fromCharacter)}
                   >
-                    {item.content}
+                    {item.content ? (
+                      <WeChatChatMixedText text={item.content} />
+                    ) : null}
                   </motion.div>
                 </div>
               </div>

@@ -214,6 +214,40 @@ export async function listPrivateConversationKeysForAccountCharacter(params: {
 }
 
 /**
+ * 信息列表未读：同一马甲 + 角色可能分裂在多个 conversationKey（聊天室会话身份 vs 列表解析身份），需汇总全部桶。
+ */
+export async function countUnreadPrivateMessagesForAccountCharacter(params: {
+  wechatAccountId: string
+  characterId: string
+  appSessionPlayerIdentityId: string
+  fallbackConversationKey?: string
+}): Promise<number> {
+  const acc = params.wechatAccountId.trim()
+  const cid = params.characterId.trim()
+  const pid = params.appSessionPlayerIdentityId.trim() || '__none__'
+  if (!acc || !cid) {
+    const fb = params.fallbackConversationKey?.trim()
+    return fb ? personaDb.countUnreadWeChatCharacterMessages(fb) : 0
+  }
+  const keys = new Set(
+    await listPrivateConversationKeysForAccountCharacter({ wechatAccountId: acc, characterId: cid }),
+  )
+  const canonical = await ensureAccountScopedPrivateConversation({
+    wechatAccountId: acc,
+    characterId: cid,
+    appSessionPlayerIdentityId: pid,
+  })
+  keys.add(canonical)
+  const fb = params.fallbackConversationKey?.trim()
+  if (fb) keys.add(fb)
+  let total = 0
+  for (const k of keys) {
+    total += await personaDb.countUnreadWeChatCharacterMessages(k)
+  }
+  return total
+}
+
+/**
  * 进入聊天室后：合并分裂桶并把所有相关键标为已读（修复列表红点与聊天室键不一致）。
  */
 export async function markPrivateChatConversationReadForAccountCharacter(params: {

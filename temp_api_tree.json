@@ -1,0 +1,4065 @@
+{
+  "sha": "c9598664367ca826b7503e6b4875ec222ad20633",
+  "url": "https://api.github.com/repos/NeteaseCloudMusicApiEnhanced/api-enhanced/git/trees/c9598664367ca826b7503e6b4875ec222ad20633",
+  "tree": [
+    {
+      "path": ".dockerignore",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "5f40f371e2016171a3778b943a2c32a95dc9fb1d",
+      "size": 155,
+      "url": "https://api.github.com/repos/NeteaseCloudMusicApiEnhanced/api-enhanced/git/blobs/5f40f371e2016171a3778b943a2c32a95dc9fb1d"
+    },
+    {
+      "path": ".editorconfig",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "6c725cea797cce32bd1b142db1e6316b41d692c9",
+      "size": 674,
+      "url": "https://api.github.com/repos/NeteaseCloudMusicApiEnhanced/api-enhanced/git/blobs/6c725cea797cce32bd1b142db1e6316b41d692c9"
+    },
+    {
+      "path": ".env.prod.example",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "db98ec6cd3296a38637ec82e187d24e4aa82d19b",
+      "size": 982,
+      "url": "https://api.github.com/repos/NeteaseCloudMusicApiEnhanced/api-enhanced/git/blobs/db98ec6cd3296a38637ec82e187d24e4aa82d19b"
+    },
+    {
+      "path": ".github",
+      "mode": "040000",
+      "type": "tree",
+      "sha": "12d065dd614abdb248a132918bd82cc42d86d60b",
+      "url": "https://api.github.com/repos/NeteaseCloudMusicApiEnhanced/api-enhanced/git/trees/12d065dd614abdb248a132918bd82cc42d86d60b"
+    },
+    {
+      "path": ".github/FUNDING.yml",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "3f5d3f23155dd9a4ebf89d544f763335c3112a3e",
+      "size": 41,
+      "url": "https://api.github.com/repos/NeteaseCloudMusicApiEnhanced/api-enhanced/git/blobs/3f5d3f23155dd9a4ebf89d544f763335c3112a3e"
+    },
+    {
+      "path": ".github/ISSUE_TEMPLATE",
+      "mode": "040000",
+      "type": "tree",
+      "sha": "ff2a09f543c9ec370b70ec7b239470019db2e475",
+      "url": "https://api.github.com/repos/NeteaseCloudMusicApiEnhanced/api-enhanced/git/trees/ff2a09f543c9ec370b70ec7b239470019db2e475"
+    },
+    {
+      "path": ".github/ISSUE_TEMPLATE/bug_report.yml",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "30fa7437be9892fe4cc4ec61f7996c12286366d9",
+      "size": 3534,
+      "url": "https://api.github.com/repos/NeteaseCloudMusicApiEnhanced/api-enhanced/git/blobs/30fa7437be9892fe4cc4ec61f7996c12286366d9"
+    },
+    {
+      "path": ".github/ISSUE_TEMPLATE/config.yml",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "299c034318269cad252af2b71673e1e264fd00b2",
+      "size": 466,
+      "url": "https://api.github.com/repos/NeteaseCloudMusicApiEnhanced/api-enhanced/git/blobs/299c034318269cad252af2b71673e1e264fd00b2"
+    },
+    {
+      "path": ".github/ISSUE_TEMPLATE/feature_request.yml",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "50dfc99970f5f5d24a8dad96f0c0648388960efa",
+      "size": 2145,
+      "url": "https://api.github.com/repos/NeteaseCloudMusicApiEnhanced/api-enhanced/git/blobs/50dfc99970f5f5d24a8dad96f0c0648388960efa"
+    },
+    {
+      "path": ".github/dependabot.yml",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "a636cd4b287d30fe1c7fd5bab51391948427430d",
+      "size": 1333,
+      "url": "https://api.github.com/repos/NeteaseCloudMusicApiEnhanced/api-enhanced/git/blobs/a636cd4b287d30fe1c7fd5bab51391948427430d"
+    },
+    {
+      "path": ".github/workflows",
+      "mode": "040000",
+      "type": "tree",
+      "sha": "3cc11143d6bd0a3818660b84a522b7a42ef66d54",
+      "url": "https://api.github.com/repos/NeteaseCloudMusicApiEnhanced/api-enhanced/git/trees/3cc11143d6bd0a3818660b84a522b7a42ef66d54"
+    },
+    {
+      "path": ".github/workflows/build-dev.yml",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "f57f971300afd903dd70833710a757540f567d8f",
+      "size": 1284,
+      "url": "https://api.github.com/repos/NeteaseCloudMusicApiEnhanced/api-enhanced/git/blobs/f57f971300afd903dd70833710a757540f567d8f"
+    },
+    {
+      "path": ".github/workflows/issue-manage.yml",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "d5271a83ff79b2c837f8bd375afba5e549bf9f11",
+      "size": 2769,
+      "url": "https://api.github.com/repos/NeteaseCloudMusicApiEnhanced/api-enhanced/git/blobs/d5271a83ff79b2c837f8bd375afba5e549bf9f11"
+    },
+    {
+      "path": ".github/workflows/release-on-version-change.yml",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "78ef199788167796237110007d2d0ace6275f3ce",
+      "size": 7772,
+      "url": "https://api.github.com/repos/NeteaseCloudMusicApiEnhanced/api-enhanced/git/blobs/78ef199788167796237110007d2d0ace6275f3ce"
+    },
+    {
+      "path": ".github/workflows/sync.yml",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "fe2bb53daf70f0f632147b375c049af4fa71ee62",
+      "size": 1053,
+      "url": "https://api.github.com/repos/NeteaseCloudMusicApiEnhanced/api-enhanced/git/blobs/fe2bb53daf70f0f632147b375c049af4fa71ee62"
+    },
+    {
+      "path": ".gitignore",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "5e7ee56d202f776173ca8fae58c03692cb1e5a0b",
+      "size": 114,
+      "url": "https://api.github.com/repos/NeteaseCloudMusicApiEnhanced/api-enhanced/git/blobs/5e7ee56d202f776173ca8fae58c03692cb1e5a0b"
+    },
+    {
+      "path": ".npmignore",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "3c3629e647f5ddf82548912e337bea9826b434af",
+      "size": 13,
+      "url": "https://api.github.com/repos/NeteaseCloudMusicApiEnhanced/api-enhanced/git/blobs/3c3629e647f5ddf82548912e337bea9826b434af"
+    },
+    {
+      "path": ".prettierrc",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "05c968c02692e6edacf700e626a5e9a2eeee8d58",
+      "size": 69,
+      "url": "https://api.github.com/repos/NeteaseCloudMusicApiEnhanced/api-enhanced/git/blobs/05c968c02692e6edacf700e626a5e9a2eeee8d58"
+    },
+    {
+      "path": ".travis.yml",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "3a813bdc02e4655e0beba05b4fe59c4fb450cc4c",
+      "size": 40,
+      "url": "https://api.github.com/repos/NeteaseCloudMusicApiEnhanced/api-enhanced/git/blobs/3a813bdc02e4655e0beba05b4fe59c4fb450cc4c"
+    },
+    {
+      "path": "Dockerfile",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "115bfa1586ba54f2554e67595798ba7aae159c6c",
+      "size": 221,
+      "url": "https://api.github.com/repos/NeteaseCloudMusicApiEnhanced/api-enhanced/git/blobs/115bfa1586ba54f2554e67595798ba7aae159c6c"
+    },
+    {
+      "path": "LICENSE",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "638a26fdf3bce974b2a5dfeb0786b2db62c662cf",
+      "size": 1081,
+      "url": "https://api.github.com/repos/NeteaseCloudMusicApiEnhanced/api-enhanced/git/blobs/638a26fdf3bce974b2a5dfeb0786b2db62c662cf"
+    },
+    {
+      "path": "README.MD",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "b83f6eddff58aad0aedf4154711e3325414542c1",
+      "size": 10147,
+      "url": "https://api.github.com/repos/NeteaseCloudMusicApiEnhanced/api-enhanced/git/blobs/b83f6eddff58aad0aedf4154711e3325414542c1"
+    },
+    {
+      "path": "app.js",
+      "mode": "100755",
+      "type": "blob",
+      "sha": "1c662e007ab04678955331b74e1ce3021859af80",
+      "size": 537,
+      "url": "https://api.github.com/repos/NeteaseCloudMusicApiEnhanced/api-enhanced/git/blobs/1c662e007ab04678955331b74e1ce3021859af80"
+    },
+    {
+      "path": "data",
+      "mode": "040000",
+      "type": "tree",
+      "sha": "1e9cf85ed21bf8a189fa473ea0a5c3374351f370",
+      "url": "https://api.github.com/repos/NeteaseCloudMusicApiEnhanced/api-enhanced/git/trees/1e9cf85ed21bf8a189fa473ea0a5c3374351f370"
+    },
+    {
+      "path": "data/china_ip_ranges.txt",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "7dbbe2bffe38b1e0033c2151b272d77be1bec183",
+      "size": 64582,
+      "url": "https://api.github.com/repos/NeteaseCloudMusicApiEnhanced/api-enhanced/git/blobs/7dbbe2bffe38b1e0033c2151b272d77be1bec183"
+    },
+    {
+      "path": "data/deviceid.txt",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "30a4f3cd5d29d1f41e182c53fc8b9c9f53ff22e5",
+      "size": 1305973,
+      "url": "https://api.github.com/repos/NeteaseCloudMusicApiEnhanced/api-enhanced/git/blobs/30a4f3cd5d29d1f41e182c53fc8b9c9f53ff22e5"
+    },
+    {
+      "path": "eslint.config.js",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "2e569fbfbf988c2701792970cd857f01c1e7d643",
+      "size": 1699,
+      "url": "https://api.github.com/repos/NeteaseCloudMusicApiEnhanced/api-enhanced/git/blobs/2e569fbfbf988c2701792970cd857f01c1e7d643"
+    },
+    {
+      "path": "examples",
+      "mode": "040000",
+      "type": "tree",
+      "sha": "ae6d18df5e748921abcb52e42db352188c97d2f0",
+      "url": "https://api.github.com/repos/NeteaseCloudMusicApiEnhanced/api-enhanced/git/trees/ae6d18df5e748921abcb52e42db352188c97d2f0"
+    },
+    {
+      "path": "examples/get_static_moddef.js",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "77dde5ef5d006eff6cd0b9ce5f2c614a683e4fc8",
+      "size": 608,
+      "url": "https://api.github.com/repos/NeteaseCloudMusicApiEnhanced/api-enhanced/git/blobs/77dde5ef5d006eff6cd0b9ce5f2c614a683e4fc8"
+    },
+    {
+      "path": "generateConfig.js",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "616858677414751ba16fa10feb5da20e4350eb77",
+      "size": 5087,
+      "url": "https://api.github.com/repos/NeteaseCloudMusicApiEnhanced/api-enhanced/git/blobs/616858677414751ba16fa10feb5da20e4350eb77"
+    },
+    {
+      "path": "index.js",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "39d0ba310de17beca961906ba48bcf32e0d93ed3",
+      "size": 20,
+      "url": "https://api.github.com/repos/NeteaseCloudMusicApiEnhanced/api-enhanced/git/blobs/39d0ba310de17beca961906ba48bcf32e0d93ed3"
+    },
+    {
+      "path": "index.mjs",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "6667bb1a9464d3e653f75f85053108d7cf9ac269",
+      "size": 18,
+      "url": "https://api.github.com/repos/NeteaseCloudMusicApiEnhanced/api-enhanced/git/blobs/6667bb1a9464d3e653f75f85053108d7cf9ac269"
+    },
+    {
+      "path": "interface.d.ts",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "071338b5cf0307cdd189f5cab83eb9393f260d98",
+      "size": 57198,
+      "url": "https://api.github.com/repos/NeteaseCloudMusicApiEnhanced/api-enhanced/git/blobs/071338b5cf0307cdd189f5cab83eb9393f260d98"
+    },
+    {
+      "path": "main.js",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "6c7634b73c45dc31cc70598c954f4b0860c086e3",
+      "size": 1377,
+      "url": "https://api.github.com/repos/NeteaseCloudMusicApiEnhanced/api-enhanced/git/blobs/6c7634b73c45dc31cc70598c954f4b0860c086e3"
+    },
+    {
+      "path": "main.test.js",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "2a7a6cad942beca39465d72469a650b8a0d9d56d",
+      "size": 483,
+      "url": "https://api.github.com/repos/NeteaseCloudMusicApiEnhanced/api-enhanced/git/blobs/2a7a6cad942beca39465d72469a650b8a0d9d56d"
+    },
+    {
+      "path": "module",
+      "mode": "040000",
+      "type": "tree",
+      "sha": "72855ae4fc48a54924b2bff404c110e7503b7b3c",
+      "url": "https://api.github.com/repos/NeteaseCloudMusicApiEnhanced/api-enhanced/git/trees/72855ae4fc48a54924b2bff404c110e7503b7b3c"
+    },
+    {
+      "path": "module/activate_init_profile.js",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "e355513f61a7d95244d0cb91fd4c897a4d1ab988",
+      "size": 235,
+      "url": "https://api.github.com/repos/NeteaseCloudMusicApiEnhanced/api-enhanced/git/blobs/e355513f61a7d95244d0cb91fd4c897a4d1ab988"
+    },
+    {
+      "path": "module/aidj_content_rcmd.js",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "f778e3de4b6b55731d57193f51facbe50e82a923",
+      "size": 1011,
+      "url": "https://api.github.com/repos/NeteaseCloudMusicApiEnhanced/api-enhanced/git/blobs/f778e3de4b6b55731d57193f51facbe50e82a923"
+    },
+    {
+      "path": "module/album.js",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "81198c9c5a72f77c292da59ffa17e24bc8a6ffe7",
+      "size": 188,
+      "url": "https://api.github.com/repos/NeteaseCloudMusicApiEnhanced/api-enhanced/git/blobs/81198c9c5a72f77c292da59ffa17e24bc8a6ffe7"
+    },
+    {
+      "path": "module/album_detail.js",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "d6e6c01ff7eb4863385dacf2fec8006494ab85f6",
+      "size": 258,
+      "url": "https://api.github.com/repos/NeteaseCloudMusicApiEnhanced/api-enhanced/git/blobs/d6e6c01ff7eb4863385dacf2fec8006494ab85f6"
+    },
+    {
+      "path": "module/album_detail_dynamic.js",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "a7510457a0717f629b06bf48f70983355a86b405",
+      "size": 251,
+      "url": "https://api.github.com/repos/NeteaseCloudMusicApiEnhanced/api-enhanced/git/blobs/a7510457a0717f629b06bf48f70983355a86b405"
+    },
+    {
+      "path": "module/album_list.js",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "5bd86f067ca862635cb7275514af34c71471693f",
+      "size": 429,
+      "url": "https://api.github.com/repos/NeteaseCloudMusicApiEnhanced/api-enhanced/git/blobs/5bd86f067ca862635cb7275514af34c71471693f"
+    },
+    {
+      "path": "module/album_list_style.js",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "45602065de742888d1792950c230185149cfc861",
+      "size": 404,
+      "url": "https://api.github.com/repos/NeteaseCloudMusicApiEnhanced/api-enhanced/git/blobs/45602065de742888d1792950c230185149cfc861"
+    },
+    {
+      "path": "module/album_new.js",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "69d5e09cf8b624807b96a9ec279f1787c07991cb",
+      "size": 361,
+      "url": "https://api.github.com/repos/NeteaseCloudMusicApiEnhanced/api-enhanced/git/blobs/69d5e09cf8b624807b96a9ec279f1787c07991cb"
+    },
+    {
+      "path": "module/album_newest.js",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "c6810323319279d3daa8ad59aa803060b93d3056",
+      "size": 186,
+      "url": "https://api.github.com/repos/NeteaseCloudMusicApiEnhanced/api-enhanced/git/blobs/c6810323319279d3daa8ad59aa803060b93d3056"
+    },
+    {
+      "path": "module/album_privilege.js",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "537780eb54737a81b0d9c84b176e2b65baf0196e",
+      "size": 230,
+      "url": "https://api.github.com/repos/NeteaseCloudMusicApiEnhanced/api-enhanced/git/blobs/537780eb54737a81b0d9c84b176e2b65baf0196e"
+    },
+    {
+      "path": "module/album_songsaleboard.js",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "07dea0163d0d48db29eb76ee840dba9a8c8da909",
+      "size": 482,
+      "url": "https://api.github.com/repos/NeteaseCloudMusicApiEnhanced/api-enhanced/git/blobs/07dea0163d0d48db29eb76ee840dba9a8c8da909"
+    },
+    {
+      "path": "module/album_sub.js",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "e6d9aeb10c58f51b268b5c752254b2c3a6a2b71a",
+      "size": 281,
+      "url": "https://api.github.com/repos/NeteaseCloudMusicApiEnhanced/api-enhanced/git/blobs/e6d9aeb10c58f51b268b5c752254b2c3a6a2b71a"
+    },
+    {
+      "path": "module/album_sublist.js",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "112cbaed7365ecc9c6545e02f3a4ab58dd71c509",
+      "size": 291,
+      "url": "https://api.github.com/repos/NeteaseCloudMusicApiEnhanced/api-enhanced/git/blobs/112cbaed7365ecc9c6545e02f3a4ab58dd71c509"
+    },
+    {
+      "path": "module/api.js",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "5503780f7d58974f5bc4fe9b178b783ea48850af",
+      "size": 556,
+      "url": "https://api.github.com/repos/NeteaseCloudMusicApiEnhanced/api-enhanced/git/blobs/5503780f7d58974f5bc4fe9b178b783ea48850af"
+    },
+    {
+      "path": "module/artist_album.js",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "2077ad37dbadd7ea1bbc8e6ccbb0fc988e5cf844",
+      "size": 317,
+      "url": "https://api.github.com/repos/NeteaseCloudMusicApiEnhanced/api-enhanced/git/blobs/2077ad37dbadd7ea1bbc8e6ccbb0fc988e5cf844"
+    },
+    {
+      "path": "module/artist_desc.js",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "dcf560c611fa610c4df92ba3d72d5bc562b6bf49",
+      "size": 228,
+      "url": "https://api.github.com/repos/NeteaseCloudMusicApiEnhanced/api-enhanced/git/blobs/dcf560c611fa610c4df92ba3d72d5bc562b6bf49"
+    },
+    {
+      "path": "module/artist_detail.js",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "9d59a862bcc939df4a431822443fa43a4b4ca3da",
+      "size": 204,
+      "url": "https://api.github.com/repos/NeteaseCloudMusicApiEnhanced/api-enhanced/git/blobs/9d59a862bcc939df4a431822443fa43a4b4ca3da"
+    },
+    {
+      "path": "module/artist_detail_dynamic.js",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "6cc5050453cef7bc89073358d2b4eb8992fdf99f",
+      "size": 227,
+      "url": "https://api.github.com/repos/NeteaseCloudMusicApiEnhanced/api-enhanced/git/blobs/6cc5050453cef7bc89073358d2b4eb8992fdf99f"
+    },
+    {
+      "path": "module/artist_fans.js",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "a9ae59e57db0534cc6f62fb64c5abc70cb754216",
+      "size": 285,
+      "url": "https://api.github.com/repos/NeteaseCloudMusicApiEnhanced/api-enhanced/git/blobs/a9ae59e57db0534cc6f62fb64c5abc70cb754216"
+    },
+    {
+      "path": "module/artist_follow_count.js",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "c1529231a24aff1d6e0d3762811b32a45a8f857c",
+      "size": 255,
+      "url": "https://api.github.com/repos/NeteaseCloudMusicApiEnhanced/api-enhanced/git/blobs/c1529231a24aff1d6e0d3762811b32a45a8f857c"
+    },
+    {
+      "path": "module/artist_list.js",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "1bba50d79f67cd34bdd7c179d20d164a1879f8e2",
+      "size": 653,
+      "url": "https://api.github.com/repos/NeteaseCloudMusicApiEnhanced/api-enhanced/git/blobs/1bba50d79f67cd34bdd7c179d20d164a1879f8e2"
+    },
+    {
+      "path": "module/artist_mv.js",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "32e9118ce3ec82cf0b9c0e02b39d81dcdbe264c6",
+      "size": 294,
+      "url": "https://api.github.com/repos/NeteaseCloudMusicApiEnhanced/api-enhanced/git/blobs/32e9118ce3ec82cf0b9c0e02b39d81dcdbe264c6"
+    },
+    {
+      "path": "module/artist_new_mv.js",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "4f83ad647e15a7745e74f23cec88ae7c6a1aa66d",
+      "size": 297,
+      "url": "https://api.github.com/repos/NeteaseCloudMusicApiEnhanced/api-enhanced/git/blobs/4f83ad647e15a7745e74f23cec88ae7c6a1aa66d"
+    },
+    {
+      "path": "module/artist_new_song.js",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "daafb03b6fb751569c2cea6f94afc566ecf14e8f",
+      "size": 299,
+      "url": "https://api.github.com/repos/NeteaseCloudMusicApiEnhanced/api-enhanced/git/blobs/daafb03b6fb751569c2cea6f94afc566ecf14e8f"
+    },
+    {
+      "path": "module/artist_songs.js",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "5d32bf953d2a067a2c22d9ecac77180f2fb736ea",
+      "size": 349,
+      "url": "https://api.github.com/repos/NeteaseCloudMusicApiEnhanced/api-enhanced/git/blobs/5d32bf953d2a067a2c22d9ecac77180f2fb736ea"
+    },
+    {
+      "path": "module/artist_sub.js",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "68d523d34541da1f057a82eb91c6bd5d4f0551cd",
+      "size": 327,
+      "url": "https://api.github.com/repos/NeteaseCloudMusicApiEnhanced/api-enhanced/git/blobs/68d523d34541da1f057a82eb91c6bd5d4f0551cd"
+    },
+    {
+      "path": "module/artist_sublist.js",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "7de56fe00cb8426d0b9a2907c27680fd1e3895f9",
+      "size": 289,
+      "url": "https://api.github.com/repos/NeteaseCloudMusicApiEnhanced/api-enhanced/git/blobs/7de56fe00cb8426d0b9a2907c27680fd1e3895f9"
+    },
+    {
+      "path": "module/artist_top_song.js",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "12f5755c8a8c1883dd9d35b2870bae0567026282",
+      "size": 236,
+      "url": "https://api.github.com/repos/NeteaseCloudMusicApiEnhanced/api-enhanced/git/blobs/12f5755c8a8c1883dd9d35b2870bae0567026282"
+    },
+    {
+      "path": "module/artist_video.js",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "7113422a1ce31d6299477ff125191e39a36ea75d",
+      "size": 377,
+      "url": "https://api.github.com/repos/NeteaseCloudMusicApiEnhanced/api-enhanced/git/blobs/7113422a1ce31d6299477ff125191e39a36ea75d"
+    },
+    {
+      "path": "module/artists.js",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "e403fe8512f85565d4113e0fc54584bf4b17f33e",
+      "size": 189,
+      "url": "https://api.github.com/repos/NeteaseCloudMusicApiEnhanced/api-enhanced/git/blobs/e403fe8512f85565d4113e0fc54584bf4b17f33e"
+    },
+    {
+      "path": "module/audio_match.js",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "e20791bffba2edb26d756116931ac8138e54c3dd",
+      "size": 524,
+      "url": "https://api.github.com/repos/NeteaseCloudMusicApiEnhanced/api-enhanced/git/blobs/e20791bffba2edb26d756116931ac8138e54c3dd"
+    },
+    {
+      "path": "module/avatar_upload.js",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "ff4e553de8f9dcbb60036f600fab305849918768",
+      "size": 474,
+      "url": "https://api.github.com/repos/NeteaseCloudMusicApiEnhanced/api-enhanced/git/blobs/ff4e553de8f9dcbb60036f600fab305849918768"
+    },
+    {
+      "path": "module/banner.js",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "bcef6ad376d058d2686d8f48fd22d66521481f06",
+      "size": 332,
+      "url": "https://api.github.com/repos/NeteaseCloudMusicApiEnhanced/api-enhanced/git/blobs/bcef6ad376d058d2686d8f48fd22d66521481f06"
+    },
+    {
+      "path": "module/batch.js",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "3f6bb8d5d8631a8a44448e1e6b2a0360543546c1",
+      "size": 294,
+      "url": "https://api.github.com/repos/NeteaseCloudMusicApiEnhanced/api-enhanced/git/blobs/3f6bb8d5d8631a8a44448e1e6b2a0360543546c1"
+    },
+    {
+      "path": "module/broadcast_category_region_get.js",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "a09229838ac7412a5ac160b8015ba6a63fb9457d",
+      "size": 253,
+      "url": "https://api.github.com/repos/NeteaseCloudMusicApiEnhanced/api-enhanced/git/blobs/a09229838ac7412a5ac160b8015ba6a63fb9457d"
+    },
+    {
+      "path": "module/broadcast_channel_collect_list.js",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "2d6eb0d5b883dc5fb119d39ddd2b85a89ad0b3be",
+      "size": 352,
+      "url": "https://api.github.com/repos/NeteaseCloudMusicApiEnhanced/api-enhanced/git/blobs/2d6eb0d5b883dc5fb119d39ddd2b85a89ad0b3be"
+    },
+    {
+      "path": "module/broadcast_channel_currentinfo.js",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "06a4c9023df65a764b368e603311d03d6ea8bc9a",
+      "size": 274,
+      "url": "https://api.github.com/repos/NeteaseCloudMusicApiEnhanced/api-enhanced/git/blobs/06a4c9023df65a764b368e603311d03d6ea8bc9a"
+    },
+    {
+      "path": "module/broadcast_channel_list.js",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "c5353d6521b63178c4626d766bb96379d119769f",
+      "size": 400,
+      "url": "https://api.github.com/repos/NeteaseCloudMusicApiEnhanced/api-enhanced/git/blobs/c5353d6521b63178c4626d766bb96379d119769f"
+    },
+    {
+      "path": "module/broadcast_sub.js",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "606093f8494855ff0ab376872bd75da0dc875827",
+      "size": 361,
+      "url": "https://api.github.com/repos/NeteaseCloudMusicApiEnhanced/api-enhanced/git/blobs/606093f8494855ff0ab376872bd75da0dc875827"
+    },
+    {
+      "path": "module/calendar.js",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "c0c836e64229e6c58b05f11f336ae9264adc2731",
+      "size": 278,
+      "url": "https://api.github.com/repos/NeteaseCloudMusicApiEnhanced/api-enhanced/git/blobs/c0c836e64229e6c58b05f11f336ae9264adc2731"
+    },
+    {
+      "path": "module/captcha_sent.js",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "fdf7231bbd2bd7eaee7341a1aec98d8fd8f3bfcb",
+      "size": 313,
+      "url": "https://api.github.com/repos/NeteaseCloudMusicApiEnhanced/api-enhanced/git/blobs/fdf7231bbd2bd7eaee7341a1aec98d8fd8f3bfcb"
+    },
+    {
+      "path": "module/captcha_verify.js",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "403bec2f4a3a2656cb2b373a4587cd82108984f9",
+      "size": 302,
+      "url": "https://api.github.com/repos/NeteaseCloudMusicApiEnhanced/api-enhanced/git/blobs/403bec2f4a3a2656cb2b373a4587cd82108984f9"
+    },
+    {
+      "path": "module/cellphone_existence_check.js",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "5d43126d4c31663b748eac2063538baf95f0c1aa",
+      "size": 292,
+      "url": "https://api.github.com/repos/NeteaseCloudMusicApiEnhanced/api-enhanced/git/blobs/5d43126d4c31663b748eac2063538baf95f0c1aa"
+    },
+    {
+      "path": "module/chart_detail.js",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "d654cb19d46de60212045f5d40b8afd63d8d7c15",
+      "size": 317,
+      "url": "https://api.github.com/repos/NeteaseCloudMusicApiEnhanced/api-enhanced/git/blobs/d654cb19d46de60212045f5d40b8afd63d8d7c15"
+    },
+    {
+      "path": "module/chart_song_detail.js",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "f4e275c529461f93f8c0977ed5ce9eb65598950c",
+      "size": 322,
+      "url": "https://api.github.com/repos/NeteaseCloudMusicApiEnhanced/api-enhanced/git/blobs/f4e275c529461f93f8c0977ed5ce9eb65598950c"
+    },
+    {
+      "path": "module/check_music.js",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "a621ccc04badb6cf7b314080a99d69954397aedc",
+      "size": 794,
+      "url": "https://api.github.com/repos/NeteaseCloudMusicApiEnhanced/api-enhanced/git/blobs/a621ccc04badb6cf7b314080a99d69954397aedc"
+    },
+    {
+      "path": "module/cloud.js",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "f3c93c84337b7e9f2a685dc578b23948bfd9403c",
+      "size": 3974,
+      "url": "https://api.github.com/repos/NeteaseCloudMusicApiEnhanced/api-enhanced/git/blobs/f3c93c84337b7e9f2a685dc578b23948bfd9403c"
+    },
+    {
+      "path": "module/cloud_import.js",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "f84e6c6676b5ea87e47be1bac3604b6c8b6be49d",
+      "size": 1106,
+      "url": "https://api.github.com/repos/NeteaseCloudMusicApiEnhanced/api-enhanced/git/blobs/f84e6c6676b5ea87e47be1bac3604b6c8b6be49d"
+    },
+    {
+      "path": "module/cloud_lyric_get.js",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "b4d83e3db4d4b76a7550f35de3910a7d7d7db1af",
+      "size": 280,
+      "url": "https://api.github.com/repos/NeteaseCloudMusicApiEnhanced/api-enhanced/git/blobs/b4d83e3db4d4b76a7550f35de3910a7d7d7db1af"
+    },
+    {
+      "path": "module/cloud_match.js",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "981d131e9cffe55e6e8ff16b798994160d95cc72",
+      "size": 288,
+      "url": "https://api.github.com/repos/NeteaseCloudMusicApiEnhanced/api-enhanced/git/blobs/981d131e9cffe55e6e8ff16b798994160d95cc72"
+    },
+    {
+      "path": "module/cloud_upload_complete.js",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "d105dffc6b69d58400ee006e7724296651ea13a5",
+      "size": 1400,
+      "url": "https://api.github.com/repos/NeteaseCloudMusicApiEnhanced/api-enhanced/git/blobs/d105dffc6b69d58400ee006e7724296651ea13a5"
+    },
+    {
+      "path": "module/cloud_upload_token.js",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "6e7f3d96f1c320699522adca1f1151a7b6276350",
+      "size": 2565,
+      "url": "https://api.github.com/repos/NeteaseCloudMusicApiEnhanced/api-enhanced/git/blobs/6e7f3d96f1c320699522adca1f1151a7b6276350"
+    },
+    {
+      "path": "module/cloudsearch.js",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "e06217c84d647fb5dc0ffc04cc05a0ca86cf877f",
+      "size": 436,
+      "url": "https://api.github.com/repos/NeteaseCloudMusicApiEnhanced/api-enhanced/git/blobs/e06217c84d647fb5dc0ffc04cc05a0ca86cf877f"
+    },
+    {
+      "path": "module/comment.js",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "8fa6eb4c87e3858a66b305f0a40f986ee09afb7c",
+      "size": 756,
+      "url": "https://api.github.com/repos/NeteaseCloudMusicApiEnhanced/api-enhanced/git/blobs/8fa6eb4c87e3858a66b305f0a40f986ee09afb7c"
+    },
+    {
+      "path": "module/comment_album.js",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "2e02b1e06f3782f3a75bb490ddbec3d826dda2d9",
+      "size": 362,
+      "url": "https://api.github.com/repos/NeteaseCloudMusicApiEnhanced/api-enhanced/git/blobs/2e02b1e06f3782f3a75bb490ddbec3d826dda2d9"
+    },
+    {
+      "path": "module/comment_dj.js",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "d82334b45c98d295a0437483419e8c058995d929",
+      "size": 362,
+      "url": "https://api.github.com/repos/NeteaseCloudMusicApiEnhanced/api-enhanced/git/blobs/d82334b45c98d295a0437483419e8c058995d929"
+    },
+    {
+      "path": "module/comment_event.js",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "20e71bb0c4c1920e933f79f77c3131dc218ba6a2",
+      "size": 348,
+      "url": "https://api.github.com/repos/NeteaseCloudMusicApiEnhanced/api-enhanced/git/blobs/20e71bb0c4c1920e933f79f77c3131dc218ba6a2"
+    },
+    {
+      "path": "module/comment_floor.js",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "b9c4d2cb2210a78039151f2bf783fa24d2329ab1",
+      "size": 458,
+      "url": "https://api.github.com/repos/NeteaseCloudMusicApiEnhanced/api-enhanced/git/blobs/b9c4d2cb2210a78039151f2bf783fa24d2329ab1"
+    },
+    {
+      "path": "module/comment_hot.js",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "c14ec3909507dd86dc2c3f4c023723a753e41ecb",
+      "size": 473,
+      "url": "https://api.github.com/repos/NeteaseCloudMusicApiEnhanced/api-enhanced/git/blobs/c14ec3909507dd86dc2c3f4c023723a753e41ecb"
+    },
+    {
+      "path": "module/comment_hug_list.js",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "524ba9f9e6f9bbc2a41dfe54defbde63df201c1c",
+      "size": 575,
+      "url": "https://api.github.com/repos/NeteaseCloudMusicApiEnhanced/api-enhanced/git/blobs/524ba9f9e6f9bbc2a41dfe54defbde63df201c1c"
+    },
+    {
+      "path": "module/comment_info_list.js",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "2c25d99a2464cbc6981792cb92cdc110d3b3da59",
+      "size": 943,
+      "url": "https://api.github.com/repos/NeteaseCloudMusicApiEnhanced/api-enhanced/git/blobs/2c25d99a2464cbc6981792cb92cdc110d3b3da59"
+    },
+    {
+      "path": "module/comment_like.js",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "e89c0bb2681fba99414ba712034311cff42acbe2",
+      "size": 526,
+      "url": "https://api.github.com/repos/NeteaseCloudMusicApiEnhanced/api-enhanced/git/blobs/e89c0bb2681fba99414ba712034311cff42acbe2"
+    },
+    {
+      "path": "module/comment_music.js",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "567e05231d08770a34c82a355b7d5319e7099f61",
+      "size": 362,
+      "url": "https://api.github.com/repos/NeteaseCloudMusicApiEnhanced/api-enhanced/git/blobs/567e05231d08770a34c82a355b7d5319e7099f61"
+    },
+    {
+      "path": "module/comment_mv.js",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "ddee04f8717a563d0005ec39468f4d582a16b756",
+      "size": 358,
+      "url": "https://api.github.com/repos/NeteaseCloudMusicApiEnhanced/api-enhanced/git/blobs/ddee04f8717a563d0005ec39468f4d582a16b756"
+    },
+    {
+      "path": "module/comment_new.js",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "a0f7e988c89759818b9b9a0a99f5a1a19cda1835",
+      "size": 967,
+      "url": "https://api.github.com/repos/NeteaseCloudMusicApiEnhanced/api-enhanced/git/blobs/a0f7e988c89759818b9b9a0a99f5a1a19cda1835"
+    },
+    {
+      "path": "module/comment_playlist.js",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "52078ac7faa12e483c793477afde47792206f637",
+      "size": 362,
+      "url": "https://api.github.com/repos/NeteaseCloudMusicApiEnhanced/api-enhanced/git/blobs/52078ac7faa12e483c793477afde47792206f637"
+    },
+    {
+      "path": "module/comment_report.js",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "ef984d7c94e12d54393b5c6ccdd8398c97eef59d",
+      "size": 290,
+      "url": "https://api.github.com/repos/NeteaseCloudMusicApiEnhanced/api-enhanced/git/blobs/ef984d7c94e12d54393b5c6ccdd8398c97eef59d"
+    },
+    {
+      "path": "module/comment_video.js",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "bf54c57ad83d429a4993e4b530e3fa71b54fe4d7",
+      "size": 363,
+      "url": "https://api.github.com/repos/NeteaseCloudMusicApiEnhanced/api-enhanced/git/blobs/bf54c57ad83d429a4993e4b530e3fa71b54fe4d7"
+    },
+    {
+      "path": "module/countries_code_list.js",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "1a2c616152a32f3a7462fa2cacee6ed5bf42d9ec",
+      "size": 200,
+      "url": "https://api.github.com/repos/NeteaseCloudMusicApiEnhanced/api-enhanced/git/blobs/1a2c616152a32f3a7462fa2cacee6ed5bf42d9ec"
+    },
+    {
+      "path": "module/creator_authinfo_get.js",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "64fa9ee00c6001da54e03315a94f3e5b49f92bbb",
+      "size": 215,
+      "url": "https://api.github.com/repos/NeteaseCloudMusicApiEnhanced/api-enhanced/git/blobs/64fa9ee00c6001da54e03315a94f3e5b49f92bbb"
+    },
+    {
+      "path": "module/daily_signin.js",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "59b25fd4708330e2c61e58094912262907a700ec",
+      "size": 552,
+      "url": "https://api.github.com/repos/NeteaseCloudMusicApiEnhanced/api-enhanced/git/blobs/59b25fd4708330e2c61e58094912262907a700ec"
+    },
+    {
+      "path": "module/decrypt.js",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "673b8bcb77814a1ee2b672d12a95a8a2f5206c4a",
+      "size": 2396,
+      "url": "https://api.github.com/repos/NeteaseCloudMusicApiEnhanced/api-enhanced/git/blobs/673b8bcb77814a1ee2b672d12a95a8a2f5206c4a"
+    },
+    {
+      "path": "module/digitalAlbum_detail.js",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "b9acf7408927912b59e96f1d66457bf9459bd642",
+      "size": 259,
+      "url": "https://api.github.com/repos/NeteaseCloudMusicApiEnhanced/api-enhanced/git/blobs/b9acf7408927912b59e96f1d66457bf9459bd642"
+    },
+    {
+      "path": "module/digitalAlbum_ordering.js",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "7ac833b7d55d683821505503c113201a06da911a",
+      "size": 463,
+      "url": "https://api.github.com/repos/NeteaseCloudMusicApiEnhanced/api-enhanced/git/blobs/7ac833b7d55d683821505503c113201a06da911a"
+    },
+    {
+      "path": "module/digitalAlbum_purchased.js",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "f738505a27b7a33ef0647827e27a36dec0e544cf",
+      "size": 314,
+      "url": "https://api.github.com/repos/NeteaseCloudMusicApiEnhanced/api-enhanced/git/blobs/f738505a27b7a33ef0647827e27a36dec0e544cf"
+    },
+    {
+      "path": "module/digitalAlbum_sales.js",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "2f3338303987a41493433e2b6c8a6492fd8a98e7",
+      "size": 277,
+      "url": "https://api.github.com/repos/NeteaseCloudMusicApiEnhanced/api-enhanced/git/blobs/2f3338303987a41493433e2b6c8a6492fd8a98e7"
+    },
+    {
+      "path": "module/djRadio_top.js",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "b738632b5264f0d380b2046f794ad302510e4047",
+      "size": 532,
+      "url": "https://api.github.com/repos/NeteaseCloudMusicApiEnhanced/api-enhanced/git/blobs/b738632b5264f0d380b2046f794ad302510e4047"
+    },
+    {
+      "path": "module/dj_banner.js",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "bf5d49ba50738b441b5a9e1fd4fce740922f4acd",
+      "size": 186,
+      "url": "https://api.github.com/repos/NeteaseCloudMusicApiEnhanced/api-enhanced/git/blobs/bf5d49ba50738b441b5a9e1fd4fce740922f4acd"
+    },
+    {
+      "path": "module/dj_category_excludehot.js",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "8eb76bca90c190af92df651ed914e7649d08b9fd",
+      "size": 221,
+      "url": "https://api.github.com/repos/NeteaseCloudMusicApiEnhanced/api-enhanced/git/blobs/8eb76bca90c190af92df651ed914e7649d08b9fd"
+    },
+    {
+      "path": "module/dj_category_recommend.js",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "8b4b4fd767110d6176dd83b31281b2ab4c89ecaa",
+      "size": 222,
+      "url": "https://api.github.com/repos/NeteaseCloudMusicApiEnhanced/api-enhanced/git/blobs/8b4b4fd767110d6176dd83b31281b2ab4c89ecaa"
+    },
+    {
+      "path": "module/dj_catelist.js",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "bc9f9b1981ab6dc81c6f5c15d6ead6ef7303128d",
+      "size": 194,
+      "url": "https://api.github.com/repos/NeteaseCloudMusicApiEnhanced/api-enhanced/git/blobs/bc9f9b1981ab6dc81c6f5c15d6ead6ef7303128d"
+    },
+    {
+      "path": "module/dj_detail.js",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "6b67d52676b7245db4316d40f36b07e6656b2215",
+      "size": 224,
+      "url": "https://api.github.com/repos/NeteaseCloudMusicApiEnhanced/api-enhanced/git/blobs/6b67d52676b7245db4316d40f36b07e6656b2215"
+    },
+    {
+      "path": "module/dj_difm_all_style_channel.js",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "d7b0caa107613b081addeec2eab732d6433208ba",
+      "size": 254,
+      "url": "https://api.github.com/repos/NeteaseCloudMusicApiEnhanced/api-enhanced/git/blobs/d7b0caa107613b081addeec2eab732d6433208ba"
+    },
+    {
+      "path": "module/dj_difm_channel_subscribe.js",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "8dcf8845bc6f5837a1e1c0cc6f3600a1b9364f19",
+      "size": 238,
+      "url": "https://api.github.com/repos/NeteaseCloudMusicApiEnhanced/api-enhanced/git/blobs/8dcf8845bc6f5837a1e1c0cc6f3600a1b9364f19"
+    },
+    {
+      "path": "module/dj_difm_channel_unsubscribe.js",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "a34b27b4fad49a2d2cc5b32fc8573f9c70e0e757",
+      "size": 246,
+      "url": "https://api.github.com/repos/NeteaseCloudMusicApiEnhanced/api-enhanced/git/blobs/a34b27b4fad49a2d2cc5b32fc8573f9c70e0e757"
+    },
+    {
+      "path": "module/dj_difm_playing_tracks_list.js",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "e0fe61cf9ac714b2d8bbc30e4e0944ada051a87d",
+      "size": 314,
+      "url": "https://api.github.com/repos/NeteaseCloudMusicApiEnhanced/api-enhanced/git/blobs/e0fe61cf9ac714b2d8bbc30e4e0944ada051a87d"
+    },
+    {
+      "path": "module/dj_difm_subscribe_channels_get.js",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "6a928d6ab211ad86fb63521c53f18b23e73fa09f",
+      "size": 282,
+      "url": "https://api.github.com/repos/NeteaseCloudMusicApiEnhanced/api-enhanced/git/blobs/6a928d6ab211ad86fb63521c53f18b23e73fa09f"
+    },
+    {
+      "path": "module/dj_hot.js",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "a902458700b22875749db72d234954e2bf19e5f4",
+      "size": 266,
+      "url": "https://api.github.com/repos/NeteaseCloudMusicApiEnhanced/api-enhanced/git/blobs/a902458700b22875749db72d234954e2bf19e5f4"
+    },
+    {
+      "path": "module/dj_paygift.js",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "183ce79b7021793c0801bfcc7745805f37e241bf",
+      "size": 310,
+      "url": "https://api.github.com/repos/NeteaseCloudMusicApiEnhanced/api-enhanced/git/blobs/183ce79b7021793c0801bfcc7745805f37e241bf"
+    },
+    {
+      "path": "module/dj_personalize_recommend.js",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "84a69122df7927bee124dc454a9646a4ca99bd8e",
+      "size": 251,
+      "url": "https://api.github.com/repos/NeteaseCloudMusicApiEnhanced/api-enhanced/git/blobs/84a69122df7927bee124dc454a9646a4ca99bd8e"
+    },
+    {
+      "path": "module/dj_program.js",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "f4df99ea6dec150976ba0b88acc3d7686e3ccb81",
+      "size": 371,
+      "url": "https://api.github.com/repos/NeteaseCloudMusicApiEnhanced/api-enhanced/git/blobs/f4df99ea6dec150976ba0b88acc3d7686e3ccb81"
+    },
+    {
+      "path": "module/dj_program_detail.js",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "17f52fea769283ffb3266b827989c88ef362b588",
+      "size": 232,
+      "url": "https://api.github.com/repos/NeteaseCloudMusicApiEnhanced/api-enhanced/git/blobs/17f52fea769283ffb3266b827989c88ef362b588"
+    },
+    {
+      "path": "module/dj_program_toplist.js",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "fdaa1a6f5602d8883af0e677b2280e1d6adef797",
+      "size": 274,
+      "url": "https://api.github.com/repos/NeteaseCloudMusicApiEnhanced/api-enhanced/git/blobs/fdaa1a6f5602d8883af0e677b2280e1d6adef797"
+    },
+    {
+      "path": "module/dj_program_toplist_hours.js",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "5052cf497ba28f8e3ffa13f88f15eb9374345ad6",
+      "size": 296,
+      "url": "https://api.github.com/repos/NeteaseCloudMusicApiEnhanced/api-enhanced/git/blobs/5052cf497ba28f8e3ffa13f88f15eb9374345ad6"
+    },
+    {
+      "path": "module/dj_radio_hot.js",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "e70e562c0bb2235e0ff6701deb97a8437dcbca42",
+      "size": 295,
+      "url": "https://api.github.com/repos/NeteaseCloudMusicApiEnhanced/api-enhanced/git/blobs/e70e562c0bb2235e0ff6701deb97a8437dcbca42"
+    },
+    {
+      "path": "module/dj_recommend.js",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "779765e717738b76d320b231ddd39d7f399164e5",
+      "size": 188,
+      "url": "https://api.github.com/repos/NeteaseCloudMusicApiEnhanced/api-enhanced/git/blobs/779765e717738b76d320b231ddd39d7f399164e5"
+    },
+    {
+      "path": "module/dj_recommend_type.js",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "82f37182831a6ff18daaa45d5a10cfcd276eff30",
+      "size": 653,
+      "url": "https://api.github.com/repos/NeteaseCloudMusicApiEnhanced/api-enhanced/git/blobs/82f37182831a6ff18daaa45d5a10cfcd276eff30"
+    },
+    {
+      "path": "module/dj_sub.js",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "940a7917d70696d2a6e52cdf7b24f130504f7a8a",
+      "size": 280,
+      "url": "https://api.github.com/repos/NeteaseCloudMusicApiEnhanced/api-enhanced/git/blobs/940a7917d70696d2a6e52cdf7b24f130504f7a8a"
+    },
+    {
+      "path": "module/dj_sublist.js",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "ec9fa54bec1ccb4b7093f945f2121547051cde02",
+      "size": 292,
+      "url": "https://api.github.com/repos/NeteaseCloudMusicApiEnhanced/api-enhanced/git/blobs/ec9fa54bec1ccb4b7093f945f2121547051cde02"
+    },
+    {
+      "path": "module/dj_subscriber.js",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "d3e17b5506a2569e210040af5e1f44416c2272ad",
+      "size": 308,
+      "url": "https://api.github.com/repos/NeteaseCloudMusicApiEnhanced/api-enhanced/git/blobs/d3e17b5506a2569e210040af5e1f44416c2272ad"
+    },
+    {
+      "path": "module/dj_today_perfered.js",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "4f85299580818f7ed025102ac0da27d50d0e4943",
+      "size": 268,
+      "url": "https://api.github.com/repos/NeteaseCloudMusicApiEnhanced/api-enhanced/git/blobs/4f85299580818f7ed025102ac0da27d50d0e4943"
+    },
+    {
+      "path": "module/dj_toplist.js",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "2fad40ace4c4e42299429cb971dcc2ea32317f7c",
+      "size": 397,
+      "url": "https://api.github.com/repos/NeteaseCloudMusicApiEnhanced/api-enhanced/git/blobs/2fad40ace4c4e42299429cb971dcc2ea32317f7c"
+    },
+    {
+      "path": "module/dj_toplist_hours.js",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "be193f4c7a3726a8ce2d95599968250ec9904861",
+      "size": 273,
+      "url": "https://api.github.com/repos/NeteaseCloudMusicApiEnhanced/api-enhanced/git/blobs/be193f4c7a3726a8ce2d95599968250ec9904861"
+    },
+    {
+      "path": "module/dj_toplist_newcomer.js",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "822664a4accfd90cbc4d201f2e31c7c39bbc75b5",
+      "size": 274,
+      "url": "https://api.github.com/repos/NeteaseCloudMusicApiEnhanced/api-enhanced/git/blobs/822664a4accfd90cbc4d201f2e31c7c39bbc75b5"
+    },
+    {
+      "path": "module/dj_toplist_pay.js",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "dead30f7edd1334a3d602fcc1d542e9b7ced41d1",
+      "size": 264,
+      "url": "https://api.github.com/repos/NeteaseCloudMusicApiEnhanced/api-enhanced/git/blobs/dead30f7edd1334a3d602fcc1d542e9b7ced41d1"
+    },
+    {
+      "path": "module/dj_toplist_popular.js",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "52008184d2150bc5b99b8b36eda34ecbb7606185",
+      "size": 273,
+      "url": "https://api.github.com/repos/NeteaseCloudMusicApiEnhanced/api-enhanced/git/blobs/52008184d2150bc5b99b8b36eda34ecbb7606185"
+    },
+    {
+      "path": "module/eapi_decrypt.js",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "962c6ad7bf08b0c45d1cab00fa1facafb8f0ab0a",
+      "size": 625,
+      "url": "https://api.github.com/repos/NeteaseCloudMusicApiEnhanced/api-enhanced/git/blobs/962c6ad7bf08b0c45d1cab00fa1facafb8f0ab0a"
+    },
+    {
+      "path": "module/event.js",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "3746631293497e330873ff5d21caf2098f11c5ea",
+      "size": 281,
+      "url": "https://api.github.com/repos/NeteaseCloudMusicApiEnhanced/api-enhanced/git/blobs/3746631293497e330873ff5d21caf2098f11c5ea"
+    },
+    {
+      "path": "module/event_del.js",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "5f1147583ff02bca6bf2fbc8f64698e27bae55e5",
+      "size": 223,
+      "url": "https://api.github.com/repos/NeteaseCloudMusicApiEnhanced/api-enhanced/git/blobs/5f1147583ff02bca6bf2fbc8f64698e27bae55e5"
+    },
+    {
+      "path": "module/event_forward.js",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "8e1f1e4061e9775cf0b209d6ef2a6ebb9f8a4a23",
+      "size": 276,
+      "url": "https://api.github.com/repos/NeteaseCloudMusicApiEnhanced/api-enhanced/git/blobs/8e1f1e4061e9775cf0b209d6ef2a6ebb9f8a4a23"
+    },
+    {
+      "path": "module/fanscenter_basicinfo_age_get.js",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "111d30a61d0217c74acabe974824faa2b3465195",
+      "size": 212,
+      "url": "https://api.github.com/repos/NeteaseCloudMusicApiEnhanced/api-enhanced/git/blobs/111d30a61d0217c74acabe974824faa2b3465195"
+    },
+    {
+      "path": "module/fanscenter_basicinfo_gender_get.js",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "7f2643c89788474c3a86c748ea5a0b6c91ccb861",
+      "size": 232,
+      "url": "https://api.github.com/repos/NeteaseCloudMusicApiEnhanced/api-enhanced/git/blobs/7f2643c89788474c3a86c748ea5a0b6c91ccb861"
+    },
+    {
+      "path": "module/fanscenter_basicinfo_province_get.js",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "8c3ac372ee3e7e4e8a03c4e826804a43e2893f24",
+      "size": 234,
+      "url": "https://api.github.com/repos/NeteaseCloudMusicApiEnhanced/api-enhanced/git/blobs/8c3ac372ee3e7e4e8a03c4e826804a43e2893f24"
+    },
+    {
+      "path": "module/fanscenter_overview_get.js",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "6af5525694a8fcc97e71e1b9f5272b0256ce4bdb",
+      "size": 201,
+      "url": "https://api.github.com/repos/NeteaseCloudMusicApiEnhanced/api-enhanced/git/blobs/6af5525694a8fcc97e71e1b9f5272b0256ce4bdb"
+    },
+    {
+      "path": "module/fanscenter_trend_list.js",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "7b294957967dc0e1163364ff80372a7b591a1787",
+      "size": 372,
+      "url": "https://api.github.com/repos/NeteaseCloudMusicApiEnhanced/api-enhanced/git/blobs/7b294957967dc0e1163364ff80372a7b591a1787"
+    },
+    {
+      "path": "module/fm_trash.js",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "c85ed5b8f9f84095400edf101a95707afb6cadc2",
+      "size": 268,
+      "url": "https://api.github.com/repos/NeteaseCloudMusicApiEnhanced/api-enhanced/git/blobs/c85ed5b8f9f84095400edf101a95707afb6cadc2"
+    },
+    {
+      "path": "module/follow.js",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "9d5d7f43a667d864ce0c0bdae8071e64659c03dd",
+      "size": 277,
+      "url": "https://api.github.com/repos/NeteaseCloudMusicApiEnhanced/api-enhanced/git/blobs/9d5d7f43a667d864ce0c0bdae8071e64659c03dd"
+    },
+    {
+      "path": "module/get_userids.js",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "c44ab890a9f251735dc26acaa0f5ce7b3d114267",
+      "size": 221,
+      "url": "https://api.github.com/repos/NeteaseCloudMusicApiEnhanced/api-enhanced/git/blobs/c44ab890a9f251735dc26acaa0f5ce7b3d114267"
+    },
+    {
+      "path": "module/history_recommend_songs.js",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "9193cd7b18a3a93cc5e1ebd16e37b992e1534bb0",
+      "size": 257,
+      "url": "https://api.github.com/repos/NeteaseCloudMusicApiEnhanced/api-enhanced/git/blobs/9193cd7b18a3a93cc5e1ebd16e37b992e1534bb0"
+    },
+    {
+      "path": "module/history_recommend_songs_detail.js",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "ca9cceadbad3114bee9693ecd358789c7aa2bfd5",
+      "size": 294,
+      "url": "https://api.github.com/repos/NeteaseCloudMusicApiEnhanced/api-enhanced/git/blobs/ca9cceadbad3114bee9693ecd358789c7aa2bfd5"
+    },
+    {
+      "path": "module/homepage_block_page.js",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "f637f3fc23387abed0b64d35ebf5efbe16ce7ca6",
+      "size": 512,
+      "url": "https://api.github.com/repos/NeteaseCloudMusicApiEnhanced/api-enhanced/git/blobs/f637f3fc23387abed0b64d35ebf5efbe16ce7ca6"
+    },
+    {
+      "path": "module/homepage_dragon_ball.js",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "e14be923b05b120a03908a839c854132050eb8b9",
+      "size": 532,
+      "url": "https://api.github.com/repos/NeteaseCloudMusicApiEnhanced/api-enhanced/git/blobs/e14be923b05b120a03908a839c854132050eb8b9"
+    },
+    {
+      "path": "module/hot_topic.js",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "e4c86a822f9f5ebf6ed15b591960652ea9f03df1",
+      "size": 258,
+      "url": "https://api.github.com/repos/NeteaseCloudMusicApiEnhanced/api-enhanced/git/blobs/e4c86a822f9f5ebf6ed15b591960652ea9f03df1"
+    },
+    {
+      "path": "module/hug_comment.js",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "df8d52cb40dc8bf59035162f69cea4a6c4c9847a",
+      "size": 443,
+      "url": "https://api.github.com/repos/NeteaseCloudMusicApiEnhanced/api-enhanced/git/blobs/df8d52cb40dc8bf59035162f69cea4a6c4c9847a"
+    },
+    {
+      "path": "module/inner_version.js",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "daf939ee02d7a1b5a041caf8a454885900bc3042",
+      "size": 336,
+      "url": "https://api.github.com/repos/NeteaseCloudMusicApiEnhanced/api-enhanced/git/blobs/daf939ee02d7a1b5a041caf8a454885900bc3042"
+    },
+    {
+      "path": "module/lbs_city_code.js",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "8e1bc3621e0daef4ff1e68133605878f849e88de",
+      "size": 253,
+      "url": "https://api.github.com/repos/NeteaseCloudMusicApiEnhanced/api-enhanced/git/blobs/8e1bc3621e0daef4ff1e68133605878f849e88de"
+    },
+    {
+      "path": "module/like.js",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "1fbdf508c89a8abfbe0ebaf16ae5586f059c9c82",
+      "size": 350,
+      "url": "https://api.github.com/repos/NeteaseCloudMusicApiEnhanced/api-enhanced/git/blobs/1fbdf508c89a8abfbe0ebaf16ae5586f059c9c82"
+    },
+    {
+      "path": "module/likelist.js",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "1a1025637757746545befe1cf71679b3908fce8d",
+      "size": 226,
+      "url": "https://api.github.com/repos/NeteaseCloudMusicApiEnhanced/api-enhanced/git/blobs/1a1025637757746545befe1cf71679b3908fce8d"
+    },
+    {
+      "path": "module/listen_data_realtime_report.js",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "e415ca93c573dd0e66faeaf91b355288d405e376",
+      "size": 307,
+      "url": "https://api.github.com/repos/NeteaseCloudMusicApiEnhanced/api-enhanced/git/blobs/e415ca93c573dd0e66faeaf91b355288d405e376"
+    },
+    {
+      "path": "module/listen_data_report.js",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "21aef525d77780429c8e432f7a3853f46b2a2ee6",
+      "size": 364,
+      "url": "https://api.github.com/repos/NeteaseCloudMusicApiEnhanced/api-enhanced/git/blobs/21aef525d77780429c8e432f7a3853f46b2a2ee6"
+    },
+    {
+      "path": "module/listen_data_today_song.js",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "9c2f7e68dafd4ad071f7402fd4aab0c5cc7353f5",
+      "size": 239,
+      "url": "https://api.github.com/repos/NeteaseCloudMusicApiEnhanced/api-enhanced/git/blobs/9c2f7e68dafd4ad071f7402fd4aab0c5cc7353f5"
+    },
+    {
+      "path": "module/listen_data_total.js",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "83472ba26e9d4859ae094aa96c175af8ba8e61e0",
+      "size": 227,
+      "url": "https://api.github.com/repos/NeteaseCloudMusicApiEnhanced/api-enhanced/git/blobs/83472ba26e9d4859ae094aa96c175af8ba8e61e0"
+    },
+    {
+      "path": "module/listen_data_year_report.js",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "ba32cb9783f279fabcbea9d29a73883ff5873e42",
+      "size": 236,
+      "url": "https://api.github.com/repos/NeteaseCloudMusicApiEnhanced/api-enhanced/git/blobs/ba32cb9783f279fabcbea9d29a73883ff5873e42"
+    },
+    {
+      "path": "module/listentogether_accept.js",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "5a986d753083ae0524a9d8a9d68f1755817491f7",
+      "size": 305,
+      "url": "https://api.github.com/repos/NeteaseCloudMusicApiEnhanced/api-enhanced/git/blobs/5a986d753083ae0524a9d8a9d68f1755817491f7"
+    },
+    {
+      "path": "module/listentogether_end.js",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "348757c6532ab23bcc022509cd60a8c2c930bd7e",
+      "size": 240,
+      "url": "https://api.github.com/repos/NeteaseCloudMusicApiEnhanced/api-enhanced/git/blobs/348757c6532ab23bcc022509cd60a8c2c930bd7e"
+    },
+    {
+      "path": "module/listentogether_heatbeat.js",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "e319847a2af438e62775070bfad57d09f1711704",
+      "size": 333,
+      "url": "https://api.github.com/repos/NeteaseCloudMusicApiEnhanced/api-enhanced/git/blobs/e319847a2af438e62775070bfad57d09f1711704"
+    },
+    {
+      "path": "module/listentogether_play_command.js",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "6706744c7efbc52c8d9e47ece34afc106e06ce4c",
+      "size": 543,
+      "url": "https://api.github.com/repos/NeteaseCloudMusicApiEnhanced/api-enhanced/git/blobs/6706744c7efbc52c8d9e47ece34afc106e06ce4c"
+    },
+    {
+      "path": "module/listentogether_room_check.js",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "065c6d365f0dcac2b56ed97fbe7bbcdc8cabc7f8",
+      "size": 244,
+      "url": "https://api.github.com/repos/NeteaseCloudMusicApiEnhanced/api-enhanced/git/blobs/065c6d365f0dcac2b56ed97fbe7bbcdc8cabc7f8"
+    },
+    {
+      "path": "module/listentogether_room_create.js",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "5265a0b4b9bffd923a8f569fd2a637b86cde75f5",
+      "size": 246,
+      "url": "https://api.github.com/repos/NeteaseCloudMusicApiEnhanced/api-enhanced/git/blobs/5265a0b4b9bffd923a8f569fd2a637b86cde75f5"
+    },
+    {
+      "path": "module/listentogether_status.js",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "d233a968cf3f45dc9a6d3a6ebb55d3dd75c4738d",
+      "size": 214,
+      "url": "https://api.github.com/repos/NeteaseCloudMusicApiEnhanced/api-enhanced/git/blobs/d233a968cf3f45dc9a6d3a6ebb55d3dd75c4738d"
+    },
+    {
+      "path": "module/listentogether_sync_list_command.js",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "a05533aad1945586775ad67d8985e02759027a46",
+      "size": 622,
+      "url": "https://api.github.com/repos/NeteaseCloudMusicApiEnhanced/api-enhanced/git/blobs/a05533aad1945586775ad67d8985e02759027a46"
+    },
+    {
+      "path": "module/listentogether_sync_playlist_get.js",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "582584668cdd60e922eaccf3436a317e46bced12",
+      "size": 274,
+      "url": "https://api.github.com/repos/NeteaseCloudMusicApiEnhanced/api-enhanced/git/blobs/582584668cdd60e922eaccf3436a317e46bced12"
+    },
+    {
+      "path": "module/login.js",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "ed46db4f532c28664b67b9b3d039ee0d63c61235",
+      "size": 952,
+      "url": "https://api.github.com/repos/NeteaseCloudMusicApiEnhanced/api-enhanced/git/blobs/ed46db4f532c28664b67b9b3d039ee0d63c61235"
+    },
+    {
+      "path": "module/login_cellphone.js",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "c1d8d452ad05484b617238807519ad7e4211bdbc",
+      "size": 931,
+      "url": "https://api.github.com/repos/NeteaseCloudMusicApiEnhanced/api-enhanced/git/blobs/c1d8d452ad05484b617238807519ad7e4211bdbc"
+    },
+    {
+      "path": "module/login_qr_check.js",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "1f34cb09d0a81d3f1c9ca048fec4f4ac2b850411",
+      "size": 558,
+      "url": "https://api.github.com/repos/NeteaseCloudMusicApiEnhanced/api-enhanced/git/blobs/1f34cb09d0a81d3f1c9ca048fec4f4ac2b850411"
+    },
+    {
+      "path": "module/login_qr_create.js",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "d94cbece205de9c97675dc79b6f47b7f182d6528",
+      "size": 727,
+      "url": "https://api.github.com/repos/NeteaseCloudMusicApiEnhanced/api-enhanced/git/blobs/d94cbece205de9c97675dc79b6f47b7f182d6528"
+    },
+    {
+      "path": "module/login_qr_key.js",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "4ef364842eaf1ae0f9c7e7c35b67c26bae1c3830",
+      "size": 354,
+      "url": "https://api.github.com/repos/NeteaseCloudMusicApiEnhanced/api-enhanced/git/blobs/4ef364842eaf1ae0f9c7e7c35b67c26bae1c3830"
+    },
+    {
+      "path": "module/login_refresh.js",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "9c8f1f4a8be2b114a186739367dbe29330951b22",
+      "size": 424,
+      "url": "https://api.github.com/repos/NeteaseCloudMusicApiEnhanced/api-enhanced/git/blobs/9c8f1f4a8be2b114a186739367dbe29330951b22"
+    },
+    {
+      "path": "module/login_status.js",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "3984966e6deffdccb3cb9a32078df176b56140ed",
+      "size": 424,
+      "url": "https://api.github.com/repos/NeteaseCloudMusicApiEnhanced/api-enhanced/git/blobs/3984966e6deffdccb3cb9a32078df176b56140ed"
+    },
+    {
+      "path": "module/logout.js",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "9f5b3ddf6c35e8566a0c436568c6c51625196f8a",
+      "size": 165,
+      "url": "https://api.github.com/repos/NeteaseCloudMusicApiEnhanced/api-enhanced/git/blobs/9f5b3ddf6c35e8566a0c436568c6c51625196f8a"
+    },
+    {
+      "path": "module/lyric.js",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "c432f29d1d6ad86f06ce78b2f6fbcd24aa464efa",
+      "size": 268,
+      "url": "https://api.github.com/repos/NeteaseCloudMusicApiEnhanced/api-enhanced/git/blobs/c432f29d1d6ad86f06ce78b2f6fbcd24aa464efa"
+    },
+    {
+      "path": "module/lyric_new.js",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "740d99f0178997bc54315828f314dce2c83a0709",
+      "size": 328,
+      "url": "https://api.github.com/repos/NeteaseCloudMusicApiEnhanced/api-enhanced/git/blobs/740d99f0178997bc54315828f314dce2c83a0709"
+    },
+    {
+      "path": "module/mlog_music_rcmd.js",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "2228e0af9dab41f4be55f16e7f19edba2598ea34",
+      "size": 348,
+      "url": "https://api.github.com/repos/NeteaseCloudMusicApiEnhanced/api-enhanced/git/blobs/2228e0af9dab41f4be55f16e7f19edba2598ea34"
+    },
+    {
+      "path": "module/mlog_to_video.js",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "69d3fb6dc22385e74b4fdbad61d7d401a8452a32",
+      "size": 263,
+      "url": "https://api.github.com/repos/NeteaseCloudMusicApiEnhanced/api-enhanced/git/blobs/69d3fb6dc22385e74b4fdbad61d7d401a8452a32"
+    },
+    {
+      "path": "module/mlog_url.js",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "efca19ab84669551daf36794c805f7b1c016750e",
+      "size": 269,
+      "url": "https://api.github.com/repos/NeteaseCloudMusicApiEnhanced/api-enhanced/git/blobs/efca19ab84669551daf36794c805f7b1c016750e"
+    },
+    {
+      "path": "module/msg_comments.js",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "15d57b2b3ae3437170c311e19e9c80df01c29be2",
+      "size": 339,
+      "url": "https://api.github.com/repos/NeteaseCloudMusicApiEnhanced/api-enhanced/git/blobs/15d57b2b3ae3437170c311e19e9c80df01c29be2"
+    },
+    {
+      "path": "module/msg_forwards.js",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "2ec1786d04764b1dcc4fa4ca9af0fcbdb0716fee",
+      "size": 275,
+      "url": "https://api.github.com/repos/NeteaseCloudMusicApiEnhanced/api-enhanced/git/blobs/2ec1786d04764b1dcc4fa4ca9af0fcbdb0716fee"
+    },
+    {
+      "path": "module/msg_notices.js",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "72c80cbc53c32b4571225dbd6bb3636ed5713b11",
+      "size": 258,
+      "url": "https://api.github.com/repos/NeteaseCloudMusicApiEnhanced/api-enhanced/git/blobs/72c80cbc53c32b4571225dbd6bb3636ed5713b11"
+    },
+    {
+      "path": "module/msg_private.js",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "090f8887884ea7e90989b70a6bda17a62e666a9f",
+      "size": 282,
+      "url": "https://api.github.com/repos/NeteaseCloudMusicApiEnhanced/api-enhanced/git/blobs/090f8887884ea7e90989b70a6bda17a62e666a9f"
+    },
+    {
+      "path": "module/msg_private_history.js",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "f5877f360e067f536217781c173b5f3292bec7a1",
+      "size": 311,
+      "url": "https://api.github.com/repos/NeteaseCloudMusicApiEnhanced/api-enhanced/git/blobs/f5877f360e067f536217781c173b5f3292bec7a1"
+    },
+    {
+      "path": "module/msg_recentcontact.js",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "b12a4f864b7a2006f3ae94dacbb17ea3b1a87599",
+      "size": 226,
+      "url": "https://api.github.com/repos/NeteaseCloudMusicApiEnhanced/api-enhanced/git/blobs/b12a4f864b7a2006f3ae94dacbb17ea3b1a87599"
+    },
+    {
+      "path": "module/music_first_listen_info.js",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "67377b722a9beb66cf388f5d59a33dfbe8b581e3",
+      "size": 261,
+      "url": "https://api.github.com/repos/NeteaseCloudMusicApiEnhanced/api-enhanced/git/blobs/67377b722a9beb66cf388f5d59a33dfbe8b581e3"
+    },
+    {
+      "path": "module/musician_cloudbean.js",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "f4a36ce8790fcc3a1efa1485ce966a6be0983fc4",
+      "size": 204,
+      "url": "https://api.github.com/repos/NeteaseCloudMusicApiEnhanced/api-enhanced/git/blobs/f4a36ce8790fcc3a1efa1485ce966a6be0983fc4"
+    },
+    {
+      "path": "module/musician_cloudbean_obtain.js",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "97f996ef09534f24845592a0913319d6be8d8667",
+      "size": 308,
+      "url": "https://api.github.com/repos/NeteaseCloudMusicApiEnhanced/api-enhanced/git/blobs/97f996ef09534f24845592a0913319d6be8d8667"
+    },
+    {
+      "path": "module/musician_data_overview.js",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "fabc34acaee471083c92e9b800b62ef5b5f45040",
+      "size": 258,
+      "url": "https://api.github.com/repos/NeteaseCloudMusicApiEnhanced/api-enhanced/git/blobs/fabc34acaee471083c92e9b800b62ef5b5f45040"
+    },
+    {
+      "path": "module/musician_play_trend.js",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "3649518a78ae40b8de54f7571455cf0d371a0cee",
+      "size": 335,
+      "url": "https://api.github.com/repos/NeteaseCloudMusicApiEnhanced/api-enhanced/git/blobs/3649518a78ae40b8de54f7571455cf0d371a0cee"
+    },
+    {
+      "path": "module/musician_sign.js",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "58373229868104359bad58dcece6f2d37e0b092c",
+      "size": 210,
+      "url": "https://api.github.com/repos/NeteaseCloudMusicApiEnhanced/api-enhanced/git/blobs/58373229868104359bad58dcece6f2d37e0b092c"
+    },
+    {
+      "path": "module/musician_tasks.js",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "9b0609c7c1cd5cf5c6c64b781b0643cb3a430981",
+      "size": 252,
+      "url": "https://api.github.com/repos/NeteaseCloudMusicApiEnhanced/api-enhanced/git/blobs/9b0609c7c1cd5cf5c6c64b781b0643cb3a430981"
+    },
+    {
+      "path": "module/musician_tasks_new.js",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "f0f45efc1984563014f9417add1e5cc22548d6f3",
+      "size": 253,
+      "url": "https://api.github.com/repos/NeteaseCloudMusicApiEnhanced/api-enhanced/git/blobs/f0f45efc1984563014f9417add1e5cc22548d6f3"
+    },
+    {
+      "path": "module/musician_vip_tasks.js",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "80828ce9c1a7f66dd484d95cc77996933207b3ef",
+      "size": 255,
+      "url": "https://api.github.com/repos/NeteaseCloudMusicApiEnhanced/api-enhanced/git/blobs/80828ce9c1a7f66dd484d95cc77996933207b3ef"
+    },
+    {
+      "path": "module/mv_all.js",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "9775d8a0f4c8bc0ec4d792fc6a8579a7443ccdb0",
+      "size": 420,
+      "url": "https://api.github.com/repos/NeteaseCloudMusicApiEnhanced/api-enhanced/git/blobs/9775d8a0f4c8bc0ec4d792fc6a8579a7443ccdb0"
+    },
+    {
+      "path": "module/mv_detail.js",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "4ced0ed6e42bf0de893cc165f69b2659096b9585",
+      "size": 219,
+      "url": "https://api.github.com/repos/NeteaseCloudMusicApiEnhanced/api-enhanced/git/blobs/4ced0ed6e42bf0de893cc165f69b2659096b9585"
+    },
+    {
+      "path": "module/mv_detail_info.js",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "116374f346b0c56359d1ddd5e777222f31825ee0",
+      "size": 314,
+      "url": "https://api.github.com/repos/NeteaseCloudMusicApiEnhanced/api-enhanced/git/blobs/116374f346b0c56359d1ddd5e777222f31825ee0"
+    },
+    {
+      "path": "module/mv_exclusive_rcmd.js",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "538a8d34f5c92a4ba7119e0039c1fd2274dc1473",
+      "size": 260,
+      "url": "https://api.github.com/repos/NeteaseCloudMusicApiEnhanced/api-enhanced/git/blobs/538a8d34f5c92a4ba7119e0039c1fd2274dc1473"
+    },
+    {
+      "path": "module/mv_first.js",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "0f8ac6b85f6c2d151f66bbf20af1a1b774f10fb2",
+      "size": 297,
+      "url": "https://api.github.com/repos/NeteaseCloudMusicApiEnhanced/api-enhanced/git/blobs/0f8ac6b85f6c2d151f66bbf20af1a1b774f10fb2"
+    },
+    {
+      "path": "module/mv_sub.js",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "d7c881e592e6d0d28347a0ea8ee47192ff9f3abd",
+      "size": 317,
+      "url": "https://api.github.com/repos/NeteaseCloudMusicApiEnhanced/api-enhanced/git/blobs/d7c881e592e6d0d28347a0ea8ee47192ff9f3abd"
+    },
+    {
+      "path": "module/mv_sublist.js",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "12feece50f148938cda84d620c944087884b1a0b",
+      "size": 318,
+      "url": "https://api.github.com/repos/NeteaseCloudMusicApiEnhanced/api-enhanced/git/blobs/12feece50f148938cda84d620c944087884b1a0b"
+    },
+    {
+      "path": "module/mv_url.js",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "e0fd7ba82679bfd6e26c982e0f27f5a099db1f15",
+      "size": 270,
+      "url": "https://api.github.com/repos/NeteaseCloudMusicApiEnhanced/api-enhanced/git/blobs/e0fd7ba82679bfd6e26c982e0f27f5a099db1f15"
+    },
+    {
+      "path": "module/nickname_check.js",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "ccdd1019f8e4fe5691dd6d99f9f9fa401096207c",
+      "size": 223,
+      "url": "https://api.github.com/repos/NeteaseCloudMusicApiEnhanced/api-enhanced/git/blobs/ccdd1019f8e4fe5691dd6d99f9f9fa401096207c"
+    },
+    {
+      "path": "module/personal_fm.js",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "f3e32d611a538601af7fa34178ccddb4600b84d7",
+      "size": 176,
+      "url": "https://api.github.com/repos/NeteaseCloudMusicApiEnhanced/api-enhanced/git/blobs/f3e32d611a538601af7fa34178ccddb4600b84d7"
+    },
+    {
+      "path": "module/personal_fm_mode.js",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "4d5b7f8896f8e260fa8b2584b39d8c7152a09d7b",
+      "size": 396,
+      "url": "https://api.github.com/repos/NeteaseCloudMusicApiEnhanced/api-enhanced/git/blobs/4d5b7f8896f8e260fa8b2584b39d8c7152a09d7b"
+    },
+    {
+      "path": "module/personalized.js",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "1e59b10ba87367720d9e62d5cc769f9e2090d5d8",
+      "size": 323,
+      "url": "https://api.github.com/repos/NeteaseCloudMusicApiEnhanced/api-enhanced/git/blobs/1e59b10ba87367720d9e62d5cc769f9e2090d5d8"
+    },
+    {
+      "path": "module/personalized_djprogram.js",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "a48ead427b475bfd887f884f1fe5c591f3193fb6",
+      "size": 207,
+      "url": "https://api.github.com/repos/NeteaseCloudMusicApiEnhanced/api-enhanced/git/blobs/a48ead427b475bfd887f884f1fe5c591f3193fb6"
+    },
+    {
+      "path": "module/personalized_mv.js",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "2f2b1043fbad1e5373b3bf1944dc730bf96bca1b",
+      "size": 179,
+      "url": "https://api.github.com/repos/NeteaseCloudMusicApiEnhanced/api-enhanced/git/blobs/2f2b1043fbad1e5373b3bf1944dc730bf96bca1b"
+    },
+    {
+      "path": "module/personalized_newsong.js",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "cd04ca96f8f79e8500454427f939110b48e1693b",
+      "size": 312,
+      "url": "https://api.github.com/repos/NeteaseCloudMusicApiEnhanced/api-enhanced/git/blobs/cd04ca96f8f79e8500454427f939110b48e1693b"
+    },
+    {
+      "path": "module/personalized_privatecontent.js",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "3d0ba78bf5378b8d598647575191780d95414af0",
+      "size": 212,
+      "url": "https://api.github.com/repos/NeteaseCloudMusicApiEnhanced/api-enhanced/git/blobs/3d0ba78bf5378b8d598647575191780d95414af0"
+    },
+    {
+      "path": "module/personalized_privatecontent_list.js",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "75d582856dba1f16a0127e4c220ff9881980e410",
+      "size": 316,
+      "url": "https://api.github.com/repos/NeteaseCloudMusicApiEnhanced/api-enhanced/git/blobs/75d582856dba1f16a0127e4c220ff9881980e410"
+    },
+    {
+      "path": "module/pl_count.js",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "bb21ea141601eb85245bad6ed860dec529a59c26",
+      "size": 205,
+      "url": "https://api.github.com/repos/NeteaseCloudMusicApiEnhanced/api-enhanced/git/blobs/bb21ea141601eb85245bad6ed860dec529a59c26"
+    },
+    {
+      "path": "module/playlist_category_list.js",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "0c2c9658234242687c46da241513970f1691fbb8",
+      "size": 292,
+      "url": "https://api.github.com/repos/NeteaseCloudMusicApiEnhanced/api-enhanced/git/blobs/0c2c9658234242687c46da241513970f1691fbb8"
+    },
+    {
+      "path": "module/playlist_catlist.js",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "409ecdb129d19627bf098d966dfa7de3ec445135",
+      "size": 191,
+      "url": "https://api.github.com/repos/NeteaseCloudMusicApiEnhanced/api-enhanced/git/blobs/409ecdb129d19627bf098d966dfa7de3ec445135"
+    },
+    {
+      "path": "module/playlist_cover_update.js",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "32ad27cd6a03f523c449f25e79bd4ab83052b09d",
+      "size": 652,
+      "url": "https://api.github.com/repos/NeteaseCloudMusicApiEnhanced/api-enhanced/git/blobs/32ad27cd6a03f523c449f25e79bd4ab83052b09d"
+    },
+    {
+      "path": "module/playlist_create.js",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "17cd858ac1b595aa5fc16d26ef7c54e89511c7c2",
+      "size": 390,
+      "url": "https://api.github.com/repos/NeteaseCloudMusicApiEnhanced/api-enhanced/git/blobs/17cd858ac1b595aa5fc16d26ef7c54e89511c7c2"
+    },
+    {
+      "path": "module/playlist_delete.js",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "15c3acc5f2d90f727a76d69dc45a1f210fab1888",
+      "size": 237,
+      "url": "https://api.github.com/repos/NeteaseCloudMusicApiEnhanced/api-enhanced/git/blobs/15c3acc5f2d90f727a76d69dc45a1f210fab1888"
+    },
+    {
+      "path": "module/playlist_desc_update.js",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "a69a3b57a090eafcd0867af6906dbbae029ada61",
+      "size": 248,
+      "url": "https://api.github.com/repos/NeteaseCloudMusicApiEnhanced/api-enhanced/git/blobs/a69a3b57a090eafcd0867af6906dbbae029ada61"
+    },
+    {
+      "path": "module/playlist_detail.js",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "d3d737dfa0a9666d5eedb3e78cb8cf7e4ee47426",
+      "size": 254,
+      "url": "https://api.github.com/repos/NeteaseCloudMusicApiEnhanced/api-enhanced/git/blobs/d3d737dfa0a9666d5eedb3e78cb8cf7e4ee47426"
+    },
+    {
+      "path": "module/playlist_detail_dynamic.js",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "d1fda3beaf9c9850a8e42733c59f859835432140",
+      "size": 265,
+      "url": "https://api.github.com/repos/NeteaseCloudMusicApiEnhanced/api-enhanced/git/blobs/d1fda3beaf9c9850a8e42733c59f859835432140"
+    },
+    {
+      "path": "module/playlist_detail_rcmd_get.js",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "068a53cdd6a3baae886b00e828f0eda332d645e5",
+      "size": 288,
+      "url": "https://api.github.com/repos/NeteaseCloudMusicApiEnhanced/api-enhanced/git/blobs/068a53cdd6a3baae886b00e828f0eda332d645e5"
+    },
+    {
+      "path": "module/playlist_highquality_tags.js",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "95daf3bf516aff8b7343a2275a1613a3cce91b6f",
+      "size": 234,
+      "url": "https://api.github.com/repos/NeteaseCloudMusicApiEnhanced/api-enhanced/git/blobs/95daf3bf516aff8b7343a2275a1613a3cce91b6f"
+    },
+    {
+      "path": "module/playlist_hot.js",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "a194f76700875b314211f058cad6cafae148d56d",
+      "size": 190,
+      "url": "https://api.github.com/repos/NeteaseCloudMusicApiEnhanced/api-enhanced/git/blobs/a194f76700875b314211f058cad6cafae148d56d"
+    },
+    {
+      "path": "module/playlist_import_name_task_create.js",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "5554a8298613b8f22273f4d4cdf89bd97bce5da8",
+      "size": 1505,
+      "url": "https://api.github.com/repos/NeteaseCloudMusicApiEnhanced/api-enhanced/git/blobs/5554a8298613b8f22273f4d4cdf89bd97bce5da8"
+    },
+    {
+      "path": "module/playlist_import_task_status.js",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "50fbe6b939c1c32ba19ac863b68d574e9b58f080",
+      "size": 268,
+      "url": "https://api.github.com/repos/NeteaseCloudMusicApiEnhanced/api-enhanced/git/blobs/50fbe6b939c1c32ba19ac863b68d574e9b58f080"
+    },
+    {
+      "path": "module/playlist_mylike.js",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "03da8ea469fb1f34302c4ad2fc0dbae1fb94b7b8",
+      "size": 284,
+      "url": "https://api.github.com/repos/NeteaseCloudMusicApiEnhanced/api-enhanced/git/blobs/03da8ea469fb1f34302c4ad2fc0dbae1fb94b7b8"
+    },
+    {
+      "path": "module/playlist_name_update.js",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "3bcb007b0eb995fee141da677719ca545131a626",
+      "size": 245,
+      "url": "https://api.github.com/repos/NeteaseCloudMusicApiEnhanced/api-enhanced/git/blobs/3bcb007b0eb995fee141da677719ca545131a626"
+    },
+    {
+      "path": "module/playlist_order_update.js",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "5f5b75f803b2050e36fd3fb3c66f920bba257353",
+      "size": 255,
+      "url": "https://api.github.com/repos/NeteaseCloudMusicApiEnhanced/api-enhanced/git/blobs/5f5b75f803b2050e36fd3fb3c66f920bba257353"
+    },
+    {
+      "path": "module/playlist_privacy.js",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "c233cf037b52bd56ae3b1e0a34d39bbbdcef69d0",
+      "size": 245,
+      "url": "https://api.github.com/repos/NeteaseCloudMusicApiEnhanced/api-enhanced/git/blobs/c233cf037b52bd56ae3b1e0a34d39bbbdcef69d0"
+    },
+    {
+      "path": "module/playlist_subscribe.js",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "062027f349c8d17e5c9038c32b9dcf0ed0b8cce5",
+      "size": 499,
+      "url": "https://api.github.com/repos/NeteaseCloudMusicApiEnhanced/api-enhanced/git/blobs/062027f349c8d17e5c9038c32b9dcf0ed0b8cce5"
+    },
+    {
+      "path": "module/playlist_subscribers.js",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "c61ae99d0478cb5b35520c6ae76d60b324f251c0",
+      "size": 284,
+      "url": "https://api.github.com/repos/NeteaseCloudMusicApiEnhanced/api-enhanced/git/blobs/c61ae99d0478cb5b35520c6ae76d60b324f251c0"
+    },
+    {
+      "path": "module/playlist_tags_update.js",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "0e767f5988b1bff5c827a211db450f92897b20a6",
+      "size": 248,
+      "url": "https://api.github.com/repos/NeteaseCloudMusicApiEnhanced/api-enhanced/git/blobs/0e767f5988b1bff5c827a211db450f92897b20a6"
+    },
+    {
+      "path": "module/playlist_track_add.js",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "1837674ca70de83a32b38df760575736679191f3",
+      "size": 437,
+      "url": "https://api.github.com/repos/NeteaseCloudMusicApiEnhanced/api-enhanced/git/blobs/1837674ca70de83a32b38df760575736679191f3"
+    },
+    {
+      "path": "module/playlist_track_all.js",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "06758f512e579936a550d2fdfd02385af4d882df",
+      "size": 918,
+      "url": "https://api.github.com/repos/NeteaseCloudMusicApiEnhanced/api-enhanced/git/blobs/06758f512e579936a550d2fdfd02385af4d882df"
+    },
+    {
+      "path": "module/playlist_track_delete.js",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "2409552a4fd5a40f18cf22b7b579e7b3fa359f68",
+      "size": 440,
+      "url": "https://api.github.com/repos/NeteaseCloudMusicApiEnhanced/api-enhanced/git/blobs/2409552a4fd5a40f18cf22b7b579e7b3fa359f68"
+    },
+    {
+      "path": "module/playlist_tracks.js",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "e36dd80291f09e2e5e74e4d4b5c3b83bc45315b8",
+      "size": 972,
+      "url": "https://api.github.com/repos/NeteaseCloudMusicApiEnhanced/api-enhanced/git/blobs/e36dd80291f09e2e5e74e4d4b5c3b83bc45315b8"
+    },
+    {
+      "path": "module/playlist_update.js",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "59dc7af3b265f0aaaa7bccb225bd57a1b25a4bec",
+      "size": 485,
+      "url": "https://api.github.com/repos/NeteaseCloudMusicApiEnhanced/api-enhanced/git/blobs/59dc7af3b265f0aaaa7bccb225bd57a1b25a4bec"
+    },
+    {
+      "path": "module/playlist_update_playcount.js",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "f6951dbcd11ba0811db73ea8ae0782cffaf2cb5e",
+      "size": 225,
+      "url": "https://api.github.com/repos/NeteaseCloudMusicApiEnhanced/api-enhanced/git/blobs/f6951dbcd11ba0811db73ea8ae0782cffaf2cb5e"
+    },
+    {
+      "path": "module/playlist_video_recent.js",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "99c809eac08231a154f3bdf995ed5e965e04275e",
+      "size": 209,
+      "url": "https://api.github.com/repos/NeteaseCloudMusicApiEnhanced/api-enhanced/git/blobs/99c809eac08231a154f3bdf995ed5e965e04275e"
+    },
+    {
+      "path": "module/playmode_intelligence_list.js",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "9071766a3f98867e9463d62ecbc3b68d8cfce01c",
+      "size": 352,
+      "url": "https://api.github.com/repos/NeteaseCloudMusicApiEnhanced/api-enhanced/git/blobs/9071766a3f98867e9463d62ecbc3b68d8cfce01c"
+    },
+    {
+      "path": "module/playmode_song_vector.js",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "9535baff40d44a2a42465d04c9d61685439a772f",
+      "size": 228,
+      "url": "https://api.github.com/repos/NeteaseCloudMusicApiEnhanced/api-enhanced/git/blobs/9535baff40d44a2a42465d04c9d61685439a772f"
+    },
+    {
+      "path": "module/program_recommend.js",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "d46c1c2b84ce5c773b4e362e6a1667a54bb5dd18",
+      "size": 313,
+      "url": "https://api.github.com/repos/NeteaseCloudMusicApiEnhanced/api-enhanced/git/blobs/d46c1c2b84ce5c773b4e362e6a1667a54bb5dd18"
+    },
+    {
+      "path": "module/radio_sport_get.js",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "acba2ab83eee3bdbc3b920c12e3e0ffe6693127c",
+      "size": 223,
+      "url": "https://api.github.com/repos/NeteaseCloudMusicApiEnhanced/api-enhanced/git/blobs/acba2ab83eee3bdbc3b920c12e3e0ffe6693127c"
+    },
+    {
+      "path": "module/rebind.js",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "117d2dcf18f09d97aacafef9b9503d4a055b4102",
+      "size": 349,
+      "url": "https://api.github.com/repos/NeteaseCloudMusicApiEnhanced/api-enhanced/git/blobs/117d2dcf18f09d97aacafef9b9503d4a055b4102"
+    },
+    {
+      "path": "module/recent_listen_list.js",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "97b3ce58d31f221bb45ee967d50c3c1bf4d41b55",
+      "size": 206,
+      "url": "https://api.github.com/repos/NeteaseCloudMusicApiEnhanced/api-enhanced/git/blobs/97b3ce58d31f221bb45ee967d50c3c1bf4d41b55"
+    },
+    {
+      "path": "module/recommend_resource.js",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "a7a7d5f3b3ec9e5edca3ff3c850eff128193b244",
+      "size": 222,
+      "url": "https://api.github.com/repos/NeteaseCloudMusicApiEnhanced/api-enhanced/git/blobs/a7a7d5f3b3ec9e5edca3ff3c850eff128193b244"
+    },
+    {
+      "path": "module/recommend_songs.js",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "9295052dfb81ca2ffe935d0b5002ea53b73a75c6",
+      "size": 268,
+      "url": "https://api.github.com/repos/NeteaseCloudMusicApiEnhanced/api-enhanced/git/blobs/9295052dfb81ca2ffe935d0b5002ea53b73a75c6"
+    },
+    {
+      "path": "module/recommend_songs_dislike.js",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "9f3a327a056b4784a165248f64f41781448c81dd",
+      "size": 329,
+      "url": "https://api.github.com/repos/NeteaseCloudMusicApiEnhanced/api-enhanced/git/blobs/9f3a327a056b4784a165248f64f41781448c81dd"
+    },
+    {
+      "path": "module/record_recent_album.js",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "11466da40e8942fda64bf60736a57b7e44c2496f",
+      "size": 244,
+      "url": "https://api.github.com/repos/NeteaseCloudMusicApiEnhanced/api-enhanced/git/blobs/11466da40e8942fda64bf60736a57b7e44c2496f"
+    },
+    {
+      "path": "module/record_recent_dj.js",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "ea7b4e59b94d0533b27b3ccc65f34c269551efa7",
+      "size": 246,
+      "url": "https://api.github.com/repos/NeteaseCloudMusicApiEnhanced/api-enhanced/git/blobs/ea7b4e59b94d0533b27b3ccc65f34c269551efa7"
+    },
+    {
+      "path": "module/record_recent_playlist.js",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "3c80e0a781e8c429f9521c32b65f02fbfcab5e18",
+      "size": 247,
+      "url": "https://api.github.com/repos/NeteaseCloudMusicApiEnhanced/api-enhanced/git/blobs/3c80e0a781e8c429f9521c32b65f02fbfcab5e18"
+    },
+    {
+      "path": "module/record_recent_song.js",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "892b8e24e27c08e34059e817b43f412e9d0fa258",
+      "size": 243,
+      "url": "https://api.github.com/repos/NeteaseCloudMusicApiEnhanced/api-enhanced/git/blobs/892b8e24e27c08e34059e817b43f412e9d0fa258"
+    },
+    {
+      "path": "module/record_recent_video.js",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "dfbd4ec87dddd120e8efcb3323d59f8bf15e87a9",
+      "size": 247,
+      "url": "https://api.github.com/repos/NeteaseCloudMusicApiEnhanced/api-enhanced/git/blobs/dfbd4ec87dddd120e8efcb3323d59f8bf15e87a9"
+    },
+    {
+      "path": "module/record_recent_voice.js",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "dc8f6fcd9fe48cf5342339f17ccd9843a0273228",
+      "size": 244,
+      "url": "https://api.github.com/repos/NeteaseCloudMusicApiEnhanced/api-enhanced/git/blobs/dc8f6fcd9fe48cf5342339f17ccd9843a0273228"
+    },
+    {
+      "path": "module/register_anonimous.js",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "a60798b19013de6b3d9cb4ab1096247fdf13d57f",
+      "size": 1452,
+      "url": "https://api.github.com/repos/NeteaseCloudMusicApiEnhanced/api-enhanced/git/blobs/a60798b19013de6b3d9cb4ab1096247fdf13d57f"
+    },
+    {
+      "path": "module/register_cellphone.js",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "967672cfcf97be810426e2cfe7e2d5f412f9fa05",
+      "size": 441,
+      "url": "https://api.github.com/repos/NeteaseCloudMusicApiEnhanced/api-enhanced/git/blobs/967672cfcf97be810426e2cfe7e2d5f412f9fa05"
+    },
+    {
+      "path": "module/register_xeapikey.js",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "9372f35c8bea6d3fb746b7f0c20361aa2d8e11ce",
+      "size": 1862,
+      "url": "https://api.github.com/repos/NeteaseCloudMusicApiEnhanced/api-enhanced/git/blobs/9372f35c8bea6d3fb746b7f0c20361aa2d8e11ce"
+    },
+    {
+      "path": "module/related_allvideo.js",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "1fb9a6a21934d9239e6dccedd93fe8be3b02559d",
+      "size": 295,
+      "url": "https://api.github.com/repos/NeteaseCloudMusicApiEnhanced/api-enhanced/git/blobs/1fb9a6a21934d9239e6dccedd93fe8be3b02559d"
+    },
+    {
+      "path": "module/related_playlist.js",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "8975fae3dbebee898d980cc9b7e86ee364bb9d46",
+      "size": 1090,
+      "url": "https://api.github.com/repos/NeteaseCloudMusicApiEnhanced/api-enhanced/git/blobs/8975fae3dbebee898d980cc9b7e86ee364bb9d46"
+    },
+    {
+      "path": "module/relay_play_state_submit.js",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "3b948e87f1b7a48cde479d7a74a763479b8025af",
+      "size": 946,
+      "url": "https://api.github.com/repos/NeteaseCloudMusicApiEnhanced/api-enhanced/git/blobs/3b948e87f1b7a48cde479d7a74a763479b8025af"
+    },
+    {
+      "path": "module/resource_like.js",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "1a201757350493d9c846189e04cc73c66999f19c",
+      "size": 481,
+      "url": "https://api.github.com/repos/NeteaseCloudMusicApiEnhanced/api-enhanced/git/blobs/1a201757350493d9c846189e04cc73c66999f19c"
+    },
+    {
+      "path": "module/sati_resource_list.js",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "f36dc6446ff387563dad24ecd5554e61a011e776",
+      "size": 280,
+      "url": "https://api.github.com/repos/NeteaseCloudMusicApiEnhanced/api-enhanced/git/blobs/f36dc6446ff387563dad24ecd5554e61a011e776"
+    },
+    {
+      "path": "module/sati_resource_list_more.js",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "5faa3f41ad49d3307d4bd0c0d2bf6e4f511f6da0",
+      "size": 270,
+      "url": "https://api.github.com/repos/NeteaseCloudMusicApiEnhanced/api-enhanced/git/blobs/5faa3f41ad49d3307d4bd0c0d2bf6e4f511f6da0"
+    },
+    {
+      "path": "module/sati_resource_sub.js",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "710df63a84ae9defb56a71e5811ba6f01db41edc",
+      "size": 267,
+      "url": "https://api.github.com/repos/NeteaseCloudMusicApiEnhanced/api-enhanced/git/blobs/710df63a84ae9defb56a71e5811ba6f01db41edc"
+    },
+    {
+      "path": "module/sati_resource_sub_list.js",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "9d41981d1262afcea5fdfec64e8c9758706ac988",
+      "size": 222,
+      "url": "https://api.github.com/repos/NeteaseCloudMusicApiEnhanced/api-enhanced/git/blobs/9d41981d1262afcea5fdfec64e8c9758706ac988"
+    },
+    {
+      "path": "module/sati_tag_list.js",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "a8fd6f10ae41261611f4c5ac6f78e8f77d909af1",
+      "size": 213,
+      "url": "https://api.github.com/repos/NeteaseCloudMusicApiEnhanced/api-enhanced/git/blobs/a8fd6f10ae41261611f4c5ac6f78e8f77d909af1"
+    },
+    {
+      "path": "module/sati_timescene_resources_get.js",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "6f6a56a5bdef2c5424ff093c6c8a5950a9ce04bf",
+      "size": 295,
+      "url": "https://api.github.com/repos/NeteaseCloudMusicApiEnhanced/api-enhanced/git/blobs/6f6a56a5bdef2c5424ff093c6c8a5950a9ce04bf"
+    },
+    {
+      "path": "module/scrobble.js",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "2cf9fb69633c60cf1713a029c59d9cb988fe550f",
+      "size": 562,
+      "url": "https://api.github.com/repos/NeteaseCloudMusicApiEnhanced/api-enhanced/git/blobs/2cf9fb69633c60cf1713a029c59d9cb988fe550f"
+    },
+    {
+      "path": "module/search.js",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "077a307178db79f99601d795414cf42b3a0d2e8d",
+      "size": 678,
+      "url": "https://api.github.com/repos/NeteaseCloudMusicApiEnhanced/api-enhanced/git/blobs/077a307178db79f99601d795414cf42b3a0d2e8d"
+    },
+    {
+      "path": "module/search_default.js",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "4fd60c25e03f680a67b9b6eb0608c522c35ee1e1",
+      "size": 193,
+      "url": "https://api.github.com/repos/NeteaseCloudMusicApiEnhanced/api-enhanced/git/blobs/4fd60c25e03f680a67b9b6eb0608c522c35ee1e1"
+    },
+    {
+      "path": "module/search_hot.js",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "15810436f500c147cf0ccdf8c43b111483e4360d",
+      "size": 208,
+      "url": "https://api.github.com/repos/NeteaseCloudMusicApiEnhanced/api-enhanced/git/blobs/15810436f500c147cf0ccdf8c43b111483e4360d"
+    },
+    {
+      "path": "module/search_hot_detail.js",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "20aeea3bb339d737f66523c8eaefd1f62bde6a86",
+      "size": 204,
+      "url": "https://api.github.com/repos/NeteaseCloudMusicApiEnhanced/api-enhanced/git/blobs/20aeea3bb339d737f66523c8eaefd1f62bde6a86"
+    },
+    {
+      "path": "module/search_match.js",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "4f90697814bb48bcff69ac47b696158c0146e502",
+      "size": 446,
+      "url": "https://api.github.com/repos/NeteaseCloudMusicApiEnhanced/api-enhanced/git/blobs/4f90697814bb48bcff69ac47b696158c0146e502"
+    },
+    {
+      "path": "module/search_multimatch.js",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "7ad14a1895eb691c059d0bf60cee62554c06c1b6",
+      "size": 292,
+      "url": "https://api.github.com/repos/NeteaseCloudMusicApiEnhanced/api-enhanced/git/blobs/7ad14a1895eb691c059d0bf60cee62554c06c1b6"
+    },
+    {
+      "path": "module/search_suggest.js",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "40ffddac5b4a3594ee2c86787979b9939998c017",
+      "size": 315,
+      "url": "https://api.github.com/repos/NeteaseCloudMusicApiEnhanced/api-enhanced/git/blobs/40ffddac5b4a3594ee2c86787979b9939998c017"
+    },
+    {
+      "path": "module/search_suggest_pc.js",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "95cc74438096c4cb4184864daefeedd51f6acfff",
+      "size": 267,
+      "url": "https://api.github.com/repos/NeteaseCloudMusicApiEnhanced/api-enhanced/git/blobs/95cc74438096c4cb4184864daefeedd51f6acfff"
+    },
+    {
+      "path": "module/send_album.js",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "cab10735d38866af8a8ca20dca0e671cd703eb97",
+      "size": 302,
+      "url": "https://api.github.com/repos/NeteaseCloudMusicApiEnhanced/api-enhanced/git/blobs/cab10735d38866af8a8ca20dca0e671cd703eb97"
+    },
+    {
+      "path": "module/send_playlist.js",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "55bdf78e806b2daf6ed08184f65bab5f8af0b77d",
+      "size": 305,
+      "url": "https://api.github.com/repos/NeteaseCloudMusicApiEnhanced/api-enhanced/git/blobs/55bdf78e806b2daf6ed08184f65bab5f8af0b77d"
+    },
+    {
+      "path": "module/send_song.js",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "efc9e00d337a5090c4b1b4da4e9acc85c6289d9a",
+      "size": 301,
+      "url": "https://api.github.com/repos/NeteaseCloudMusicApiEnhanced/api-enhanced/git/blobs/efc9e00d337a5090c4b1b4da4e9acc85c6289d9a"
+    },
+    {
+      "path": "module/send_text.js",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "4aee44fb71bd3b8aae6fef2b1c58f5f65d5306f8",
+      "size": 271,
+      "url": "https://api.github.com/repos/NeteaseCloudMusicApiEnhanced/api-enhanced/git/blobs/4aee44fb71bd3b8aae6fef2b1c58f5f65d5306f8"
+    },
+    {
+      "path": "module/setting.js",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "8ddf1782f8dfd4b0bcbd9819fcd6d079a9f510ba",
+      "size": 194,
+      "url": "https://api.github.com/repos/NeteaseCloudMusicApiEnhanced/api-enhanced/git/blobs/8ddf1782f8dfd4b0bcbd9819fcd6d079a9f510ba"
+    },
+    {
+      "path": "module/share_resource.js",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "82ca84b1306283d46b17f1515c9e94052d787b72",
+      "size": 344,
+      "url": "https://api.github.com/repos/NeteaseCloudMusicApiEnhanced/api-enhanced/git/blobs/82ca84b1306283d46b17f1515c9e94052d787b72"
+    },
+    {
+      "path": "module/sheet_list.js",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "db1d800380d4514eb5ffc95184fd668e54b299e6",
+      "size": 247,
+      "url": "https://api.github.com/repos/NeteaseCloudMusicApiEnhanced/api-enhanced/git/blobs/db1d800380d4514eb5ffc95184fd668e54b299e6"
+    },
+    {
+      "path": "module/sheet_preview.js",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "2f406e87ded683152a4a3d107604e5487ef25ea7",
+      "size": 223,
+      "url": "https://api.github.com/repos/NeteaseCloudMusicApiEnhanced/api-enhanced/git/blobs/2f406e87ded683152a4a3d107604e5487ef25ea7"
+    },
+    {
+      "path": "module/sign_happy_info.js",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "7e4def1a06636b2ce4ffd4b742571b0d35bf0cf0",
+      "size": 186,
+      "url": "https://api.github.com/repos/NeteaseCloudMusicApiEnhanced/api-enhanced/git/blobs/7e4def1a06636b2ce4ffd4b742571b0d35bf0cf0"
+    },
+    {
+      "path": "module/signin_progress.js",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "12eae3946d34d6e9052f37cbf253316d49562e1e",
+      "size": 295,
+      "url": "https://api.github.com/repos/NeteaseCloudMusicApiEnhanced/api-enhanced/git/blobs/12eae3946d34d6e9052f37cbf253316d49562e1e"
+    },
+    {
+      "path": "module/simi_artist.js",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "b2f0ed769d02dc5c8b70476aba7369ee1aba1b1b",
+      "size": 251,
+      "url": "https://api.github.com/repos/NeteaseCloudMusicApiEnhanced/api-enhanced/git/blobs/b2f0ed769d02dc5c8b70476aba7369ee1aba1b1b"
+    },
+    {
+      "path": "module/simi_mv.js",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "4bd9e62d511190c67401aeb1fab2b396d021a8fc",
+      "size": 225,
+      "url": "https://api.github.com/repos/NeteaseCloudMusicApiEnhanced/api-enhanced/git/blobs/4bd9e62d511190c67401aeb1fab2b396d021a8fc"
+    },
+    {
+      "path": "module/simi_playlist.js",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "dcf6e2d3965c4ea324e3d49920d2b8dc9bd1c989",
+      "size": 313,
+      "url": "https://api.github.com/repos/NeteaseCloudMusicApiEnhanced/api-enhanced/git/blobs/dcf6e2d3965c4ea324e3d49920d2b8dc9bd1c989"
+    },
+    {
+      "path": "module/simi_song.js",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "97f3ca8335aecec6d178a0534e861356def2336a",
+      "size": 312,
+      "url": "https://api.github.com/repos/NeteaseCloudMusicApiEnhanced/api-enhanced/git/blobs/97f3ca8335aecec6d178a0534e861356def2336a"
+    },
+    {
+      "path": "module/simi_user.js",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "0d96b090616b20422c7c598df15d3aba2536f218",
+      "size": 292,
+      "url": "https://api.github.com/repos/NeteaseCloudMusicApiEnhanced/api-enhanced/git/blobs/0d96b090616b20422c7c598df15d3aba2536f218"
+    },
+    {
+      "path": "module/song_chorus.js",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "e487cf4563eb853ba69ffa34ea633bf68c978251",
+      "size": 230,
+      "url": "https://api.github.com/repos/NeteaseCloudMusicApiEnhanced/api-enhanced/git/blobs/e487cf4563eb853ba69ffa34ea633bf68c978251"
+    },
+    {
+      "path": "module/song_cloud_download.js",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "f246513eb5de4190d34d5eba8a134f6bbc149e63",
+      "size": 248,
+      "url": "https://api.github.com/repos/NeteaseCloudMusicApiEnhanced/api-enhanced/git/blobs/f246513eb5de4190d34d5eba8a134f6bbc149e63"
+    },
+    {
+      "path": "module/song_copyright_rcmd.js",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "92e6cbaaf03d09a4179a392785ffce148723ba48",
+      "size": 268,
+      "url": "https://api.github.com/repos/NeteaseCloudMusicApiEnhanced/api-enhanced/git/blobs/92e6cbaaf03d09a4179a392785ffce148723ba48"
+    },
+    {
+      "path": "module/song_creators.js",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "835cabc8c8dfd7954daa0fff867b73b0d6f16c85",
+      "size": 226,
+      "url": "https://api.github.com/repos/NeteaseCloudMusicApiEnhanced/api-enhanced/git/blobs/835cabc8c8dfd7954daa0fff867b73b0d6f16c85"
+    },
+    {
+      "path": "module/song_detail.js",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "adcd9471869d68d1ce8d8422d2487d970b88cc66",
+      "size": 353,
+      "url": "https://api.github.com/repos/NeteaseCloudMusicApiEnhanced/api-enhanced/git/blobs/adcd9471869d68d1ce8d8422d2487d970b88cc66"
+    },
+    {
+      "path": "module/song_downlist.js",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "6ee4643c1d1d97c585058d9bc61fa8c388c25a0d",
+      "size": 298,
+      "url": "https://api.github.com/repos/NeteaseCloudMusicApiEnhanced/api-enhanced/git/blobs/6ee4643c1d1d97c585058d9bc61fa8c388c25a0d"
+    },
+    {
+      "path": "module/song_download_url.js",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "9fa877405a3dd64db2ff29195d564be2aa796232",
+      "size": 284,
+      "url": "https://api.github.com/repos/NeteaseCloudMusicApiEnhanced/api-enhanced/git/blobs/9fa877405a3dd64db2ff29195d564be2aa796232"
+    },
+    {
+      "path": "module/song_download_url_v1.js",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "10a7b9c16a077806c11b43576f4ef2e2891f70fa",
+      "size": 500,
+      "url": "https://api.github.com/repos/NeteaseCloudMusicApiEnhanced/api-enhanced/git/blobs/10a7b9c16a077806c11b43576f4ef2e2891f70fa"
+    },
+    {
+      "path": "module/song_dynamic_cover.js",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "d51969f0c7c696316bbdc1e4204b238aa67b27b1",
+      "size": 232,
+      "url": "https://api.github.com/repos/NeteaseCloudMusicApiEnhanced/api-enhanced/git/blobs/d51969f0c7c696316bbdc1e4204b238aa67b27b1"
+    },
+    {
+      "path": "module/song_like.js",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "e38039431bd5a4e68b3516d9113f43b419f4a239",
+      "size": 291,
+      "url": "https://api.github.com/repos/NeteaseCloudMusicApiEnhanced/api-enhanced/git/blobs/e38039431bd5a4e68b3516d9113f43b419f4a239"
+    },
+    {
+      "path": "module/song_like_check.js",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "4162e73e156dd343dbb793edc18d8d7435d1832b",
+      "size": 228,
+      "url": "https://api.github.com/repos/NeteaseCloudMusicApiEnhanced/api-enhanced/git/blobs/4162e73e156dd343dbb793edc18d8d7435d1832b"
+    },
+    {
+      "path": "module/song_lyrics_mark.js",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "74f20003f5a2052b80e9c6745e0d5c293149c7d8",
+      "size": 251,
+      "url": "https://api.github.com/repos/NeteaseCloudMusicApiEnhanced/api-enhanced/git/blobs/74f20003f5a2052b80e9c6745e0d5c293149c7d8"
+    },
+    {
+      "path": "module/song_lyrics_mark_add.js",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "7fc6a09eff7baf0339956e4b0e9929c50bcf5e60",
+      "size": 688,
+      "url": "https://api.github.com/repos/NeteaseCloudMusicApiEnhanced/api-enhanced/git/blobs/7fc6a09eff7baf0339956e4b0e9929c50bcf5e60"
+    },
+    {
+      "path": "module/song_lyrics_mark_del.js",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "cada747395b345aeb84052606b66e7420fc4e9a0",
+      "size": 251,
+      "url": "https://api.github.com/repos/NeteaseCloudMusicApiEnhanced/api-enhanced/git/blobs/cada747395b345aeb84052606b66e7420fc4e9a0"
+    },
+    {
+      "path": "module/song_lyrics_mark_user_page.js",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "2182dd8fb095e55b59a158878aa5b47f58124ba3",
+      "size": 309,
+      "url": "https://api.github.com/repos/NeteaseCloudMusicApiEnhanced/api-enhanced/git/blobs/2182dd8fb095e55b59a158878aa5b47f58124ba3"
+    },
+    {
+      "path": "module/song_monthdownlist.js",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "1290eddfc6589b331af737b277f676c42f168867",
+      "size": 309,
+      "url": "https://api.github.com/repos/NeteaseCloudMusicApiEnhanced/api-enhanced/git/blobs/1290eddfc6589b331af737b277f676c42f168867"
+    },
+    {
+      "path": "module/song_music_detail.js",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "479a6ae2446ded4cc846e7ad9a0f9953fca70faf",
+      "size": 231,
+      "url": "https://api.github.com/repos/NeteaseCloudMusicApiEnhanced/api-enhanced/git/blobs/479a6ae2446ded4cc846e7ad9a0f9953fca70faf"
+    },
+    {
+      "path": "module/song_order_update.js",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "55e935858596f6b731e4a0a19ec26a547eab5ea3",
+      "size": 278,
+      "url": "https://api.github.com/repos/NeteaseCloudMusicApiEnhanced/api-enhanced/git/blobs/55e935858596f6b731e4a0a19ec26a547eab5ea3"
+    },
+    {
+      "path": "module/song_purchased.js",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "34b7cb6e86b07f12fac0fb2e05942b08e9c8bc2a",
+      "size": 294,
+      "url": "https://api.github.com/repos/NeteaseCloudMusicApiEnhanced/api-enhanced/git/blobs/34b7cb6e86b07f12fac0fb2e05942b08e9c8bc2a"
+    },
+    {
+      "path": "module/song_red_count.js",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "94239ca444593b36d7292afee302fc28ae3d0a48",
+      "size": 224,
+      "url": "https://api.github.com/repos/NeteaseCloudMusicApiEnhanced/api-enhanced/git/blobs/94239ca444593b36d7292afee302fc28ae3d0a48"
+    },
+    {
+      "path": "module/song_singledownlist.js",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "d520d2e3910ac899bbb6b62f97763e35b81f679f",
+      "size": 295,
+      "url": "https://api.github.com/repos/NeteaseCloudMusicApiEnhanced/api-enhanced/git/blobs/d520d2e3910ac899bbb6b62f97763e35b81f679f"
+    },
+    {
+      "path": "module/song_url.js",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "1f65434c675aebc41120bb04f75b93191c94a334",
+      "size": 583,
+      "url": "https://api.github.com/repos/NeteaseCloudMusicApiEnhanced/api-enhanced/git/blobs/1f65434c675aebc41120bb04f75b93191c94a334"
+    },
+    {
+      "path": "module/song_url_match.js",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "d2adbb09a43fb35c18120970b56dab34c20a4d20",
+      "size": 1093,
+      "url": "https://api.github.com/repos/NeteaseCloudMusicApiEnhanced/api-enhanced/git/blobs/d2adbb09a43fb35c18120970b56dab34c20a4d20"
+    },
+    {
+      "path": "module/song_url_ncmget.js",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "f1215782efb7839772bbcd495fd3e3cefd37c19c",
+      "size": 153,
+      "url": "https://api.github.com/repos/NeteaseCloudMusicApiEnhanced/api-enhanced/git/blobs/f1215782efb7839772bbcd495fd3e3cefd37c19c"
+    },
+    {
+      "path": "module/song_url_v1.js",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "3a9c326eb8a89599e55f8719262bab9a614d15aa",
+      "size": 1991,
+      "url": "https://api.github.com/repos/NeteaseCloudMusicApiEnhanced/api-enhanced/git/blobs/3a9c326eb8a89599e55f8719262bab9a614d15aa"
+    },
+    {
+      "path": "module/song_url_v1_302.js",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "4150832a0dcff7ac839da659c8a75bfbe71502d8",
+      "size": 1228,
+      "url": "https://api.github.com/repos/NeteaseCloudMusicApiEnhanced/api-enhanced/git/blobs/4150832a0dcff7ac839da659c8a75bfbe71502d8"
+    },
+    {
+      "path": "module/song_wiki_summary.js",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "fa8d8e377731eafc04476223f012a898803747c5",
+      "size": 241,
+      "url": "https://api.github.com/repos/NeteaseCloudMusicApiEnhanced/api-enhanced/git/blobs/fa8d8e377731eafc04476223f012a898803747c5"
+    },
+    {
+      "path": "module/starpick_comments_summary.js",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "c825197dfb25290ac4456ba9f1400d4a988d509e",
+      "size": 361,
+      "url": "https://api.github.com/repos/NeteaseCloudMusicApiEnhanced/api-enhanced/git/blobs/c825197dfb25290ac4456ba9f1400d4a988d509e"
+    },
+    {
+      "path": "module/style_album.js",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "26f84889f3062db53c17a5848d4874edd1b7a206",
+      "size": 339,
+      "url": "https://api.github.com/repos/NeteaseCloudMusicApiEnhanced/api-enhanced/git/blobs/26f84889f3062db53c17a5848d4874edd1b7a206"
+    },
+    {
+      "path": "module/style_artist.js",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "77114b786da9b3ea722668fcb36c5414f805307e",
+      "size": 326,
+      "url": "https://api.github.com/repos/NeteaseCloudMusicApiEnhanced/api-enhanced/git/blobs/77114b786da9b3ea722668fcb36c5414f805307e"
+    },
+    {
+      "path": "module/style_detail.js",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "3a9f17678aa500e02c40c2f2ceeec53f96325a33",
+      "size": 234,
+      "url": "https://api.github.com/repos/NeteaseCloudMusicApiEnhanced/api-enhanced/git/blobs/3a9f17678aa500e02c40c2f2ceeec53f96325a33"
+    },
+    {
+      "path": "module/style_list.js",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "f73f5a516d9976eec539f27357ff82754466975b",
+      "size": 200,
+      "url": "https://api.github.com/repos/NeteaseCloudMusicApiEnhanced/api-enhanced/git/blobs/f73f5a516d9976eec539f27357ff82754466975b"
+    },
+    {
+      "path": "module/style_playlist.js",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "69be895410e54fd3eb09d70980b973b51fdbe3b1",
+      "size": 328,
+      "url": "https://api.github.com/repos/NeteaseCloudMusicApiEnhanced/api-enhanced/git/blobs/69be895410e54fd3eb09d70980b973b51fdbe3b1"
+    },
+    {
+      "path": "module/style_preference.js",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "e561cacb002d438272bf20d7a3d37abec0bde9c3",
+      "size": 226,
+      "url": "https://api.github.com/repos/NeteaseCloudMusicApiEnhanced/api-enhanced/git/blobs/e561cacb002d438272bf20d7a3d37abec0bde9c3"
+    },
+    {
+      "path": "module/style_song.js",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "5d827ad9febb40e5dbcbcf4337ef94776034007b",
+      "size": 321,
+      "url": "https://api.github.com/repos/NeteaseCloudMusicApiEnhanced/api-enhanced/git/blobs/5d827ad9febb40e5dbcbcf4337ef94776034007b"
+    },
+    {
+      "path": "module/summary_annual.js",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "d7f353b290e523a9acf498575b13320d7ce83ec5",
+      "size": 344,
+      "url": "https://api.github.com/repos/NeteaseCloudMusicApiEnhanced/api-enhanced/git/blobs/d7f353b290e523a9acf498575b13320d7ce83ec5"
+    },
+    {
+      "path": "module/threshold_detail_get.js",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "5f2ff6a8ce67a66c6447f29df1e425a99215b4d0",
+      "size": 248,
+      "url": "https://api.github.com/repos/NeteaseCloudMusicApiEnhanced/api-enhanced/git/blobs/5f2ff6a8ce67a66c6447f29df1e425a99215b4d0"
+    },
+    {
+      "path": "module/top_album.js",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "5d0b45b334b67a11c90ad954743687fdbc0a8278",
+      "size": 564,
+      "url": "https://api.github.com/repos/NeteaseCloudMusicApiEnhanced/api-enhanced/git/blobs/5d0b45b334b67a11c90ad954743687fdbc0a8278"
+    },
+    {
+      "path": "module/top_artists.js",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "bc8d84d6c48a4a9e0ca7aa1636b2ba8feb406a91",
+      "size": 279,
+      "url": "https://api.github.com/repos/NeteaseCloudMusicApiEnhanced/api-enhanced/git/blobs/bc8d84d6c48a4a9e0ca7aa1636b2ba8feb406a91"
+    },
+    {
+      "path": "module/top_list.js",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "c8eba0efd2d3fe99e665e84ff1014ee18df0c585",
+      "size": 420,
+      "url": "https://api.github.com/repos/NeteaseCloudMusicApiEnhanced/api-enhanced/git/blobs/c8eba0efd2d3fe99e665e84ff1014ee18df0c585"
+    },
+    {
+      "path": "module/top_mv.js",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "1ee32a49eac0d7af8331b4a0ff8c7821cbc6071e",
+      "size": 306,
+      "url": "https://api.github.com/repos/NeteaseCloudMusicApiEnhanced/api-enhanced/git/blobs/1ee32a49eac0d7af8331b4a0ff8c7821cbc6071e"
+    },
+    {
+      "path": "module/top_playlist.js",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "1f46336524146d8bb069b545c6d5b5c8509029a2",
+      "size": 1061,
+      "url": "https://api.github.com/repos/NeteaseCloudMusicApiEnhanced/api-enhanced/git/blobs/1f46336524146d8bb069b545c6d5b5c8509029a2"
+    },
+    {
+      "path": "module/top_playlist_highquality.js",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "68bf30b34506404ea370406df8f6591ef3190cfe",
+      "size": 524,
+      "url": "https://api.github.com/repos/NeteaseCloudMusicApiEnhanced/api-enhanced/git/blobs/68bf30b34506404ea370406df8f6591ef3190cfe"
+    },
+    {
+      "path": "module/top_song.js",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "0cbf7b10e2f3d6a4c6b97bc24efa5a18a050cc0a",
+      "size": 394,
+      "url": "https://api.github.com/repos/NeteaseCloudMusicApiEnhanced/api-enhanced/git/blobs/0cbf7b10e2f3d6a4c6b97bc24efa5a18a050cc0a"
+    },
+    {
+      "path": "module/topic_detail.js",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "57162ffd2b7152828dfa55b499c543cf0bcbba52",
+      "size": 208,
+      "url": "https://api.github.com/repos/NeteaseCloudMusicApiEnhanced/api-enhanced/git/blobs/57162ffd2b7152828dfa55b499c543cf0bcbba52"
+    },
+    {
+      "path": "module/topic_detail_event_hot.js",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "18504a46f09fc099c8aa1369ab1fe3b3a14983da",
+      "size": 211,
+      "url": "https://api.github.com/repos/NeteaseCloudMusicApiEnhanced/api-enhanced/git/blobs/18504a46f09fc099c8aa1369ab1fe3b3a14983da"
+    },
+    {
+      "path": "module/topic_sublist.js",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "5424445b5db9cd079e0a4c2d4e02a6bdb78951c8",
+      "size": 285,
+      "url": "https://api.github.com/repos/NeteaseCloudMusicApiEnhanced/api-enhanced/git/blobs/5424445b5db9cd079e0a4c2d4e02a6bdb78951c8"
+    },
+    {
+      "path": "module/toplist.js",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "3fba5e18028e3a2f67df8f9ea5ad57dd373de0cb",
+      "size": 172,
+      "url": "https://api.github.com/repos/NeteaseCloudMusicApiEnhanced/api-enhanced/git/blobs/3fba5e18028e3a2f67df8f9ea5ad57dd373de0cb"
+    },
+    {
+      "path": "module/toplist_artist.js",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "633d1fc7ddaf8604c151d801673f90b4301b0232",
+      "size": 277,
+      "url": "https://api.github.com/repos/NeteaseCloudMusicApiEnhanced/api-enhanced/git/blobs/633d1fc7ddaf8604c151d801673f90b4301b0232"
+    },
+    {
+      "path": "module/toplist_detail.js",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "65cb270b1a7ee5ca424ab37353c1089df7fa737e",
+      "size": 194,
+      "url": "https://api.github.com/repos/NeteaseCloudMusicApiEnhanced/api-enhanced/git/blobs/65cb270b1a7ee5ca424ab37353c1089df7fa737e"
+    },
+    {
+      "path": "module/toplist_detail_v2.js",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "e947b7b13d8e7bca2f55498e0a77d6d07b74ba9e",
+      "size": 199,
+      "url": "https://api.github.com/repos/NeteaseCloudMusicApiEnhanced/api-enhanced/git/blobs/e947b7b13d8e7bca2f55498e0a77d6d07b74ba9e"
+    },
+    {
+      "path": "module/ugc_album_get.js",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "751aa047dd977e4b28cfbb268c8c71f1d22191a0",
+      "size": 233,
+      "url": "https://api.github.com/repos/NeteaseCloudMusicApiEnhanced/api-enhanced/git/blobs/751aa047dd977e4b28cfbb268c8c71f1d22191a0"
+    },
+    {
+      "path": "module/ugc_artist_get.js",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "3483f0b8270713f2543950d5f3511f50c483d82c",
+      "size": 235,
+      "url": "https://api.github.com/repos/NeteaseCloudMusicApiEnhanced/api-enhanced/git/blobs/3483f0b8270713f2543950d5f3511f50c483d82c"
+    },
+    {
+      "path": "module/ugc_artist_search.js",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "7bb4b866cbe0bdd114b92f9ac65839b2f3040270",
+      "size": 293,
+      "url": "https://api.github.com/repos/NeteaseCloudMusicApiEnhanced/api-enhanced/git/blobs/7bb4b866cbe0bdd114b92f9ac65839b2f3040270"
+    },
+    {
+      "path": "module/ugc_detail.js",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "392029bb0ea4f5d64fdf50adae5a39aa59362316",
+      "size": 661,
+      "url": "https://api.github.com/repos/NeteaseCloudMusicApiEnhanced/api-enhanced/git/blobs/392029bb0ea4f5d64fdf50adae5a39aa59362316"
+    },
+    {
+      "path": "module/ugc_mv_get.js",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "2df71ce280a2f401d4f736778b7805d72188bbf8",
+      "size": 223,
+      "url": "https://api.github.com/repos/NeteaseCloudMusicApiEnhanced/api-enhanced/git/blobs/2df71ce280a2f401d4f736778b7805d72188bbf8"
+    },
+    {
+      "path": "module/ugc_song_get.js",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "3912c0864b91d4badd62ee0af03443db51fd06d3",
+      "size": 231,
+      "url": "https://api.github.com/repos/NeteaseCloudMusicApiEnhanced/api-enhanced/git/blobs/3912c0864b91d4badd62ee0af03443db51fd06d3"
+    },
+    {
+      "path": "module/ugc_user_devote.js",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "109c1dfbfd760d80f5829854bd08003969e54fe3",
+      "size": 227,
+      "url": "https://api.github.com/repos/NeteaseCloudMusicApiEnhanced/api-enhanced/git/blobs/109c1dfbfd760d80f5829854bd08003969e54fe3"
+    },
+    {
+      "path": "module/user_account.js",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "0cdada539a8385f6e4fb0c033cc9014cb7c3f412",
+      "size": 188,
+      "url": "https://api.github.com/repos/NeteaseCloudMusicApiEnhanced/api-enhanced/git/blobs/0cdada539a8385f6e4fb0c033cc9014cb7c3f412"
+    },
+    {
+      "path": "module/user_audio.js",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "d2a43fadd92cb1f50797a52defe0fe5c7373226d",
+      "size": 241,
+      "url": "https://api.github.com/repos/NeteaseCloudMusicApiEnhanced/api-enhanced/git/blobs/d2a43fadd92cb1f50797a52defe0fe5c7373226d"
+    },
+    {
+      "path": "module/user_binding.js",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "0e0f7d422200e667b5340ecf94af6984a79cb383",
+      "size": 217,
+      "url": "https://api.github.com/repos/NeteaseCloudMusicApiEnhanced/api-enhanced/git/blobs/0e0f7d422200e667b5340ecf94af6984a79cb383"
+    },
+    {
+      "path": "module/user_bindingcellphone.js",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "580efd2d55654ba21fa2ef3ccbb0e5b4784ba17f",
+      "size": 423,
+      "url": "https://api.github.com/repos/NeteaseCloudMusicApiEnhanced/api-enhanced/git/blobs/580efd2d55654ba21fa2ef3ccbb0e5b4784ba17f"
+    },
+    {
+      "path": "module/user_cloud.js",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "c5cec1000771a819e998552b21357cb3f7332106",
+      "size": 264,
+      "url": "https://api.github.com/repos/NeteaseCloudMusicApiEnhanced/api-enhanced/git/blobs/c5cec1000771a819e998552b21357cb3f7332106"
+    },
+    {
+      "path": "module/user_cloud_del.js",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "acb5413285ad2b322c407eb50c1783fd46b74e93",
+      "size": 231,
+      "url": "https://api.github.com/repos/NeteaseCloudMusicApiEnhanced/api-enhanced/git/blobs/acb5413285ad2b322c407eb50c1783fd46b74e93"
+    },
+    {
+      "path": "module/user_cloud_detail.js",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "22420c7f17a67dd191b150baf1859b8254a13555",
+      "size": 284,
+      "url": "https://api.github.com/repos/NeteaseCloudMusicApiEnhanced/api-enhanced/git/blobs/22420c7f17a67dd191b150baf1859b8254a13555"
+    },
+    {
+      "path": "module/user_comment_history.js",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "cd93d87690d961ddd4883daa4a87de66e59ea915",
+      "size": 363,
+      "url": "https://api.github.com/repos/NeteaseCloudMusicApiEnhanced/api-enhanced/git/blobs/cd93d87690d961ddd4883daa4a87de66e59ea915"
+    },
+    {
+      "path": "module/user_detail.js",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "7ed90029c0ae9b054b4f9a4e58e5980631d52cd9",
+      "size": 353,
+      "url": "https://api.github.com/repos/NeteaseCloudMusicApiEnhanced/api-enhanced/git/blobs/7ed90029c0ae9b054b4f9a4e58e5980631d52cd9"
+    },
+    {
+      "path": "module/user_detail_new.js",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "ff319c1741f9875a7681c40ab3fec9c69ebc53fd",
+      "size": 446,
+      "url": "https://api.github.com/repos/NeteaseCloudMusicApiEnhanced/api-enhanced/git/blobs/ff319c1741f9875a7681c40ab3fec9c69ebc53fd"
+    },
+    {
+      "path": "module/user_dj.js",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "ff42a8ad153380e1fdc5e87076d00737d93efd3a",
+      "size": 298,
+      "url": "https://api.github.com/repos/NeteaseCloudMusicApiEnhanced/api-enhanced/git/blobs/ff42a8ad153380e1fdc5e87076d00737d93efd3a"
+    },
+    {
+      "path": "module/user_event.js",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "8b947b83cc60fe16157ed870b3ae6f5b48b95cb5",
+      "size": 305,
+      "url": "https://api.github.com/repos/NeteaseCloudMusicApiEnhanced/api-enhanced/git/blobs/8b947b83cc60fe16157ed870b3ae6f5b48b95cb5"
+    },
+    {
+      "path": "module/user_follow_mixed.js",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "4ccb1dfa191469dde973f87fcef72ba14f134cbd",
+      "size": 560,
+      "url": "https://api.github.com/repos/NeteaseCloudMusicApiEnhanced/api-enhanced/git/blobs/4ccb1dfa191469dde973f87fcef72ba14f134cbd"
+    },
+    {
+      "path": "module/user_followeds.js",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "992886f7e338390846877bc8f23f37a1b7ac2b29",
+      "size": 361,
+      "url": "https://api.github.com/repos/NeteaseCloudMusicApiEnhanced/api-enhanced/git/blobs/992886f7e338390846877bc8f23f37a1b7ac2b29"
+    },
+    {
+      "path": "module/user_follows.js",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "d604b1d25f3fcae4d67a9c4a4cf8d0a23637060d",
+      "size": 324,
+      "url": "https://api.github.com/repos/NeteaseCloudMusicApiEnhanced/api-enhanced/git/blobs/d604b1d25f3fcae4d67a9c4a4cf8d0a23637060d"
+    },
+    {
+      "path": "module/user_level.js",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "4d0107bd81ac71dcefb84de8c08f9ca70ac69117",
+      "size": 204,
+      "url": "https://api.github.com/repos/NeteaseCloudMusicApiEnhanced/api-enhanced/git/blobs/4d0107bd81ac71dcefb84de8c08f9ca70ac69117"
+    },
+    {
+      "path": "module/user_medal.js",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "f9509f1c3f990e492f3ac1ec8b73596397ff7302",
+      "size": 217,
+      "url": "https://api.github.com/repos/NeteaseCloudMusicApiEnhanced/api-enhanced/git/blobs/f9509f1c3f990e492f3ac1ec8b73596397ff7302"
+    },
+    {
+      "path": "module/user_mutualfollow_get.js",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "67bff6c8371e2d74ca3395228b904714718ba681",
+      "size": 240,
+      "url": "https://api.github.com/repos/NeteaseCloudMusicApiEnhanced/api-enhanced/git/blobs/67bff6c8371e2d74ca3395228b904714718ba681"
+    },
+    {
+      "path": "module/user_playlist.js",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "e1186445ebd945b984d1f5585dd1639e3924180e",
+      "size": 309,
+      "url": "https://api.github.com/repos/NeteaseCloudMusicApiEnhanced/api-enhanced/git/blobs/e1186445ebd945b984d1f5585dd1639e3924180e"
+    },
+    {
+      "path": "module/user_playlist_collect.js",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "24fb3deb67a47779048ec7dfd3fb6aad4b91d981",
+      "size": 389,
+      "url": "https://api.github.com/repos/NeteaseCloudMusicApiEnhanced/api-enhanced/git/blobs/24fb3deb67a47779048ec7dfd3fb6aad4b91d981"
+    },
+    {
+      "path": "module/user_playlist_create.js",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "03ed06d9b646fca5c71930eb5d351dab7d292da9",
+      "size": 388,
+      "url": "https://api.github.com/repos/NeteaseCloudMusicApiEnhanced/api-enhanced/git/blobs/03ed06d9b646fca5c71930eb5d351dab7d292da9"
+    },
+    {
+      "path": "module/user_record.js",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "30ce827459ce7311c1152eab879f8c7b93c82a52",
+      "size": 288,
+      "url": "https://api.github.com/repos/NeteaseCloudMusicApiEnhanced/api-enhanced/git/blobs/30ce827459ce7311c1152eab879f8c7b93c82a52"
+    },
+    {
+      "path": "module/user_replacephone.js",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "4347526d96abb09a9137e47bceb90dd03695de79",
+      "size": 342,
+      "url": "https://api.github.com/repos/NeteaseCloudMusicApiEnhanced/api-enhanced/git/blobs/4347526d96abb09a9137e47bceb90dd03695de79"
+    },
+    {
+      "path": "module/user_social_status.js",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "97a929ba8ce599b24e2eb5e6dfe1c57157629b20",
+      "size": 226,
+      "url": "https://api.github.com/repos/NeteaseCloudMusicApiEnhanced/api-enhanced/git/blobs/97a929ba8ce599b24e2eb5e6dfe1c57157629b20"
+    },
+    {
+      "path": "module/user_social_status_edit.js",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "4e53b829139cc5c3772fbd0dd37d0ef709c4b78f",
+      "size": 380,
+      "url": "https://api.github.com/repos/NeteaseCloudMusicApiEnhanced/api-enhanced/git/blobs/4e53b829139cc5c3772fbd0dd37d0ef709c4b78f"
+    },
+    {
+      "path": "module/user_social_status_rcmd.js",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "a3b7b38f2e3e2a9ff19524636235f19ed176d5e5",
+      "size": 205,
+      "url": "https://api.github.com/repos/NeteaseCloudMusicApiEnhanced/api-enhanced/git/blobs/a3b7b38f2e3e2a9ff19524636235f19ed176d5e5"
+    },
+    {
+      "path": "module/user_social_status_support.js",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "1b688e8ec894cfe4b0af06f91797a16df2f96bab",
+      "size": 208,
+      "url": "https://api.github.com/repos/NeteaseCloudMusicApiEnhanced/api-enhanced/git/blobs/1b688e8ec894cfe4b0af06f91797a16df2f96bab"
+    },
+    {
+      "path": "module/user_subcount.js",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "7b62bb6c748185ce99d2900c4d41b62c40047fce",
+      "size": 176,
+      "url": "https://api.github.com/repos/NeteaseCloudMusicApiEnhanced/api-enhanced/git/blobs/7b62bb6c748185ce99d2900c4d41b62c40047fce"
+    },
+    {
+      "path": "module/user_update.js",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "c6433f1845615a235c1f1a83ee7cc92512ea6a9c",
+      "size": 402,
+      "url": "https://api.github.com/repos/NeteaseCloudMusicApiEnhanced/api-enhanced/git/blobs/c6433f1845615a235c1f1a83ee7cc92512ea6a9c"
+    },
+    {
+      "path": "module/verify_getQr.js",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "a1a88986c09ceb001ac90ff5bcfbc908b3229dbc",
+      "size": 913,
+      "url": "https://api.github.com/repos/NeteaseCloudMusicApiEnhanced/api-enhanced/git/blobs/a1a88986c09ceb001ac90ff5bcfbc908b3229dbc"
+    },
+    {
+      "path": "module/verify_qrcodestatus.js",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "e51c315957602b962f7212fcb7ab13a1fbf508e6",
+      "size": 272,
+      "url": "https://api.github.com/repos/NeteaseCloudMusicApiEnhanced/api-enhanced/git/blobs/e51c315957602b962f7212fcb7ab13a1fbf508e6"
+    },
+    {
+      "path": "module/video_category_list.js",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "235fc12c47bc8275ebc702d936d84309041ae180",
+      "size": 318,
+      "url": "https://api.github.com/repos/NeteaseCloudMusicApiEnhanced/api-enhanced/git/blobs/235fc12c47bc8275ebc702d936d84309041ae180"
+    },
+    {
+      "path": "module/video_detail.js",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "d5fc55654815a851622664b6b362fa0d898b6d8b",
+      "size": 252,
+      "url": "https://api.github.com/repos/NeteaseCloudMusicApiEnhanced/api-enhanced/git/blobs/d5fc55654815a851622664b6b362fa0d898b6d8b"
+    },
+    {
+      "path": "module/video_detail_info.js",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "44fa36a7a903ab4b32f358f102c1ecaffcdf2671",
+      "size": 317,
+      "url": "https://api.github.com/repos/NeteaseCloudMusicApiEnhanced/api-enhanced/git/blobs/44fa36a7a903ab4b32f358f102c1ecaffcdf2671"
+    },
+    {
+      "path": "module/video_group.js",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "774d3288fb5d9c223798596ae9548719d4763c93",
+      "size": 368,
+      "url": "https://api.github.com/repos/NeteaseCloudMusicApiEnhanced/api-enhanced/git/blobs/774d3288fb5d9c223798596ae9548719d4763c93"
+    },
+    {
+      "path": "module/video_group_list.js",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "b5911c5b14eb5ff278a4a398962a9b81e820be79",
+      "size": 232,
+      "url": "https://api.github.com/repos/NeteaseCloudMusicApiEnhanced/api-enhanced/git/blobs/b5911c5b14eb5ff278a4a398962a9b81e820be79"
+    },
+    {
+      "path": "module/video_sub.js",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "b16809f7b81c520219aaa2325b3f060dcc675336",
+      "size": 311,
+      "url": "https://api.github.com/repos/NeteaseCloudMusicApiEnhanced/api-enhanced/git/blobs/b16809f7b81c520219aaa2325b3f060dcc675336"
+    },
+    {
+      "path": "module/video_timeline_all.js",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "e83496835b1857517d7c53e2e173b81da50007f9",
+      "size": 379,
+      "url": "https://api.github.com/repos/NeteaseCloudMusicApiEnhanced/api-enhanced/git/blobs/e83496835b1857517d7c53e2e173b81da50007f9"
+    },
+    {
+      "path": "module/video_timeline_recommend.js",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "632642782aa58e64b48ada0519c9ed82354a2d47",
+      "size": 332,
+      "url": "https://api.github.com/repos/NeteaseCloudMusicApiEnhanced/api-enhanced/git/blobs/632642782aa58e64b48ada0519c9ed82354a2d47"
+    },
+    {
+      "path": "module/video_url.js",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "cccf868f03939d776c507e7db03ce494a6cc74ae",
+      "size": 277,
+      "url": "https://api.github.com/repos/NeteaseCloudMusicApiEnhanced/api-enhanced/git/blobs/cccf868f03939d776c507e7db03ce494a6cc74ae"
+    },
+    {
+      "path": "module/vip_growthpoint.js",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "13aa045b06d655485f26b6c95efdc0447e6021e3",
+      "size": 247,
+      "url": "https://api.github.com/repos/NeteaseCloudMusicApiEnhanced/api-enhanced/git/blobs/13aa045b06d655485f26b6c95efdc0447e6021e3"
+    },
+    {
+      "path": "module/vip_growthpoint_details.js",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "da4e3630a7ae9764dff0664dcc1eba7b7d3a38a0",
+      "size": 321,
+      "url": "https://api.github.com/repos/NeteaseCloudMusicApiEnhanced/api-enhanced/git/blobs/da4e3630a7ae9764dff0664dcc1eba7b7d3a38a0"
+    },
+    {
+      "path": "module/vip_growthpoint_get.js",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "a68d7c02d80770e1ada3cce59d0406f39c1adade",
+      "size": 279,
+      "url": "https://api.github.com/repos/NeteaseCloudMusicApiEnhanced/api-enhanced/git/blobs/a68d7c02d80770e1ada3cce59d0406f39c1adade"
+    },
+    {
+      "path": "module/vip_info.js",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "abc153c7f5be2c51ec652719de8b72b49646f456",
+      "size": 261,
+      "url": "https://api.github.com/repos/NeteaseCloudMusicApiEnhanced/api-enhanced/git/blobs/abc153c7f5be2c51ec652719de8b72b49646f456"
+    },
+    {
+      "path": "module/vip_info_v2.js",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "83ae33105182bdaeb5570b9fbe262893ffa2de53",
+      "size": 262,
+      "url": "https://api.github.com/repos/NeteaseCloudMusicApiEnhanced/api-enhanced/git/blobs/83ae33105182bdaeb5570b9fbe262893ffa2de53"
+    },
+    {
+      "path": "module/vip_sign.js",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "8539ba715ce5f4df46796564a454d41a1582c565",
+      "size": 235,
+      "url": "https://api.github.com/repos/NeteaseCloudMusicApiEnhanced/api-enhanced/git/blobs/8539ba715ce5f4df46796564a454d41a1582c565"
+    },
+    {
+      "path": "module/vip_sign_detail.js",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "7cf6b97e6831bbdaa0eecfeced3e2a5d78c05c15",
+      "size": 318,
+      "url": "https://api.github.com/repos/NeteaseCloudMusicApiEnhanced/api-enhanced/git/blobs/7cf6b97e6831bbdaa0eecfeced3e2a5d78c05c15"
+    },
+    {
+      "path": "module/vip_sign_history.js",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "9cd3d47a6f193622c5476bc6c225e8cbd1cad688",
+      "size": 274,
+      "url": "https://api.github.com/repos/NeteaseCloudMusicApiEnhanced/api-enhanced/git/blobs/9cd3d47a6f193622c5476bc6c225e8cbd1cad688"
+    },
+    {
+      "path": "module/vip_sign_info.js",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "96c5091221918e7d82a4b06abf2c7fc3ec748c92",
+      "size": 254,
+      "url": "https://api.github.com/repos/NeteaseCloudMusicApiEnhanced/api-enhanced/git/blobs/96c5091221918e7d82a4b06abf2c7fc3ec748c92"
+    },
+    {
+      "path": "module/vip_tasks.js",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "d398c735b47a320fe4f900385171db29b243e090",
+      "size": 237,
+      "url": "https://api.github.com/repos/NeteaseCloudMusicApiEnhanced/api-enhanced/git/blobs/d398c735b47a320fe4f900385171db29b243e090"
+    },
+    {
+      "path": "module/vip_tasks_v1.js",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "1794bc8eb51af750f9f10ff7919e3d940dd39ef8",
+      "size": 313,
+      "url": "https://api.github.com/repos/NeteaseCloudMusicApiEnhanced/api-enhanced/git/blobs/1794bc8eb51af750f9f10ff7919e3d940dd39ef8"
+    },
+    {
+      "path": "module/vip_timemachine.js",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "518f50ee0d0287ac971181732b9e3cc231c6ff74",
+      "size": 404,
+      "url": "https://api.github.com/repos/NeteaseCloudMusicApiEnhanced/api-enhanced/git/blobs/518f50ee0d0287ac971181732b9e3cc231c6ff74"
+    },
+    {
+      "path": "module/voice_delete.js",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "76473e2b257f4fcca2b5150ae103f65b3afd3a6c",
+      "size": 205,
+      "url": "https://api.github.com/repos/NeteaseCloudMusicApiEnhanced/api-enhanced/git/blobs/76473e2b257f4fcca2b5150ae103f65b3afd3a6c"
+    },
+    {
+      "path": "module/voice_detail.js",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "b69583bc45908f92c80ca14de435b7442a38e647",
+      "size": 211,
+      "url": "https://api.github.com/repos/NeteaseCloudMusicApiEnhanced/api-enhanced/git/blobs/b69583bc45908f92c80ca14de435b7442a38e647"
+    },
+    {
+      "path": "module/voice_lyric.js",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "af4035d94cb3774e695092b73f12a83bed51f237",
+      "size": 205,
+      "url": "https://api.github.com/repos/NeteaseCloudMusicApiEnhanced/api-enhanced/git/blobs/af4035d94cb3774e695092b73f12a83bed51f237"
+    },
+    {
+      "path": "module/voice_upload.js",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "986fa71ab81dde26f1a0d576b3b13abad00ebe39",
+      "size": 5393,
+      "url": "https://api.github.com/repos/NeteaseCloudMusicApiEnhanced/api-enhanced/git/blobs/986fa71ab81dde26f1a0d576b3b13abad00ebe39"
+    },
+    {
+      "path": "module/voicelist_detail.js",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "047fed260bc83da96c3813cef9c23f7c84b334b5",
+      "size": 232,
+      "url": "https://api.github.com/repos/NeteaseCloudMusicApiEnhanced/api-enhanced/git/blobs/047fed260bc83da96c3813cef9c23f7c84b334b5"
+    },
+    {
+      "path": "module/voicelist_list.js",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "86f04d8b20ad7aece2e51553b53878a46125c05c",
+      "size": 319,
+      "url": "https://api.github.com/repos/NeteaseCloudMusicApiEnhanced/api-enhanced/git/blobs/86f04d8b20ad7aece2e51553b53878a46125c05c"
+    },
+    {
+      "path": "module/voicelist_list_search.js",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "b66fa30d42578c4bbea0be082ee916cbbbab1bf9",
+      "size": 458,
+      "url": "https://api.github.com/repos/NeteaseCloudMusicApiEnhanced/api-enhanced/git/blobs/b66fa30d42578c4bbea0be082ee916cbbbab1bf9"
+    },
+    {
+      "path": "module/voicelist_my_created.js",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "84f73af4594f141f77d7947740a0d424503e390c",
+      "size": 280,
+      "url": "https://api.github.com/repos/NeteaseCloudMusicApiEnhanced/api-enhanced/git/blobs/84f73af4594f141f77d7947740a0d424503e390c"
+    },
+    {
+      "path": "module/voicelist_search.js",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "0220ae62e4618dc05d628ee4336d5540231aa81d",
+      "size": 321,
+      "url": "https://api.github.com/repos/NeteaseCloudMusicApiEnhanced/api-enhanced/git/blobs/0220ae62e4618dc05d628ee4336d5540231aa81d"
+    },
+    {
+      "path": "module/voicelist_trans.js",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "1e1421250852aebcdf3450499880111f8aa55699",
+      "size": 464,
+      "url": "https://api.github.com/repos/NeteaseCloudMusicApiEnhanced/api-enhanced/git/blobs/1e1421250852aebcdf3450499880111f8aa55699"
+    },
+    {
+      "path": "module/weblog.js",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "1999109b2803c758df9a1b80aad9dd28b1633054",
+      "size": 214,
+      "url": "https://api.github.com/repos/NeteaseCloudMusicApiEnhanced/api-enhanced/git/blobs/1999109b2803c758df9a1b80aad9dd28b1633054"
+    },
+    {
+      "path": "module/yunbei.js",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "be9d960451cd81b5090656f83ca59919755d53d7",
+      "size": 213,
+      "url": "https://api.github.com/repos/NeteaseCloudMusicApiEnhanced/api-enhanced/git/blobs/be9d960451cd81b5090656f83ca59919755d53d7"
+    },
+    {
+      "path": "module/yunbei_expense.js",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "e1c41046862513296c391702f0ea5851ad143a42",
+      "size": 239,
+      "url": "https://api.github.com/repos/NeteaseCloudMusicApiEnhanced/api-enhanced/git/blobs/e1c41046862513296c391702f0ea5851ad143a42"
+    },
+    {
+      "path": "module/yunbei_info.js",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "f4c339ff29f3bdfb393ca4f3b8bef47913e88055",
+      "size": 183,
+      "url": "https://api.github.com/repos/NeteaseCloudMusicApiEnhanced/api-enhanced/git/blobs/f4c339ff29f3bdfb393ca4f3b8bef47913e88055"
+    },
+    {
+      "path": "module/yunbei_rcmd_song.js",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "5d8e7357ed51c9ab470878015303606ae63c3aef",
+      "size": 373,
+      "url": "https://api.github.com/repos/NeteaseCloudMusicApiEnhanced/api-enhanced/git/blobs/5d8e7357ed51c9ab470878015303606ae63c3aef"
+    },
+    {
+      "path": "module/yunbei_rcmd_song_history.js",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "b3d427fcae91d644c5a7c2d36034791fb136b4bd",
+      "size": 348,
+      "url": "https://api.github.com/repos/NeteaseCloudMusicApiEnhanced/api-enhanced/git/blobs/b3d427fcae91d644c5a7c2d36034791fb136b4bd"
+    },
+    {
+      "path": "module/yunbei_receipt.js",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "82aec8e6f9aed3adb897e94095cbeba09bbee95b",
+      "size": 239,
+      "url": "https://api.github.com/repos/NeteaseCloudMusicApiEnhanced/api-enhanced/git/blobs/82aec8e6f9aed3adb897e94095cbeba09bbee95b"
+    },
+    {
+      "path": "module/yunbei_sign.js",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "74dd4629088035e5ab04142dd8694eb44c357243",
+      "size": 190,
+      "url": "https://api.github.com/repos/NeteaseCloudMusicApiEnhanced/api-enhanced/git/blobs/74dd4629088035e5ab04142dd8694eb44c357243"
+    },
+    {
+      "path": "module/yunbei_task_finish.js",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "49240c095b0e69cc300f556ab560490c1b093cc0",
+      "size": 295,
+      "url": "https://api.github.com/repos/NeteaseCloudMusicApiEnhanced/api-enhanced/git/blobs/49240c095b0e69cc300f556ab560490c1b093cc0"
+    },
+    {
+      "path": "module/yunbei_tasks.js",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "843148ea31daf657b95ce24ecb7e95eca51de234",
+      "size": 210,
+      "url": "https://api.github.com/repos/NeteaseCloudMusicApiEnhanced/api-enhanced/git/blobs/843148ea31daf657b95ce24ecb7e95eca51de234"
+    },
+    {
+      "path": "module/yunbei_tasks_todo.js",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "b65060c18236df122e785d7a1166bad5961e5eb8",
+      "size": 212,
+      "url": "https://api.github.com/repos/NeteaseCloudMusicApiEnhanced/api-enhanced/git/blobs/b65060c18236df122e785d7a1166bad5961e5eb8"
+    },
+    {
+      "path": "module/yunbei_today.js",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "938fba9f792f4df6a7c34a5b8e662b2edb377752",
+      "size": 186,
+      "url": "https://api.github.com/repos/NeteaseCloudMusicApiEnhanced/api-enhanced/git/blobs/938fba9f792f4df6a7c34a5b8e662b2edb377752"
+    },
+    {
+      "path": "module_example",
+      "mode": "040000",
+      "type": "tree",
+      "sha": "852ac5b26779b99055a7ced5ee904e7f5a8457d1",
+      "url": "https://api.github.com/repos/NeteaseCloudMusicApiEnhanced/api-enhanced/git/trees/852ac5b26779b99055a7ced5ee904e7f5a8457d1"
+    },
+    {
+      "path": "module_example/avatar_upload.js",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "39ea5e51234274fb2c46510de3a4783df141f22a",
+      "size": 491,
+      "url": "https://api.github.com/repos/NeteaseCloudMusicApiEnhanced/api-enhanced/git/blobs/39ea5e51234274fb2c46510de3a4783df141f22a"
+    },
+    {
+      "path": "module_example/eapi_decrypt.js",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "ab91da5ae83e71e0cf108cf1512b7f9305ccb95e",
+      "size": 1239,
+      "url": "https://api.github.com/repos/NeteaseCloudMusicApiEnhanced/api-enhanced/git/blobs/ab91da5ae83e71e0cf108cf1512b7f9305ccb95e"
+    },
+    {
+      "path": "module_example/multi_song_upload.js",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "b71c7c22bb747fab72028656668ff265596eda7f",
+      "size": 2802,
+      "url": "https://api.github.com/repos/NeteaseCloudMusicApiEnhanced/api-enhanced/git/blobs/b71c7c22bb747fab72028656668ff265596eda7f"
+    },
+    {
+      "path": "module_example/song_upload.js",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "a47867f59dc4cc29bfcd62a4b83cb1b2abf3555f",
+      "size": 542,
+      "url": "https://api.github.com/repos/NeteaseCloudMusicApiEnhanced/api-enhanced/git/blobs/a47867f59dc4cc29bfcd62a4b83cb1b2abf3555f"
+    },
+    {
+      "path": "module_example/test.jpg",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "790c2e724ffcf4d8fb1151ae79c97cf6d61656ff",
+      "size": 127857,
+      "url": "https://api.github.com/repos/NeteaseCloudMusicApiEnhanced/api-enhanced/git/blobs/790c2e724ffcf4d8fb1151ae79c97cf6d61656ff"
+    },
+    {
+      "path": "module_example/test.js",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "58caecdad721108b2b9e9546239708c41e958c13",
+      "size": 702,
+      "url": "https://api.github.com/repos/NeteaseCloudMusicApiEnhanced/api-enhanced/git/blobs/58caecdad721108b2b9e9546239708c41e958c13"
+    },
+    {
+      "path": "module_example/test.mp3",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "e85b76e87e85ebae6ee162463d13c37a73359c9d",
+      "size": 3717468,
+      "url": "https://api.github.com/repos/NeteaseCloudMusicApiEnhanced/api-enhanced/git/blobs/e85b76e87e85ebae6ee162463d13c37a73359c9d"
+    },
+    {
+      "path": "module_example/test.ts",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "37cb6f76321ae14e51cb41497e69e638c41be7ae",
+      "size": 234,
+      "url": "https://api.github.com/repos/NeteaseCloudMusicApiEnhanced/api-enhanced/git/blobs/37cb6f76321ae14e51cb41497e69e638c41be7ae"
+    },
+    {
+      "path": "package.json",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "0325822cac0ae058a3f1d7ae3829da97447d8b7c",
+      "size": 3419,
+      "url": "https://api.github.com/repos/NeteaseCloudMusicApiEnhanced/api-enhanced/git/blobs/0325822cac0ae058a3f1d7ae3829da97447d8b7c"
+    },
+    {
+      "path": "plugins",
+      "mode": "040000",
+      "type": "tree",
+      "sha": "2cf79186012b61181760b85096ac27782bc36604",
+      "url": "https://api.github.com/repos/NeteaseCloudMusicApiEnhanced/api-enhanced/git/trees/2cf79186012b61181760b85096ac27782bc36604"
+    },
+    {
+      "path": "plugins/songUpload.js",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "379c6a0aafdc0315037b55428a7ed7ebd85f81db",
+      "size": 2731,
+      "url": "https://api.github.com/repos/NeteaseCloudMusicApiEnhanced/api-enhanced/git/blobs/379c6a0aafdc0315037b55428a7ed7ebd85f81db"
+    },
+    {
+      "path": "plugins/upload.js",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "3312d5d5cffe5429d76774ffbe80623eb1db02fa",
+      "size": 961,
+      "url": "https://api.github.com/repos/NeteaseCloudMusicApiEnhanced/api-enhanced/git/blobs/3312d5d5cffe5429d76774ffbe80623eb1db02fa"
+    },
+    {
+      "path": "pnpm-lock.yaml",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "98f628c56a4976f44a550749ea28c64c82aab127",
+      "size": 176819,
+      "url": "https://api.github.com/repos/NeteaseCloudMusicApiEnhanced/api-enhanced/git/blobs/98f628c56a4976f44a550749ea28c64c82aab127"
+    },
+    {
+      "path": "public",
+      "mode": "040000",
+      "type": "tree",
+      "sha": "9cdb9c04ef8543549a878b17b5f2f68aec7535b7",
+      "url": "https://api.github.com/repos/NeteaseCloudMusicApiEnhanced/api-enhanced/git/trees/9cdb9c04ef8543549a878b17b5f2f68aec7535b7"
+    },
+    {
+      "path": "public/api.html",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "6d09141be49ee7f855b3c08ab217a7868a979fe3",
+      "size": 5746,
+      "url": "https://api.github.com/repos/NeteaseCloudMusicApiEnhanced/api-enhanced/git/blobs/6d09141be49ee7f855b3c08ab217a7868a979fe3"
+    },
+    {
+      "path": "public/api_decrypt.html",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "a1591de66e622beb51f6946a63480b53d58c0f37",
+      "size": 19132,
+      "url": "https://api.github.com/repos/NeteaseCloudMusicApiEnhanced/api-enhanced/git/blobs/a1591de66e622beb51f6946a63480b53d58c0f37"
+    },
+    {
+      "path": "public/audio_match_demo",
+      "mode": "040000",
+      "type": "tree",
+      "sha": "39c2d3b41d377c62d11c076416c644e5426dc0f7",
+      "url": "https://api.github.com/repos/NeteaseCloudMusicApiEnhanced/api-enhanced/git/trees/39c2d3b41d377c62d11c076416c644e5426dc0f7"
+    },
+    {
+      "path": "public/audio_match_demo/afp.js",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "c387e0bb15e88b113c6cfd8f0143f970d8dc7182",
+      "size": 58770,
+      "url": "https://api.github.com/repos/NeteaseCloudMusicApiEnhanced/api-enhanced/git/blobs/c387e0bb15e88b113c6cfd8f0143f970d8dc7182"
+    },
+    {
+      "path": "public/audio_match_demo/afp.wasm.js",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "8de2271ef926a68564eabd0547cfc4448772c995",
+      "size": 308355,
+      "url": "https://api.github.com/repos/NeteaseCloudMusicApiEnhanced/api-enhanced/git/blobs/8de2271ef926a68564eabd0547cfc4448772c995"
+    },
+    {
+      "path": "public/audio_match_demo/index.html",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "550880c4cd51d036210f41641b5abaa174dfbe57",
+      "size": 9640,
+      "url": "https://api.github.com/repos/NeteaseCloudMusicApiEnhanced/api-enhanced/git/blobs/550880c4cd51d036210f41641b5abaa174dfbe57"
+    },
+    {
+      "path": "public/audio_match_demo/rec.js",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "9b5b8fe5ebd36dbf6a6a6eb09216bfe39bd9cd2a",
+      "size": 1533,
+      "url": "https://api.github.com/repos/NeteaseCloudMusicApiEnhanced/api-enhanced/git/blobs/9b5b8fe5ebd36dbf6a6a6eb09216bfe39bd9cd2a"
+    },
+    {
+      "path": "public/avatar_update.html",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "9a62d7811607d1d98c0957cb801bf6ce2c1299d0",
+      "size": 7774,
+      "url": "https://api.github.com/repos/NeteaseCloudMusicApiEnhanced/api-enhanced/git/blobs/9a62d7811607d1d98c0957cb801bf6ce2c1299d0"
+    },
+    {
+      "path": "public/cloud.html",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "410d2c0d2559975f444ae1340df1239b861b5d88",
+      "size": 16606,
+      "url": "https://api.github.com/repos/NeteaseCloudMusicApiEnhanced/api-enhanced/git/blobs/410d2c0d2559975f444ae1340df1239b861b5d88"
+    },
+    {
+      "path": "public/docs",
+      "mode": "040000",
+      "type": "tree",
+      "sha": "72d508d1b02188d0f77f618c90367f8a75267059",
+      "url": "https://api.github.com/repos/NeteaseCloudMusicApiEnhanced/api-enhanced/git/trees/72d508d1b02188d0f77f618c90367f8a75267059"
+    },
+    {
+      "path": "public/docs/.nojekyll",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "e69de29bb2d1d6434b8b29ae775ad8c2e48c5391",
+      "size": 0,
+      "url": "https://api.github.com/repos/NeteaseCloudMusicApiEnhanced/api-enhanced/git/blobs/e69de29bb2d1d6434b8b29ae775ad8c2e48c5391"
+    },
+    {
+      "path": "public/docs/_coverpage.md",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "fceae11b0164809a79acbdf12f1523debcd80c1b",
+      "size": 487,
+      "url": "https://api.github.com/repos/NeteaseCloudMusicApiEnhanced/api-enhanced/git/blobs/fceae11b0164809a79acbdf12f1523debcd80c1b"
+    },
+    {
+      "path": "public/docs/aigen.png",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "14a31d934d1627b182296550eaf5d1bf8d163310",
+      "size": 2518710,
+      "url": "https://api.github.com/repos/NeteaseCloudMusicApiEnhanced/api-enhanced/git/blobs/14a31d934d1627b182296550eaf5d1bf8d163310"
+    },
+    {
+      "path": "public/docs/favicon.ico",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "976cb56789676689d0c16014189c955cc45d620c",
+      "size": 14802,
+      "url": "https://api.github.com/repos/NeteaseCloudMusicApiEnhanced/api-enhanced/git/blobs/976cb56789676689d0c16014189c955cc45d620c"
+    },
+    {
+      "path": "public/docs/home.md",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "8e611d98de824fe7784f791337f61e12ed5ae082",
+      "size": 144685,
+      "url": "https://api.github.com/repos/NeteaseCloudMusicApiEnhanced/api-enhanced/git/blobs/8e611d98de824fe7784f791337f61e12ed5ae082"
+    },
+    {
+      "path": "public/docs/index.html",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "fbf226a502b552bf60bce73ae035f9fdf5874771",
+      "size": 4205,
+      "url": "https://api.github.com/repos/NeteaseCloudMusicApiEnhanced/api-enhanced/git/blobs/fbf226a502b552bf60bce73ae035f9fdf5874771"
+    },
+    {
+      "path": "public/docs/logo.svg",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "88b0c6314ff4bc9fac9c3fce8a4ff021c827cea5",
+      "size": 1127,
+      "url": "https://api.github.com/repos/NeteaseCloudMusicApiEnhanced/api-enhanced/git/blobs/88b0c6314ff4bc9fac9c3fce8a4ff021c827cea5"
+    },
+    {
+      "path": "public/docs/netease.png",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "26fb6aafc4cf7d41ffaff465fd70526ca5a26e73",
+      "size": 1203815,
+      "url": "https://api.github.com/repos/NeteaseCloudMusicApiEnhanced/api-enhanced/git/blobs/26fb6aafc4cf7d41ffaff465fd70526ca5a26e73"
+    },
+    {
+      "path": "public/docs/sw.js",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "a50f9ba6fc53479cdd59546b12b55942de78b1c0",
+      "size": 3065,
+      "url": "https://api.github.com/repos/NeteaseCloudMusicApiEnhanced/api-enhanced/git/blobs/a50f9ba6fc53479cdd59546b12b55942de78b1c0"
+    },
+    {
+      "path": "public/home.html",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "22912b8058e3bed905b47ed4924eec050ccfe30a",
+      "size": 1071,
+      "url": "https://api.github.com/repos/NeteaseCloudMusicApiEnhanced/api-enhanced/git/blobs/22912b8058e3bed905b47ed4924eec050ccfe30a"
+    },
+    {
+      "path": "public/index.html",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "a9adf3e5f28e1d29924e0d92356d33687f9a8a9e",
+      "size": 5937,
+      "url": "https://api.github.com/repos/NeteaseCloudMusicApiEnhanced/api-enhanced/git/blobs/a9adf3e5f28e1d29924e0d92356d33687f9a8a9e"
+    },
+    {
+      "path": "public/listen_together_host.html",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "ec53cc3a8e4086a55e0216a983c32e95d2946e58",
+      "size": 15306,
+      "url": "https://api.github.com/repos/NeteaseCloudMusicApiEnhanced/api-enhanced/git/blobs/ec53cc3a8e4086a55e0216a983c32e95d2946e58"
+    },
+    {
+      "path": "public/login.html",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "242515197e89ddca72b3094dcbe79eb85145e6e5",
+      "size": 5061,
+      "url": "https://api.github.com/repos/NeteaseCloudMusicApiEnhanced/api-enhanced/git/blobs/242515197e89ddca72b3094dcbe79eb85145e6e5"
+    },
+    {
+      "path": "public/playlist_cover_update.html",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "18bbeaa62bfa37307f821b422bdd3e00fc3f0768",
+      "size": 7462,
+      "url": "https://api.github.com/repos/NeteaseCloudMusicApiEnhanced/api-enhanced/git/blobs/18bbeaa62bfa37307f821b422bdd3e00fc3f0768"
+    },
+    {
+      "path": "public/playlist_import.html",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "e2e7933893a8bf32a13f85064d00273bd6b27701",
+      "size": 15008,
+      "url": "https://api.github.com/repos/NeteaseCloudMusicApiEnhanced/api-enhanced/git/blobs/e2e7933893a8bf32a13f85064d00273bd6b27701"
+    },
+    {
+      "path": "public/qrlogin-nocookie.html",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "72de9fb089edf6fdc9eb02a81f225e36972662a2",
+      "size": 4942,
+      "url": "https://api.github.com/repos/NeteaseCloudMusicApiEnhanced/api-enhanced/git/blobs/72de9fb089edf6fdc9eb02a81f225e36972662a2"
+    },
+    {
+      "path": "public/qrlogin.html",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "f803304f77f60ef3873729b162960d6b09b2d567",
+      "size": 4946,
+      "url": "https://api.github.com/repos/NeteaseCloudMusicApiEnhanced/api-enhanced/git/blobs/f803304f77f60ef3873729b162960d6b09b2d567"
+    },
+    {
+      "path": "public/static",
+      "mode": "040000",
+      "type": "tree",
+      "sha": "a08cd6972502d448ad30c54311a69af1b07279b3",
+      "url": "https://api.github.com/repos/NeteaseCloudMusicApiEnhanced/api-enhanced/git/trees/a08cd6972502d448ad30c54311a69af1b07279b3"
+    },
+    {
+      "path": "public/static/2170.png",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "e6d08b3c5d922378168b21aa15bee6aeff977556",
+      "size": 1486947,
+      "url": "https://api.github.com/repos/NeteaseCloudMusicApiEnhanced/api-enhanced/git/blobs/e6d08b3c5d922378168b21aa15bee6aeff977556"
+    },
+    {
+      "path": "public/static/docs.png",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "739b5f2b95ea2b0848cebe40fbccad24d9beb1ef",
+      "size": 102312,
+      "url": "https://api.github.com/repos/NeteaseCloudMusicApiEnhanced/api-enhanced/git/blobs/739b5f2b95ea2b0848cebe40fbccad24d9beb1ef"
+    },
+    {
+      "path": "public/static/eapi_params.png",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "505ed77030c6f11ddc84231171a481ad38e882c2",
+      "size": 2639112,
+      "url": "https://api.github.com/repos/NeteaseCloudMusicApiEnhanced/api-enhanced/git/blobs/505ed77030c6f11ddc84231171a481ad38e882c2"
+    },
+    {
+      "path": "public/static/eapi_response.png",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "f04301b46e9f4061f649f7289a24528633434e4e",
+      "size": 2202112,
+      "url": "https://api.github.com/repos/NeteaseCloudMusicApiEnhanced/api-enhanced/git/blobs/f04301b46e9f4061f649f7289a24528633434e4e"
+    },
+    {
+      "path": "public/static/module_test.png",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "97b1992cdeecad5b3aa15bdd92417cf8e903b458",
+      "size": 2005547,
+      "url": "https://api.github.com/repos/NeteaseCloudMusicApiEnhanced/api-enhanced/git/blobs/97b1992cdeecad5b3aa15bdd92417cf8e903b458"
+    },
+    {
+      "path": "public/static/neteaselogo.png",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "2e5113010f369f496472a141c745b81cf42c0126",
+      "size": 633811,
+      "url": "https://api.github.com/repos/NeteaseCloudMusicApiEnhanced/api-enhanced/git/blobs/2e5113010f369f496472a141c745b81cf42c0126"
+    },
+    {
+      "path": "public/unblock_test.html",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "09cca269c5a1771d3201d8f0846401045f833a6b",
+      "size": 4160,
+      "url": "https://api.github.com/repos/NeteaseCloudMusicApiEnhanced/api-enhanced/git/blobs/09cca269c5a1771d3201d8f0846401045f833a6b"
+    },
+    {
+      "path": "public/voice_upload.html",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "e8f9e40678eaec18f07e69d07069f363d5f404ce",
+      "size": 8528,
+      "url": "https://api.github.com/repos/NeteaseCloudMusicApiEnhanced/api-enhanced/git/blobs/e8f9e40678eaec18f07e69d07069f363d5f404ce"
+    },
+    {
+      "path": "scf_bootstrap",
+      "mode": "100755",
+      "type": "blob",
+      "sha": "0d8f59938637d74ae7778817550cf6b9219c8cf1",
+      "size": 62,
+      "url": "https://api.github.com/repos/NeteaseCloudMusicApiEnhanced/api-enhanced/git/blobs/0d8f59938637d74ae7778817550cf6b9219c8cf1"
+    },
+    {
+      "path": "server.js",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "45dce9a653bfef4e93dd19cefe34f2ace8360436",
+      "size": 12784,
+      "url": "https://api.github.com/repos/NeteaseCloudMusicApiEnhanced/api-enhanced/git/blobs/45dce9a653bfef4e93dd19cefe34f2ace8360436"
+    },
+    {
+      "path": "server.test.js",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "ea46f231290f484d64c1c86cb63df2da49f48e5b",
+      "size": 998,
+      "url": "https://api.github.com/repos/NeteaseCloudMusicApiEnhanced/api-enhanced/git/blobs/ea46f231290f484d64c1c86cb63df2da49f48e5b"
+    },
+    {
+      "path": "test",
+      "mode": "040000",
+      "type": "tree",
+      "sha": "f196230622e13bac4d6f56b127dc8fad7b9c3e10",
+      "url": "https://api.github.com/repos/NeteaseCloudMusicApiEnhanced/api-enhanced/git/trees/f196230622e13bac4d6f56b127dc8fad7b9c3e10"
+    },
+    {
+      "path": "test/album.test.js",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "f48e9a624fdd65c78fecb6b1a7bd30d8d1744dbf",
+      "size": 571,
+      "url": "https://api.github.com/repos/NeteaseCloudMusicApiEnhanced/api-enhanced/git/blobs/f48e9a624fdd65c78fecb6b1a7bd30d8d1744dbf"
+    },
+    {
+      "path": "test/comment.test.js",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "1c9aba9c76a09cc047b0d6999eaf6b549f215c4b",
+      "size": 567,
+      "url": "https://api.github.com/repos/NeteaseCloudMusicApiEnhanced/api-enhanced/git/blobs/1c9aba9c76a09cc047b0d6999eaf6b549f215c4b"
+    },
+    {
+      "path": "test/lyric.test.js",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "ebff84011dc471d8437e0374d392917c720c7398",
+      "size": 577,
+      "url": "https://api.github.com/repos/NeteaseCloudMusicApiEnhanced/api-enhanced/git/blobs/ebff84011dc471d8437e0374d392917c720c7398"
+    },
+    {
+      "path": "test/music_url.test.js",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "37863ec49d0491a2823c6ff6f06a807998857873",
+      "size": 630,
+      "url": "https://api.github.com/repos/NeteaseCloudMusicApiEnhanced/api-enhanced/git/blobs/37863ec49d0491a2823c6ff6f06a807998857873"
+    },
+    {
+      "path": "test/search.test.js",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "4298335fc5dbabda7da9adf2dfcb44c434ca2e00",
+      "size": 653,
+      "url": "https://api.github.com/repos/NeteaseCloudMusicApiEnhanced/api-enhanced/git/blobs/4298335fc5dbabda7da9adf2dfcb44c434ca2e00"
+    },
+    {
+      "path": "tsconfig.json",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "37b19e112ab7faabad9dc61ba862c7403c25176a",
+      "size": 588,
+      "url": "https://api.github.com/repos/NeteaseCloudMusicApiEnhanced/api-enhanced/git/blobs/37b19e112ab7faabad9dc61ba862c7403c25176a"
+    },
+    {
+      "path": "util",
+      "mode": "040000",
+      "type": "tree",
+      "sha": "24f60c8018e15a0f50419c3619f2eefe3ec75e2e",
+      "url": "https://api.github.com/repos/NeteaseCloudMusicApiEnhanced/api-enhanced/git/trees/24f60c8018e15a0f50419c3619f2eefe3ec75e2e"
+    },
+    {
+      "path": "util/apicache.js",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "bf6ea133a48642bd1caed9e6af6eb56f648b5176",
+      "size": 22533,
+      "url": "https://api.github.com/repos/NeteaseCloudMusicApiEnhanced/api-enhanced/git/blobs/bf6ea133a48642bd1caed9e6af6eb56f648b5176"
+    },
+    {
+      "path": "util/client-sign.js",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "49e785e072aa7ef5a876396e0bac77c4ddcd0215",
+      "size": 4277,
+      "url": "https://api.github.com/repos/NeteaseCloudMusicApiEnhanced/api-enhanced/git/blobs/49e785e072aa7ef5a876396e0bac77c4ddcd0215"
+    },
+    {
+      "path": "util/config.json",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "189e5fb71c070a76df1563d6de16751da5fca9d6",
+      "size": 792,
+      "url": "https://api.github.com/repos/NeteaseCloudMusicApiEnhanced/api-enhanced/git/blobs/189e5fb71c070a76df1563d6de16751da5fca9d6"
+    },
+    {
+      "path": "util/crypto.js",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "775b1b8b74d6631cf3d4bf41d2eac366a9486c88",
+      "size": 9690,
+      "url": "https://api.github.com/repos/NeteaseCloudMusicApiEnhanced/api-enhanced/git/blobs/775b1b8b74d6631cf3d4bf41d2eac366a9486c88"
+    },
+    {
+      "path": "util/fileHelper.js",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "6f49eb7503e692e842def44395b3ea42a0bf3ee9",
+      "size": 1996,
+      "url": "https://api.github.com/repos/NeteaseCloudMusicApiEnhanced/api-enhanced/git/blobs/6f49eb7503e692e842def44395b3ea42a0bf3ee9"
+    },
+    {
+      "path": "util/index.js",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "4ad7830cff170918f3d0e51467d71aff3041d1d2",
+      "size": 6600,
+      "url": "https://api.github.com/repos/NeteaseCloudMusicApiEnhanced/api-enhanced/git/blobs/4ad7830cff170918f3d0e51467d71aff3041d1d2"
+    },
+    {
+      "path": "util/logger.js",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "8fe8295228734144f512a4f902e5081add29a2b1",
+      "size": 1066,
+      "url": "https://api.github.com/repos/NeteaseCloudMusicApiEnhanced/api-enhanced/git/blobs/8fe8295228734144f512a4f902e5081add29a2b1"
+    },
+    {
+      "path": "util/memory-cache.js",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "5dce8be70e369bd47dfece06986ff5fbcc590ce8",
+      "size": 1344,
+      "url": "https://api.github.com/repos/NeteaseCloudMusicApiEnhanced/api-enhanced/git/blobs/5dce8be70e369bd47dfece06986ff5fbcc590ce8"
+    },
+    {
+      "path": "util/option.js",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "48911093672a5ae5b25e001f1dda71684db37413",
+      "size": 547,
+      "url": "https://api.github.com/repos/NeteaseCloudMusicApiEnhanced/api-enhanced/git/blobs/48911093672a5ae5b25e001f1dda71684db37413"
+    },
+    {
+      "path": "util/request.js",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "1b12d2eaae129a39cad529e9a60feac4f4ff505d",
+      "size": 14025,
+      "url": "https://api.github.com/repos/NeteaseCloudMusicApiEnhanced/api-enhanced/git/blobs/1b12d2eaae129a39cad529e9a60feac4f4ff505d"
+    },
+    {
+      "path": "util/xeapiKey.js",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "d308df5459c6471fee198880e5d77762592ba1d2",
+      "size": 555,
+      "url": "https://api.github.com/repos/NeteaseCloudMusicApiEnhanced/api-enhanced/git/blobs/d308df5459c6471fee198880e5d77762592ba1d2"
+    },
+    {
+      "path": "vercel.json",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "b7928143e80c76a58b3abb05070bf5115b99701f",
+      "size": 564,
+      "url": "https://api.github.com/repos/NeteaseCloudMusicApiEnhanced/api-enhanced/git/blobs/b7928143e80c76a58b3abb05070bf5115b99701f"
+    }
+  ],
+  "truncated": false
+}

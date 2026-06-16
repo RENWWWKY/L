@@ -4,7 +4,8 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 
 import { ArtistNoteBody } from './artistNoteDisplay'
 import { ListenTogetherHeaderRefreshButton } from './ListenTogetherHeaderRefreshButton'
-import { ListenNum } from './ListenNum'
+import { ListenNum, ListenNumericText } from './ListenNum'
+import { ListenNeteaseCommentText } from './ListenNeteaseCommentText'
 import {
   fetchEventComments,
   type NeteaseArtistNote,
@@ -44,7 +45,9 @@ function CommentItem({ comment }: { comment: NeteaseSongComment }) {
       </div>
       <div className="min-w-0 flex-1">
         <div className="flex items-center gap-2">
-          <p className="truncate text-[14px] font-medium text-stone-700">{comment.nickname}</p>
+          <p className="truncate text-[14px] font-medium text-stone-700">
+            <ListenNumericText text={comment.nickname} />
+          </p>
           {comment.isHot ? (
             <span className="shrink-0 rounded-full bg-rose-50 px-1.5 py-0.5 text-[10px] text-rose-400">
               热评
@@ -52,10 +55,10 @@ function CommentItem({ comment }: { comment: NeteaseSongComment }) {
           ) : null}
         </div>
         <p className="mt-1.5 whitespace-pre-wrap break-words text-[15px] leading-relaxed text-stone-600">
-          {comment.content}
+          <ListenNeteaseCommentText text={comment.content} />
         </p>
         <div className="mt-2.5 flex items-center gap-3 text-[12px] text-stone-400">
-          <span>{formatCommentTime(comment.time)}</span>
+          <ListenNumericText text={formatCommentTime(comment.time)} />
           {comment.likedCount > 0 ? (
             <span className="inline-flex items-center gap-0.5">
               <Heart className="size-3.5 text-rose-300" strokeWidth={1.5} />

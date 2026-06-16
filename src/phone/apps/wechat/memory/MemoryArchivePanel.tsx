@@ -2,7 +2,13 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { WeChatContactRow } from '../../../../components/WeChatContactsInstagram'
 import { personaDb } from '../newFriendsPersona/idb'
 import type { CharacterMemory } from '../newFriendsPersona/types'
-import { isSecondaryWechatAccountInBundle, loadAccountsBundle } from '../wechatAccountPersistence'
+import { loadAccountsBundle } from '../wechatAccountPersistence'
+import type { WechatAccountsBundle } from '../wechatAccountTypes'
+import {
+  buildMemoryArchiveAccountOptions,
+  matchesMemoryArchiveAccount,
+  resolvePrimaryWechatAccountId,
+} from './memoryArchiveAccountScope'
 import {
   buildMemoryArchiveLookup,
   characterMemoryToMemoryEntry,
@@ -12,12 +18,18 @@ import {
   resolveMemoryUserBindingLabels,
 } from './memoryArchiveSourceLabel'
 import {
-  buildCharacterFocusRoster,
+  buildCharacterRoster,
   filterAndSortMemoryEntries,
+  isLinkedMemoryEntry,
+  resolveDetailCharacterInfo,
+  rosterMatchesSearch,
 } from './memoryArchiveFilter'
-import type { MemoryArchiveKind, MemoryEntry, MemorySourceIdentity } from './memoryArchiveTypes'
+import type { MemoryEntry, MemoryTypeFilterId, MemoryCharacterPageMeta } from './memoryArchiveTypes'
+import { parseMemorySourcePrefix } from './memorySourceBadges'
 import { MemoryArchiveBackToTop } from './MemoryArchiveBackToTop'
 import { MemoryArchiveHeader } from './MemoryArchiveHeader'
+import { MemoryCharacterDetailView } from './MemoryCharacterDetailView'
+import { MemoryCharacterRoster } from './MemoryCharacterRoster'
 import { MemoryList } from './MemoryList'
 import { MemoryEditorSheet } from './MemoryEditorSheet'
 import { ARCHIVE_BG } from './memoryArchiveTheme'
@@ -37,6 +49,11 @@ import {
   writeMemoryCoachSeen,
 } from './memoryCoachTypes'
 import { isUserMomentViewerMemory } from '../../../../components/moments/userMomentDistributionArchiveService'
+import { memoryTextMatchesQuery } from './memorySearchFilter'
+
+function stripMemoryPrefixForDisplay(raw: string): string {
+  return parseMemorySourcePrefix(raw).body.trim() || raw.trim()
+}
 
 const MEMORY_ARCHIVE_START_COACH_EVENT = 'memory-archive-start-coach'
 
@@ -44,10 +61,17 @@ export function MemoryArchivePanel({
   contacts,
   currentWechatAccountId,
   playerIdentityId,
+  activeCharacterPageId,
+  onCharacterPageChange,
+  onRegisterCharacterNav,
 }: {
   contacts: WeChatContactRow[]
   currentWechatAccountId?: string
   playerIdentityId?: string
+  /** 顶栏返回浏览页时置 null，面板退回角色列表 */
+  activeCharacterPageId?: string | null
+  onCharacterPageChange?: (meta: MemoryCharacterPageMeta | null) => void
+  onRegisterCharacterNav?: (nav: { prev: () => void; next: () => void } | null) => void
 }) {
   const [loading, setLoading] = useState(true)
   const [allEntries, setAllEntries] = useState<MemoryEntry[]>([])
@@ -56,9 +80,11 @@ export function MemoryArchivePanel({
 
   const [search, setSearch] = useState('')
   const debouncedSearch = useDebouncedValue(search, 280)
-  const [source, setSource] = useState<MemorySourceIdentity>('main_wechat')
-  const [memoryKind, setMemoryKind] = useState<MemoryArchiveKind>('own')
-  const [focusCharId, setFocusCharId] = useState<string | 'all'>('all')
+  const [selectedAccountId, setSelectedAccountId] = useState('')
+  const [accountsBundle, setAccountsBundle] = useState<WechatAccountsBundle | null>(null)
+  const [archiveView, setArchiveView] = useState<'roster' | 'detail'>('roster')
+  const [selectedCharId, setSelectedCharId] = useState<string | null>(null)
+  const [typeFilters, setTypeFilters] = useState<ReadonlySet<MemoryTypeFilterId>>(() => new Set())
 
   const [editorOpen, setEditorOpen] = useState(false)
   const [editorMode, setEditorMode] = useState<'create' | 'edit'>('create')
@@ -71,10 +97,10 @@ export function MemoryArchivePanel({
   const [tutorialOpen, setTutorialOpen] = useState(false)
   const [coachOpen, setCoachOpen] = useState(false)
   const [coachStepIndex, setCoachStepIndex] = useState(0)
-  /** 仅首次进入当前微信账号时按主/副号设默认身份源；刷新列表勿覆盖用户已选 Tab */
-  const sourceBootstrappedForAccountRef = useRef<string | null>(null)
+  const accountBootstrappedForAccountRef = useRef<string | null>(null)
   const scrollerRef = useRef<HTMLDivElement | null>(null)
   const [showBackToTop, setShowBackToTop] = useState(false)
+  const [charRealNameById, setCharRealNameById] = useState<Map<string, string>>(() => new Map())
 
   const reload = useCallback(async (opts?: { silent?: boolean }) => {
     if (!opts?.silent) setLoading(true)
@@ -103,8 +129,10 @@ export function MemoryArchivePanel({
       }
       gOpts.sort((a, b) => a.title.localeCompare(b.title, 'zh-CN'))
       setGroupOptions(gOpts)
+      setCharRealNameById(charNameById)
 
       const bundle = await loadAccountsBundle()
+      setAccountsBundle(bundle)
       const lookup = buildMemoryArchiveLookup(contacts, charNameById, groupNameById, bundle)
       const rawMap = new Map<string, CharacterMemory>()
       const entries: MemoryEntry[] = []
@@ -130,7 +158,7 @@ export function MemoryArchivePanel({
           ...base,
           ...(sourceLineLabel ? { sourceLineLabel } : {}),
           ...(userBindingLabels.length ? { userBindingLabels } : {}),
-          contentExpanded: contentExpanded.trim() || base.content,
+          contentExpanded: stripMemoryPrefixForDisplay(contentExpanded.trim() || base.content),
         })
       }
       entries.sort((a, b) => b.timestamp - a.timestamp)
@@ -144,18 +172,36 @@ export function MemoryArchivePanel({
   useEffect(() => {
     const acc = currentWechatAccountId?.trim()
     if (!acc) return
-    if (sourceBootstrappedForAccountRef.current === acc) return
-    let cancelled = false
-    void (async () => {
-      const bundle = await loadAccountsBundle()
-      if (cancelled || !bundle) return
-      sourceBootstrappedForAccountRef.current = acc
-      setSource(isSecondaryWechatAccountInBundle(bundle, acc) ? 'sub_wechat' : 'main_wechat')
-    })()
-    return () => {
-      cancelled = true
-    }
+    if (accountBootstrappedForAccountRef.current === acc) return
+    accountBootstrappedForAccountRef.current = acc
+    setSelectedAccountId(acc)
   }, [currentWechatAccountId])
+
+  useEffect(() => {
+    if (selectedAccountId.trim()) return
+    const fallback =
+      accountsBundle?.currentAccountId?.trim() ||
+      accountsBundle?.accounts[0]?.accountId?.trim() ||
+      currentWechatAccountId?.trim() ||
+      ''
+    if (fallback) setSelectedAccountId(fallback)
+  }, [accountsBundle, currentWechatAccountId, selectedAccountId])
+
+  const accountOptions = useMemo(
+    () => buildMemoryArchiveAccountOptions(accountsBundle),
+    [accountsBundle],
+  )
+
+  const primaryAccountId = useMemo(
+    () => resolvePrimaryWechatAccountId(accountsBundle),
+    [accountsBundle],
+  )
+
+  const accountScoped = useMemo(() => {
+    const acc = selectedAccountId.trim()
+    if (!acc) return allEntries
+    return allEntries.filter((e) => matchesMemoryArchiveAccount(e, acc, primaryAccountId))
+  }, [allEntries, selectedAccountId, primaryAccountId])
 
   useEffect(() => {
     void reload()
@@ -247,45 +293,139 @@ export function MemoryArchivePanel({
     return () => window.removeEventListener('wechat-storage-changed', onEvt)
   }, [reload])
 
-  const sourceScoped = useMemo(() => {
-    return allEntries.filter((e) => {
-      if (e.sourceIdentity !== source) return false
-      const raw = rawById.get(e.id)
-      if (memoryKind === 'linked') {
-        return !!raw && raw.memoryScope === 'linked'
-      }
-      return !raw || raw.memoryScope !== 'linked'
-    })
-  }, [allEntries, source, memoryKind, rawById])
+
+  const contactByCharId = useMemo(() => {
+    const m = new Map<string, WeChatContactRow>()
+    for (const c of contacts) {
+      const id = c.id.trim()
+      if (id) m.set(id, c)
+    }
+    return m
+  }, [contacts])
+
+  const remarkByCharId = useMemo(() => {
+    const m = new Map<string, string>()
+    for (const c of contacts) {
+      const id = c.id.trim()
+      const remark = c.remarkName?.trim()
+      if (id && remark) m.set(id, remark)
+    }
+    return m
+  }, [contacts])
 
   const characterRoster = useMemo(
     () =>
-      buildCharacterFocusRoster(sourceScoped).map((c) => ({
-        charId: c.charId,
-        displayName: c.displayName,
-        avatarUrl: c.avatarUrl,
-      })),
-    [sourceScoped],
+      buildCharacterRoster(accountScoped, {
+        realNameByCharId: charRealNameById,
+        remarkByCharId,
+      }),
+    [accountScoped, charRealNameById, remarkByCharId],
   )
 
-  useEffect(() => {
-    if (focusCharId === 'all') return
-    if (!characterRoster.some((c) => c.charId === focusCharId)) {
-      setFocusCharId('all')
+  const rosterForDisplay = useMemo(() => {
+    const q = debouncedSearch.trim()
+    if (!q) return characterRoster
+    return characterRoster.filter((item) => {
+      if (rosterMatchesSearch(item, q)) return true
+      return accountScoped.some((e) => {
+        if (e.charId !== item.charId) return false
+        const raw = rawById.get(e.id)
+        return raw ? memoryTextMatchesQuery(raw, q) : e.content.toLowerCase().includes(q.toLowerCase())
+      })
+    })
+  }, [characterRoster, debouncedSearch, accountScoped, rawById])
+
+  const rosterSummary = useMemo(
+    () => ({
+      characterCount: rosterForDisplay.length,
+      memoryCount: rosterForDisplay.reduce((sum, item) => sum + item.memoryCount, 0),
+    }),
+    [rosterForDisplay],
+  )
+
+  const selectedRosterIndex = useMemo(
+    () => (selectedCharId ? characterRoster.findIndex((c) => c.charId === selectedCharId) : -1),
+    [characterRoster, selectedCharId],
+  )
+
+  const detailCharacter = useMemo(() => {
+    if (!selectedCharId) return null
+    const contact = contactByCharId.get(selectedCharId)
+    return resolveDetailCharacterInfo(
+      selectedCharId,
+      allEntries,
+      selectedAccountId,
+      primaryAccountId,
+      {
+        displayName: contact?.remarkName,
+        avatarUrl: contact?.avatarUrl,
+        wechatRemarkName: contact?.remarkName,
+      },
+      charRealNameById,
+    )
+  }, [selectedCharId, allEntries, selectedAccountId, primaryAccountId, contactByCharId, charRealNameById])
+
+  const characterTotalCount = useMemo(() => detailCharacter?.memoryCount ?? 0, [detailCharacter])
+
+  const publishCharacterPage = useCallback(() => {
+    if (!onCharacterPageChange) return
+    if (archiveView !== 'detail' || !selectedCharId || !detailCharacter) {
+      onCharacterPageChange(null)
+      return
     }
-  }, [characterRoster, focusCharId])
+    const idx = characterRoster.findIndex((c) => c.charId === selectedCharId)
+    onCharacterPageChange({
+      charId: selectedCharId,
+      displayName: detailCharacter.displayName,
+      rosterIndex: idx,
+      rosterTotal: characterRoster.length,
+      canPrev: idx > 0,
+      canNext: idx >= 0 && idx < characterRoster.length - 1,
+    })
+  }, [
+    archiveView,
+    selectedCharId,
+    detailCharacter,
+    characterRoster,
+    onCharacterPageChange,
+  ])
+
+  const navigateCharacter = useCallback(
+    (delta: -1 | 1) => {
+      const idx = selectedRosterIndex
+      if (idx < 0) return
+      const next = characterRoster[idx + delta]
+      if (!next) return
+      setSelectedCharId(next.charId)
+      setTypeFilters(new Set())
+      scrollerRef.current?.scrollTo({ top: 0, behavior: 'auto' })
+    },
+    [selectedRosterIndex, characterRoster],
+  )
+
+  const availableTypeFilters = useMemo(() => {
+    if (!selectedCharId) return undefined
+    const set = new Set<MemoryTypeFilterId>()
+    for (const e of allEntries) {
+      if (e.charId !== selectedCharId || !matchesMemoryArchiveAccount(e, selectedAccountId, primaryAccountId)) continue
+      for (const t of e.tags) set.add(t)
+      if (isLinkedMemoryEntry(e)) set.add('linked')
+    }
+    return set
+  }, [selectedCharId, allEntries, selectedAccountId, primaryAccountId])
 
   const filtered = useMemo(
     () =>
       filterAndSortMemoryEntries({
         entries: allEntries,
         rawById,
-        source,
-        kind: memoryKind,
-        charId: focusCharId,
-        searchQuery: debouncedSearch,
+        accountId: selectedAccountId,
+        primaryAccountId,
+        charId: selectedCharId ?? 'all',
+        searchQuery: archiveView === 'detail' ? debouncedSearch : '',
+        typeFilters,
       }),
-    [allEntries, rawById, source, memoryKind, focusCharId, debouncedSearch],
+    [allEntries, rawById, selectedAccountId, primaryAccountId, selectedCharId, debouncedSearch, typeFilters, archiveView],
   )
 
   useEffect(() => {
@@ -295,11 +435,75 @@ export function MemoryArchivePanel({
     el.addEventListener('scroll', onScroll, { passive: true })
     onScroll()
     return () => el.removeEventListener('scroll', onScroll)
-  }, [loading, filtered.length])
+  }, [loading, archiveView, filtered.length, rosterForDisplay.length])
 
   const scrollArchiveToTop = useCallback(() => {
     scrollerRef.current?.scrollTo({ top: 0, behavior: 'smooth' })
   }, [])
+
+  const openCharacter = useCallback((charId: string) => {
+    setSelectedCharId(charId)
+    setTypeFilters(new Set())
+    setArchiveView('detail')
+    scrollerRef.current?.scrollTo({ top: 0, behavior: 'auto' })
+  }, [])
+
+  const backToRoster = useCallback(() => {
+    setArchiveView('roster')
+    setSelectedCharId(null)
+    setTypeFilters(new Set())
+    scrollerRef.current?.scrollTo({ top: 0, behavior: 'auto' })
+    onCharacterPageChange?.(null)
+  }, [onCharacterPageChange])
+
+  useEffect(() => {
+    publishCharacterPage()
+  }, [publishCharacterPage])
+
+  const prevActiveCharacterPageIdRef = useRef<string | null | undefined>(activeCharacterPageId)
+
+  useEffect(() => {
+    const prev = prevActiveCharacterPageIdRef.current
+    prevActiveCharacterPageIdRef.current = activeCharacterPageId ?? null
+
+    // 仅当顶栏返回把 characterPage 清掉时退回列表；打开详情时 activeCharacterPageId 会短暂为 null，不能误判
+    if (prev != null && activeCharacterPageId == null && archiveView === 'detail') {
+      setArchiveView('roster')
+      setSelectedCharId(null)
+      setTypeFilters(new Set())
+      scrollerRef.current?.scrollTo({ top: 0, behavior: 'auto' })
+    }
+  }, [activeCharacterPageId, archiveView])
+
+  useEffect(() => {
+    if (!onRegisterCharacterNav) return
+    if (archiveView !== 'detail') {
+      onRegisterCharacterNav(null)
+      return
+    }
+    onRegisterCharacterNav({
+      prev: () => navigateCharacter(-1),
+      next: () => navigateCharacter(1),
+    })
+    return () => onRegisterCharacterNav(null)
+  }, [archiveView, navigateCharacter, onRegisterCharacterNav])
+
+  useEffect(() => {
+    if (!coachOpen) return
+    const step = MEMORY_ARCHIVE_COACH_STEPS[coachStepIndex]
+    const target = step?.target
+    if (
+      (target === 'type-filter' || target === 'list') &&
+      archiveView === 'roster' &&
+      rosterForDisplay.length > 0
+    ) {
+      openCharacter(rosterForDisplay[0]!.charId)
+      return
+    }
+    if (target === 'roster' && archiveView === 'detail') {
+      backToRoster()
+    }
+  }, [coachOpen, coachStepIndex, archiveView, rosterForDisplay, openCharacter, backToRoster])
 
   const openCreate = () => {
     setEditorMode('create')
@@ -326,6 +530,9 @@ export function MemoryArchivePanel({
     await reload({ silent: true })
   }
 
+  const editorKind: 'own' | 'linked' =
+    editingRaw?.memoryScope === 'linked' || editingEntry?.memoryScope === 'linked' ? 'linked' : 'own'
+
   return (
     <div
       data-memory-coach-root="memory-archive"
@@ -337,47 +544,85 @@ export function MemoryArchivePanel({
           ref={scrollerRef}
           className="h-full overflow-y-auto overscroll-y-contain [-webkit-overflow-scrolling:touch]"
         >
-        <MemoryArchiveHeader
-          search={search}
-          onSearchChange={setSearch}
-          source={source}
-          onSourceChange={(s) => {
-            setSource(s)
-            setFocusCharId('all')
-          }}
-          memoryKind={memoryKind}
-          onMemoryKindChange={(k) => {
-            setMemoryKind(k)
-            setFocusCharId('all')
-          }}
-          characters={characterRoster}
-          focusCharId={focusCharId}
-          onFocusCharChange={setFocusCharId}
-          onCreate={openCreate}
-          alignUserBusy={alignUserBusy}
-          alignUserDisabled={userPlaceholderSummary.slotCount === 0}
-          alignUserTitle={
-            userPlaceholderSummary.slotCount === 0
-              ? '当前记忆库中没有 {{user}} 表达式'
-              : userInsertCtx
-                ? `先按各条来源线对齐；未绑定的 {{user}} 将绑到当前账号「${userInsertCtx.displayName || userInsertCtx.lineLabel}」；已有绑定不变`
-                : '请先在当前微信账号下选择扮演身份'
-          }
-          onAlignUser={runAlignUserPlaceholders}
-          alignUserToast={alignUserToast}
-          onOpenTutorial={() => setTutorialOpen(true)}
-        />
-        <MemoryList
-          entries={filtered}
-          loading={loading}
-          emptyHint={
-            memoryKind === 'linked'
-              ? '暂无关联记忆。来自绑定主角线下约会：人脉 NPC 与「管理关系」绑定的其它主角均可各有一条；请在本馆按对应角色筛选查看。'
-              : '调整检索词、身份源或角色焦点；也可点右上角「+」新建角色私聊记忆。'
-          }
-          onEdit={openEdit}
-          onDelete={(e) => void handleDelete(e)}
-        />
+          {archiveView === 'roster' ? (
+            <>
+              <MemoryArchiveHeader
+                search={search}
+                onSearchChange={setSearch}
+                accountOptions={accountOptions}
+                selectedAccountId={selectedAccountId}
+                onAccountChange={(id) => {
+                  setSelectedAccountId(id)
+                  setTypeFilters(new Set())
+                }}
+                onCreate={openCreate}
+                alignUserBusy={alignUserBusy}
+                alignUserDisabled={userPlaceholderSummary.slotCount === 0}
+                alignUserTitle={
+                  userPlaceholderSummary.slotCount === 0
+                    ? '当前记忆库中没有 {{user}} 表达式'
+                    : userInsertCtx
+                      ? `先按各条来源线对齐；未绑定的 {{user}} 将绑到当前账号「${userInsertCtx.displayName || userInsertCtx.lineLabel}」；已有绑定不变`
+                      : '请先在当前微信账号下选择扮演身份'
+                }
+                onAlignUser={runAlignUserPlaceholders}
+                alignUserToast={alignUserToast}
+                onOpenTutorial={() => setTutorialOpen(true)}
+                rosterSummary={rosterSummary}
+              />
+              <MemoryCharacterRoster
+                items={rosterForDisplay}
+                loading={loading}
+                searchQuery={debouncedSearch}
+                onSelect={openCharacter}
+              />
+            </>
+          ) : archiveView === 'detail' && selectedCharId && detailCharacter ? (
+            <MemoryCharacterDetailView
+              character={detailCharacter}
+              rosterIndex={selectedRosterIndex}
+              rosterTotal={characterRoster.length}
+              search={search}
+              onSearchChange={setSearch}
+              accountOptions={accountOptions}
+              selectedAccountId={selectedAccountId}
+              onAccountChange={(id) => {
+                setSelectedAccountId(id)
+                setTypeFilters(new Set())
+              }}
+              typeFilters={typeFilters}
+              onTypeFiltersChange={setTypeFilters}
+              availableTypeFilters={availableTypeFilters}
+              filteredCount={filtered.length}
+              totalCount={characterTotalCount}
+              onCreate={openCreate}
+              onOpenTutorial={() => setTutorialOpen(true)}
+              onAlignUser={runAlignUserPlaceholders}
+              alignUserBusy={alignUserBusy}
+              alignUserDisabled={userPlaceholderSummary.slotCount === 0}
+              alignUserTitle={
+                userPlaceholderSummary.slotCount === 0
+                  ? '当前记忆库中没有 {{user}} 表达式'
+                  : userInsertCtx
+                    ? `先按各条来源线对齐；未绑定的 {{user}} 将绑到当前账号「${userInsertCtx.displayName || userInsertCtx.lineLabel}」；已有绑定不变`
+                    : '请先在当前微信账号下选择扮演身份'
+              }
+              alignUserToast={alignUserToast}
+            >
+              <MemoryList
+                entries={filtered}
+                loading={loading}
+                inCharacterContext
+                emptyHint={
+                  characterTotalCount === 0
+                    ? '该角色在当前账号下暂无记忆；可切换上方查看账号，或用「遇见应用」标签筛选 Lumi Meet 记忆，或点上方按钮新建。'
+                    : '调整检索词或记忆类型，或点上方按钮新建记忆。'
+                }
+                onEdit={openEdit}
+                onDelete={(e) => void handleDelete(e)}
+              />
+            </MemoryCharacterDetailView>
+          ) : null}
         </div>
         <MemoryArchiveBackToTop visible={showBackToTop} onClick={scrollArchiveToTop} />
       </div>
@@ -400,6 +645,7 @@ export function MemoryArchivePanel({
         onSkip={() => finishCoach()}
         onComplete={(opts) => finishCoach(opts)}
         scopeRoot="memory-archive"
+        layoutEpoch={`${archiveView}-${selectedAccountId}-${selectedCharId ?? 'none'}`}
         zIndex={54000}
       />
 
@@ -409,9 +655,9 @@ export function MemoryArchivePanel({
         entry={editingEntry}
         raw={editingRaw}
         contacts={contacts}
-        initialCharId={focusCharId !== 'all' ? focusCharId : undefined}
-        sourceIdentity={source}
-        editorKind={memoryKind}
+        initialCharId={selectedCharId ?? undefined}
+        archiveSelectedAccountId={selectedAccountId}
+        editorKind={editorKind}
         currentWechatAccountId={currentWechatAccountId}
         playerIdentityId={playerIdentityId}
         groupOptions={groupOptions}

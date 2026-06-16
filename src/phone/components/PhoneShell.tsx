@@ -2,6 +2,7 @@ import { useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type Re
 import { FloatingMusicOrb } from '../../components/discoverListen/FloatingMusicOrb'
 import { DesktopLyricsWidget } from '../../components/discoverListen/DesktopLyricsWidget'
 import { ListenTogetherFullscreenHost } from '../../components/discoverListen/ListenTogetherFullscreenHost'
+import { ListenTogetherCommentsOverlayHost } from '../../components/discoverListen/ListenTogetherCommentsOverlayHost'
 import { ListenTogetherPlayModeToastHost } from '../../components/discoverListen/ListenTogetherPlayModeToastHost'
 import { useCustomization } from '../CustomizationContext'
 
@@ -114,6 +115,7 @@ export function PhoneShell({ children }: Props) {
     <div className="relative flex h-full min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
       {children}
       <ListenTogetherFullscreenHost />
+      <ListenTogetherCommentsOverlayHost />
       <DesktopLyricsWidget />
       <ListenTogetherPlayModeToastHost />
       <FloatingMusicOrb />

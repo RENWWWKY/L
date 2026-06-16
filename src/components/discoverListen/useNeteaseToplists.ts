@@ -6,17 +6,10 @@ import { fetchFeaturedToplistCharts, type NeteaseToplistChart } from './neteaseT
 
 export function useNeteaseToplists(cookie: string, refreshKey = 0) {
   const [charts, setCharts] = useState<NeteaseToplistChart[]>([])
-  const [loading, setLoading] = useState(false)
+  const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
 
   const refetch = useCallback(async (refresh = false) => {
-    if (!isLocalNcmMode()) {
-      setCharts([])
-      setError(null)
-      setLoading(false)
-      return
-    }
-
     if (!refresh) {
       const cached = await getCachedToplists()
       if (cached && cached.length > 0) {
@@ -25,6 +18,13 @@ export function useNeteaseToplists(cookie: string, refreshKey = 0) {
         setLoading(false)
         return
       }
+    }
+
+    if (!isLocalNcmMode()) {
+      setCharts([])
+      setError(null)
+      setLoading(false)
+      return
     }
 
     setLoading(true)

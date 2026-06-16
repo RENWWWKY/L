@@ -2,6 +2,7 @@ import type { KeyboardEvent as ReactKeyboardEvent, PointerEvent as ReactPointerE
 import { Mic, Plus, Smile } from 'lucide-react'
 import { motion } from 'framer-motion'
 import { Pressable } from '../../../components/Pressable'
+import { wechatChatComposerFontStyle } from '../WeChatChatMixedText'
 
 function SendPlaneIcon({ color }: { color: string }) {
   return (
@@ -105,6 +106,7 @@ export function ChatInputBar({
             padding: '10px 16px',
             color: 'var(--wx-text)',
             maxHeight: 120,
+            ...wechatChatComposerFontStyle,
           }}
           placeholder="输入消息..."
           aria-label="输入消息"

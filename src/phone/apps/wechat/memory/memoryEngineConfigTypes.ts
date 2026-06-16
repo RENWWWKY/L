@@ -4,6 +4,22 @@ export interface VectorAPIConfig {
   collection: string
 }
 
+export interface SummaryAPIConfig {
+  endpoint: string
+  apiKey: string
+}
+
+export function summaryConfigFromDraft(params: { endpoint: string; apiKey: string }): SummaryAPIConfig {
+  return {
+    endpoint: params.endpoint.trim(),
+    apiKey: params.apiKey.trim(),
+  }
+}
+
+export function isSummaryConfigReadyForPing(config: SummaryAPIConfig, hasSavedKey: boolean): boolean {
+  return Boolean(config.endpoint && (config.apiKey || hasSavedKey))
+}
+
 export type ConnectionStatus = 'idle' | 'pinging' | 'connected' | 'failed'
 
 export function vectorConfigFromDraft(params: {

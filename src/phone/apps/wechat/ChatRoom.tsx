@@ -44,12 +44,14 @@ import { generateMomentsImage } from '../../../components/moments/momentsImageGe
 import { resolveImageStyleHint } from '../../../components/moments/momentsImagePromptEnhancer'
 
 import { useChatTheme } from './ChatThemeContext'
+import { WeChatChatMixedText } from './WeChatChatMixedText'
 import {
   densityToTrackCount,
   hexAndOpacityToRgba,
   resolveEffectiveDanmakuVisuals,
 } from './danmakuResolve'
 import { isMeetImportedWeChatMessageId } from '../lumiMeet/meetMemoryConstants'
+import { loadStarMakerAgencyReplyBias } from '../starMaker/starMakerWechatBridge'
 import { formatUnsummarizedMeetChatBlock } from '../lumiMeet/meetMemoryPromptBlocks'
 import {
   buildMeetWechatPrivateChatContinuityBlock,
@@ -117,6 +119,7 @@ import type {
   WeChatRedPacketPayload,
   WeChatTransferPayload,
   WeChatMusicSyncPayload,
+  WeChatListenCommentSharePayload,
   WeChatMusicSyncInvitePayload,
   WeChatReplyToMeta,
 } from './newFriendsPersona/types'
@@ -273,6 +276,8 @@ import type { CharacterPsychePageSummaries } from './characterPsyche/characterPs
 import type { CharacterPsycheMetricsSnapshot, CharacterPsycheState } from './characterPsyche/characterPsycheTypes'
 import { RedPacketChatRow } from './redPacket/RedPacketChatRow'
 import { MusicInviteChatRow } from './musicSync/MusicInviteChatRow'
+import { ListenCommentShareChatRow } from './musicSync/ListenCommentShareChatRow'
+import { requestOpenListenCommentShareCard } from '../../../components/discoverListen/listenTogetherCommentNavigation'
 import {
   adjudicateMusicSyncFromCharacterText,
   buildMusicSyncInviteReplyBias,
@@ -365,6 +370,7 @@ import {
   sanitizeVoiceControlForTextBubble,
   sanitizeVoiceTranscriptDisplay,
   stripEmotionTagsForTts,
+  voiceTranscriptDuplicatesPlainTexts,
 } from './wechatVoiceScript'
 
 function isSameApiConfigShape(
@@ -455,6 +461,16 @@ function itemsToTranscript(items: ChatItem[], opts?: { groupSpeakerLabel?: (m: C
           }
         }
       }
+      if (m.listenCommentShare) {
+        const lc = m.listenCommentShare
+        return {
+          id: m.id,
+          from: m.from,
+          text: `（分享评论）${lc.commentAuthor}：${lc.commentText} · 《${lc.targetTitle}》`,
+          replyTo: m.replyTo,
+          speakerLabel,
+        }
+      }
       const text = m.text?.trim()
       if (text) return { id: m.id, from: m.from, text, replyTo: m.replyTo, speakerLabel }
       if (m.images?.length)
@@ -540,6 +556,7 @@ function mapWeChatMessagesToChatItems(msgs: WeChatChatMessage[]): ChatMsg[] {
         callStatus: m.callStatus,
         voice: m.voice,
         musicSync: m.musicSync,
+        listenCommentShare: m.listenCommentShare,
         originalText: m.originalContent,
         isRecalled: m.isRecalled,
         recallTimestamp: m.recallTimestamp,
@@ -574,6 +591,7 @@ function mapWeChatMessagesToChatItems(msgs: WeChatChatMessage[]): ChatMsg[] {
       callStatus: m.callStatus,
       voice: m.voice,
       musicSync: m.musicSync,
+      listenCommentShare: m.listenCommentShare,
       originalText: m.originalContent,
       isRecalled: m.isRecalled,
       recallTimestamp: m.recallTimestamp,
@@ -632,7 +650,7 @@ function rebuildChatItemsWithTimestamps(msgs: ChatMsg[], formatWxTimeLabel: (ts:
 function messagePlainPreview(
   msg: Pick<
     ChatMsg,
-    'text' | 'images' | 'redPacket' | 'transfer' | 'callStatus' | 'voice' | 'musicSync' | 'isRecalled' | 'isGroupEventStrip'
+    'text' | 'images' | 'redPacket' | 'transfer' | 'callStatus' | 'voice' | 'musicSync' | 'listenCommentShare' | 'isRecalled' | 'isGroupEventStrip'
   >,
 ): string {
   if (msg.isGroupEventStrip && msg.text?.trim()) return msg.text.trim()
@@ -644,6 +662,7 @@ function messagePlainPreview(
   if (ms?.kind === 'music_invite') return `[音乐共听] ${ms.trackTitle}`
   if (ms?.kind === 'music_accept') return '[频率已接轨]'
   if (ms?.kind === 'music_decline') return '[错失的波段]'
+  if (msg.listenCommentShare) return `[分享评论] ${msg.listenCommentShare.targetTitle}`
   const rp = msg.redPacket
   if (rp) {
     const r = rp.remark?.trim()
@@ -1210,6 +1229,7 @@ type ChatMsg = {
     transcriptText?: string
   }
   musicSync?: WeChatMusicSyncPayload
+  listenCommentShare?: WeChatListenCommentSharePayload
   status?: MsgStatus
   /** 为 true 时播放对方消息入场动效 */
   otherAnimated?: boolean
@@ -1618,6 +1638,8 @@ export function ChatRoom({
   onOpenGroupInfo: _onOpenGroupInfo,
   psycheRadarOpen = false,
   onPsycheRadarOpenChange,
+  embedMode,
+  onEmbedSendReady,
 }: {
   onBack: () => void
   /** 同步「对方正在输入」到顶栏（替代底部提示） */
@@ -1677,6 +1699,9 @@ export function ChatRoom({
   /** 私聊顶栏「体征监测」抽屉开关（由 WeChatApp 承载入口） */
   psycheRadarOpen?: boolean
   onPsycheRadarOpenChange?: (open: boolean) => void
+  /** 隐藏 UI，仅保留发送与 AI 管线（全局快捷回复引擎） */
+  embedMode?: 'quick-reply'
+  onEmbedSendReady?: (api: { sendText: (text: string) => void }) => void
 }) {
   const logger = useConsoleLogger()
   const groupDocRef = useRef<GroupChatRow | null>(null)
@@ -2126,7 +2151,7 @@ export function ChatRoom({
   const aiContextDbMessagesRef = useRef<WeChatChatMessage[]>([])
   /** 会话设置里的「仅 UI 隐藏」截止时间；≤ 此时间的消息不展示在列表中 */
   const uiOnlyHiddenCutTsRef = useRef<number | null>(null)
-  /** 私聊「聊天信息」：角色发表情包 / 语音每轮触发概率（undefined = 未定制） */
+  /** 私聊「聊天信息」：角色发表情包 / 语音每轮是否出现的触发概率（undefined = 未定制；命中后仍可多条） */
   const convMediaFreqRef = useRef<{
     sticker?: number
     voice?: number
@@ -3408,6 +3433,8 @@ export function ChatRoom({
   const [psycheRadarGenerating, setPsycheRadarGenerating] = useState(false)
   const [psycheRadarGenerateError, setPsycheRadarGenerateError] = useState<string | null>(null)
   const retryReplyBiasRef = useRef('')
+  /** 「重新回复」重生当轮对方稿：不额外 +1 自动总结计轮 */
+  const skipMemoryRoundBumpRef = useRef(false)
   const { openConsole } = useWeChatConsole()
   const [composerToast, setComposerToast] = useState<string | null>(null)
   const [centerToast, setCenterToast] = useState<string | null>(null)
@@ -5515,7 +5542,13 @@ export function ChatRoom({
               chunks.push('- 回复时先做情绪承接，再给出内容回应；语气自然、克制、贴近真实聊天。')
               return chunks.join('\n')
             })()
-            const mergedReplyBias = [roundReplyBias, voiceEmotionBias].filter((x) => x.trim()).join('\n\n')
+            const agencyChatBias =
+              roomType !== 'group' && !lumiAssistantChat && personaCharacterId?.trim()
+                ? loadStarMakerAgencyReplyBias(personaCharacterId)
+                : ''
+            const mergedReplyBias = [roundReplyBias, voiceEmotionBias, agencyChatBias]
+              .filter((x) => x.trim())
+              .join('\n\n')
             const recallPreview = pendingRecalledUserTextRef.current?.trim() || ''
             const recallVagueShape = (() => {
               if (!recallPreview) return ''
@@ -6607,7 +6640,7 @@ export function ChatRoom({
         let pendingReplyMessageId: string | undefined
         let thinkingAttached = false
         let musicSyncDirectiveHandledThisRound = false
-        const characterPlainTextsThisRound: string[] = []
+        const characterPlainTextsThisRound: string[] = [] // 同轮已发出气泡正文（含文字与语音转写）
         const emittedThisRound = new Set<string>()
         const emittedMessageIdsThisRound = new Set<string>()
         const roundStickerAllowed =
@@ -6923,6 +6956,16 @@ export function ChatRoom({
               if (!rawScript) continue
               const normalizedScript = normalizeVoiceScriptForTts(rawScript)
               const seg = sanitizeVoiceTranscriptDisplay(normalizedScript)
+              if (
+                characterPlainTextsThisRound.length > 0 &&
+                voiceTranscriptDuplicatesPlainTexts(seg, characterPlainTextsThisRound)
+              ) {
+                continue
+              }
+              const rememberVoiceTranscript = () => {
+                const spoken = seg.trim()
+                if (spoken) characterPlainTextsThisRound.push(spoken)
+              }
               if (await skipBubbleForGroupMute()) {
                 const tsM = getCurrentTimeMs()
                 const oidM = `wxm-${tsM}-ov-${i}-${Math.random().toString(36).slice(2, 6)}`
@@ -6987,6 +7030,7 @@ export function ChatRoom({
                       },
                     },
                   ])
+                  rememberVoiceTranscript()
                 }
                 continue
               }
@@ -7063,6 +7107,7 @@ export function ChatRoom({
                 },
               ]
               enqueueOpponentMessagesSequential(voiceJobs)
+              rememberVoiceTranscript()
               continue
             }
             if (await skipBubbleForGroupMute()) {
@@ -7727,7 +7772,11 @@ export function ChatRoom({
           })
         }
 
+        const skipMemoryRoundBumpThisTurn = skipMemoryRoundBumpRef.current
+        if (skipMemoryRoundBumpThisTurn) skipMemoryRoundBumpRef.current = false
+
         void (async () => {
+          if (skipMemoryRoundBumpThisTurn) return
           let shouldSummarizeNow = false
           try {
             const { shouldSummarize } = await personaDb.bumpMemoryAiRoundCount(conversationKey)
@@ -8223,6 +8272,13 @@ export function ChatRoom({
   )
 
   commitSendRef.current = commitSend
+
+  useEffect(() => {
+    if (embedMode !== 'quick-reply' || !onEmbedSendReady) return
+    onEmbedSendReady({
+      sendText: (text: string) => commitSendRef.current(text, true),
+    })
+  }, [embedMode, onEmbedSendReady, commitSend])
 
   const commitMessageEdit = useCallback(async () => {
     const modal = messageEditModal
@@ -8912,6 +8968,7 @@ export function ChatRoom({
       ]
         .filter((x) => x.trim())
         .join('\n\n')
+      skipMemoryRoundBumpRef.current = true
       window.setTimeout(() => {
         opponentQueueStopRef.current = false
         deferResetProactiveMessageCountdown()
@@ -9520,7 +9577,9 @@ export function ChatRoom({
               />
             </div>
             {expanded ? (
-              <p className="mt-1 whitespace-pre-wrap break-words text-[12px] leading-[1.45] text-[#666]">{text}</p>
+              <p className="mt-1 whitespace-pre-wrap break-words text-[12px] leading-[1.45] text-[#666]">
+                <WeChatChatMixedText text={text} />
+              </p>
             ) : null}
           </button>
         </div>
@@ -9571,17 +9630,13 @@ export function ChatRoom({
                   lineHeight: 1.1,
                 }}
               >
-                {left ? <span style={{ fontFamily: 'var(--wx-font)' }}>{left}&nbsp;</span> : null}
-                <span
-                  style={{
-                    fontFamily: 'var(--wx-num-font)',
-                    fontVariantNumeric: 'tabular-nums lining-nums',
-                    fontFeatureSettings: '"tnum" 1, "lnum" 1',
-                    display: 'inline-block',
-                  }}
-                >
-                  {time}
-                </span>
+                {left ? (
+                  <>
+                    <WeChatChatMixedText text={left} />
+                    &nbsp;
+                  </>
+                ) : null}
+                <WeChatChatMixedText text={time} />
               </span>
             </div>
           </div>
@@ -9596,7 +9651,7 @@ export function ChatRoom({
                 className="rounded-full bg-[#f2f2f2] px-3 py-1 text-[12px]"
                 style={{ color: '#999999', lineHeight: 1.1, fontFamily: 'var(--wx-font)' }}
               >
-                {m.text}
+                <WeChatChatMixedText text={m.text} />
               </span>
             </div>
           </div>
@@ -10012,6 +10067,36 @@ export function ChatRoom({
         return wrap(rowWrapped, renderDetachedReply(m, isSelf))
       }
 
+      if (m.listenCommentShare) {
+        const shareData = m.listenCommentShare
+        const rowInner = (
+          <ListenCommentShareChatRow
+            id={m.id}
+            isSelf={isSelf}
+            data={shareData}
+            bubble={bubble}
+            showAvatar={showAvatar}
+            showAvatarColumn={isSelf ? showAvatarColumnSelf : showAvatarColumnOther}
+            chatSelfAvatarUrl={sharedMsgProps.chatSelfAvatarUrl}
+            chatOtherAvatarUrl={sharedRowProps.chatOtherAvatarUrl}
+            chatOtherSenderNickname={chatOtherSenderNickname}
+            chatOtherAvatarRankBadge={chatOtherAvatarRankBadge}
+            chatSelfAvatarRankBadge={chatSelfAvatarRankBadge}
+            groupRankShowBesideNickname={sharedMsgProps.groupRankShowBesideNickname}
+            onOpen={() => requestOpenListenCommentShareCard(shareData)}
+          />
+        )
+        const rowWrapped =
+          !isSelf && m.otherAnimated ? (
+            <ChatMessageEnter isSelf={false}>{rowInner}</ChatMessageEnter>
+          ) : isSelf && m.selfAnimated ? (
+            <ChatMessageEnter isSelf>{rowInner}</ChatMessageEnter>
+          ) : (
+            rowInner
+          )
+        return wrap(rowWrapped, renderDetachedReply(m, isSelf))
+      }
+
       if (m.redPacket) {
         const rp = m.redPacket
         const rowInner = (
@@ -10384,6 +10469,10 @@ export function ChatRoom({
     if (p === 'random') return { top: '6%', height: '58%' }
     return { top: '3%', height: '26%' }
   }, [effectiveDm?.position])
+
+  if (embedMode === 'quick-reply') {
+    return <div className="h-0 w-0 overflow-hidden" aria-hidden data-wx-quick-reply-engine />
+  }
 
   return (
     <div className="relative flex h-full min-h-0 flex-1 flex-col" data-wx-chat-motion-scope>
@@ -11178,6 +11267,7 @@ export function ChatRoom({
           open={heartWhisperOpen}
           loading={heartWhisperLoading}
           data={heartWhisperData}
+          characterName={psycheCharacterFullName || peerNotifyTitle.trim() || undefined}
           generateError={heartWhisperGenerateError}
           onDismissGenerateError={() => setHeartWhisperGenerateError(null)}
           onClose={() => {

@@ -7,19 +7,41 @@ import {
 
 export { hydrateNeteaseLoginCookie }
 
-/** 未配置时回退 Worker；上线请在 .env 配置国内公网 API（见 docs/听一听-网易云登录部署.md） */
-const DEFAULT_BASE = 'https://netease-qr-login.lyx815934990.workers.dev'
+/**
+ * 社区公共网易云 API（主地址挂掉时 ncmGet 会自动切换下一个）。
+ * 均为第三方服务，不保证长期可用；登录 Cookie 会经过对应服务器。
+ */
+export const PUBLIC_NCM_FALLBACK_BASES = [
+  'https://apic.netstart.cn/music',
+  'https://apis.netstart.cn/music',
+  'https://docs-neteasecloudmusicapi.focalors.ltd',
+  'https://api-enhanced-smoky-five.vercel.app',
+] as const
+
+/** 未配置 VITE_NETEASE_API_BASE 时使用 NetStart 公共实例 */
+const DEFAULT_BASE = PUBLIC_NCM_FALLBACK_BASES[0]
+
+/** 探测到可用公共节点后缓存，减少重复切换 */
+let activeNcmBase: string | null = null
 
 export function isWorkerOnlyMode(): boolean {
   return !isLocalNcmMode() && getNeteaseApiBase().includes('workers.dev')
 }
-const FETCH_TIMEOUT_MS = 60_000
+
+const FETCH_TIMEOUT_MS = 25_000
+/** 可选接口（NetStart 不支持的 enhanced 路径）快速失败，避免拖慢同步 */
+const NCM_OPTIONAL_TIMEOUT_MS = 10_000
 
 const LOCAL_NCM_HOST_RE =
   /^https?:\/\/(localhost|127\.0\.0\.1|192\.168\.\d+\.\d+|10\.\d+\.\d+\.\d+)(:\d+)?/i
 
 /** 开发环境下本机 HTTP API 走 Vite 同源代理，避免 HTTPS 页面 Mixed Content 拦截 */
 export const NCM_DEV_PROXY_PREFIX = '/ncm-api'
+
+/** 当前是否为 NetStart 公共 API（Binaryify 原版，无 enhanced 专属接口） */
+export function isNetStartPublicApi(): boolean {
+  return getNeteaseApiBase().includes('netstart.cn')
+}
 
 export function getNeteaseApiBase(): string {
   const fromEnv = (import.meta.env.VITE_NETEASE_API_BASE as string | undefined)?.trim()
@@ -45,14 +67,15 @@ function buildNeteaseRequestUrl(path: string): URL {
   return new URL(`${base}${path}`)
 }
 
-/** 直连本机 / 局域网 NeteaseCloudMusicApi（国内开发推荐） */
+/** 走 NeteaseCloudMusicApi 标准路径，含本机、公网公共实例 */
 export function isLocalNcmMode(): boolean {
   const mode = (import.meta.env.VITE_NETEASE_API_MODE as string | undefined)?.trim()
   if (mode === 'ncm') return true
   if (mode === 'worker') return false
   const base = getNeteaseApiBase()
   if (base === NCM_DEV_PROXY_PREFIX) return true
-  return LOCAL_NCM_HOST_RE.test(base)
+  if (LOCAL_NCM_HOST_RE.test(base)) return true
+  return !base.includes('workers.dev')
 }
 
 type ApiEnvelope<T> = {
@@ -62,17 +85,21 @@ type ApiEnvelope<T> = {
   cookie?: string
 }
 
-async function fetchWithTimeout(input: string, init?: RequestInit): Promise<Response> {
+async function fetchWithTimeout(
+  input: string,
+  init?: RequestInit,
+  timeoutMs = FETCH_TIMEOUT_MS,
+): Promise<Response> {
   const ctrl = new AbortController()
-  const timer = window.setTimeout(() => ctrl.abort(), FETCH_TIMEOUT_MS)
+  const timer = window.setTimeout(() => ctrl.abort(), timeoutMs)
   try {
     return await fetch(input, { ...init, signal: ctrl.signal })
   } catch (e) {
     if (e instanceof Error && e.name === 'AbortError') {
-      throw new Error(`请求超时（${FETCH_TIMEOUT_MS / 1000}秒），建议打开梯子后重试`)
+      throw new Error(`请求超时（${timeoutMs / 1000}秒）`)
     }
     if (e instanceof TypeError) {
-      throw new Error('无法连接登录服务，建议打开梯子后重试')
+      throw new Error('网络连接失败')
     }
     throw e
   } finally {
@@ -80,55 +107,90 @@ async function fetchWithTimeout(input: string, init?: RequestInit): Promise<Resp
   }
 }
 
-function pickUnikeyFromNcmBody(body: Record<string, unknown>): string | null {
-  const data = body.data
-  if (data && typeof data === 'object' && !Array.isArray(data)) {
-    const unikey = (data as Record<string, unknown>).unikey
-    if (typeof unikey === 'string' && unikey) return unikey
+function getNcmCandidateBases(): string[] {
+  const configured = getNeteaseApiBase().replace(/\/+$/, '')
+  const fromEnv = (import.meta.env.VITE_NETEASE_API_BASE as string | undefined)?.trim()
+  /** 用户已在 .env 指定 API 时，同步只打该节点，避免失败时串测多个公共站导致极慢 */
+  if (fromEnv) return [configured]
+
+  const seen = new Set<string>()
+  const out: string[] = []
+  for (const raw of [configured, ...PUBLIC_NCM_FALLBACK_BASES]) {
+    const base = raw.replace(/\/+$/, '')
+    if (!base || seen.has(base)) continue
+    seen.add(base)
+    out.push(base)
   }
-  if (typeof body.unikey === 'string' && body.unikey) return body.unikey
-  return null
+  return out
 }
 
-function pickQrFromNcmCreate(body: Record<string, unknown>) {
-  const data = (body.data && typeof body.data === 'object' ? body.data : body) as Record<
-    string,
-    unknown
-  >
-  const qrurl =
-    typeof data.qrurl === 'string'
-      ? data.qrurl
-      : typeof data.url === 'string'
-        ? data.url
-        : null
-  let qrimg = typeof data.qrimg === 'string' ? data.qrimg : ''
-  if (qrimg && !qrimg.startsWith('data:')) {
-    qrimg = `data:image/png;base64,${qrimg}`
+function buildNcmRequestUrl(base: string, path: string, params?: Record<string, string>): string {
+  let url: URL
+  if (base.startsWith('/')) {
+    const origin =
+      typeof window !== 'undefined' && window.location?.origin
+        ? window.location.origin
+        : 'http://127.0.0.1:5173'
+    url = new URL(`${base}${path}`, origin)
+  } else {
+    url = new URL(`${base}${path}`)
   }
-  return { qrurl, qrimg: qrimg || null }
-}
-
-async function ncmGet(path: string, params?: Record<string, string>) {
-  const url = buildNeteaseRequestUrl(path)
   url.searchParams.set('timestamp', String(Date.now()))
   if (params) {
     for (const [k, v] of Object.entries(params)) url.searchParams.set(k, v)
   }
-  const res = await fetchWithTimeout(url.toString())
-  let json: Record<string, unknown>
-  try {
-    json = (await res.json()) as Record<string, unknown>
-  } catch {
-    throw new Error(`接口无响应 (${res.status})`)
-  }
-  if (!res.ok) {
-    const msg = (json.message as string) ?? `请求失败 (${res.status})`
-    if (res.status === 404) {
-      throw new Error(`接口不存在 (404): ${path}，请核对 API 文档路径`)
+  return url.toString()
+}
+
+function isNcmInfrastructureError(message: string): boolean {
+  return /请求超时|网络连接|无法连接|接口无响应|接口不存在|502|503|504/i.test(message)
+}
+
+async function ncmGet(
+  path: string,
+  params?: Record<string, string>,
+  timeoutMs = FETCH_TIMEOUT_MS,
+) {
+  const bases = activeNcmBase
+    ? [activeNcmBase, ...getNcmCandidateBases().filter((b) => b !== activeNcmBase)]
+    : getNcmCandidateBases()
+
+  let lastError: Error | null = null
+  for (const base of bases) {
+    try {
+      const res = await fetchWithTimeout(buildNcmRequestUrl(base, path, params), undefined, timeoutMs)
+      let json: Record<string, unknown>
+      try {
+        json = (await res.json()) as Record<string, unknown>
+      } catch {
+        throw new Error(`接口无响应 (${res.status})`)
+      }
+      if (!res.ok) {
+        const msg = (json.message as string) ?? `请求失败 (${res.status})`
+        if (res.status === 404) {
+          throw new Error(`接口不存在 (404): ${path}，请核对 API 文档路径`)
+        }
+        throw new Error(msg)
+      }
+      activeNcmBase = base
+      return json
+    } catch (e) {
+      lastError = e instanceof Error ? e : new Error('无法连接网易云 API')
     }
-    throw new Error(msg)
   }
-  return json
+
+  if (lastError?.message) {
+    const msg = lastError.message
+    if (isNcmInfrastructureError(msg) && bases.length > 1) {
+      throw new Error(`${msg}（已尝试 ${bases.length} 个公共节点）`)
+    }
+    throw lastError
+  }
+  throw new Error(
+    bases.length > 1
+      ? `所有公共 API 均不可用（已尝试 ${bases.length} 个节点）`
+      : '所有公共 API 均不可用',
+  )
 }
 
 /** 带 cookie 的 NCM 请求，并校验 body.code === 200 */
@@ -142,6 +204,22 @@ export async function ncmApiGet(path: string, cookie: string, params?: Record<st
     throw new Error((body.message as string) ?? `接口错误 (${code})`)
   }
   return body
+}
+
+/** 可选接口：失败或超时返回 null，不阻塞主流程 */
+export async function ncmApiGetOptional(
+  path: string,
+  cookie: string,
+  params?: Record<string, string>,
+): Promise<Record<string, unknown> | null> {
+  try {
+    const body = await ncmGet(path, { ...params, cookie }, NCM_OPTIONAL_TIMEOUT_MS)
+    const code = typeof body.code === 'number' ? body.code : 200
+    if (code !== 200) return null
+    return body
+  } catch {
+    return null
+  }
 }
 
 async function apiGet<T>(path: string, params?: Record<string, string>) {
@@ -158,102 +236,16 @@ async function apiGet<T>(path: string, params?: Record<string, string>) {
   return json
 }
 
-async function apiPost<T>(path: string, body?: unknown) {
-  const url = buildNeteaseRequestUrl(path)
-  url.searchParams.set('timestamp', String(Date.now()))
-  const res = await fetchWithTimeout(url.toString(), {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: body ? JSON.stringify(body) : undefined,
-  })
-  let json: ApiEnvelope<T>
-  try {
-    json = (await res.json()) as ApiEnvelope<T>
-  } catch {
-    throw new Error(`接口无响应 (${res.status})，请打开 /api/debug/netease 排查 Worker`)
-  }
-  if (!res.ok || json.code === 500) {
-    throw new Error(
-      (json as { message?: string }).message ?? `请求失败 (${res.status})`,
-    )
-  }
-  return json
-}
-
-export type QrStartData = {
-  key: string
-  qrurl: string
-  qrimg: string | null
-}
-
-export type QrCheckResult = {
-  code: number
-  message?: string | null
-  cookie?: string
-}
-
 export function loadNeteaseCookie(): string {
   return getNeteaseLoginCookieSync()
 }
 
-export function saveNeteaseCookie(cookie: string) {
-  void saveNeteaseLoginCookie(cookie)
+export async function saveNeteaseCookie(cookie: string) {
+  await saveNeteaseLoginCookie(cookie)
 }
 
 export function clearNeteaseCookie() {
   void clearNeteaseLoginCookie()
-}
-
-async function workerQrStart(qrimg: boolean): Promise<QrStartData> {
-  const res = await apiPost<QrStartData>('/api/login/qr/start', { qrimg })
-  if (res.code !== 200 || !res.data?.key) {
-    throw new Error(
-      (res as { message?: string }).message ??
-        'Worker 无法直连网易云。上线请在腾讯云部署 API 并配置 VITE_NETEASE_API_BASE，或在 Cloudflare 设置 NETEASE_UPSTREAM。详见 docs/听一听-网易云登录部署.md',
-    )
-  }
-  return res.data
-}
-
-/** 本机 NeteaseCloudMusicApi：/login/qr/key + /login/qr/create */
-async function ncmQrStart(qrimg: boolean): Promise<QrStartData> {
-  const keyBody = await ncmGet('/login/qr/key')
-  const key = pickUnikeyFromNcmBody(keyBody)
-  if (!key) {
-    throw new Error('本机 API 未返回 unikey，请确认 NeteaseCloudMusicApi 已启动（node app.js）')
-  }
-  const createBody = await ncmGet('/login/qr/create', {
-    key,
-    qrimg: qrimg ? 'true' : 'false',
-  })
-  const { qrurl: rawUrl, qrimg: rawImg } = pickQrFromNcmCreate(createBody)
-  const qrurl =
-    rawUrl ?? `https://music.163.com/login?codekey=${encodeURIComponent(key)}`
-  return { key, qrurl, qrimg: rawImg }
-}
-
-/** 一步获取 key + 二维码图 */
-export async function neteaseQrStart(qrimg = true) {
-  if (isLocalNcmMode()) return ncmQrStart(qrimg)
-  return workerQrStart(qrimg)
-}
-
-/** 轮询扫码状态 */
-export async function neteaseQrCheck(key: string): Promise<QrCheckResult> {
-  if (isLocalNcmMode()) {
-    const body = await ncmGet('/login/qr/check', { key })
-    return {
-      code: typeof body.code === 'number' ? body.code : 500,
-      message: typeof body.message === 'string' ? body.message : null,
-      cookie: typeof body.cookie === 'string' ? body.cookie : '',
-    }
-  }
-  const res = await apiGet<QrCheckResult>('/api/login/qr/check', { key })
-  return {
-    code: res.code,
-    message: res.message,
-    cookie: res.cookie ?? '',
-  }
 }
 
 export async function neteaseLoginStatus(cookie: string) {
@@ -262,9 +254,11 @@ export async function neteaseLoginStatus(cookie: string) {
 
 function pickLoginCookie(body: Record<string, unknown>): string {
   if (typeof body.cookie === 'string' && body.cookie.trim()) return body.cookie.trim()
+  if (typeof body.cookies === 'string' && body.cookies.trim()) return body.cookies.trim()
   const data = body.data
   if (data && typeof data === 'object' && !Array.isArray(data)) {
-    const c = (data as Record<string, unknown>).cookie
+    const row = data as Record<string, unknown>
+    const c = row.cookie ?? row.cookies
     if (typeof c === 'string' && c.trim()) return c.trim()
   }
   return ''
@@ -294,7 +288,7 @@ async function loginCellphoneRequest(params: Record<string, string>): Promise<st
   const code = typeof body.code === 'number' ? body.code : 200
   const cookie = pickLoginCookie(body)
   if (code === 200 && cookie) {
-    saveNeteaseCookie(cookie)
+    await saveNeteaseCookie(cookie)
     return cookie
   }
   throw new Error(loginErrorMessage(body, '手机号登录失败'))
@@ -302,13 +296,12 @@ async function loginCellphoneRequest(params: Record<string, string>): Promise<st
 
 export type NeteasePhoneLoginParams = {
   phone: string
-  password?: string
-  captcha?: string
+  captcha: string
   /** 国家区号，默认 86 */
   ctcode?: string
 }
 
-/** 发送手机验证码（需先调用再使用 captcha 登录） */
+/** 发送手机验证码（需先调用再登录） */
 export async function neteaseSendCaptcha(phone: string, ctcode = '86') {
   const trimmed = phone.trim()
   if (!trimmed) throw new Error('请输入手机号')
@@ -327,30 +320,22 @@ export async function neteaseSendCaptcha(phone: string, ctcode = '86') {
   throw new Error(loginErrorMessage(body, '验证码发送失败'))
 }
 
-/** 手机号 + 密码，或手机号 + 短信验证码登录 */
+/** 手机号 + 短信验证码登录 */
 export async function neteasePhoneLogin({
   phone,
-  password,
   captcha,
   ctcode = '86',
 }: NeteasePhoneLoginParams): Promise<string> {
   const trimmedPhone = phone.trim()
   if (!trimmedPhone) throw new Error('请输入手机号')
 
+  const trimmedCaptcha = captcha.trim()
+  if (!trimmedCaptcha) throw new Error('请输入验证码')
+
   const params: Record<string, string> = {
     phone: trimmedPhone,
     ctcode,
-  }
-
-  const code = captcha?.trim()
-  const pwd = password?.trim()
-
-  if (code) {
-    params.captcha = code
-  } else if (pwd) {
-    params.password = pwd
-  } else {
-    throw new Error('请输入密码或验证码')
+    captcha: trimmedCaptcha,
   }
 
   return loginCellphoneRequest(params)

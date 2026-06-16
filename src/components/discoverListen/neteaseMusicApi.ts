@@ -12,6 +12,8 @@ export type NeteaseSongItem = {
   id: number
   name: string
   artist: string
+  /** 主唱歌手 id（ar[0]），用于跳转歌手页 */
+  artistId?: number
   cover: string
 }
 
@@ -47,6 +49,13 @@ function pickCoverFromRecord(row: Record<string, unknown> | null | undefined): s
   return ''
 }
 
+function pickPrimaryArtistId(ar: unknown[]): number {
+  if (!Array.isArray(ar) || ar.length === 0) return 0
+  const first = ar[0]
+  if (!first || typeof first !== 'object') return 0
+  return Number((first as Record<string, unknown>).id ?? 0)
+}
+
 function mapSong(raw: Record<string, unknown>): NeteaseSongItem | null {
   const id = Number(raw.id ?? raw.songId)
   if (!id) return null
@@ -55,6 +64,7 @@ function mapSong(raw: Record<string, unknown>): NeteaseSongItem | null {
     : Array.isArray(raw.artists)
       ? raw.artists
       : []
+  const artistId = pickPrimaryArtistId(ar)
   const artist = ar
     .map((a) => (a && typeof a === 'object' ? String((a as Record<string, unknown>).name ?? '') : ''))
     .filter(Boolean)
@@ -64,6 +74,7 @@ function mapSong(raw: Record<string, unknown>): NeteaseSongItem | null {
     id,
     name: nameRaw != null && String(nameRaw).trim() ? String(nameRaw) : '未知歌曲',
     artist: artist || '未知歌手',
+    artistId: artistId > 0 ? artistId : undefined,
     cover: pickCoverFromRecord(raw),
   }
 }
@@ -274,14 +285,13 @@ function isSameImageUrl(a: string, b: string): boolean {
   return normalizeImageKey(a) === normalizeImageKey(b)
 }
 
-/** 歌手主页顶部横图（勿用 300y300 方形裁切） */
+/** 歌手主页顶部横图（保留原图比例，勿用 y 裁切参数） */
 function artistBannerUrl(raw: unknown): string {
   const url = typeof raw === 'string' ? raw : ''
   if (!url) return ''
   const full = url.startsWith('//') ? `https:${url}` : url
   if (!full.startsWith('http')) return ''
-  if (full.includes('param=')) return full
-  return `${full}?param=1080y340`
+  return full
 }
 
 function pickArtistUserBlock(pageData?: Record<string, unknown>): Record<string, unknown> | null {
@@ -923,18 +933,52 @@ export async function searchNeteaseSongs(
   return enrichSongsWithDetailCovers(cookie, mapped)
 }
 
-/** GET /song/url/v1?id= — 获取播放地址（文档：音乐 url） */
+/** GET /song/url/v1?id= — 获取播放地址；NetStart 等原版 API 回退 /song/url */
 export async function fetchSongPlayUrl(cookie: string, id: number): Promise<string | null> {
+  const fromV1 = await tryFetchSongPlayUrlV1(cookie, id)
+  if (fromV1) return fromV1
+  return tryFetchSongPlayUrlLegacy(cookie, id)
+}
+
+function pickPlayUrlFromSongUrlBody(body: Record<string, unknown>): string | null {
+  const data = Array.isArray(body.data) ? body.data : []
+  const first = data[0]
+  if (first && typeof first === 'object') {
+    const row = first as Record<string, unknown>
+    const url = row.url
+    if (typeof url === 'string' && url) return url
+    if (row.code === -110 || url === null) return null
+  }
+  return null
+}
+
+async function tryFetchSongPlayUrlV1(cookie: string, id: number): Promise<string | null> {
   const levels = ['standard', 'exhigh', 'higher', 'lossless'] as const
-  for (const level of levels) {
-    const body = await ncmApiGet('/song/url/v1', cookie, { id: String(id), level })
-    const data = Array.isArray(body.data) ? body.data : []
-    const first = data[0]
-    if (first && typeof first === 'object') {
-      const row = first as Record<string, unknown>
-      const url = row.url
-      if (typeof url === 'string' && url) return url
-      if (row.code === -110 || url === null) continue
+  try {
+    for (const level of levels) {
+      const body = await ncmApiGet('/song/url/v1', cookie, { id: String(id), level })
+      const url = pickPlayUrlFromSongUrlBody(body as Record<string, unknown>)
+      if (url) return url
+    }
+  } catch {
+    /* 原版 Binaryify API（如 NetStart）无 /song/url/v1 */
+  }
+  return null
+}
+
+async function tryFetchSongPlayUrlLegacy(cookie: string, id: number): Promise<string | null> {
+  const attempts: Record<string, string>[] = [
+    { id: String(id), br: '320000' },
+    { id: String(id), br: '192000' },
+    { id: String(id) },
+  ]
+  for (const params of attempts) {
+    try {
+      const body = await ncmApiGet('/song/url', cookie, params)
+      const url = pickPlayUrlFromSongUrlBody(body as Record<string, unknown>)
+      if (url) return url
+    } catch {
+      /* 尝试下一档码率 */
     }
   }
   return null
@@ -1332,9 +1376,13 @@ export type NeteaseSongComment = {
   content: string
   nickname: string
   avatar: string
+  userId: number
   likedCount: number
+  liked: boolean
   time: number
   isHot?: boolean
+  /** 仅保存在 Lumi 本机，未同步网易云 */
+  localOnly?: boolean
 }
 
 export type SongCommentsPage = {
@@ -1365,7 +1413,9 @@ function mapComment(raw: unknown, isHot = false): NeteaseSongComment | null {
     content: String(row.content ?? ''),
     nickname: String(user?.nickname ?? '匿名用户'),
     avatar: coverUrl(user?.avatarUrl),
+    userId: Number(user?.userId ?? user?.user_id ?? user?.uid ?? 0),
     likedCount: Number(row.likedCount ?? 0),
+    liked: Boolean(row.liked),
     time: Number(row.time ?? 0),
     isHot,
   }
@@ -1434,6 +1484,91 @@ export async function fetchSongComments(
     items,
     total,
     more: loaded < total,
+  }
+}
+
+/** 评论资源类型：0 歌曲 1 MV 2 歌单 3 专辑 … */
+export type NeteaseCommentResourceType = 0 | 1 | 2 | 3 | 4 | 5 | 6 | 7
+
+/** GET /comment/like — 点赞/取消点赞评论（t=1 点赞，t=0 取消） */
+export async function likeNeteaseComment(
+  cookie: string,
+  opts: {
+    resourceId: number
+    commentId: number
+    type: NeteaseCommentResourceType
+    like: boolean
+  },
+): Promise<void> {
+  if (!opts.resourceId || !opts.commentId) return
+  const body = await ncmApiGet('/comment/like', cookie, {
+    id: String(opts.resourceId),
+    cid: String(opts.commentId),
+    t: opts.like ? '1' : '0',
+    type: String(opts.type),
+  })
+  const code = typeof body.code === 'number' ? body.code : 200
+  if (code !== 200) {
+    throw new Error((body.message as string) ?? `点赞失败 (${code})`)
+  }
+}
+
+/** GET /comment — 发送评论（t=1 发送；type: 0 歌曲 2 歌单 …） */
+export async function postNeteaseComment(
+  cookie: string,
+  opts: {
+    resourceId: number
+    type: NeteaseCommentResourceType
+    content: string
+  },
+): Promise<NeteaseSongComment> {
+  const trimmed = opts.content.trim()
+  if (!opts.resourceId || !trimmed) {
+    throw new Error('评论内容不能为空')
+  }
+  const body = await ncmApiGet('/comment', cookie, {
+    t: '1',
+    type: String(opts.type),
+    id: String(opts.resourceId),
+    content: trimmed,
+  })
+  const code = typeof body.code === 'number' ? body.code : 200
+  if (code !== 200) {
+    throw new Error((body.message as string) ?? `发送评论失败 (${code})`)
+  }
+  const raw =
+    body.comment ??
+    (body.data && typeof body.data === 'object' && !Array.isArray(body.data) ? body.data : null)
+  const mapped = raw ? mapComment(raw) : null
+  if (mapped) return mapped
+  return {
+    id: Date.now(),
+    content: trimmed,
+    nickname: '我',
+    avatar: '',
+    userId: 0,
+    likedCount: 0,
+    liked: false,
+    time: Date.now(),
+  }
+}
+
+/** GET /hug/comment — 抱一抱评论（uid=评论作者 sid=歌曲 id cid=评论 id） */
+export async function hugNeteaseSongComment(
+  cookie: string,
+  opts: { songId: number; commentId: number; targetUserId: number },
+): Promise<void> {
+  if (!opts.songId || !opts.commentId || !opts.targetUserId) {
+    throw new Error('无法获取评论用户信息')
+  }
+  const body = await ncmApiGet('/hug/comment', cookie, {
+    sid: String(opts.songId),
+    cid: String(opts.commentId),
+    uid: String(opts.targetUserId),
+  })
+  const code = typeof body.code === 'number' ? body.code : 200
+  if (code !== 200) {
+    throw new Error((body.message as string) ?? `抱一抱失败 (${code})`)
   }
 }
 
@@ -1558,6 +1693,40 @@ export function songToAttached(song: NeteaseSongItem) {
     songId: song.id,
     title: song.name,
     artist: song.artist,
+    artistId: song.artistId,
     cover: song.cover || 'https://images.unsplash.com/photo-1614613535308-eb5fbd3d2c17?w=300&q=80',
   }
+}
+
+/** 解析歌曲主唱歌手，用于全屏页跳转歌手主页 */
+export async function resolveSongPrimaryArtist(
+  cookie: string,
+  songId: number,
+  artistName?: string,
+): Promise<{ id: number; name: string; avatar: string } | null> {
+  if (!songId) return null
+  try {
+    const details = await fetchNeteaseSongDetails(cookie, [songId])
+    const row = details[0]
+    if (row?.artistId) {
+      return {
+        id: row.artistId,
+        name: row.artist || artistName?.trim() || '未知歌手',
+        avatar: '',
+      }
+    }
+  } catch {
+    /* 回退搜索 */
+  }
+  const q = artistName?.trim()
+  if (!q) return null
+  try {
+    const artists = await searchNeteaseArtists(cookie, q, 8)
+    const exact = artists.find((a) => a.name === q)
+    const pick = exact ?? artists[0]
+    if (pick) return { id: pick.id, name: pick.name, avatar: pick.avatar }
+  } catch {
+    /* ignore */
+  }
+  return null
 }

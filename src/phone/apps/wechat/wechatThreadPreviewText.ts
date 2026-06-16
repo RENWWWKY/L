@@ -30,11 +30,12 @@ export function formatWeChatMessagesTabPreviewFromStoredMessageContent(content: 
 
 type NotifyPreviewMessage = {
   content: string
-  voice?: { durationSec?: number } | null
+  voice?: { durationSec?: number; transcriptText?: string } | null
   images?: unknown[] | null
   redPacket?: unknown | null
   transfer?: unknown | null
   musicSync?: unknown | null
+  listenCommentShare?: unknown | null
 }
 
 /** 微信「信息」会话列表末条预览（与通知摘要规则一致） */
@@ -56,6 +57,7 @@ export function formatWeChatNotifyPreviewFromStoredMessage(msg: NotifyPreviewMes
     return `[语音]${Math.max(1, Math.round(sec))}"`
   }
   if (msg.transfer) return '[转账]'
+  if (msg.listenCommentShare) return '[分享评论]'
   if (msg.musicSync) return '[音乐]'
   if (msg.redPacket) return '[红包]'
   if (isWeChatStickerPreviewContent(msg.content)) return '[动画表情]'

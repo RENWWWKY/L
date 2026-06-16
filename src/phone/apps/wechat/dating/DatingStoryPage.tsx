@@ -631,6 +631,7 @@ function DatingStoryPageInner({ onBackToSelect }: Props) {
   const [retryTargetPlotId, setRetryTargetPlotId] = useState<string | null>(null)
   const [vnRollbackConfirmOpen, setVnRollbackConfirmOpen] = useState(false)
   const [vnRegenerateConfirmOpen, setVnRegenerateConfirmOpen] = useState(false)
+  const [resetArchiveConfirmOpen, setResetArchiveConfirmOpen] = useState(false)
   const [styleDrawerOpen, setStyleDrawerOpen] = useState(false)
   const [styleTuning, setStyleTuning] = useState<DatingStyleTuning>(() => ({ stylePrompt: '', referenceSnippet: '' }))
 
@@ -2765,6 +2766,13 @@ function DatingStoryPageInner({ onBackToSelect }: Props) {
     void regenerateAiPlot(last.id, perspective, narrativeGenOptions)
   }, [currentArchive.plots, narrativeGenOptions, perspective, regenerateAiPlot])
 
+  const confirmResetArchive = useCallback(() => {
+    setResetArchiveConfirmOpen(false)
+    setMenuOpen(false)
+    setSwitchOpen(false)
+    resetCurrentArchive()
+  }, [resetCurrentArchive])
+
   useEffect(() => {
     if (!currentArchive.godPerspective) return
     setAutoUserReaction(false)
@@ -3015,7 +3023,14 @@ function DatingStoryPageInner({ onBackToSelect }: Props) {
                   >
                     编辑当前角色卡片信息
                   </button>
-                  <button className="w-full rounded-lg px-3 py-2 text-left text-[13px] text-[#262626] hover:bg-stone-50" onClick={resetCurrentArchive}>
+                  <button
+                    className="w-full rounded-lg px-3 py-2 text-left text-[13px] text-[#262626] hover:bg-stone-50"
+                    onClick={() => {
+                      setMenuOpen(false)
+                      setSwitchOpen(false)
+                      setResetArchiveConfirmOpen(true)
+                    }}
+                  >
                     重置当前角色进度
                   </button>
                   <button className="flex w-full items-center justify-between rounded-lg px-3 py-2 text-left text-[13px] text-[#262626] hover:bg-stone-50" onClick={() => setSwitchOpen((v) => !v)}>
@@ -4485,6 +4500,48 @@ function DatingStoryPageInner({ onBackToSelect }: Props) {
         </div>
       ) : null}
 
+      {resetArchiveConfirmOpen ? (
+        <div
+          className="absolute inset-0 z-[52] flex items-center justify-center bg-black/35 px-4"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="reset-archive-confirm-title"
+          onClick={() => setResetArchiveConfirmOpen(false)}
+        >
+          <div
+            className="w-full max-w-[400px] rounded-2xl border border-stone-200 bg-white p-4 shadow-lg"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <p id="reset-archive-confirm-title" className="text-center text-[16px] font-semibold text-[#262626]">
+              重置当前角色进度？
+            </p>
+            <p className="mt-2 text-center text-[12px] leading-relaxed text-[#737373]">
+              将清空
+              <span className="font-medium text-[#404040]">
+                {currentCharacter.realName?.trim() || '当前角色'}
+              </span>
+              的全部线下约会剧情、分支记录与相关进度，并恢复为初始状态。此操作不可撤销。
+            </p>
+            <div className="mt-4 flex items-center justify-end gap-2">
+              <button
+                type="button"
+                className="rounded-xl border border-stone-200 bg-white px-4 py-2 text-[13px] text-[#262626] hover:bg-stone-50"
+                onClick={() => setResetArchiveConfirmOpen(false)}
+              >
+                取消
+              </button>
+              <button
+                type="button"
+                className="rounded-xl bg-neutral-900 px-4 py-2 text-[13px] font-medium text-white hover:bg-neutral-800"
+                onClick={confirmResetArchive}
+              >
+                确认重置
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
       {retryBiasOpen ? (
         <div className="absolute inset-0 z-50 flex items-center justify-center bg-black/35 px-4">
           <div className="w-full max-w-[520px] rounded-2xl border border-stone-200 bg-white p-4 shadow-lg">
@@ -4542,6 +4599,7 @@ function DatingStoryPageInner({ onBackToSelect }: Props) {
         open={heartWhisperOpen}
         loading={heartWhisperLoading}
         data={heartWhisperData}
+        characterName={currentCharacter.realName?.trim() || undefined}
         generateError={heartWhisperGenerateError}
         onDismissGenerateError={() => setHeartWhisperGenerateError(null)}
         onClose={() => {

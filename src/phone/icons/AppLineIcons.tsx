@@ -128,6 +128,17 @@ export function IconRecycleBin(props: SVGProps<SVGSVGElement>) {
   )
 }
 
+/** 幻境引擎：六边形沙盒网格（平行宇宙推演意象） */
+export function IconSandbox(props: SVGProps<SVGSVGElement>) {
+  return (
+    <svg {...base} {...props}>
+      <path d="M12 4.25 17.2 7.25v6l-5.2 3-5.2-3v-6L12 4.25z" />
+      <path d="M12 8.1v3.8M9.7 9.95h4.6" opacity="0.38" />
+      <circle cx="12" cy="10" r="1.15" opacity="0.55" />
+    </svg>
+  )
+}
+
 /** 后台通知：铃铛 */
 export function IconBackgroundNotify(props: SVGProps<SVGSVGElement>) {
   return (
@@ -150,6 +161,7 @@ const map = {
   loreArchive: IconLoreArchive,
   recycleBin: IconRecycleBin,
   backgroundNotify: IconBackgroundNotify,
+  sandbox: IconSandbox,
   appearance: IconAppearance,
 } as const
 

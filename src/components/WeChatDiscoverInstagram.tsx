@@ -13,6 +13,8 @@ import { AnonymousQnAApp } from './anonymousQa/AnonymousQnAApp'
 import type { AnonymousQaWechatContext } from './anonymousQa/buildAnonymousQaPersonaContext'
 import type { MockContact } from './anonymousQa/types'
 import { DiscoverListenTogetherApp } from './discoverListen/DiscoverListenTogetherApp'
+import { LISTEN_TOGETHER_UNDER_DEV } from './discoverListen/listenTogetherConstants'
+import { ListenTogetherUnderDev } from './discoverListen/ListenTogetherUnderDev'
 import { LISTEN_TOGETHER_NAVIGATE_EVENT } from './discoverListen/listenTogetherNavigation'
 import { useMomentsInteractionUnreadCount } from './moments/MomentsNoticeRuntime'
 import { MomentsSerifNumericText } from './moments/ArchiveTimelineDateColumn'
@@ -160,6 +162,14 @@ export function WeChatDiscoverInstagram({
     )
   }
   if (activeView === 'listen-together') {
+    if (LISTEN_TOGETHER_UNDER_DEV) {
+      return (
+        <ListenTogetherUnderDev
+          className={`h-full min-h-0 ${className}`}
+          onBack={() => setActiveView('list')}
+        />
+      )
+    }
     return (
       <DiscoverListenTogetherApp
         className={`h-full min-h-0 ${className}`}

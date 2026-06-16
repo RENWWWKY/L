@@ -1,9 +1,11 @@
 import { AnimatePresence, motion } from 'framer-motion'
-import { ChevronDown, MoreHorizontal, Pencil, Sparkles, Trash2, User, UserRound } from 'lucide-react'
+import { ChevronDown, MoreHorizontal, Pencil, Trash2 } from 'lucide-react'
 import { useCallback, useEffect, useRef, useState } from 'react'
-import type { MemoryEntry, MemorySourceIdentity } from './memoryArchiveTypes'
+import type { MemoryEntry } from './memoryArchiveTypes'
+import { isMeetOnlyMemoryEntry } from './memoryArchiveAccountScope'
 import { ARCHIVE_INK, ARCHIVE_SERIF } from './memoryArchiveTheme'
 import { isMomentMemoryEntry, MomentMemoryArchiveCard } from './MomentMemoryArchiveCard'
+import { parseMemorySourcePrefix } from './memorySourceBadges'
 
 const EXPAND_EASE = [0.22, 1, 0.36, 1] as const
 
@@ -16,63 +18,31 @@ function formatArchiveTime(ts: number): string {
   return `${d.getFullYear()}.${String(d.getMonth() + 1).padStart(2, '0')}.${String(d.getDate()).padStart(2, '0')} · ${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`
 }
 
-const MEMORY_SOURCE_GLYPH: Record<
-  MemorySourceIdentity,
-  { Icon: typeof User; short: string; title: string }
-> = {
-  main_wechat: {
-    Icon: User,
-    short: '主号',
-    title: '来源：主微信身份（与顶部「主身份」筛选一致）',
-  },
-  sub_wechat: {
-    Icon: UserRound,
-    short: '小号',
-    title: '来源：伪装小号 / 副微信账号（与顶部「伪装小号」筛选一致）',
-  },
-  lumi_meet: {
-    Icon: Sparkles,
-    short: '遇见',
-    title: '来源：Lumi Meet 邂逅（与顶部「Lumi Meet」筛选一致）',
-  },
-}
-
-/** 横向：主号/小号/遇见 + 微信昵称 · 身份名 */
-function MemorySourceLine({
-  identity,
-  lineLabel,
-}: {
-  identity: MemorySourceIdentity
-  lineLabel?: string
-}) {
-  const { Icon, short, title } = MEMORY_SOURCE_GLYPH[identity]
+/** 微信账号来源线（遇见记忆仅用场景标签，不展示来源线） */
+function MemoryAccountSourceLine({ lineLabel }: { lineLabel?: string }) {
   const detail = lineLabel?.trim()
+  if (!detail || detail === '遇见') return null
   return (
     <span
-      className="inline-flex max-w-[min(100%,220px)] items-center gap-1 whitespace-nowrap text-[11px] leading-none text-gray-600"
-      title={detail ? `${title}：${detail}` : title}
-      aria-label={detail ? `来源 ${short} · ${detail}` : title}
+      className="inline-flex max-w-[min(100%,220px)] items-center whitespace-nowrap text-[11px] leading-none text-gray-600"
+      title={detail}
+      aria-label={`来源 ${detail}`}
     >
-      <Icon className="size-3 shrink-0 text-gray-400" strokeWidth={1.25} aria-hidden />
-      <span className="shrink-0 font-medium text-gray-500">{short}</span>
-      {detail ? (
-        <>
-          <span className="shrink-0 text-gray-300" aria-hidden>
-            ·
-          </span>
-          <span className="min-w-0 truncate font-medium text-gray-700">{detail}</span>
-        </>
-      ) : null}
+      <span className="min-w-0 truncate font-medium text-gray-700">{detail}</span>
     </span>
   )
 }
 
+import { MEMORY_SCENE_CHIP_CLASS, memorySceneFilterLabel } from './memorySceneChipStyles'
+
 export function MemoryCloudCard({
   entry,
+  hideCharacterLabel = false,
   onEdit,
   onDelete,
 }: {
   entry: MemoryEntry
+  hideCharacterLabel?: boolean
   onEdit: () => void
   onDelete: () => void
 }) {
@@ -82,7 +52,10 @@ export function MemoryCloudCard({
   const menuWrapRef = useRef<HTMLDivElement | null>(null)
 
   const bodyText = entry.content.trim() || '—'
-  const displayText = (entry.contentExpanded?.trim() || bodyText) || '—'
+  const displayText =
+    parseMemorySourcePrefix(entry.contentExpanded?.trim() || bodyText).body.trim() ||
+    bodyText ||
+    '—'
   const momentMemory = isMomentMemoryEntry(entry)
 
   const closeActions = useCallback(() => {
@@ -152,21 +125,18 @@ export function MemoryCloudCard({
             {primaryTags.map((tag) => (
               <span
                 key={tag}
-                className={`rounded-full px-3 py-1 text-[10px] font-medium tracking-wider ${
-                  tag === '朋友圈'
-                    ? 'bg-gray-50 text-gray-500'
-                    : 'bg-gray-50 text-gray-500'
+                className={`rounded-full px-2.5 py-1 text-[10px] font-semibold tracking-wide ${
+                  MEMORY_SCENE_CHIP_CLASS[tag] ?? 'bg-gray-50 text-gray-500'
                 }`}
               >
-                {tag}
+                {memorySceneFilterLabel(tag)}
               </span>
             ))}
           </div>
           <div className="flex shrink-0 items-center gap-2">
-            <MemorySourceLine
-              identity={entry.sourceIdentity}
-              lineLabel={entry.sourceLineLabel}
-            />
+            {!isMeetOnlyMemoryEntry(entry) ? (
+              <MemoryAccountSourceLine lineLabel={entry.sourceLineLabel} />
+            ) : null}
             <div
               ref={menuWrapRef}
               className="relative z-30"
@@ -237,10 +207,18 @@ export function MemoryCloudCard({
           onClick={toggleExpanded}
           aria-expanded={expanded}
         >
-          <p className="text-[10px] tracking-[0.14em] text-gray-400">
-            {entry.charDisplayName}
-            {entry.groupDisplayName ? ` · ${entry.groupDisplayName}` : ''}
-          </p>
+          {!hideCharacterLabel || entry.groupDisplayName ? (
+            <p className="text-[10px] tracking-[0.14em] text-gray-400">
+              {!hideCharacterLabel ? (
+                <>
+                  {entry.charDisplayName}
+                  {entry.groupDisplayName ? ` · ${entry.groupDisplayName}` : ''}
+                </>
+              ) : (
+                entry.groupDisplayName
+              )}
+            </p>
+          ) : null}
 
           {momentMemory ? (
             <MomentMemoryArchiveCard entry={entry} expanded={expanded} />

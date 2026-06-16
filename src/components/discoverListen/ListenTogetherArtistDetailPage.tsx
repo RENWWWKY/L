@@ -12,17 +12,20 @@ import {
 } from 'lucide-react'
 import { useCallback, useEffect, useRef, useState } from 'react'
 
+import { ListenTogetherHeaderRefreshButton } from './ListenTogetherHeaderRefreshButton'
 import { ListenTogetherSongCommentsPage } from './ListenTogetherSongCommentsPage'
+import type { ListenCommentAuthor } from './ListenCommentComposer'
 import {
   ListenTogetherPlaylistDetailPage,
   type PlaylistDetailInfo,
 } from './ListenTogetherPlaylistDetailPage'
 import { ListenTogetherArtistNoteDetailPage } from './ListenTogetherArtistNoteDetailPage'
-import { ListenTogetherHeaderRefreshButton } from './ListenTogetherHeaderRefreshButton'
+import { ListenTogetherFollowListPage, type ListenTogetherFollowListTarget } from './ListenTogetherFollowListPage'
 import {
   ArtistNoteBody,
 } from './artistNoteDisplay'
-import { ListenNum } from './ListenNum'
+import { ListenNum, ListenNumericText } from './ListenNum'
+import { listenNumStatClass } from './listenTogetherTypography'
 import {
   getCachedArtistPage,
   saveCachedArtistPage,
@@ -42,6 +45,7 @@ import {
   type NeteaseArtistNote,
   type NeteaseSongItem,
 } from './neteaseMusicApi'
+import type { UserDetailInfo } from './listenTogetherProfileTypes'
 
 export type ArtistDetailInfo = {
   id: number
@@ -64,9 +68,11 @@ export type ListenTogetherArtistDetailPageProps = {
   artist: ArtistDetailInfo
   cookie: string
   sessionActive?: boolean
+  commentAuthor?: ListenCommentAuthor
   onBack: () => void
   onRequireLogin?: () => void
   onOpenArtist?: (artist: NeteaseArtistItem) => void
+  onOpenUser?: (user: UserDetailInfo) => void
   onPlaySong: (song: NeteaseSongItem, queueTracks: NeteaseSongItem[]) => void
   playingSongId?: number | null
   isPlaying?: boolean
@@ -270,7 +276,7 @@ function AlbumCard({ album, onOpen }: { album: NeteaseAlbumItem; onOpen?: () => 
       <div className="p-2.5">
         <p className="line-clamp-2 text-[13px] font-medium text-stone-800">{album.name}</p>
         <p className="mt-1 text-[11px] text-stone-400">
-          {formatAlbumDate(album.publishTime)}
+          <ListenNumericText text={formatAlbumDate(album.publishTime)} />
           {album.trackCount > 0 ? (
             <>
               {' · '}
@@ -374,9 +380,11 @@ export function ListenTogetherArtistDetailPage({
   artist,
   cookie,
   sessionActive = false,
+  commentAuthor,
   onBack,
   onRequireLogin,
   onOpenArtist,
+  onOpenUser,
   onPlaySong,
   playingSongId = null,
   isPlaying = false,
@@ -405,6 +413,9 @@ export function ListenTogetherArtistDetailPage({
   const [commentsSong, setCommentsSong] = useState<NeteaseSongItem | null>(null)
   const [openAlbum, setOpenAlbum] = useState<PlaylistDetailInfo | null>(null)
   const [openNote, setOpenNote] = useState<OpenNoteState | null>(null)
+  const [followListTarget, setFollowListTarget] = useState<ListenTogetherFollowListTarget | null>(
+    null,
+  )
   const [pageRefreshing, setPageRefreshing] = useState(false)
 
   const songsLoadedRef = useRef(false)
@@ -686,6 +697,33 @@ export function ListenTogetherArtistDetailPage({
   const displayCover = detail?.cover ?? ''
   const hasBanner = Boolean(displayCover)
 
+  const openArtistFollowList = (listKind: 'following' | 'followers') => {
+    if (!sessionActive) {
+      onRequireLogin?.()
+      return
+    }
+    if (!detail) return
+    setFollowListTarget({
+      listKind,
+      subject: {
+        type: 'artist',
+        artistId: detail.id,
+        accountUserId: detail.accountUserId,
+        title: displayName,
+      },
+    })
+  }
+
+  const handleOpenArtistFromList = (next: NeteaseArtistItem) => {
+    setFollowListTarget(null)
+    onOpenArtist?.(next)
+  }
+
+  const handleOpenUserFromList = (next: UserDetailInfo) => {
+    setFollowListTarget(null)
+    onOpenUser?.(next)
+  }
+
   const playQueue =
     activeTab === 'songs' && allSongs.length > 0 ? allSongs : hotSongs.length > 0 ? hotSongs : allSongs
 
@@ -740,7 +778,7 @@ export function ListenTogetherArtistDetailPage({
               descExpanded ? '' : 'line-clamp-4'
             }`}
           >
-            {detail.briefDesc}
+            <ListenNumericText text={detail.briefDesc} />
           </p>
           {detail.briefDesc.length > 96 ? (
             <button
@@ -901,18 +939,20 @@ export function ListenTogetherArtistDetailPage({
         style={contentBottomInset ? { paddingBottom: contentBottomInset } : undefined}
       >
         <div className="relative">
-          <div className="relative h-[200px] overflow-hidden" aria-hidden>
+          <div className="relative w-full overflow-hidden bg-stone-100/40" aria-hidden>
             {hasBanner ? (
-              <img
-                src={displayCover}
-                alt=""
-                referrerPolicy="no-referrer"
-                className="h-full w-full object-cover object-center"
-              />
+              <div className="flex min-h-[min(52vw,300px)] w-full items-start justify-center">
+                <img
+                  src={displayCover}
+                  alt=""
+                  referrerPolicy="no-referrer"
+                  className="block w-full h-auto"
+                />
+              </div>
             ) : (
-              <div className="h-full w-full bg-gradient-to-br from-rose-200/80 via-rose-100/60 to-stone-100" />
+              <div className="min-h-[320px] w-full bg-gradient-to-br from-rose-200/80 via-rose-100/60 to-stone-100" />
             )}
-            <div className="absolute inset-0 bg-gradient-to-b from-black/35 via-black/15 to-white/25" />
+            <div className="pointer-events-none absolute inset-0 bg-gradient-to-b from-black/35 via-black/15 to-white/25" />
           </div>
 
           <div className="absolute inset-x-0 top-0 z-20 px-4 pt-[max(10px,env(safe-area-inset-top))]">
@@ -944,7 +984,7 @@ export function ListenTogetherArtistDetailPage({
             </div>
           </div>
 
-          <div className="relative z-10 -mt-14 px-4">
+          <div className="relative z-10 -mt-16 px-4">
             <div className="rounded-[24px] bg-white/95 px-4 pb-4 pt-14 shadow-[0_8px_32px_rgba(120,113,108,0.1)] ring-1 ring-stone-100/80 backdrop-blur-sm">
               <div className="absolute left-1/2 top-0 -translate-x-1/2 -translate-y-1/2">
                 <div className="h-[96px] w-[96px] overflow-hidden rounded-full bg-stone-100 shadow-[0_8px_24px_rgba(120,113,108,0.15)] ring-4 ring-white">
@@ -1001,18 +1041,26 @@ export function ListenTogetherArtistDetailPage({
 
               {detail && !detailLoading ? (
                 <div className="mt-4 grid grid-cols-2 gap-2 rounded-2xl bg-stone-50/90 px-3 py-3 ring-1 ring-stone-100/90">
-                  <div className="text-center">
-                    <p className="text-[15px] font-semibold tabular-nums text-stone-800">
+                  <button
+                    type="button"
+                    onClick={() => openArtistFollowList('following')}
+                    className="rounded-xl py-1 text-center transition-colors hover:bg-white/80 active:scale-[0.98]"
+                  >
+                    <p className={`${listenNumStatClass} text-[15px] text-stone-800`}>
                       <ListenNum>{detail.following.toLocaleString()}</ListenNum>
                     </p>
                     <p className="mt-0.5 text-[11px] text-stone-400">关注</p>
-                  </div>
-                  <div className="text-center">
-                    <p className="text-[15px] font-semibold tabular-nums text-stone-800">
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => openArtistFollowList('followers')}
+                    className="rounded-xl py-1 text-center transition-colors hover:bg-white/80 active:scale-[0.98]"
+                  >
+                    <p className={`${listenNumStatClass} text-[15px] text-stone-800`}>
                       <ListenNum>{detail.followers.toLocaleString()}</ListenNum>
                     </p>
                     <p className="mt-0.5 text-[11px] text-stone-400">粉丝</p>
-                  </div>
+                  </button>
                 </div>
               ) : null}
 
@@ -1051,7 +1099,9 @@ export function ListenTogetherArtistDetailPage({
         open={commentsSong !== null}
         song={commentsSong}
         cookie={cookie}
+        author={commentAuthor}
         onBack={() => setCommentsSong(null)}
+        onRequireLogin={onRequireLogin}
       />
 
       <ListenTogetherArtistNoteDetailPage
@@ -1069,6 +1119,7 @@ export function ListenTogetherArtistDetailPage({
           <ListenTogetherPlaylistDetailPage
             playlist={openAlbum}
             cookie={cookie}
+            commentAuthor={commentAuthor}
             onBack={() => setOpenAlbum(null)}
             onRequireLogin={onRequireLogin}
             onPlaySong={onPlaySong}
@@ -1079,6 +1130,17 @@ export function ListenTogetherArtistDetailPage({
           />
         </div>
       ) : null}
+
+      <ListenTogetherFollowListPage
+        open={followListTarget !== null}
+        target={followListTarget}
+        cookie={cookie}
+        onBack={() => setFollowListTarget(null)}
+        onOpenArtist={handleOpenArtistFromList}
+        onOpenUser={handleOpenUserFromList}
+        onRequireLogin={onRequireLogin}
+        className="!z-[120]"
+      />
     </div>
   )
 }

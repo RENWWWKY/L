@@ -1,7 +1,6 @@
 import { personaDb } from '../newFriendsPersona/idb'
 import {
   applyAffectionDerivedRelationship,
-  buildDefaultCharacterPsycheState,
   extractCharacterPsycheMetrics,
   normalizeCharacterPsycheSnapshotRow,
   normalizeCharacterPsycheState,
@@ -15,8 +14,8 @@ import {
 } from './characterPsycheSummaries'
 
 export type CharacterPsycheLoaded = {
-  state: CharacterPsycheState
-  summaries: CharacterPsychePageSummaries
+  state: CharacterPsycheState | null
+  summaries: CharacterPsychePageSummaries | null
   previousMetrics: CharacterPsycheMetricsSnapshot | null
   /** 上次 AI 生成并入库的时间戳；未生成过则为 null */
   lastGeneratedAt: number | null
@@ -48,10 +47,9 @@ export async function loadCharacterPsycheState(params: {
     lastUserQuote: params.lastUserQuote,
   }
   if (!cid || !pid) {
-    const state = normalizeCharacterPsycheState({})
     return {
-      state,
-      summaries: mergeCharacterPsycheSummaries(state, summaryCtx),
+      state: null,
+      summaries: null,
       previousMetrics: null,
       lastGeneratedAt: null,
     }
@@ -59,19 +57,22 @@ export async function loadCharacterPsycheState(params: {
 
   const raw = await personaDb.getPhoneKv(psycheKvKey(cid, pid))
   const row = normalizeCharacterPsycheSnapshotRow(raw)
-  let state: CharacterPsycheState
-  if (row?.state) {
-    state = applyAffectionDerivedRelationship(normalizeCharacterPsycheState(row.state))
-  } else {
-    const seed = `${cid}::${pid}::${params.personaCharacterId ?? ''}`
-    state = buildDefaultCharacterPsycheState(seed)
+  if (!row?.state) {
+    return {
+      state: null,
+      summaries: null,
+      previousMetrics: null,
+      lastGeneratedAt: null,
+    }
   }
+
+  const state = applyAffectionDerivedRelationship(normalizeCharacterPsycheState(row.state))
 
   return {
     state,
     summaries: mergeCharacterPsycheSummaries(state, summaryCtx),
-    previousMetrics: row?.previousMetrics ?? null,
-    lastGeneratedAt: row?.updatedAt ?? null,
+    previousMetrics: row.previousMetrics ?? null,
+    lastGeneratedAt: row.updatedAt ?? null,
   }
 }
 

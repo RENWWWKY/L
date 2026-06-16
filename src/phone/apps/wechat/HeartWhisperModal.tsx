@@ -1,7 +1,11 @@
 import { AnimatePresence, motion } from 'framer-motion'
+import { Sparkles, X } from 'lucide-react'
+import { useCallback, useEffect, useState } from 'react'
 
 import { Pressable } from '../../components/Pressable'
 import type { HeartWhisper } from './newFriendsPersona/types'
+
+const EDITORIAL_SERIF = 'var(--wx-font, var(--phone-font, "Noto Serif SC", serif))'
 
 /** 供聊天室 / 约会页在捕获异常后写入面板展示 */
 export function formatHeartWhisperGenerateError(err: unknown): string {
@@ -10,54 +14,84 @@ export function formatHeartWhisperGenerateError(err: unknown): string {
   return '未知错误，请稍后重试'
 }
 
-function WhisperField({
+const contentStagger = {
+  hidden: {},
+  visible: {
+    transition: { staggerChildren: 0.1, delayChildren: 0.05 },
+  },
+}
+
+const blockReveal = {
+  hidden: { opacity: 0, y: 10 },
+  visible: {
+    opacity: 1,
+    y: 0,
+    transition: { duration: 0.5, ease: [0.22, 1, 0.36, 1] as const },
+  },
+}
+
+function DossierIndexHeader({
+  index,
   en,
   zh,
-  value,
 }: {
+  index: string
   en: string
   zh: string
-  value: string
 }) {
   return (
-    <div className="space-y-1.5">
-      <div className="flex items-baseline gap-1.5">
-        <span className="text-[10px] font-semibold tracking-[0.18em] text-[#4a4a4a]">{en}</span>
-        <span className="text-[10px] text-[#9a9a9a]">{zh}</span>
-      </div>
-      <p className="text-[14px] leading-6 text-[#111111]">{value || '-'}</p>
-    </div>
+    <p className="font-mono text-[10px] tracking-[0.22em] text-gray-400">
+      {index}. {en} / {zh}
+    </p>
   )
 }
 
 function Skeleton() {
   return (
-    <div className="space-y-4">
-      <div className="h-4 w-24 animate-pulse rounded bg-[#f1f1f1]" />
-      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-        <div className="space-y-3">
-          <div className="h-3 w-20 animate-pulse rounded bg-[#f1f1f1]" />
-          <div className="h-5 w-full animate-pulse rounded bg-[#f6f6f6]" />
-          <div className="h-3 w-20 animate-pulse rounded bg-[#f1f1f1]" />
-          <div className="h-5 w-full animate-pulse rounded bg-[#f6f6f6]" />
-          <div className="h-3 w-20 animate-pulse rounded bg-[#f1f1f1]" />
-          <div className="h-5 w-full animate-pulse rounded bg-[#f6f6f6]" />
+    <div className="space-y-10">
+      {[0, 1, 2].map((i) => (
+        <div key={i} className="space-y-3">
+          <div className="h-2.5 w-28 animate-pulse rounded bg-gray-100" />
+          <div className="h-14 animate-pulse rounded bg-gray-50" />
         </div>
-        <div className="space-y-4">
-          <div className="h-3 w-24 animate-pulse rounded bg-[#f1f1f1]" />
-          <div className="h-24 w-full animate-pulse rounded bg-[#f6f6f6]" />
-          <div className="h-3 w-28 animate-pulse rounded bg-[#f1f1f1]" />
-          <div className="h-20 w-full animate-pulse rounded bg-[#f6f6f6]" />
-        </div>
+      ))}
+      <div className="rounded-2xl bg-[#F9FAFB] p-5">
+        <div className="h-2.5 w-36 animate-pulse rounded bg-gray-100" />
+        <div className="mt-4 h-16 animate-pulse rounded bg-gray-50" />
       </div>
     </div>
   )
+}
+
+function EmptyHint() {
+  return (
+    <div className="flex flex-col items-center justify-center px-4 py-20 text-center">
+      <p className="font-serif text-[14px] text-gray-800">尚未生成心语</p>
+      <p className="mt-3 max-w-[260px] text-[12px] leading-relaxed text-gray-400">
+        点击右上角「生成心语」，基于最近一轮对话解码 TA 此刻的内心侧写。
+      </p>
+    </div>
+  )
+}
+
+function whisperContentKey(data: HeartWhisper): string {
+  return [
+    data.timestamp,
+    data.location,
+    data.outfit,
+    data.action,
+    data.innerThoughts,
+    data.userImpression,
+  ]
+    .map((s) => String(s ?? '').trim())
+    .join('\x1e')
 }
 
 export function HeartWhisperModal({
   open,
   loading,
   data,
+  characterName,
   generateError,
   onDismissGenerateError,
   onClose,
@@ -66,13 +100,47 @@ export function HeartWhisperModal({
   open: boolean
   loading: boolean
   data: HeartWhisper | null
-  /** 最近一次「生成/刷新」失败时的可读原因，展示在面板内便于对照 */
+  /** 私聊对象名，展示于面板标题 */
+  characterName?: string
   generateError?: string | null
   onDismissGenerateError?: () => void
   onClose: () => void
   onGenerate: () => void
 }) {
   const err = String(generateError ?? '').trim()
+  const [resonating, setResonating] = useState(false)
+
+  const hasContent =
+    !!data &&
+    [data.location, data.outfit, data.action, data.innerThoughts, data.userImpression].some((s) =>
+      String(s ?? '').trim(),
+    )
+
+  const location = String(data?.location ?? '').trim()
+  const outfit = String(data?.outfit ?? '').trim()
+  const action = String(data?.action ?? '').trim()
+  const innerThoughts = String(data?.innerThoughts ?? '').trim()
+  const userImpression = String(data?.userImpression ?? '').trim()
+  const contentKey = data ? whisperContentKey(data) : 'empty'
+  const titleName = characterName?.trim() || '心语'
+
+  const handleResonate = useCallback(() => {
+    if (loading) return
+    setResonating(true)
+    onGenerate()
+  }, [loading, onGenerate])
+
+  useEffect(() => {
+    if (!resonating) return
+    const t = window.setTimeout(() => setResonating(false), 1000)
+    return () => window.clearTimeout(t)
+  }, [resonating])
+
+  useEffect(() => {
+    if (!loading) return
+    setResonating(true)
+  }, [loading])
+
   return (
     <AnimatePresence>
       {open ? (
@@ -81,90 +149,167 @@ export function HeartWhisperModal({
           initial={{ opacity: 0 }}
           animate={{ opacity: 1 }}
           exit={{ opacity: 0 }}
-          transition={{ duration: 0.22, ease: 'easeOut' }}
-          className="fixed inset-0 z-[1300] flex items-center justify-center bg-[#f5f5f5]/65 px-4 backdrop-blur-sm"
+          transition={{ duration: 0.24, ease: 'easeOut' }}
+          className="fixed inset-0 z-[1300] flex items-end justify-center bg-black/15 px-0 backdrop-blur-sm sm:items-center sm:px-4"
           onMouseDown={(e) => {
             if (e.target === e.currentTarget) onClose()
           }}
         >
           <motion.div
             key="heart-whisper-panel"
-            initial={{ opacity: 0, y: 12 }}
+            initial={{ opacity: 0, y: 20 }}
             animate={{ opacity: 1, y: 0 }}
-            exit={{ opacity: 0, y: 8 }}
-            transition={{ duration: 0.3, ease: [0.22, 1, 0.36, 1] }}
-            className="flex h-full max-h-[82vh] w-full max-w-[760px] flex-col rounded-[18px] border border-[#eaeaea] bg-white px-5 py-5 shadow-[0_18px_60px_rgba(0,0,0,0.09)]"
+            exit={{ opacity: 0, y: 14 }}
+            transition={{ duration: 0.36, ease: [0.22, 1, 0.36, 1] }}
+            className="relative flex h-[min(88vh,720px)] w-full max-w-[420px] flex-col overflow-hidden rounded-t-[28px] bg-white/95 shadow-[0_20px_60px_rgba(0,0,0,0.05)] backdrop-blur-2xl sm:rounded-[28px]"
             onMouseDown={(e) => e.stopPropagation()}
           >
-            <div className="flex items-start justify-between gap-3">
-              <div>
-                <h2 className="text-[17px] font-semibold tracking-[0.12em] text-black">INNER VOICE</h2>
-                <p className="mt-1 text-[12px] text-[#8e8e8e]">心语</p>
-              </div>
-              <div className="flex items-center gap-2">
-                <Pressable
-                  type="button"
-                  onClick={onGenerate}
-                  className="rounded-[10px] border border-black px-3 py-1.5 text-[12px] font-medium tracking-wide text-black transition-colors hover:bg-black hover:text-white"
-                >
-                  {loading ? '生成中...' : '生成/刷新'}
-                </Pressable>
-                <Pressable type="button" onClick={onClose} className="flex h-8 w-8 items-center justify-center rounded-full border border-[#e5e5e5] text-[#555]">
-                  <span className="text-[15px] leading-none">X</span>
-                </Pressable>
+            {/* ── Header ── */}
+            <div className="relative shrink-0 px-7 pb-5 pt-7">
+              <div className="flex items-start justify-between gap-5">
+                <div className="min-w-0 flex-1">
+                  <p className="text-[10px] tracking-widest text-gray-400">LIVE FEED · 实时心语</p>
+                  <h2
+                    className="mt-2 truncate text-[26px] font-semibold leading-tight text-[#1C1C1E]"
+                    style={{ fontFamily: EDITORIAL_SERIF }}
+                  >
+                    {titleName}
+                  </h2>
+                  {data?.timestamp ? (
+                    <p className="mt-2 font-mono text-[10px] tabular-nums tracking-wider text-gray-300">
+                      {data.timestamp}
+                    </p>
+                  ) : null}
+                </div>
+                <div className="flex shrink-0 items-center gap-3 pt-0.5">
+                  <Pressable
+                    type="button"
+                    onClick={handleResonate}
+                    disabled={loading}
+                    className="inline-flex items-center gap-1.5 rounded-full bg-[#1C1C1E] px-4 py-2 text-white shadow-[0_6px_20px_rgba(28,28,30,0.22)] transition-all hover:bg-black active:scale-[0.98] disabled:opacity-45"
+                    aria-label={loading ? '心语解码中' : '生成心语'}
+                  >
+                    <Sparkles
+                      className={`size-3.5 shrink-0 ${resonating || loading ? 'animate-spin' : ''}`}
+                      strokeWidth={1.75}
+                    />
+                    <span className="text-[12px] font-medium tracking-wide">
+                      {loading ? '解码中…' : '生成心语'}
+                    </span>
+                  </Pressable>
+                  <Pressable
+                    type="button"
+                    onClick={onClose}
+                    className="flex h-9 w-9 shrink-0 items-center justify-center text-gray-300 transition-colors hover:text-gray-600"
+                    aria-label="关闭"
+                  >
+                    <X className="size-[18px]" strokeWidth={1.25} />
+                  </Pressable>
+                </div>
               </div>
             </div>
 
-            <div className="mt-3 border-t border-[#eeeeee]" />
-
             {err ? (
-              <div
-                className="mt-3 rounded-xl border border-red-200/90 bg-red-50 px-3 py-2.5"
-                role="alert"
-              >
-                <div className="flex items-start justify-between gap-3">
-                  <div className="min-w-0 flex-1">
-                    <p className="text-[12px] font-semibold text-red-900">生成失败</p>
-                    <p className="mt-1 whitespace-pre-wrap break-words text-[13px] leading-relaxed text-red-950/90">
-                      {err}
-                    </p>
+              <div className="relative shrink-0 px-7 pb-4">
+                <div className="rounded-2xl bg-red-50/80 px-4 py-3" role="alert">
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="min-w-0 flex-1">
+                      <p className="text-[12px] font-medium text-red-900">解码失败</p>
+                      <p className="mt-1 whitespace-pre-wrap break-words text-[13px] leading-relaxed text-red-950/85">
+                        {err}
+                      </p>
+                    </div>
+                    {onDismissGenerateError ? (
+                      <Pressable
+                        type="button"
+                        onClick={onDismissGenerateError}
+                        className="shrink-0 px-2 py-1 text-[11px] text-red-800/80 hover:text-red-900"
+                      >
+                        知道了
+                      </Pressable>
+                    ) : null}
                   </div>
-                  {onDismissGenerateError ? (
-                    <Pressable
-                      type="button"
-                      onClick={onDismissGenerateError}
-                      className="shrink-0 rounded-lg border border-red-300/80 bg-white px-2.5 py-1 text-[11px] font-medium text-red-900 hover:bg-red-100/80"
-                    >
-                      知道了
-                    </Pressable>
-                  ) : null}
                 </div>
               </div>
             ) : null}
 
-            <div className="mt-3 min-h-0 flex-1 overflow-y-auto pr-1">
-              <div className="text-right">
-                <span className="text-[12px] tabular-nums text-[#8c8c8c]">{data?.timestamp || '--'}</span>
-              </div>
+            {/* ── Dossier body ── */}
+            <div className="relative min-h-0 flex-1 overflow-y-auto overscroll-y-contain px-7 pb-10 pt-1 [scrollbar-width:none] [-webkit-overflow-scrolling:touch] [&::-webkit-scrollbar]:hidden">
+              {loading && !hasContent ? (
+                <Skeleton />
+              ) : hasContent ? (
+                <motion.div
+                  key={contentKey}
+                  variants={contentStagger}
+                  initial="hidden"
+                  animate="visible"
+                >
+                  {location ? (
+                    <motion.p
+                      variants={blockReveal}
+                      className="mb-10 font-mono text-[10px] leading-relaxed tracking-wide text-gray-400"
+                    >
+                      LOC / {location}
+                    </motion.p>
+                  ) : null}
 
-              <div className="mt-4">
-                {loading ? (
-                  <Skeleton />
-                ) : (
-                  <div className="grid grid-cols-1 gap-6 sm:grid-cols-[0.95fr_1.05fr]">
-                    <div className="space-y-5">
-                      <WhisperField en="LOCATION" zh="所在地点" value={data?.location ?? ''} />
-                      <WhisperField en="OUTFIT" zh="着装" value={data?.outfit ?? ''} />
-                      <WhisperField en="ACTION" zh="动作姿态" value={data?.action ?? ''} />
-                    </div>
-                    <div className="space-y-5">
-                      <WhisperField en="INNER THOUGHTS" zh="内心独白" value={data?.innerThoughts ?? ''} />
-                      <div className="border-t border-dashed border-[#eeeeee]" />
-                      <WhisperField en="IMPRESSION ON USER" zh="对你的看法" value={data?.userImpression ?? ''} />
-                    </div>
-                  </div>
-                )}
-              </div>
+                  {outfit ? (
+                    <motion.section variants={blockReveal} className="mb-10">
+                      <DossierIndexHeader index="01" en="OUTFIT" zh="着装" />
+                      <p className="mt-3 font-sans text-[14px] font-light leading-relaxed text-gray-700">
+                        {outfit}
+                      </p>
+                    </motion.section>
+                  ) : null}
+
+                  {action ? (
+                    <motion.section variants={blockReveal} className="mb-10">
+                      <DossierIndexHeader index="02" en="ACTION" zh="动作" />
+                      <p className="mt-3 font-sans text-[14px] font-light leading-relaxed text-gray-700">
+                        {action}
+                      </p>
+                    </motion.section>
+                  ) : null}
+
+                  {innerThoughts ? (
+                    <motion.section variants={blockReveal} className="relative mb-10">
+                      <DossierIndexHeader index="03" en="MONOLOGUE" zh="独白" />
+                      <div className="relative mt-4">
+                        <span
+                          className="pointer-events-none absolute -left-3 -top-6 select-none font-serif text-[7.5rem] leading-none text-gray-900 opacity-[0.05]"
+                          aria-hidden
+                        >
+                          “
+                        </span>
+                        <p
+                          className="relative whitespace-pre-wrap text-[15px] leading-relaxed text-[#1C1C1E]"
+                          style={{ fontFamily: EDITORIAL_SERIF }}
+                        >
+                          {innerThoughts}
+                        </p>
+                      </div>
+                    </motion.section>
+                  ) : null}
+
+                  {userImpression ? (
+                    <motion.section variants={blockReveal} className="mt-4">
+                      <div className="rounded-2xl border-l-2 border-gray-800 bg-[#F9FAFB] p-5">
+                        <DossierIndexHeader index="04" en="THOUGHTS ON YOU" zh="对你的剖析" />
+                        <p
+                          className="mt-4 whitespace-pre-wrap text-[14px] italic leading-relaxed text-gray-700"
+                          style={{ fontFamily: EDITORIAL_SERIF }}
+                        >
+                          {userImpression}
+                        </p>
+                      </div>
+                    </motion.section>
+                  ) : null}
+                </motion.div>
+              ) : loading ? (
+                <Skeleton />
+              ) : (
+                <EmptyHint />
+              )}
             </div>
           </motion.div>
         </motion.div>

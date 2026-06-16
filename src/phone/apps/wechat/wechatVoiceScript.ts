@@ -45,6 +45,46 @@ export function sanitizeVoiceTranscriptDisplay(input: string): string {
     .trim()
 }
 
+/** 比较聊天正文/语音转写是否大体重复（用于同轮文字+语音去重） */
+export function normalizeChatContentForCompare(input: string): string {
+  return String(input ?? '')
+    .replace(/[^\u4e00-\u9fff0-9a-zA-Z]/g, '')
+    .toLowerCase()
+}
+
+export function chatContentMostlyDuplicates(existing: string, incoming: string): boolean {
+  const a = normalizeChatContentForCompare(existing)
+  const b = normalizeChatContentForCompare(incoming)
+  if (!a || !b) return false
+  if (a.length >= 6 && b.length >= 6 && (a.includes(b) || b.includes(a))) return true
+  const shorter = a.length <= b.length ? a : b
+  const longer = a.length <= b.length ? b : a
+  if (shorter.length < 8) return false
+  let hit = 0
+  for (let len = 4; len <= Math.min(12, shorter.length); len += 1) {
+    for (let i = 0; i <= shorter.length - len; i += 1) {
+      if (longer.includes(shorter.slice(i, i + len))) {
+        hit += len
+        break
+      }
+    }
+  }
+  return hit / shorter.length >= 0.82
+}
+
+/** 同轮已发出的文字/语音转写：仅拦截「复读」，不误伤穿插的补充语音 */
+export function voiceTranscriptDuplicatesPlainTexts(voiceTranscript: string, priorLines: string[]): boolean {
+  const voiceNorm = normalizeChatContentForCompare(voiceTranscript)
+  if (voiceNorm.length < 8) return false
+  if (priorLines.some((line) => chatContentMostlyDuplicates(line, voiceTranscript))) return true
+  if (voiceNorm.length < 12) return false
+  const combined = priorLines.map((t) => normalizeChatContentForCompare(t)).filter(Boolean).join('')
+  if (combined.length >= voiceNorm.length && chatContentMostlyDuplicates(combined, voiceTranscript)) {
+    return true
+  }
+  return false
+}
+
 export function sanitizeVoiceControlForTextBubble(input: string): string {
   return String(input ?? '')
     .replace(/<#\s*[\d.]+\s*#>/g, ' ')

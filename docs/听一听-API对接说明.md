@@ -1,6 +1,6 @@
 # 听一听 · api-enhanced 接口对接说明
 
-API 文档：[在线文档](https://neteasecloudmusicapienhanced.js.org/) · 你的部署示例：`https://api-enhanced-smoky-five.vercel.app/docs/`
+API 文档：[NetStart 网易云 API](https://apis.netstart.cn/music/#/) · 默认：`https://apic.netstart.cn/music`（备用：`apis.netstart.cn/music` 等）
 
 所有需登录接口均在 Query 带 `cookie`（项目里由 `ncmApiGet` 自动附加）。
 
@@ -10,8 +10,7 @@ API 文档：[在线文档](https://neteasecloudmusicapienhanced.js.org/) · 你
 
 | 页面功能 | 接口 | 项目实现 |
 |----------|------|----------|
-| 扫码登录 | `GET /login/qr/key` → `/login/qr/create` → `/login/qr/check` | `NeteaseQrLoginModal` · 扫码 Tab |
-| 手机号登录 | `GET /captcha/sent` + `GET /login/cellphone` | 同上 · 手机号 Tab（密码或验证码） |
+| 手机号验证码登录 | `GET /captcha/sent` + `GET /login/cellphone` | `NeteaseQrLoginModal` |
 | 游客进入 | 无网易 Cookie，本地标记游客模式 | 登录弹窗 / 首页 · `enterGuestListenMode()` |
 | 登录态校验 | `GET /login/status` | `checkNeteaseLogin()` |
 | 我的 · 头像昵称 | `GET /user/account` | `fetchNeteaseProfile()` |
@@ -83,8 +82,8 @@ GET {BASE}/playlist/detail?id=3778678&cookie=...
 ## 环境变量
 
 ```env
-VITE_NETEASE_API_BASE=https://api-enhanced-smoky-five.vercel.app
+VITE_NETEASE_API_BASE=https://apic.netstart.cn/music
 VITE_NETEASE_API_MODE=ncm
 ```
 
-**上线给国内用户**：建议改为国内机房 API，Vercel 仅适合开发或配合梯子。
+**公共 API 说明**：NetStart 为第三方社区服务（原版 Binaryify API），播放接口会自动回退 `/song/url`。不保证长期可用；长期上线建议自建国内 API。

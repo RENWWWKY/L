@@ -18,6 +18,8 @@ export const LISTEN_TOGETHER_ARTIST_PAGE_CACHE_KV_KEY = 'listen-together-artist-
 
 const MAX_SEARCH_CACHE_ENTRIES = 32
 const MAX_ARTIST_CACHE_ENTRIES = 24
+/** 首页推荐 / 排行榜缓存有效期（7 天） */
+export const LISTEN_PAGE_CACHE_TTL_MS = 7 * 24 * 60 * 60 * 1000
 
 export type CachedHomeFeed = {
   dayKey: string
@@ -100,7 +102,16 @@ async function hydrateHomeFeed(): Promise<void> {
 
 export async function getCachedHomeFeed(): Promise<NeteaseHomeFeed | null> {
   await hydrateHomeFeed()
-  if (!homeFeedMemory || homeFeedMemory.dayKey !== todayDayKey()) return null
+  if (!homeFeedMemory) return null
+  if (Date.now() - homeFeedMemory.updatedAt > LISTEN_PAGE_CACHE_TTL_MS) return null
+  const { feed } = homeFeedMemory
+  if (feed.banners.length === 0 && feed.sections.length === 0) return null
+  return feed
+}
+
+export function getCachedHomeFeedSync(): NeteaseHomeFeed | null {
+  if (!homeFeedHydrated || !homeFeedMemory) return null
+  if (Date.now() - homeFeedMemory.updatedAt > LISTEN_PAGE_CACHE_TTL_MS) return null
   const { feed } = homeFeedMemory
   if (feed.banners.length === 0 && feed.sections.length === 0) return null
   return feed
@@ -137,7 +148,15 @@ async function hydrateToplists(): Promise<void> {
 
 export async function getCachedToplists(): Promise<NeteaseToplistChart[] | null> {
   await hydrateToplists()
-  return toplistsMemory?.charts.length ? toplistsMemory.charts : null
+  if (!toplistsMemory) return null
+  if (Date.now() - toplistsMemory.updatedAt > LISTEN_PAGE_CACHE_TTL_MS) return null
+  return toplistsMemory.charts.length > 0 ? toplistsMemory.charts : null
+}
+
+export function getCachedToplistsSync(): NeteaseToplistChart[] | null {
+  if (!toplistsHydrated || !toplistsMemory) return null
+  if (Date.now() - toplistsMemory.updatedAt > LISTEN_PAGE_CACHE_TTL_MS) return null
+  return toplistsMemory.charts.length > 0 ? toplistsMemory.charts : null
 }
 
 export async function saveCachedToplists(charts: NeteaseToplistChart[]): Promise<void> {
@@ -335,5 +354,16 @@ export async function clearListenTogetherPageCaches(): Promise<void> {
     clearCachedFeaturedArtists(),
     clearCachedSearchResults(),
     clearCachedArtistPage(),
+  ])
+}
+
+/** 进入听一听时预加载页面级缓存到内存 */
+export async function hydrateListenTogetherPageCaches(): Promise<void> {
+  await Promise.all([
+    hydrateHomeFeed(),
+    hydrateToplists(),
+    hydrateFeaturedArtists(),
+    hydrateSearchResults(),
+    hydrateArtistPages(),
   ])
 }

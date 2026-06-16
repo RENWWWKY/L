@@ -5,7 +5,9 @@ import { fileURLToPath } from 'node:url'
 import tailwindcss from '@tailwindcss/vite'
 import react from '@vitejs/plugin-react'
 import basicSsl from '@vitejs/plugin-basic-ssl'
-import { defineConfig, type Plugin, type ResolvedConfig } from 'vite'
+import { defineConfig, loadEnv, type Plugin, type ResolvedConfig } from 'vite'
+
+import { buildNeteaseDevProxyTable } from './viteNeteaseDevProxy'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 
@@ -66,7 +68,9 @@ function pwaManifestPlugin(): Plugin {
 function injectEarlyServiceWorkerPlugin(): Plugin {
   let resolvedBase = '/'
 
-  const buildRegisterSnippet = (base: string) => {
+  const buildRegisterSnippet = (base: string, isDev: boolean) => {
+    /** 本机 dev：iOS「添加到主屏幕」与早期 SW 抢首屏易白屏，开发期不注入 */
+    if (isDev) return ''
     const scope = base === '/' ? '/' : base.endsWith('/') ? base : `${base}/`
     const swUrl = `${base}sw.js`.replace(/([^:]\/)\/+/g, '$1')
     return `<script>(function(){if(!('serviceWorker'in navigator))return;var u=${JSON.stringify(swUrl)},s=${JSON.stringify(scope)},go=function(){navigator.serviceWorker.register(u,{scope:s,updateViaCache:'none'}).catch(function(){});};var ios=/iPad|iPhone|iPod/.test(navigator.userAgent)||(navigator.platform==='MacIntel'&&navigator.maxTouchPoints>1);if(ios){window.addEventListener('load',function(){setTimeout(go,2000);},{once:true});}else{go();}})();</script>`
@@ -77,8 +81,10 @@ function injectEarlyServiceWorkerPlugin(): Plugin {
     configResolved(config: ResolvedConfig) {
       resolvedBase = config.base
     },
-    transformIndexHtml(html) {
-      const snippet = buildRegisterSnippet(resolvedBase)
+    transformIndexHtml(html, ctx) {
+      const isDev = !!ctx.server
+      const snippet = buildRegisterSnippet(resolvedBase, isDev)
+      if (!snippet) return html
       return html.replace('</head>', `${snippet}\n</head>`)
     },
   }
@@ -213,8 +219,11 @@ function resolveAppBase(command: 'build' | 'serve') {
   return '/'
 }
 
-export default defineConfig(({ command }) => {
+export default defineConfig(({ command, mode }) => {
   const base = resolveAppBase(command)
+  const env = loadEnv(mode, __dirname, '')
+  const neteaseDevProxies = buildNeteaseDevProxyTable(env)
+
   return {
   base,
   plugins: [react(), tailwindcss(), basicSsl(), injectEarlyServiceWorkerPlugin(), notifyIconDevServerPlugin(), copyRootImageDirToDist(), pwaManifestPlugin()],
@@ -246,14 +255,9 @@ export default defineConfig(({ command }) => {
         rewrite: (p) => p.replace(/^\/minimaxi/, ''),
       },
       /**
-       * 听一听 · 本机 NeteaseCloudMusicApi（npm run ncm:local 或 Docker :3000）
-       * 开发页为 HTTPS 时，浏览器会拦截直连 http://127.0.0.1:3000（Mixed Content），走同源代理。
+       * 听一听 · 网易云 API 开发代理（/ncm-api-0… 对应不同公共节点，502 时自动切换）
        */
-      '/ncm-api': {
-        target: 'http://127.0.0.1:3000',
-        changeOrigin: true,
-        rewrite: (p) => p.replace(/^\/ncm-api/, ''),
-      },
+      ...neteaseDevProxies,
     },
   },
   preview: {

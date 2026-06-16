@@ -1,11 +1,17 @@
 import { personaDb, pullPhoneKvWithLocalStorageLegacy } from '../../phone/apps/wechat/newFriendsPersona/idb'
 import type { ParsedLyricLine } from './listenLyricParse'
 import type { NeteaseProfileBundle } from './neteaseProfileApi'
-import type { NeteaseSongItem, SongCommentsCacheEntry } from './neteaseMusicApi'
+import type {
+  NeteaseSongComment,
+  NeteaseSongItem,
+  PlaylistMeta,
+  SongCommentsCacheEntry,
+} from './neteaseMusicApi'
 
 /** IndexedDB `phoneKv` 键（与微信人设同库 `personaDb`） */
 export const LISTEN_TOGETHER_PLAYLIST_CACHE_KV_KEY = 'listen-together-playlist-tracks-v1'
 export const LISTEN_TOGETHER_SONG_COMMENTS_CACHE_KV_KEY = 'listen-together-song-comments-v1'
+export const LISTEN_TOGETHER_PLAYLIST_COMMENTS_CACHE_KV_KEY = 'listen-together-playlist-comments-v1'
 export const LISTEN_TOGETHER_PROFILE_CACHE_KV_KEY = 'listen-together-netease-profile-v1'
 export const LISTEN_TOGETHER_LOGIN_COOKIE_KV_KEY = 'listen-together-netease-login-cookie-v1'
 export const LISTEN_TOGETHER_GUEST_MODE_KV_KEY = 'listen-together-guest-mode-v1'
@@ -25,6 +31,16 @@ export type CachedPlaylistData = {
   count: number
   tracks: NeteaseSongItem[]
   fullyLoaded: boolean
+  meta?: PlaylistMeta
+  updatedAt: number
+}
+
+export type PlaylistCommentsCacheEntry = {
+  playlistId: number
+  hot: NeteaseSongComment[]
+  items: NeteaseSongComment[]
+  total: number
+  more: boolean
   updatedAt: number
 }
 
@@ -104,6 +120,14 @@ export async function getCachedPlaylist(playlistId: number): Promise<CachedPlayl
   return hit
 }
 
+/** 内存已 hydrate 时同步读取歌单缓存 */
+export function getCachedPlaylistSync(playlistId: number): CachedPlaylistData | null {
+  if (!playlistId || !playlistHydrated) return null
+  const hit = playlistMemory.get(playlistId)
+  if (!hit || !Array.isArray(hit.tracks) || hit.tracks.length === 0) return null
+  return hit
+}
+
 export async function savePlaylistCache(
   data: Omit<CachedPlaylistData, 'updatedAt'>,
 ): Promise<void> {
@@ -158,6 +182,66 @@ export async function clearSongCommentsCache(songId?: number): Promise<void> {
   commentsMemory.clear()
   commentsHydrated = true
   await personaDb.deletePhoneKv(LISTEN_TOGETHER_SONG_COMMENTS_CACHE_KV_KEY)
+}
+
+// —— 歌单评论 ——
+
+const playlistCommentsMemory = new Map<number, PlaylistCommentsCacheEntry>()
+let playlistCommentsHydrated = false
+
+async function hydratePlaylistCommentsFromIdb(): Promise<void> {
+  if (playlistCommentsHydrated) return
+  const raw = await personaDb.getPhoneKv(LISTEN_TOGETHER_PLAYLIST_COMMENTS_CACHE_KV_KEY)
+  if (raw && typeof raw === 'object' && !Array.isArray(raw)) {
+    for (const entry of Object.values(raw as Record<string, PlaylistCommentsCacheEntry>)) {
+      if (entry?.playlistId) playlistCommentsMemory.set(entry.playlistId, entry)
+    }
+  }
+  playlistCommentsHydrated = true
+}
+
+function playlistCommentsMemoryToStore(): Record<string, PlaylistCommentsCacheEntry> {
+  const store: Record<string, PlaylistCommentsCacheEntry> = {}
+  for (const entry of playlistCommentsMemory.values()) {
+    store[String(entry.playlistId)] = entry
+  }
+  return store
+}
+
+async function persistPlaylistCommentsStore(): Promise<void> {
+  await personaDb.setPhoneKv(
+    LISTEN_TOGETHER_PLAYLIST_COMMENTS_CACHE_KV_KEY,
+    playlistCommentsMemoryToStore(),
+  )
+}
+
+export async function getCachedPlaylistComments(
+  playlistId: number,
+): Promise<PlaylistCommentsCacheEntry | null> {
+  if (!playlistId) return null
+  await hydratePlaylistCommentsFromIdb()
+  return playlistCommentsMemory.get(playlistId) ?? null
+}
+
+export async function savePlaylistCommentsCache(
+  entry: PlaylistCommentsCacheEntry,
+): Promise<void> {
+  if (!entry.playlistId) return
+  await hydratePlaylistCommentsFromIdb()
+  playlistCommentsMemory.set(entry.playlistId, entry)
+  await persistPlaylistCommentsStore()
+}
+
+export async function clearPlaylistCommentsCache(playlistId?: number): Promise<void> {
+  await hydratePlaylistCommentsFromIdb()
+  if (playlistId) {
+    playlistCommentsMemory.delete(playlistId)
+    await persistPlaylistCommentsStore()
+    return
+  }
+  playlistCommentsMemory.clear()
+  playlistCommentsHydrated = true
+  await personaDb.deletePhoneKv(LISTEN_TOGETHER_PLAYLIST_COMMENTS_CACHE_KV_KEY)
 }
 
 // —— 网易云登录 Cookie（IndexedDB + 内存，兼容旧 localStorage）——
@@ -265,6 +349,12 @@ async function hydrateProfileFromIdb(): Promise<void> {
 
 export async function getCachedNeteaseProfile(): Promise<CachedNeteaseProfile | null> {
   await hydrateProfileFromIdb()
+  return profileMemory
+}
+
+/** 内存已 hydrate 时同步读取用户资料 */
+export function getCachedNeteaseProfileSync(): CachedNeteaseProfile | null {
+  if (!profileHydrated) return null
   return profileMemory
 }
 
@@ -445,9 +535,24 @@ export async function clearListenTogetherSyncCaches(): Promise<void> {
   await Promise.all([
     clearPlaylistCache(),
     clearSongCommentsCache(),
+    clearPlaylistCommentsCache(),
     clearSongPlaybackCache(),
     clearCachedNeteaseProfile(),
     clearCachedRecentSongs(),
     clearListenTogetherPageCaches(),
+  ])
+}
+
+/** 进入听一听时预加载 IndexedDB 缓存到内存，避免每次打开重复请求 */
+export async function hydrateListenTogetherDataCaches(): Promise<void> {
+  await Promise.all([
+    hydratePlaylistFromIdb(),
+    hydrateCommentsFromIdb(),
+    hydratePlaylistCommentsFromIdb(),
+    hydrateProfileFromIdb(),
+    hydrateRecentSongsFromIdb(),
+    hydrateSongPlaybackFromIdb(),
+    hydrateNeteaseLoginCookie(),
+    hydrateGuestMode(),
   ])
 }

@@ -9,8 +9,8 @@ export const PERSONA_GRAPH_COACH_STEPS: MemoryCoachStep[] = [
   },
   {
     target: 'graph-header',
-    title: '当前聚焦在谁',
-    body: '标题是视角中心的名字。副标题会写「聚焦 · 已绑定关系」——意思是只强调和 TA 有关系的人。',
+    title: '当前角色是谁',
+    body: '标题是入口角色的名字。默认是「全景 · 当前角色高亮」——整张关系网都在，只是把 TA 和相关连线加亮。',
   },
   {
     target: 'graph-tutorial-btn',
@@ -45,7 +45,7 @@ export const PERSONA_GRAPH_COACH_STEPS: MemoryCoachStep[] = [
   {
     target: 'graph-exit-focus',
     title: '退出聚焦',
-    body: '看腻了聚焦视角就点「退出聚焦」，恢复整张人脉图。',
+    body: '轻点头像可进入聚焦视角；聚焦后点「退出聚焦」回到纯全景，不再保留高亮。',
   },
   {
     target: 'graph-tutorial-btn',

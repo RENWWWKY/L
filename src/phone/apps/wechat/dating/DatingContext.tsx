@@ -152,7 +152,8 @@ async function buildDatingTurnModelExtras(params: {
 }): Promise<{ datingExtras: DatingTurnModelExtras; memoryGather: UnifiedMemoryGatherResult | null }> {
   const regeneratingWorldBookBaseline = params.regeneratingWorldBookBaseline === true
   const memSettings = await personaDb.getMemorySettings()
-  const linkedOn = memSettings.linkedMemoryAutoSummaryEnabled !== false
+  const linkedOn =
+    memSettings.autoSummaryEnabled !== false && memSettings.linkedMemoryAutoSummaryEnabled !== false
   const datingMemOn =
     memSettings.autoSummaryEnabled !== false && memSettings.datingAutoSummaryEnabled !== false
   if (!datingMemOn && !linkedOn) {
@@ -767,9 +768,12 @@ async function finalizeDatingMemoryAfterAiReply(params: {
    * 重新生成中间某条时必须传入该条 id，否则会用「最后一条 AI」误绑轮次，关联记忆无法覆盖本条旧稿。
    */
   memoryTurnAiPlotId?: string | null
+  /** 「重新回复」重生当轮 AI 剧情：不额外 +1 自动总结计轮 */
+  skipMemoryRoundBump?: boolean
 }): Promise<string[]> {
   const memSettings = await personaDb.getMemorySettings()
-  const linkedOn = memSettings.linkedMemoryAutoSummaryEnabled !== false
+  const linkedOn =
+    memSettings.autoSummaryEnabled !== false && memSettings.linkedMemoryAutoSummaryEnabled !== false
   const datingMemOn =
     memSettings.autoSummaryEnabled !== false && memSettings.datingAutoSummaryEnabled !== false
   if (!linkedOn && !datingMemOn) return []
@@ -790,9 +794,10 @@ async function finalizeDatingMemoryAfterAiReply(params: {
   if (!gatherForApply) return []
 
   const ck = gatherForApply.conversationKey
-  const shouldSummarize = datingMemOn
-    ? (await personaDb.bumpMemoryAiRoundCount(ck)).shouldSummarize
-    : false
+  const shouldSummarize =
+    datingMemOn && params.skipMemoryRoundBump !== true
+      ? (await personaDb.bumpMemoryAiRoundCount(ck)).shouldSummarize
+      : false
 
   const datingAiPlotId =
     params.memoryTurnAiPlotId?.trim() ||
@@ -2347,6 +2352,7 @@ export function DatingProvider({ children }: { children: ReactNode }) {
             plotsSnapshotAfterAi: plotItemsToSnapshots(nextPlots),
             char,
             memoryTurnAiPlotId: plotId,
+            skipMemoryRoundBump: true,
           })
         } catch (memErr) {
           console.warn('[dating] memory post failed after plot saved', memErr)
