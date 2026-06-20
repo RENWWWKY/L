@@ -201,7 +201,7 @@ export function UserAccountApp({ onBack, initialTab = 'overview', initialAuthTab
         setError(r.error)
         return
       }
-      setInfo('注册成功，请登录后前往「设备激活码」领取')
+      setInfo('注册成功，请登录账号')
       setAuthTab('login')
       setPassword('')
       setPassword2('')
@@ -235,7 +235,7 @@ export function UserAccountApp({ onBack, initialTab = 'overview', initialAuthTab
     <div className="mx-auto w-full max-w-md space-y-4 py-2">
       <div className={`rounded-[16px] border p-4 ${t.card}`}>
         <h2 className="text-[16px] font-semibold">Lumi账号中心</h2>
-        <p className={`mt-2 text-[13px] leading-6 ${t.muted}`}>欢迎使用Lumi账号中心。请先登录或注册；登录后前往「设备激活码」领取默认激活码，领满后可使用「新增激活码」通道。</p>
+        <p className={`mt-2 text-[13px] leading-6 ${t.muted}`}>欢迎使用 Lumi 账号中心。请先注册或登录；审核通过后即可在 Lumi 主页使用。</p>
       </div>
 
       <div className={`flex rounded-[12px] p-1 ${t.authTabs}`}>
@@ -298,7 +298,7 @@ export function UserAccountApp({ onBack, initialTab = 'overview', initialAuthTab
               若在 QQ 群与 Discord 社区<strong>两处均无法查询到</strong>您填写的信息，将按违规处理并<strong>封禁账号</strong>。
             </p>
           </div>
-          <p className={`text-[12px] leading-5 ${t.muted}`}>注册后请登录，再前往「设备激活码」领取激活码。</p>
+          <p className={`text-[12px] leading-5 ${t.muted}`}>注册成功后请登录；管理员将在 48 小时内审核 QQ 与 Discord ID，审核期间可正常使用。</p>
           <label className="block">
             <span className={`mb-1 block text-[12px] ${t.label}`}>账号</span>
             <input className={inputCls} value={username} onChange={(e) => setUsername(e.target.value)} />
