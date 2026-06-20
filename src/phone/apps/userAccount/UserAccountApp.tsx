@@ -25,8 +25,9 @@ import { type UserAccountTab, type UserProfile } from '../../userSystem/types'
 import { UserAccountAnnouncementPanel } from './UserAccountAnnouncementPanel'
 import { UserAccountReportPanel } from './UserAccountReportPanel'
 import { UserAccountUnbanPanel } from './UserAccountUnbanPanel'
+import { UserAccountRecoverPanel } from '../../components/UserAccountRecoverPanel'
 
-type AuthTab = 'login' | 'register'
+type AuthTab = 'login' | 'register' | 'recover'
 type LoggedInTab = 'announcement' | 'report' | 'unban' | 'overview'
 
 type Props = {
@@ -239,24 +240,45 @@ export function UserAccountApp({ onBack, initialTab = 'overview', initialAuthTab
       </div>
 
       <div className={`flex rounded-[12px] p-1 ${t.authTabs}`}>
-        {(['login', 'register'] as const).map((item) => (
-          <button
-            key={item}
-            type="button"
-            className={`flex-1 rounded-[10px] py-2 text-[13px] font-medium ${
-              authTab === item ? t.authTabActive : t.authTabIdle
-            }`}
-            onClick={() => {
-              setAuthTab(item)
-              setError('')
-            }}
-          >
-            {item === 'login' ? '登录' : '注册'}
-          </button>
-        ))}
+        {authTab !== 'recover'
+          ? (['login', 'register'] as const).map((item) => (
+              <button
+                key={item}
+                type="button"
+                className={`flex-1 rounded-[10px] py-2 text-[13px] font-medium ${
+                  authTab === item ? t.authTabActive : t.authTabIdle
+                }`}
+                onClick={() => {
+                  setAuthTab(item)
+                  setError('')
+                }}
+              >
+                {item === 'login' ? '登录' : '注册'}
+              </button>
+            ))
+          : (
+              <div className={`flex-1 rounded-[10px] py-2 text-center text-[13px] font-medium ${t.authTabActive}`}>
+                找回账号
+              </div>
+            )}
       </div>
 
-      {authTab === 'login' ? (
+      {authTab === 'recover' ? (
+        <div className={`rounded-[16px] border p-4 ${t.card}`}>
+          <UserAccountRecoverPanel
+            inputCls={inputCls}
+            primaryBtnCls={t.primaryBtn}
+            labelCls={t.label}
+            mutedCls={t.muted}
+            onBack={() => setAuthTab('login')}
+            onFillLogin={(name, pwd) => {
+              setUsername(name)
+              setPassword(pwd)
+              setAuthTab('login')
+            }}
+          />
+        </div>
+      ) : authTab === 'login' ? (
         <div className={`space-y-3 rounded-[16px] border p-4 ${t.card}`}>
           <label className="block">
             <span className={`mb-1 block text-[12px] ${t.label}`}>账号</span>
@@ -284,6 +306,10 @@ export function UserAccountApp({ onBack, initialTab = 'overview', initialAuthTab
             还没有账号？
             <button type="button" className="ml-1 text-[#4F46E5] underline" onClick={() => setAuthTab('register')}>
               去注册
+            </button>
+            <span className="mx-1">·</span>
+            <button type="button" className="text-[#4F46E5] underline" onClick={() => setAuthTab('recover')}>
+              忘记密码
             </button>
           </p>
         </div>

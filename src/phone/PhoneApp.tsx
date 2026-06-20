@@ -21,6 +21,7 @@ import {
   runLumiSessionGuard,
 } from './userSystem/userSystemApi'
 import { isUserActivated, needsUserInfoCorrection, type UserAccountTab, type UserLoginStatus } from './userSystem/types'
+import { isLocalDevBypassAuth, LOCAL_DEV_MOCK_STATUS } from './userSystem/localDevMode'
 import { ApiSettingsProvider } from './apps/api/ApiSettingsContext'
 import { ApiSettingsApp } from './apps/api/ApiSettingsApp'
 import { VoiceprintHubApp } from './apps/voiceprint/VoiceprintHubApp'
@@ -73,6 +74,7 @@ function buildPageProps(disableTransitions: boolean) {
   }
 }
 const ENTRY_NOTICE_KEY = 'entry-notice-accepted-v1'
+const localDevBypassAuth = isLocalDevBypassAuth()
 
 /** Provider 置于路由层，避免与 LumiMeetApp 同文件热更新时子树脱离 Context */
 function LumiMeetAppRoute({ onBack }: { onBack: () => void }) {
@@ -94,13 +96,19 @@ export function PhoneApp() {
   const [showEntryNotice, setShowEntryNotice] = useState(false)
   const [ageConfirmed, setAgeConfirmed] = useState(false)
   const [riskConfirmed, setRiskConfirmed] = useState(false)
-  const [userAuthStatus, setUserAuthStatus] = useState<UserLoginStatus | null>(null)
-  const [userAuthReady, setUserAuthReady] = useState(false)
+  const [userAuthStatus, setUserAuthStatus] = useState<UserLoginStatus | null>(
+    () => (localDevBypassAuth ? LOCAL_DEV_MOCK_STATUS : null),
+  )
+  const [userAuthReady, setUserAuthReady] = useState(() => localDevBypassAuth)
   const [banNotice, setBanNotice] = useState<string | null>(() => readBannedNotice()?.message ?? null)
   const [sessionKickedNotice, setSessionKickedNotice] = useState<string | null>(() => readSessionKickedNotice())
   const [authVerifyError, setAuthVerifyError] = useState<string | null>(null)
   const [authChecking, setAuthChecking] = useState(false)
-  const openVerifiedRef = useRef(false)
+  const openVerifiedRef = useRef(localDevBypassAuth)
+
+  useEffect(() => {
+    if (localDevBypassAuth) openVerifiedRef.current = true
+  }, [])
 
   const handleKickedToLogin = useCallback(() => {
     setUserAuthStatus(null)
@@ -172,6 +180,17 @@ export function PhoneApp() {
   }, [ageConfirmed, riskConfirmed])
 
   const refreshUserAuth = useCallback(async () => {
+    if (localDevBypassAuth) {
+      openVerifiedRef.current = true
+      setAuthChecking(false)
+      setUserAuthStatus(LOCAL_DEV_MOCK_STATUS)
+      setAuthVerifyError(null)
+      setBanNotice(null)
+      setSessionKickedNotice(null)
+      setUserAuthReady(true)
+      return
+    }
+
     if (!getAuthToken()) {
       openVerifiedRef.current = false
       setAuthChecking(false)
@@ -231,6 +250,7 @@ export function PhoneApp() {
   }, [handleKickedToLogin])
 
   useEffect(() => {
+    if (localDevBypassAuth) return
     if (showSplash || showEntryNotice) return
     if (route.name !== 'home') return
     setUserAuthReady(false)
@@ -238,6 +258,7 @@ export function PhoneApp() {
   }, [route.name, showSplash, showEntryNotice, refreshUserAuth])
 
   useEffect(() => {
+    if (localDevBypassAuth) return
     if (showSplash || showEntryNotice) return
     if (!getAuthToken() || !openVerifiedRef.current) return
     void fetchUserStatus({ force: true }).then((status) => {
@@ -249,6 +270,7 @@ export function PhoneApp() {
   const needsCorrection = needsUserInfoCorrection(userAuthStatus)
 
   const showUserAuthModal =
+    !localDevBypassAuth &&
     !showSplash &&
     !showEntryNotice &&
     !authChecking &&
@@ -260,6 +282,7 @@ export function PhoneApp() {
       !isUserActivated(userAuthStatus))
 
   const showInfoCorrectionModal =
+    !localDevBypassAuth &&
     !showSplash &&
     !showEntryNotice &&
     !authChecking &&
@@ -268,6 +291,7 @@ export function PhoneApp() {
     !!userAuthStatus
 
   const showAccountStatusChecking =
+    !localDevBypassAuth &&
     !showSplash &&
     !showEntryNotice &&
     route.name === 'home' &&

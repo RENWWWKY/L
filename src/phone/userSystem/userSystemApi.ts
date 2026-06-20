@@ -1,5 +1,6 @@
 import type { LumiSessionStatus, UnbanStatusState, UserLoginStatus, UserProfile, UserReportType } from './types'
 import { getDeviceFingerprint } from './deviceFingerprint'
+import { isLocalDevBypassAuth, LOCAL_DEV_MOCK_STATUS } from './localDevMode'
 
 const TOKEN_KEY = 'us_auth_token'
 const USERNAME_KEY = 'us_username'
@@ -168,6 +169,7 @@ export function clearPendingStatusChecks(): void {
 
 /** 是否必须联网核查（仅上次封禁/挤下线后待复查时为 true） */
 export function needsRemoteAuthCheck(): boolean {
+  if (isLocalDevBypassAuth()) return false
   try {
     if (localStorage.getItem(PENDING_BAN_CHECK_KEY) === '1') return true
     if (localStorage.getItem(PENDING_SESSION_CHECK_KEY) === '1') return true
@@ -194,6 +196,7 @@ export function readLocalUserLoginStatus(): UserLoginStatus | null {
 
 /** 是否需要在打开时联网校验会话（仅待复查账号） */
 export function shouldCheckLumiSessionOnOpen(): boolean {
+  if (isLocalDevBypassAuth()) return false
   return needsRemoteAuthCheck() && !!getAuthToken()
 }
 
@@ -256,6 +259,7 @@ export async function logoutUser(): Promise<void> {
 
 /** Lumi 机前台活跃心跳（管理端「在线」仅据此判断） */
 export async function sendLumiHeartbeat(): Promise<'ok' | 'session_conflict' | 'banned' | 'ignored'> {
+  if (isLocalDevBypassAuth()) return 'ignored'
   if (!getAuthToken()) return 'ignored'
   const fp = await getDeviceFingerprint()
   const r = await request('POST', '/api/auth/lumi-heartbeat', { deviceId: fp.deviceId }, true)
@@ -287,6 +291,7 @@ export async function watchLumiSession(): Promise<'ok' | 'displaced' | 'ignored'
 
 /** 打开主页且账号待复查时：联网校验会话 / 封禁 */
 export async function runLumiSessionGuard(): Promise<'ok' | 'displaced' | 'banned' | 'ignored'> {
+  if (isLocalDevBypassAuth()) return 'ignored'
   if (!shouldCheckLumiSessionOnOpen()) return 'ignored'
   const sessionResult = await watchLumiSession()
   if (sessionResult === 'displaced') return 'displaced'
@@ -398,6 +403,23 @@ export async function registerUser(payload: {
   return { ok: true }
 }
 
+export async function recoverAccountByContact(payload: {
+  qq?: string
+  dcId?: string
+}): Promise<{ ok: true; username: string; password: string } | { ok: false; error: string }> {
+  const r = await request<{ username: string; password: string }>(
+    'POST',
+    '/api/auth/recover-account',
+    {
+      qq: payload.qq || '',
+      dcId: payload.dcId || '',
+    },
+    false,
+  )
+  if (!r.ok) return r
+  return { ok: true, username: r.data.username, password: r.data.password }
+}
+
 export async function fetchUserProfile(): Promise<UserProfile | null> {
   if (!getAuthToken()) return null
   const r = await request<{ profile: Record<string, unknown> }>('GET', '/api/user/profile')
@@ -424,6 +446,7 @@ export async function fetchUserProfile(): Promise<UserProfile | null> {
 }
 
 export async function fetchUserStatus(options?: { force?: boolean }): Promise<UserLoginStatus | null> {
+  if (isLocalDevBypassAuth()) return LOCAL_DEV_MOCK_STATUS
   if (!getAuthToken()) return null
 
   if (!shouldFetchUserStatus(options)) {
