@@ -1,4 +1,8 @@
 import { AnimatePresence, motion } from 'framer-motion'
+import {
+  OFFICIAL_COMMUNITY_JOIN_HINT,
+  OFFICIAL_DISCORD_COMMUNITY_ID,
+} from '../userSystem/officialCommunity'
 
 type EntryNoticeModalProps = {
   open: boolean
@@ -50,12 +54,19 @@ export function EntryNoticeModal({
 
             <div className="mt-4 space-y-3 text-[14px] leading-7 text-[#1C1C1E]/85 sm:text-[15px]">
               <p>
-                本项目始终免费提供，若你通过二传、代售、倒卖等渠道获得访问权限，请知悉该收费行为与项目作者无关。
+                本项目始终免费。若你通过倒卖链接等渠道付费获得访问，请知悉该收费行为与项目作者无关。
               </p>
               <p className="font-medium text-[#D92D20]">
-                请大家互相监督并积极举报二传和倒卖行为；若发现相关情况，请前往官方 QQ 群 <strong>1084498477</strong>{' '}
-                进行反馈举报，入群申请原因填写“举报”即可。
+                请勿购买或传播倒卖链接；若发现相关情况，请前往官方 Discord 社区或 QQ 群反馈举报。
+                {OFFICIAL_DISCORD_COMMUNITY_ID ? (
+                  <>
+                    {' '}
+                    社区 ID：<strong>{OFFICIAL_DISCORD_COMMUNITY_ID}</strong>。
+                  </>
+                ) : null}
+                {OFFICIAL_COMMUNITY_JOIN_HINT}
               </p>
+              <p>请妥善保管账号与密码，勿向他人泄露，避免账号被盗用。</p>
               <p>你必须年满 18 周岁方可继续使用。</p>
               <p>
                 项目内聊天内容主要由 AI 生成，仅供参考与体验，请你自行判断其真实性、合理性与适用性。

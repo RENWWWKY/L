@@ -1,9 +1,12 @@
 import { useMemo, useState } from 'react'
-import { Pencil } from 'lucide-react'
+import { Pencil, UserCircle2 } from 'lucide-react'
 
 import { useCustomization } from '../CustomizationContext'
 import { resolveProfileAvatarPreviewUrl } from '../utils/characterAvatarUrl'
 import { resolvePersonalCardBackgroundUrl } from '../utils/personalCardAssets'
+import {
+  getAuthToken,
+} from '../userSystem/userSystemApi'
 import { PersonalCardEditModal } from './PersonalCardEditModal'
 
 function formatDate(d: Date) {
@@ -29,12 +32,19 @@ function splitDateForNumberStyle(dateText: string) {
 export type PersonalCardProps = {
   /** 为 false 时不可点击（桌面组件编辑模式） */
   interactive?: boolean
+  /** 打开账号中心（个人名片左上角入口） */
+  onOpenUserAccount?: () => void
 }
 
-export function PersonalCard({ interactive = true }: PersonalCardProps) {
+export function PersonalCard({ interactive = true, onOpenUserAccount }: PersonalCardProps) {
   const { state, setPersonalCardProfile, setPersonalCardBackgroundUrl } = useCustomization()
   const { personalCardProfile: profile, personalCardBackgroundUrl, theme } = state
   const [editOpen, setEditOpen] = useState(false)
+
+  const lumiSessionLabel = (() => {
+    if (!getAuthToken()) return null
+    return { text: 'Lumi 使用中', tone: 'active' as const }
+  })()
 
   const dateText = formatDate(new Date())
   const dateParts = splitDateForNumberStyle(dateText)
@@ -74,6 +84,51 @@ export function PersonalCard({ interactive = true }: PersonalCardProps) {
         }}
         aria-label={interactive ? '编辑桌面个人名片' : undefined}
       >
+        {interactive && onOpenUserAccount ? (
+          <div className="absolute left-2.5 top-2.5 z-[2] flex max-w-[calc(100%-5rem)] items-center gap-1.5">
+            <button
+              type="button"
+              className="flex size-7 shrink-0 items-center justify-center rounded-full border bg-white/88 shadow-sm backdrop-blur-sm active:scale-95"
+              style={{ borderColor: theme.border, color: theme.textMuted }}
+              aria-label="个人中心"
+              title="个人中心"
+              onClick={(e) => {
+                e.stopPropagation()
+                onOpenUserAccount()
+              }}
+            >
+              <UserCircle2 className="size-3.5" strokeWidth={1.75} />
+            </button>
+            {lumiSessionLabel ? (
+              <span
+                className="truncate rounded-full border px-2 py-0.5 text-[10px] font-medium leading-none shadow-sm backdrop-blur-sm"
+                style={{
+                  borderColor:
+                    lumiSessionLabel.tone === 'active'
+                      ? '#86EFAC'
+                      : lumiSessionLabel.tone === 'elsewhere'
+                        ? '#FCD34D'
+                        : theme.border,
+                  background:
+                    lumiSessionLabel.tone === 'active'
+                      ? 'rgba(240, 253, 244, 0.92)'
+                      : lumiSessionLabel.tone === 'elsewhere'
+                        ? 'rgba(255, 251, 235, 0.92)'
+                        : 'rgba(255, 255, 255, 0.88)',
+                  color:
+                    lumiSessionLabel.tone === 'active'
+                      ? '#15803D'
+                      : lumiSessionLabel.tone === 'elsewhere'
+                        ? '#B45309'
+                        : theme.textMuted,
+                }}
+                title={lumiSessionLabel.text}
+              >
+                {lumiSessionLabel.text}
+              </span>
+            ) : null}
+          </div>
+        ) : null}
         {interactive ? (
           <span
             className="absolute right-2.5 top-2.5 z-[2] flex size-7 items-center justify-center rounded-full border bg-white/88 shadow-sm backdrop-blur-sm"

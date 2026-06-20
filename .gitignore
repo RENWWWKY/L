@@ -22,3 +22,6 @@ dist-ssr
 *.njsproj
 *.sln
 *.sw?
+
+# 账号系统后端 + 管理页（独立部署到 Cloudflare，不纳入 Lumi 主仓库）
+leancloud-user-system/

@@ -19,6 +19,7 @@ import { useLongPress } from '../hooks/useLongPress'
 
 type Props = {
   onOpenApp: (id: AppSlot['id']) => void
+  onOpenUserAccount?: () => void
 }
 
 function useWeChatHomeUnreadBadge(): number {
@@ -701,7 +702,7 @@ function readInitialFreeHomeLayout(): {
   return migrateStorageToFreeHome()
 }
 
-export function HomeScreen({ onOpenApp }: Props) {
+export function HomeScreen({ onOpenApp, onOpenUserAccount }: Props) {
   const { state, reorderApps, setDesktopLayout } = useCustomization()
   const { apps, ui, theme } = state
   const wechatUnread = useWeChatHomeUnreadBadge()
@@ -1382,7 +1383,7 @@ export function HomeScreen({ onOpenApp }: Props) {
                   onPointerCancel={!isEditMode ? profileLongPressHandlers.onPointerCancel : undefined}
                   onPointerLeave={!isEditMode ? profileLongPressHandlers.onPointerLeave : undefined}
                 >
-                  <PersonalCard interactive={!isEditMode} />
+                  <PersonalCard interactive={!isEditMode} onOpenUserAccount={onOpenUserAccount} />
                 </motion.div>
               </div>
             )

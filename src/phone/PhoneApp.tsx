@@ -1,12 +1,25 @@
 import { AnimatePresence, motion } from 'framer-motion'
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { AppPlaceholderScreen } from './components/AppPlaceholderScreen'
 import { CustomizeScreen } from './components/CustomizeScreen'
 import { EntryNoticeModal } from './components/EntryNoticeModal'
 import { HomeScreen } from './components/HomeScreen'
 import { PhoneShell } from './components/PhoneShell'
+import { UserAccountApp } from './apps/userAccount/UserAccountApp'
+import { UserSystemAuthModal } from './components/UserSystemAuthModal'
+import { AccountStatusCheckingOverlay } from './components/AccountStatusCheckingOverlay'
 import { SplashScreen } from './components/SplashScreen'
 import { useCustomization } from './CustomizationContext'
+import {
+  fetchUserStatus,
+  getAuthToken,
+  needsRemoteAuthCheck,
+  readBannedNotice,
+  readLocalUserLoginStatus,
+  readSessionKickedNotice,
+  runLumiSessionGuard,
+} from './userSystem/userSystemApi'
+import { isUserActivated, type UserAccountTab, type UserLoginStatus } from './userSystem/types'
 import { ApiSettingsProvider } from './apps/api/ApiSettingsContext'
 import { ApiSettingsApp } from './apps/api/ApiSettingsApp'
 import { VoiceprintHubApp } from './apps/voiceprint/VoiceprintHubApp'
@@ -28,6 +41,7 @@ import { dispatchPhoneDismissOverlays } from './phoneDismissOverlays'
 type Route =
   | { name: 'home' }
   | { name: 'customize' }
+  | { name: 'userAccount'; tab?: UserAccountTab; authTab?: 'login' | 'register' }
   | { name: 'app'; id: AppSlot['id'] }
 
 const transition = { duration: 0.32, ease: [0.22, 1, 0.36, 1] as const }
@@ -79,6 +93,21 @@ export function PhoneApp() {
   const [showEntryNotice, setShowEntryNotice] = useState(false)
   const [ageConfirmed, setAgeConfirmed] = useState(false)
   const [riskConfirmed, setRiskConfirmed] = useState(false)
+  const [userAuthStatus, setUserAuthStatus] = useState<UserLoginStatus | null>(null)
+  const [userAuthReady, setUserAuthReady] = useState(false)
+  const [banNotice, setBanNotice] = useState<string | null>(() => readBannedNotice()?.message ?? null)
+  const [sessionKickedNotice, setSessionKickedNotice] = useState<string | null>(() => readSessionKickedNotice())
+  const [authVerifyError, setAuthVerifyError] = useState<string | null>(null)
+  const [authChecking, setAuthChecking] = useState(false)
+  const openVerifiedRef = useRef(false)
+
+  const handleKickedToLogin = useCallback(() => {
+    setUserAuthStatus(null)
+    setBanNotice(readBannedNotice()?.message ?? null)
+    setSessionKickedNotice(readSessionKickedNotice())
+    setUserAuthReady(true)
+    setRoute({ name: 'home' })
+  }, [])
 
   const goHome = useCallback(() => setRoute({ name: 'home' }), [])
 
@@ -141,6 +170,116 @@ export function PhoneApp() {
     setShowEntryNotice(false)
   }, [ageConfirmed, riskConfirmed])
 
+  const refreshUserAuth = useCallback(async () => {
+    if (!getAuthToken()) {
+      openVerifiedRef.current = false
+      setAuthChecking(false)
+      setUserAuthStatus(null)
+      setAuthVerifyError(null)
+      setBanNotice(readBannedNotice()?.message ?? null)
+      setSessionKickedNotice(readSessionKickedNotice())
+      setUserAuthReady(true)
+      return
+    }
+
+    if (!openVerifiedRef.current) {
+      setAuthChecking(true)
+      setAuthVerifyError(null)
+      try {
+        const status = await fetchUserStatus({ force: true })
+        if (!getAuthToken()) {
+          openVerifiedRef.current = false
+          handleKickedToLogin()
+          return
+        }
+        if (!status) {
+          setUserAuthStatus(null)
+          setAuthVerifyError('无法连接账号服务器，请打开梯子后点击「重新验证账号状态」')
+          setBanNotice(readBannedNotice()?.message ?? null)
+          setSessionKickedNotice(readSessionKickedNotice())
+          setUserAuthReady(true)
+          return
+        }
+        openVerifiedRef.current = true
+
+        if (needsRemoteAuthCheck()) {
+          const guard = await runLumiSessionGuard()
+          if (guard === 'displaced' || guard === 'banned') {
+            openVerifiedRef.current = false
+            handleKickedToLogin()
+            return
+          }
+        }
+
+        setUserAuthStatus(status)
+        setBanNotice(readBannedNotice()?.message ?? null)
+        setSessionKickedNotice(readSessionKickedNotice())
+        setUserAuthReady(true)
+      } finally {
+        setAuthChecking(false)
+      }
+      return
+    }
+
+    setAuthChecking(false)
+    setUserAuthStatus(readLocalUserLoginStatus())
+    setAuthVerifyError(null)
+    setBanNotice(readBannedNotice()?.message ?? null)
+    setSessionKickedNotice(readSessionKickedNotice())
+    setUserAuthReady(true)
+  }, [handleKickedToLogin])
+
+  useEffect(() => {
+    if (showSplash || showEntryNotice) return
+    if (route.name !== 'home') return
+    setUserAuthReady(false)
+    void refreshUserAuth()
+  }, [route.name, showSplash, showEntryNotice, refreshUserAuth])
+
+  const showUserAuthModal =
+    !showSplash &&
+    !showEntryNotice &&
+    !authChecking &&
+    route.name === 'home' &&
+    userAuthReady &&
+    (!!authVerifyError ||
+      !userAuthStatus ||
+      !isUserActivated(userAuthStatus))
+
+  const showAccountStatusChecking =
+    !showSplash &&
+    !showEntryNotice &&
+    route.name === 'home' &&
+    authChecking
+
+  const userAuthStatusOnly =
+    !!userAuthStatus && !isUserActivated(userAuthStatus)
+
+  const handleRetryAuthVerify = useCallback(() => {
+    openVerifiedRef.current = false
+    setAuthVerifyError(null)
+    setUserAuthReady(false)
+    void refreshUserAuth()
+  }, [refreshUserAuth])
+
+  const handleUserAuthed = useCallback((status: UserLoginStatus) => {
+    openVerifiedRef.current = true
+    setUserAuthStatus(status)
+    setAuthVerifyError(null)
+    setBanNotice(null)
+    setSessionKickedNotice(null)
+  }, [])
+
+  const openUserAccount = useCallback((tab: UserAccountTab = 'overview', authTab?: 'login' | 'register') => {
+    setRoute({ name: 'userAccount', tab, authTab: authTab ?? (tab === 'auth' ? 'register' : undefined) })
+  }, [])
+
+  const handleUserAccountBack = useCallback(() => {
+    setRoute({ name: 'home' })
+    setUserAuthReady(false)
+    void refreshUserAuth()
+  }, [refreshUserAuth])
+
   return (
     <div
       className={
@@ -170,7 +309,24 @@ export function PhoneApp() {
                 className={`route-page-layer relative flex h-full min-h-0 flex-col ${disableTransitions ? '' : 'transform-gpu'}`}
                 {...pageProps}
               >
-                <HomeScreen onOpenApp={openApp} />
+                <HomeScreen onOpenApp={openApp} onOpenUserAccount={() => openUserAccount('overview')} />
+              </motion.div>
+            )}
+            {route.name === 'userAccount' && (
+              <motion.div
+                key="userAccount"
+                className={`route-page-layer flex h-full min-h-0 flex-col ${disableTransitions ? '' : 'transform-gpu'}`}
+                {...pageProps}
+              >
+                <UserAccountApp
+                  onBack={handleUserAccountBack}
+                  initialTab={route.tab}
+                  initialAuthTab={route.authTab}
+                  onAuthChange={() => {
+                    setUserAuthReady(false)
+                    void refreshUserAuth()
+                  }}
+                />
               </motion.div>
             )}
             {route.name === 'customize' && (
@@ -220,6 +376,20 @@ export function PhoneApp() {
           onToggleAge={setAgeConfirmed}
           onToggleRisk={setRiskConfirmed}
           onConfirm={handleNoticeConfirm}
+        />
+        <AccountStatusCheckingOverlay open={showAccountStatusChecking} />
+        <UserSystemAuthModal
+          open={showUserAuthModal}
+          statusOnly={userAuthStatusOnly}
+          initialStatus={userAuthStatus}
+          banNotice={banNotice}
+          sessionKickedNotice={sessionKickedNotice}
+          authVerifyError={authVerifyError}
+          onAuthed={handleUserAuthed}
+          onRetryAuthVerify={handleRetryAuthVerify}
+          onOpenAccount={(tab) => {
+            openUserAccount(tab ?? 'overview')
+          }}
         />
       </ApiSettingsProvider>
     </div>
