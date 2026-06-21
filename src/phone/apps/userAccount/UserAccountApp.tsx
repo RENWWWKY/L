@@ -27,6 +27,9 @@ import { UserAccountChangePasswordPanel } from './UserAccountChangePasswordPanel
 import { UserAccountReportPanel } from './UserAccountReportPanel'
 import { UserAccountUnbanPanel } from './UserAccountUnbanPanel'
 import { UserAccountRecoverPanel } from '../../components/UserAccountRecoverPanel'
+import { publicAssetUrl } from '../../../publicAssetUrl'
+
+const DISCORD_ID_EXAMPLE_IMG = publicAssetUrl('/images/discord-id-example.png')
 
 type AuthTab = 'login' | 'register' | 'recover'
 type LoggedInTab = 'announcement' | 'report' | 'unban' | 'overview'
@@ -345,6 +348,15 @@ export function UserAccountApp({ onBack, initialTab = 'overview', initialAuthTab
           <label className="block">
             <span className={`mb-1 block text-[12px] ${t.label}`}>Discord ID</span>
             <input className={inputCls} value={dcId} onChange={(e) => setDcId(e.target.value)} />
+            <p className={`mt-1.5 text-[11px] leading-5 ${t.muted}`}>
+              请填写 Discord 个人资料卡片里、昵称下方红框所示的那一串 ID（不是显示昵称）。
+            </p>
+            <img
+              src={DISCORD_ID_EXAMPLE_IMG}
+              alt="Discord ID 填写位置示例"
+              className="mt-2 max-w-[240px] rounded-[10px] border border-black/10"
+              loading="lazy"
+            />
           </label>
           <button
             type="button"
