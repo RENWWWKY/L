@@ -47,12 +47,34 @@ import { WorldbookLoreProvider } from './worldbook/worldbookLoreStore'
 import type { AppSlot } from './types'
 import { ListenTogetherPlayerBootstrap } from '../components/discoverListen/ListenTogetherPlayerBootstrap'
 import { dispatchPhoneDismissOverlays } from './phoneDismissOverlays'
+import {
+  runDiscordOAuthCallbackFromUrl,
+  resolveDiscordAuthTabAfterOAuth,
+  storeDiscordOAuthError,
+} from './userSystem/discordOAuthFlow'
+import {
+  storeDiscordRegisterPending,
+} from './components/DiscordRegisterCompleteModal'
 
 type Route =
   | { name: 'home' }
   | { name: 'customize' }
   | { name: 'userAccount'; tab?: UserAccountTab; authTab?: 'login' | 'register' }
   | { name: 'app'; id: AppSlot['id'] }
+
+function resolveInitialPhoneRoute(): Route {
+  if (typeof window === 'undefined') return { name: 'home' }
+  const authTab = resolveDiscordAuthTabAfterOAuth()
+  if (authTab) {
+    return { name: 'userAccount', tab: 'auth', authTab }
+  }
+  return { name: 'home' }
+}
+
+function shouldSkipSplashOnBoot(): boolean {
+  if (typeof window === 'undefined') return false
+  return !!resolveDiscordAuthTabAfterOAuth()
+}
 
 const transition = { duration: 0.32, ease: [0.22, 1, 0.36, 1] as const }
 
@@ -98,8 +120,8 @@ export function PhoneApp() {
   const fullScreen = state.ui.fullScreen
   const disableTransitions = state.ui.disablePageTransitions
   const pageProps = buildPageProps(disableTransitions)
-  const [route, setRoute] = useState<Route>({ name: 'home' })
-  const [showSplash, setShowSplash] = useState(true)
+  const [route, setRoute] = useState<Route>(resolveInitialPhoneRoute)
+  const [showSplash, setShowSplash] = useState(() => !shouldSkipSplashOnBoot())
   const [wechatKeepAlive, setWechatKeepAlive] = useState(false)
   const [showEntryNotice, setShowEntryNotice] = useState(false)
   const [ageConfirmed, setAgeConfirmed] = useState(false)
@@ -150,6 +172,10 @@ export function PhoneApp() {
 
   useEffect(() => {
     if (typeof window === 'undefined') return
+    if (shouldSkipSplashOnBoot()) {
+      setShowEntryNotice(false)
+      return
+    }
     const accepted = window.localStorage.getItem(ENTRY_NOTICE_KEY) === '1'
     setShowEntryNotice(!accepted)
   }, [])
@@ -346,6 +372,35 @@ export function PhoneApp() {
   const openUserAccount = useCallback((tab: UserAccountTab = 'overview', authTab?: 'login' | 'register') => {
     setRoute({ name: 'userAccount', tab, authTab: authTab ?? (tab === 'auth' ? 'register' : undefined) })
   }, [])
+
+  useEffect(() => {
+    void runDiscordOAuthCallbackFromUrl().then((result) => {
+      if (!result) return
+      if (result.kind === 'login' && result.ok) {
+        handleUserAuthed(result.status)
+        if (result.status.banStatus === 'banned') {
+          openUserAccount('unban', 'login')
+        } else if (!result.lumiEntry) {
+          openUserAccount('overview', 'login')
+        }
+        return
+      }
+      if (result.kind === 'register' && result.ok) {
+        storeDiscordRegisterPending({
+          registerToken: result.registerToken,
+          discordId: result.discordId,
+          discordHandle: result.discordHandle,
+          discordDisplayName: result.discordDisplayName,
+          discordUsername: result.discordUsername,
+          fromUnregisteredLogin: result.fromUnregisteredLogin,
+        })
+        openUserAccount('auth', result.fromUnregisteredLogin ? 'login' : 'register')
+        return
+      }
+      storeDiscordOAuthError(result.error)
+      openUserAccount('auth', result.kind === 'register' ? 'register' : 'login')
+    })
+  }, [handleUserAuthed, openUserAccount])
 
   const handleUserAccountBack = useCallback(() => {
     setRoute({ name: 'home' })

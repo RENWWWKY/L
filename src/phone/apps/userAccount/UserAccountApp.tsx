@@ -9,10 +9,9 @@ import {
   getStoredUsername,
   loginUser,
   readBannedNotice,
-  registerUser,
 } from '../../userSystem/userSystemApi'
 import { accountStatusLabel, formatAccountDate } from '../../userSystem/accountStatusLabel'
-import { AccountNum, AccountNumericText } from '../../userSystem/AccountNum'
+import { AccountNum, AccountNumericText, accountNumStyle } from '../../userSystem/AccountNum'
 import {
   readUserAccountTheme,
   STATUS_BADGE_DARK,
@@ -27,9 +26,20 @@ import { UserAccountChangePasswordPanel } from './UserAccountChangePasswordPanel
 import { UserAccountReportPanel } from './UserAccountReportPanel'
 import { UserAccountUnbanPanel } from './UserAccountUnbanPanel'
 import { UserAccountRecoverPanel } from '../../components/UserAccountRecoverPanel'
-import { publicAssetUrl } from '../../../publicAssetUrl'
+import { AuthDivider, DiscordLoginButton } from '../../components/DiscordLoginButton'
+import {
+  clearDiscordRegisterPending,
+  DiscordRegisterCompleteModal,
+  readDiscordRegisterPending,
+  type DiscordRegisterPending,
+} from '../../components/DiscordRegisterCompleteModal'
+import { consumeDiscordOAuthError } from '../../userSystem/discordOAuthFlow'
+import { isDiscordOAuthConfigured } from '../../userSystem/discordOAuth'
 
-const DISCORD_ID_EXAMPLE_IMG = publicAssetUrl('/images/discord-id-example.png')
+const accountInputNumStyle = {
+  fontFamily: accountNumStyle.fontFamily,
+  fontVariantNumeric: accountNumStyle.fontVariantNumeric,
+} as const
 
 type AuthTab = 'login' | 'register' | 'recover'
 type LoggedInTab = 'announcement' | 'report' | 'unban' | 'overview'
@@ -70,12 +80,11 @@ export function UserAccountApp({ onBack, initialTab = 'overview', initialAuthTab
 
   const [username, setUsername] = useState('')
   const [password, setPassword] = useState('')
-  const [password2, setPassword2] = useState('')
-  const [qq, setQq] = useState('')
-  const [dcId, setDcId] = useState('')
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState('')
   const [info, setInfo] = useState('')
+  const [discordRegisterPending, setDiscordRegisterPending] = useState<DiscordRegisterPending | null>(null)
+  const [discordRegisterModalOpen, setDiscordRegisterModalOpen] = useState(false)
 
   const currentNavLabel = useMemo(
     () => LOGGED_IN_NAV.find((item) => item.id === tab)?.label ?? 'Lumi账号中心',
@@ -131,7 +140,31 @@ export function UserAccountApp({ onBack, initialTab = 'overview', initialAuthTab
 
   useEffect(() => {
     setAuthTab(initialAuthTab)
+    const pending = readDiscordRegisterPending()
+    if (!pending) return
+    setDiscordRegisterPending(pending)
+    setDiscordRegisterModalOpen(true)
+    if (pending.fromUnregisteredLogin) {
+      setAuthTab('login')
+      setInfo('当前 Discord 账号尚未注册，已自动打开注册信息填写面板')
+    }
   }, [initialAuthTab])
+
+  useEffect(() => {
+    const pending = readDiscordRegisterPending()
+    if (pending) {
+      setDiscordRegisterPending(pending)
+      setDiscordRegisterModalOpen(true)
+      if (pending.fromUnregisteredLogin) {
+        setAuthTab('login')
+        setInfo('当前 Discord 账号尚未注册，已自动打开注册信息填写面板')
+      } else {
+        setAuthTab('register')
+      }
+    }
+    const oauthError = consumeDiscordOAuthError()
+    if (oauthError) setError(oauthError)
+  }, [])
 
   useEffect(() => {
     if (sessionLoggedIn && initialTab && initialTab !== 'auth') {
@@ -183,37 +216,43 @@ export function UserAccountApp({ onBack, initialTab = 'overview', initialAuthTab
     }
   }, [username, password, loadProfile, onAuthChange, initialTab])
 
-  const handleRegister = useCallback(async () => {
+  const handleDiscordRegisterModalClose = useCallback(() => {
+    setDiscordRegisterModalOpen(false)
+    clearDiscordRegisterPending()
+    setDiscordRegisterPending(null)
+  }, [])
+
+  const handleDiscordRegisterSuccess = useCallback(async (credentials: { username: string; password: string }) => {
+    clearDiscordRegisterPending()
+    setDiscordRegisterPending(null)
+    setDiscordRegisterModalOpen(false)
+    setUsername(credentials.username)
+    setPassword(credentials.password)
     setError('')
-    if (password !== password2) {
-      setError('两次密码不一致')
-      return
-    }
     setSubmitting(true)
     try {
       const fp = await getDeviceFingerprint()
       const ip = await getPublicIp()
-      const r = await registerUser({
-        username: username.trim(),
-        password,
-        qq: qq.trim(),
-        dcId: dcId.trim(),
+      const r = await loginUser(credentials.username, credentials.password, {
         publicIp: ip,
         deviceId: fp.deviceId,
         deviceType: fp.deviceType,
       })
       if (!r.ok) {
+        setAuthTab('login')
+        setInfo('注册成功，请登录账号')
         setError(r.error)
         return
       }
-      setInfo('注册成功，请登录账号')
-      setAuthTab('login')
-      setPassword('')
-      setPassword2('')
+      setSessionLoggedIn(true)
+      setInfo('注册并登录成功')
+      setTab('overview')
+      await loadProfile()
+      onAuthChange?.()
     } finally {
       setSubmitting(false)
     }
-  }, [username, password, password2, qq, dcId])
+  }, [loadProfile, onAuthChange])
 
   const handleLogout = useCallback(() => {
     void logoutUser().then(() => {
@@ -286,13 +325,20 @@ export function UserAccountApp({ onBack, initialTab = 'overview', initialAuthTab
         <div className={`space-y-3 rounded-[16px] border p-4 ${t.card}`}>
           <label className="block">
             <span className={`mb-1 block text-[12px] ${t.label}`}>账号</span>
-            <input className={inputCls} value={username} onChange={(e) => setUsername(e.target.value)} autoComplete="username" />
+            <input
+              className={inputCls}
+              style={accountInputNumStyle}
+              value={username}
+              onChange={(e) => setUsername(e.target.value)}
+              autoComplete="username"
+            />
           </label>
           <label className="block">
             <span className={`mb-1 block text-[12px] ${t.label}`}>密码</span>
             <input
               type="password"
               className={inputCls}
+              style={accountInputNumStyle}
               value={password}
               onChange={(e) => setPassword(e.target.value)}
               autoComplete="current-password"
@@ -306,6 +352,13 @@ export function UserAccountApp({ onBack, initialTab = 'overview', initialAuthTab
           >
             {submitting ? '登录中…' : '登录'}
           </button>
+          <AuthDivider mutedCls={t.subtitle} />
+          <DiscordLoginButton
+            intent="login"
+            disabled={submitting}
+            onError={setError}
+            buttonClassName={`flex h-11 w-full items-center justify-center gap-2 rounded-[12px] border border-[#5865F2]/35 bg-[#5865F2]/10 text-[14px] font-medium text-[#5865F2] disabled:opacity-50 ${theme === 'dark' ? 'border-[#5865F2]/45 bg-[#5865F2]/15' : ''}`}
+          />
           <p className={`text-center text-[12px] ${t.subtitle}`}>
             还没有账号？
             <button type="button" className="ml-1 text-[#4F46E5] underline" onClick={() => setAuthTab('register')}>
@@ -322,50 +375,40 @@ export function UserAccountApp({ onBack, initialTab = 'overview', initialAuthTab
           <div className={`rounded-[12px] border px-3 py-3 text-[12px] leading-6 ${t.statusRejected}`}>
             <p className="font-medium">成员信息审核说明</p>
             <p className="mt-1">
-              管理员将在 <strong>48 小时内</strong>审核您填写的 QQ 号与 Discord ID。审核期间请勿退出官方 QQ 群或 Discord 社区。
+              管理员将在{' '}
+              <strong>
+                <AccountNumericText text="48" /> 小时内
+              </strong>
+              审核您的 Discord 信息{isDiscordOAuthConfigured() ? '与 QQ 号（若已填写）' : ''}。
+              <strong>审核期间可正常登录并进入 Lumi 使用</strong>，无需等待审核通过。
             </p>
             <p className="mt-1">
-              若在 QQ 群与 Discord 社区<strong>两处均无法查询到</strong>您填写的信息，将按违规处理并<strong>封禁账号</strong>。
+              审核期间请勿退出官方 QQ 群或 Discord 社区。若在 QQ 群与 Discord 社区
+              <strong>两处均无法查询到</strong>您填写的信息，将按违规处理并<strong>封禁账号</strong>。
             </p>
           </div>
-          <p className={`text-[12px] leading-5 ${t.muted}`}>注册成功后请登录；管理员将在 48 小时内审核 QQ 与 Discord ID，审核期间可正常使用。每个 QQ 号与 Discord ID 仅可注册一个账号。</p>
-          <label className="block">
-            <span className={`mb-1 block text-[12px] ${t.label}`}>账号</span>
-            <input className={inputCls} value={username} onChange={(e) => setUsername(e.target.value)} />
-          </label>
-          <label className="block">
-            <span className={`mb-1 block text-[12px] ${t.label}`}>密码</span>
-            <input type="password" className={inputCls} value={password} onChange={(e) => setPassword(e.target.value)} />
-          </label>
-          <label className="block">
-            <span className={`mb-1 block text-[12px] ${t.label}`}>确认密码</span>
-            <input type="password" className={inputCls} value={password2} onChange={(e) => setPassword2(e.target.value)} />
-          </label>
-          <label className="block">
-            <span className={`mb-1 block text-[12px] ${t.label}`}>QQ</span>
-            <input className={inputCls} value={qq} onChange={(e) => setQq(e.target.value)} />
-          </label>
-          <label className="block">
-            <span className={`mb-1 block text-[12px] ${t.label}`}>Discord ID</span>
-            <input className={inputCls} value={dcId} onChange={(e) => setDcId(e.target.value)} />
-            <p className={`mt-1.5 text-[11px] leading-5 ${t.muted}`}>
-              请填写 Discord 个人资料卡片里、昵称下方红框所示的那一串 ID（不是显示昵称）。
-            </p>
-            <img
-              src={DISCORD_ID_EXAMPLE_IMG}
-              alt="Discord ID 填写位置示例"
-              className="mt-2 max-w-[240px] rounded-[10px] border border-black/10"
-              loading="lazy"
+          <p className={`text-[12px] leading-5 ${t.muted}`}>
+            请使用 Discord 一键注册。授权成功后将弹出面板填写 Lumi 账号与密码；QQ 号可选填，但建议填写以便找回账密。
+          </p>
+          {isDiscordOAuthConfigured() ? (
+            <DiscordLoginButton
+              intent="register"
+              disabled={submitting}
+              label="使用 Discord 一键注册"
+              onError={setError}
+              buttonClassName={`flex h-12 w-full items-center justify-center gap-2 rounded-[12px] border border-[#5865F2]/35 bg-[#5865F2]/12 text-[15px] font-medium text-[#5865F2] disabled:opacity-50 ${theme === 'dark' ? 'border-[#5865F2]/45 bg-[#5865F2]/18' : ''}`}
             />
-          </label>
-          <button
-            type="button"
-            className={`h-11 w-full rounded-[12px] text-[14px] font-medium disabled:opacity-50 ${t.primaryBtn}`}
-            disabled={submitting}
-            onClick={() => void handleRegister()}
-          >
-            {submitting ? '注册中…' : '注册'}
-          </button>
+          ) : (
+            <p className={`rounded-[12px] border px-3 py-3 text-[13px] ${t.errorBox}`}>
+              未配置 Discord 注册（VITE_DISCORD_CLIENT_ID），请联系管理员。
+            </p>
+          )}
+          <p className={`text-center text-[12px] ${t.subtitle}`}>
+            已有账号？
+            <button type="button" className="ml-1 text-[#4F46E5] underline" onClick={() => setAuthTab('login')}>
+              去登录
+            </button>
+          </p>
         </div>
       )}
     </div>
@@ -415,11 +458,31 @@ export function UserAccountApp({ onBack, initialTab = 'overview', initialAuthTab
               </dd>
             </div>
             <div className="flex justify-between gap-4">
-              <dt className={t.subtitle}>Discord ID</dt>
+              <dt className={t.subtitle}>Discord 用户名</dt>
+              <dd className="truncate text-right text-[13px]">
+                {profile.discordHandle || profile.discordDisplayName || '-'}
+              </dd>
+            </div>
+            {profile.discordDisplayName &&
+            profile.discordHandle &&
+            profile.discordDisplayName !== profile.discordHandle ? (
+              <div className="flex justify-between gap-4">
+                <dt className={t.subtitle}>Discord 显示昵称</dt>
+                <dd className="truncate text-right text-[13px]">{profile.discordDisplayName}</dd>
+              </div>
+            ) : null}
+            <div className="flex justify-between gap-4">
+              <dt className={t.subtitle}>Discord 数字 ID</dt>
               <dd className="truncate text-right">
                 <AccountNumericText text={profile.dcId || '-'} className="text-[13px]" />
               </dd>
             </div>
+            {profile.discordDisplayName && !profile.discordHandle ? (
+              <div className="flex justify-between gap-4">
+                <dt className={t.subtitle}>Discord 昵称</dt>
+                <dd className="truncate text-right text-[13px]">{profile.discordDisplayName}</dd>
+              </div>
+            ) : null}
             {profile.auditStatus === 'correction_required' && profile.auditRejectReason ? (
               <div className={`rounded-[10px] px-3 py-2 ${t.statusRejected}`}>更正说明：{profile.auditRejectReason}</div>
             ) : null}
@@ -606,6 +669,22 @@ export function UserAccountApp({ onBack, initialTab = 'overview', initialAuthTab
           </>
         ) : null}
       </AnimatePresence>
+
+      <DiscordRegisterCompleteModal
+        open={discordRegisterModalOpen}
+        pending={discordRegisterPending}
+        themeTokens={{
+          card: t.card,
+          label: t.label,
+          muted: t.muted,
+          input: t.input,
+          primaryBtn: t.primaryBtn,
+          errorBox: t.errorBox,
+          infoBox: t.infoBox,
+        }}
+        onClose={handleDiscordRegisterModalClose}
+        onSuccess={handleDiscordRegisterSuccess}
+      />
     </div>
   )
 }

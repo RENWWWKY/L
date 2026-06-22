@@ -11,6 +11,8 @@ import {
 } from '../userSystem/userSystemApi'
 import { isUserActivated, type UserAccountTab, type UserLoginStatus } from '../userSystem/types'
 import { UserAccountRecoverPanel } from './UserAccountRecoverPanel'
+import { AuthDivider, DiscordLoginButton } from './DiscordLoginButton'
+import { consumeDiscordOAuthError } from '../userSystem/discordOAuthFlow'
 
 type Props = {
   open: boolean
@@ -52,6 +54,8 @@ export function UserSystemAuthModal({
     if (!open) return
     setAuthMode('login')
     setUsername(getStoredUsername())
+    const oauthError = consumeDiscordOAuthError()
+    if (oauthError) setError(oauthError)
     let cancelled = false
     void getDeviceFingerprint().then((fp) => {
       if (cancelled) return
@@ -298,6 +302,8 @@ export function UserSystemAuthModal({
                   >
                     {loading ? '登录中…' : '登录'}
                   </button>
+                  <AuthDivider />
+                  <DiscordLoginButton intent="login" lumiEntry disabled={loading} onError={setError} />
                   <button
                     type="button"
                     className="h-10 w-full rounded-[12px] border border-black/10 text-[14px] text-[#1C1C1E]/70"

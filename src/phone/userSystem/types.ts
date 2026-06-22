@@ -21,6 +21,8 @@ export type UserProfile = {
   username: string
   qq: string
   dcId: string
+  discordHandle?: string
+  discordDisplayName?: string
   auditStatus: UserAuditStatus
   auditRejectReason: string
   auditInquiryImages?: string[]

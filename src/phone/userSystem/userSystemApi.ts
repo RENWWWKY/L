@@ -505,6 +505,34 @@ async function request<T>(
   }
 }
 
+function persistAuthLogin(
+  username: string,
+  data: { token: string; status: UserLoginStatus },
+  options?: { lumiEntry?: boolean },
+): UserLoginStatus {
+  try {
+    localStorage.setItem(TOKEN_KEY, data.token)
+    localStorage.setItem(USERNAME_KEY, data.status.username || username)
+  } catch {
+    /* ignore */
+  }
+  if (options?.lumiEntry && data.status.banStatus !== 'banned') {
+    clearBannedNotice()
+    clearSessionKickedNotice()
+  }
+  writeCachedUserStatus(data.status)
+  if (data.status.banStatus !== 'banned') {
+    clearPendingBanStatusCheck()
+    clearBannedNotice()
+  }
+  if (data.status.auditStatus === 'correction_required') {
+    markPendingCorrectionCheck()
+  } else if (options?.lumiEntry && isUserActivated(data.status)) {
+    setAuthVerified()
+  }
+  return data.status
+}
+
 export async function loginUser(
   username: string,
   password: string,
@@ -525,27 +553,110 @@ export async function loginUser(
     if (banned && options?.lumiEntry) writeBannedNotice(username, r.error)
     return { ok: false, error: r.error, banned }
   }
-  try {
-    localStorage.setItem(TOKEN_KEY, r.data.token)
-    localStorage.setItem(USERNAME_KEY, r.data.status.username || username)
-  } catch {
-    /* ignore */
+  return { ok: true, status: persistAuthLogin(username, r.data, options) }
+}
+
+export async function loginWithDiscord(
+  code: string,
+  redirectUri: string,
+  trace: { publicIp: string; deviceId: string; deviceType: string },
+  options?: { lumiEntry?: boolean },
+): Promise<
+  | { ok: true; kind: 'session'; status: UserLoginStatus }
+  | { ok: true; kind: 'register'; registerToken: string; discordId: string; discordHandle?: string; discordDisplayName?: string; discordUsername: string }
+  | { ok: false; error: string; banned?: boolean }
+> {
+  const payload: Record<string, unknown> = { code, redirectUri, ...trace }
+  if (options?.lumiEntry) payload.lumiEntry = true
+  const r = await request<{
+    token?: string
+    status?: UserLoginStatus
+    needsRegister?: boolean
+    registerToken?: string
+    discordId?: string
+    discordHandle?: string
+    discordDisplayName?: string
+    discordUsername?: string
+  }>(
+    'POST',
+    '/api/auth/discord/login',
+    payload,
+    false,
+  )
+  if (!r.ok) {
+    const banned = /封禁/.test(r.error)
+    const username = getStoredUsername()
+    if (banned && !options?.lumiEntry) markPendingBanStatusCheck()
+    if (banned && options?.lumiEntry) writeBannedNotice(username, r.error)
+    return { ok: false, error: r.error, banned }
   }
-  if (options?.lumiEntry && r.data.status.banStatus !== 'banned') {
-    clearBannedNotice()
-    clearSessionKickedNotice()
+  if (r.data.needsRegister && r.data.registerToken && r.data.discordId) {
+    return {
+      ok: true,
+      kind: 'register',
+      registerToken: r.data.registerToken,
+      discordId: r.data.discordId,
+      discordHandle: r.data.discordHandle?.trim() || '',
+      discordDisplayName: r.data.discordDisplayName?.trim() || r.data.discordUsername?.trim() || '',
+      discordUsername: r.data.discordUsername?.trim() || r.data.discordDisplayName?.trim() || '',
+    }
   }
-  writeCachedUserStatus(r.data.status)
-  if (r.data.status.banStatus !== 'banned') {
-    clearPendingBanStatusCheck()
-    clearBannedNotice()
+  if (!r.data.token || !r.data.status) {
+    return { ok: false, error: 'Discord 登录响应异常，请稍后重试' }
   }
-  if (r.data.status.auditStatus === 'correction_required') {
-    markPendingCorrectionCheck()
-  } else if (options?.lumiEntry && isUserActivated(r.data.status)) {
-    setAuthVerified()
+  const username = r.data.status.username || getStoredUsername()
+  return {
+    ok: true,
+    kind: 'session',
+    status: persistAuthLogin(username, { token: r.data.token, status: r.data.status }, options),
   }
-  return { ok: true, status: r.data.status }
+}
+
+export async function identifyDiscordUser(
+  code: string,
+  redirectUri: string,
+  options?: { forRegister?: boolean },
+): Promise<
+  | { ok: true; discordId: string; discordHandle?: string; discordDisplayName?: string; discordUsername: string; registerToken?: string }
+  | { ok: false; error: string }
+> {
+  const payload: Record<string, unknown> = { code, redirectUri }
+  if (options?.forRegister) payload.forRegister = true
+  const r = await request<{
+    discordId: string
+    discordHandle?: string
+    discordDisplayName?: string
+    discordUsername?: string
+    registerToken?: string
+  }>(
+    'POST',
+    '/api/auth/discord/identify',
+    payload,
+    false,
+  )
+  if (!r.ok) return r
+  return {
+    ok: true,
+    discordId: r.data.discordId,
+    discordHandle: r.data.discordHandle?.trim() || '',
+    discordDisplayName: r.data.discordDisplayName?.trim() || r.data.discordUsername?.trim() || '',
+    discordUsername: r.data.discordUsername?.trim() || r.data.discordDisplayName?.trim() || '',
+    registerToken: r.data.registerToken?.trim() || undefined,
+  }
+}
+
+export async function registerWithDiscord(payload: {
+  registerToken: string
+  username: string
+  password: string
+  qq?: string
+  publicIp: string
+  deviceId: string
+  deviceType: string
+}): Promise<{ ok: true } | { ok: false; error: string }> {
+  const r = await request<{ username: string }>('POST', '/api/auth/discord/register', payload, false)
+  if (!r.ok) return r
+  return { ok: true }
 }
 
 export async function registerUser(payload: {
@@ -589,6 +700,8 @@ export async function fetchUserProfile(): Promise<UserProfile | null> {
     username: String(p.username ?? ''),
     qq: String(p.qq ?? ''),
     dcId: String(p.dcId ?? ''),
+    discordHandle: String(p.discordHandle ?? ''),
+    discordDisplayName: String(p.discordDisplayName ?? ''),
     auditStatus: (p.auditStatus as UserProfile['auditStatus']) ?? 'pending',
     auditRejectReason: String(p.auditRejectReason ?? ''),
     auditInquiryImages: Array.isArray(p.auditInquiryImages)
