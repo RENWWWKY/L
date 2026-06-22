@@ -20,6 +20,8 @@ import {
   consumeWeChatFocusPersonaChatId,
   type WeChatFocusPersonaChatDetail,
 } from './wechatFocusChatNavigation'
+import { wxFillToStyle } from './wechatThemeFillStyle'
+import { resolvePublicImageUrl } from '../../../publicAssetUrl'
 import { WeChatTitleUnreadText, WeChatThreadPreviewText, WeChatThreadTimeText, WeChatUnreadBadgeText } from './wechatUnreadCountText'
 import { Pressable } from '../../components/Pressable'
 import {
@@ -465,8 +467,6 @@ function buildPageProps(disableTransitions: boolean) {
   }
 }
 
-type WxFillStyleWithNaturalness = WxFillStyle & { gradientNaturalness?: number }
-
 function DragHandle({ onPointerDown }: { onPointerDown: (e: React.PointerEvent) => void }) {
   return (
     <Pressable
@@ -564,33 +564,7 @@ function TabBarItemRow({
 }
 
 function fillToStyle(fill: WxFillStyle): React.CSSProperties {
-  if (fill.mode === 'solid') {
-    return {
-      backgroundImage: 'none',
-      backgroundColor: fill.solidColor,
-    }
-  }
-  if (fill.mode === 'gradient') {
-    const hint = clamp((fill as WxFillStyleWithNaturalness).gradientNaturalness ?? 50, 0, 100)
-    const hintPct = clamp(5 + (hint / 100) * 90, 5, 95)
-    return {
-      backgroundColor: 'transparent',
-      backgroundImage: `linear-gradient(${fill.gradientAngle}deg, ${fill.gradientFrom} 0%, ${hintPct}%, ${fill.gradientTo} 100%)`,
-      backgroundRepeat: 'no-repeat',
-      backgroundPosition: 'center',
-      backgroundSize: 'cover',
-    }
-  }
-  const url = fill.imageUrl?.trim()
-  return url
-    ? {
-        backgroundColor: 'transparent',
-        backgroundImage: `url(${url})`,
-        backgroundRepeat: 'no-repeat',
-        backgroundPosition: 'center',
-        backgroundSize: 'cover',
-      }
-    : { backgroundColor: 'transparent', backgroundImage: 'none' }
+  return wxFillToStyle(fill)
 }
 
 function fillLayerOpacity(fill: Partial<WxFillStyle> | null | undefined) {
@@ -4999,7 +4973,9 @@ function WeChatAppInner({ onBack }: Props) {
     if (route.name === 'tabs') return fillToStyle(activeTabBgFill)
     return {
       backgroundColor: pageStyle?.pageBg || 'var(--wx-bg)',
-      backgroundImage: pageStyle?.pageBgImageUrl?.trim() ? `url(${pageStyle.pageBgImageUrl})` : 'none',
+      backgroundImage: pageStyle?.pageBgImageUrl?.trim()
+        ? `url(${resolvePublicImageUrl(pageStyle.pageBgImageUrl)})`
+        : 'none',
       backgroundPosition: 'center',
       backgroundRepeat: 'no-repeat',
       backgroundSize: 'cover',

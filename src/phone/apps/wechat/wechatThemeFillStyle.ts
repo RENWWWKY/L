@@ -1,4 +1,5 @@
 import type { CSSProperties } from 'react'
+import { resolvePublicImageUrl } from '../../../publicAssetUrl'
 import type { WeChatTabId, WeChatTheme, WxFillStyle } from '../../types'
 
 function clamp(n: number, min: number, max: number) {
@@ -25,10 +26,11 @@ export function wxFillToStyle(fill: WxFillStyle): CSSProperties {
     }
   }
   const url = fill.imageUrl?.trim()
-  return url
+  const resolved = url ? resolvePublicImageUrl(url) : ''
+  return resolved
     ? {
         backgroundColor: 'transparent',
-        backgroundImage: `url(${url})`,
+        backgroundImage: `url(${resolved})`,
         backgroundRepeat: 'no-repeat',
         backgroundPosition: 'center',
         backgroundSize: 'cover',

@@ -391,7 +391,7 @@ export const DEFAULT_WECHAT_TAB_PAGE_BG: WxFillStyle = {
   gradientTo: '#FFFFFF',
   gradientAngle: 180,
   gradientNaturalness: 50,
-  imageUrl: DEFAULT_WECHAT_CHAT_WALLPAPER_URL,
+  imageUrl: DEFAULT_WECHAT_CHAT_WALLPAPER_PATH,
   layerOpacity: 100,
   glassEnabled: false,
   glassOpacity: 0,
@@ -489,7 +489,7 @@ export const DEFAULT_CUSTOMIZATION: CustomizationState = {
     wechat: {
       ...DEFAULT_APP_PAGE_STYLE,
       pageBg: '#F5F6F8',
-      pageBgImageUrl: DEFAULT_WECHAT_CHAT_WALLPAPER_URL,
+      pageBgImageUrl: DEFAULT_WECHAT_CHAT_WALLPAPER_PATH,
     },
     takeout: { ...DEFAULT_APP_PAGE_STYLE },
     weibo: { ...DEFAULT_APP_PAGE_STYLE },
@@ -519,7 +519,7 @@ export const DEFAULT_CUSTOMIZATION: CustomizationState = {
     appearance: {
       ...DEFAULT_APP_PAGE_STYLE,
       pageBg: '#F5F6F8',
-      pageBgImageUrl: DEFAULT_WECHAT_CHAT_WALLPAPER_URL,
+      pageBgImageUrl: DEFAULT_WECHAT_CHAT_WALLPAPER_PATH,
     },
   },
   dockStyle: {
