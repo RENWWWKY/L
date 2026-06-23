@@ -242,7 +242,7 @@ function markAuthVerifiedIfActivated(status: UserLoginStatus): void {
   }
 }
 
-/** 是否须在主页显示「正在检测账号状态」（每次刷新进入且已登录） */
+/** 是否须在主页显示「正在检测账号状态」（页面刷新后开屏结束且已登录） */
 export function shouldShowAccountStatusCheck(): boolean {
   if (isLocalDevBypassAuth()) return false
   if (getAuthToken()) return true

@@ -19,6 +19,7 @@ import {
   readAuthVerified,
   readBannedNotice,
   readLocalAccountGateStatus,
+  readLocalUserLoginStatus,
   readSessionKickedNotice,
   runLumiSessionGuard,
   shouldShowAccountStatusCheck,
@@ -135,6 +136,8 @@ export function PhoneApp() {
   const [authVerifyError, setAuthVerifyError] = useState<string | null>(null)
   const [authChecking, setAuthChecking] = useState(false)
   const openVerifiedRef = useRef(localDevBypassAuth || readAuthVerified())
+  /** 本次页面加载是否已做过开屏后的唯一一次账号检测（刷新页面会重置） */
+  const sessionBootAuthDoneRef = useRef(false)
 
   useEffect(() => {
     if (localDevBypassAuth) openVerifiedRef.current = true
@@ -309,13 +312,14 @@ export function PhoneApp() {
   useEffect(() => {
     if (localDevBypassAuth) return
     if (showSplash || showEntryNotice) return
-    if (route.name !== 'home') return
+    if (sessionBootAuthDoneRef.current) return
+    sessionBootAuthDoneRef.current = true
     if (shouldShowAccountStatusCheck()) {
       setAuthChecking(true)
       setUserAuthReady(false)
     }
     void refreshUserAuth()
-  }, [route.name, showSplash, showEntryNotice, refreshUserAuth])
+  }, [showSplash, showEntryNotice, refreshUserAuth])
 
   const needsCorrection = needsUserInfoCorrection(userAuthStatus)
 
@@ -404,9 +408,25 @@ export function PhoneApp() {
 
   const handleUserAccountBack = useCallback(() => {
     setRoute({ name: 'home' })
-    setUserAuthReady(false)
-    void refreshUserAuth()
-  }, [refreshUserAuth])
+  }, [])
+
+  const syncUserAuthFromLocal = useCallback(() => {
+    if (!getAuthToken()) {
+      openVerifiedRef.current = false
+      setUserAuthStatus(null)
+      setAuthVerifyError(null)
+      setBanNotice(readBannedNotice()?.message ?? null)
+      setSessionKickedNotice(readSessionKickedNotice())
+      setUserAuthReady(true)
+      return
+    }
+    openVerifiedRef.current = readAuthVerified()
+    setUserAuthStatus(readLocalUserLoginStatus())
+    setAuthVerifyError(null)
+    setBanNotice(readBannedNotice()?.message ?? null)
+    setSessionKickedNotice(readSessionKickedNotice())
+    setUserAuthReady(true)
+  }, [])
 
   return (
     <div
@@ -450,10 +470,7 @@ export function PhoneApp() {
                   onBack={handleUserAccountBack}
                   initialTab={route.tab}
                   initialAuthTab={route.authTab}
-                  onAuthChange={() => {
-                    setUserAuthReady(false)
-                    void refreshUserAuth()
-                  }}
+                  onAuthChange={syncUserAuthFromLocal}
                 />
               </motion.div>
             )}
