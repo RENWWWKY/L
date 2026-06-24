@@ -131,7 +131,6 @@ import type {
   WeChatRedPacketPayload,
   WeChatTransferPayload,
   WeChatMusicSyncPayload,
-  WeChatLocationPayload,
   WeChatListenCommentSharePayload,
   WeChatListenProfileSharePayload,
   WeChatListenTrackSharePayload,
@@ -302,15 +301,6 @@ import { MusicInviteChatRow } from './musicSync/MusicInviteChatRow'
 import { ListenCommentShareChatRow } from './musicSync/ListenCommentShareChatRow'
 import { ListenProfileShareChatRow } from './musicSync/ListenProfileShareChatRow'
 import { ListenTrackShareChatRow } from './musicSync/ListenTrackShareChatRow'
-import { LocationChatRow } from './location/LocationChatRow'
-import { LocationSpoofModal } from './location/LocationSpoofModal'
-import { formatLocationShareAiTranscriptLine } from './location/locationAiContext'
-import {
-  buildWeChatLocationPayloadFromAiDirective,
-  isLocationShareDirectiveArtifactLine,
-  parseLocationShareDirective,
-} from './location/locationShareAiDirective'
-import { locationShareContentFallback } from './location/wechatLocationUtils'
 import {
   formatListenCommentShareAiTranscriptLine,
   formatListenProfileShareAiTranscriptLine,
@@ -582,15 +572,6 @@ function itemsToTranscript(items: ChatItem[], opts?: { groupSpeakerLabel?: (m: C
           speakerLabel,
         }
       }
-      if (m.locationShare) {
-        return {
-          id: m.id,
-          from: m.from,
-          text: formatLocationShareAiTranscriptLine(m.locationShare, m.from === 'self' ? 'self' : 'other'),
-          replyTo: m.replyTo,
-          speakerLabel,
-        }
-      }
       if (m.sharedRecord) {
         const sr = m.sharedRecord
         const typeLabel =
@@ -703,7 +684,6 @@ function mapWeChatMessagesToChatItems(msgs: WeChatChatMessage[]): ChatMsg[] {
         listenCommentShare: m.listenCommentShare,
         listenProfileShare: m.listenProfileShare,
         listenTrackShare: m.listenTrackShare,
-        locationShare: m.locationShare,
         sharedRecord: m.sharedRecord,
         originalText: m.originalContent,
         isRecalled: m.isRecalled,
@@ -734,14 +714,11 @@ function mapWeChatMessagesToChatItems(msgs: WeChatChatMessage[]): ChatMsg[] {
       bodyText = normalizeGroupSmartBotBubblePlaintext(m.content, null)
     }
     const resolvedChatHistory = m.chatHistory ?? resolveChatHistoryFromStoredMessage(m) ?? undefined
-    const resolvedBodyText = m.locationShare
-      ? locationShareContentFallback(m.locationShare)
-      : bodyText
     mapped.push({
       id: m.id,
       kind: 'msg',
       from: m.type === 'player' ? 'self' : 'other',
-      text: resolvedChatHistory ? '[聊天记录]' : resolvedBodyText,
+      text: resolvedChatHistory ? '[聊天记录]' : bodyText,
       thinking: m.thinking,
       timestamp: m.timestamp,
       replyTo: m.replyTo,
@@ -754,7 +731,6 @@ function mapWeChatMessagesToChatItems(msgs: WeChatChatMessage[]): ChatMsg[] {
       listenCommentShare: m.listenCommentShare,
       listenProfileShare: m.listenProfileShare,
       listenTrackShare: m.listenTrackShare,
-      locationShare: m.locationShare,
       sharedRecord: m.sharedRecord,
       chatHistory: resolvedChatHistory,
       originalText: m.originalContent,
@@ -815,7 +791,7 @@ function rebuildChatItemsWithTimestamps(msgs: ChatMsg[], formatWxTimeLabel: (ts:
 function messagePlainPreview(
   msg: Pick<
     ChatMsg,
-    'text' | 'images' | 'redPacket' | 'transfer' | 'callStatus' | 'voice' | 'musicSync' | 'listenCommentShare' | 'listenProfileShare' | 'listenTrackShare' | 'locationShare' | 'sharedRecord' | 'chatHistory' | 'isRecalled' | 'isGroupEventStrip'
+    'text' | 'images' | 'redPacket' | 'transfer' | 'callStatus' | 'voice' | 'musicSync' | 'listenCommentShare' | 'listenProfileShare' | 'listenTrackShare' | 'sharedRecord' | 'chatHistory' | 'isRecalled' | 'isGroupEventStrip'
   >,
 ): string {
   if (msg.isGroupEventStrip && msg.text?.trim()) return msg.text.trim()
@@ -833,7 +809,6 @@ function messagePlainPreview(
     const prefix = msg.listenTrackShare.targetType === 'song' ? '[分享单曲]' : '[分享歌单]'
     return `${prefix} ${msg.listenTrackShare.targetTitle}`
   }
-  if (msg.locationShare) return `[位置] ${msg.locationShare.name}`
   if (msg.sharedRecord) return '[收藏]'
   if (msg.chatHistory) return '[聊天记录]'
   const rp = msg.redPacket
@@ -905,7 +880,6 @@ function bubbleLineNeedsSpecialBubbleHandler(line: string): boolean {
   if (/^(?:\[语音\]|【语音】)\s*/.test(t)) return true
   if (parseRedPacketDirective(t)) return true
   if (parseTransferDirective(t)) return true
-  if (parseLocationShareDirective(t)) return true
   if (parseTransferIncomingActionDirective(t)) return true
   if (parseRedPacketOpenDirective(t)) return true
   if (parseVoiceCallDirective(t)) return true
@@ -1382,7 +1356,6 @@ type ChatMsg = {
   listenCommentShare?: WeChatListenCommentSharePayload
   listenProfileShare?: WeChatListenProfileSharePayload
   listenTrackShare?: WeChatListenTrackSharePayload
-  locationShare?: WeChatLocationPayload
   sharedRecord?: WeChatSharedRecordPayload
   chatHistory?: WeChatChatHistoryPayload
   status?: MsgStatus
@@ -3716,8 +3689,6 @@ export function ChatRoom({
   const [photoPickerOpen, setPhotoPickerOpen] = useState(false)
   const [favoritesPickerOpen, setFavoritesPickerOpen] = useState(false)
   const [favoriteShareSending, setFavoriteShareSending] = useState(false)
-  const [locationSendOpen, setLocationSendOpen] = useState(false)
-  const [locationSendBusy, setLocationSendBusy] = useState(false)
   const [heartWhisperOpen, setHeartWhisperOpen] = useState(false)
   const [callSheetOpen, setCallSheetOpen] = useState(false)
   const [callingOpen, setCallingOpen] = useState(false)
@@ -4506,7 +4477,6 @@ export function ChatRoom({
             voice: p.voice,
             images: p.images,
             musicSync: p.musicSync,
-            locationShare: p.locationShare,
             otherAnimated: true,
           }
           return {
@@ -4528,7 +4498,6 @@ export function ChatRoom({
                   voice: p.voice,
                   images: p.images,
                   musicSync: p.musicSync,
-                  locationShare: p.locationShare,
                 })
                 .catch(() => {})
             },
@@ -7356,7 +7325,6 @@ export function ChatRoom({
             .filter(Boolean)
             .filter((s) => !/^\[BUSY\]/i.test(s) && !/^["'“”‘’]\s*,?\s*"duration"\s*:/i.test(s))
             .filter((s) => !isCharacterMusicSyncDirectiveArtifactLine(s) && !isMusicSyncDirectiveArtifactLine(s))
-            .filter((s) => !isLocationShareDirectiveArtifactLine(s))
             .reduce<string[]>((acc, cur) => {
               const prev = acc.length ? acc[acc.length - 1] : ''
               if (prev && prev === cur) return acc
@@ -7766,7 +7734,6 @@ export function ChatRoom({
               if (!String(segForStore).trim()) continue
               if (isMusicSyncDirectiveArtifactLine(String(segForStore))) continue
               if (isCharacterMusicSyncDirectiveArtifactLine(String(segForStore))) continue
-              if (isLocationShareDirectiveArtifactLine(String(segForStore))) continue
               if (
                 roomType === 'group' &&
                 groupId?.trim() &&
@@ -8311,8 +8278,7 @@ export function ChatRoom({
             const rpDirective = parseRedPacketDirective(currentLine)
             const tfDirective = parseTransferDirective(currentLine)
             const vcDirective = parseVoiceCallDirective(currentLine)
-            const locDirective = parseLocationShareDirective(currentLine)
-            if (rpDirective || tfDirective || vcDirective || locDirective) {
+            if (rpDirective || tfDirective || vcDirective) {
               const ts = getCurrentTimeMs()
               const mid = `wxm-${ts}-o-${i}-${Math.random().toString(36).slice(2, 6)}`
               if (vcDirective?.type === 'start') {
@@ -8423,52 +8389,6 @@ export function ChatRoom({
                         })
                     },
                     afterReveal: withMusicSyncFlushOnBubbleRevealed(tfStep),
-                  },
-                ])
-                continue
-              }
-              if (locDirective) {
-                const locPayload = buildWeChatLocationPayloadFromAiDirective(locDirective)
-                if (!locPayload) continue
-                const seg = locationShareContentFallback(locPayload)
-                const thinkingLoc = !thinkingAttached && thinking ? thinking : undefined
-                const incoming: ChatMsg = {
-                  id: mid,
-                  kind: 'msg',
-                  from: 'other',
-                  senderCharacterId: persistCharacterId,
-                  text: seg,
-                  thinking: thinkingLoc,
-                  timestamp: ts,
-                  locationShare: locPayload,
-                  otherAnimated: true,
-                }
-                if (thinkingLoc) thinkingAttached = true
-                const locStep = markEmittedThisRound(mid, ts, seg)
-                enqueueOpponentMessagesSequential([
-                  {
-                    forConversationKey: conversationKey,
-                    msg: incoming,
-                    persist: () => {
-                      void personaDb
-                        .appendWeChatChatMessage({
-                          id: mid,
-                          characterId: persistCharacterId,
-                          playerIdentityId,
-                          type: 'character',
-                          content: seg,
-                          thinking: thinkingLoc,
-                          timestamp: incoming.timestamp,
-                          isRead: true,
-                          conversationKey,
-                          notifyPeerTitle: notifyPeerRound.trim() || undefined,
-                          locationShare: locPayload,
-                        })
-                        .catch(() => {
-                          /* ignore */
-                        })
-                    },
-                    afterReveal: withMusicSyncFlushOnBubbleRevealed(locStep),
                   },
                 ])
                 continue
@@ -8679,7 +8599,6 @@ export function ChatRoom({
             if (!String(segForStore).trim()) continue
             if (isMusicSyncDirectiveArtifactLine(String(segForStore))) continue
             if (isCharacterMusicSyncDirectiveArtifactLine(String(segForStore))) continue
-            if (isLocationShareDirectiveArtifactLine(String(segForStore))) continue
             characterPlainTextsThisRound.push(String(segForStore).trim())
             if (opponentQueueStopRef.current) break bubbleRunLoop
 
@@ -9469,93 +9388,6 @@ export function ChatRoom({
     ],
   )
 
-  const commitSendLocation = useCallback(
-    async (payload: WeChatLocationPayload) => {
-      if (locationSendBusy) return
-      setLocationSendBusy(true)
-      manualAiPauseRef.current = false
-      opponentQueueStopRef.current = true
-      flushOpponentRevealQueueImmediate()
-      setTypingVisible(false)
-      const ts = getCurrentTimeMs()
-      const id = `wxm-${ts}-loc-${Math.random().toString(36).slice(2, 8)}`
-      const content = locationShareContentFallback(payload)
-      const triggerAi = roomType === 'private' && !isSelfMemoChat && !useLumiProjectAssistantPrompt
-      try {
-        await personaDb.appendWeChatChatMessage({
-          id,
-          characterId: conversationCharacterId,
-          playerIdentityId,
-          type: 'player',
-          content,
-          locationShare: payload,
-          timestamp: ts,
-          isRead: true,
-          conversationKey,
-        })
-        setItems((prev) => {
-          const next = rebuildWithCurrentTime([
-            ...extractMessages(prev),
-            {
-              id,
-              kind: 'msg',
-              from: 'self',
-              text: content,
-              timestamp: ts,
-              locationShare: payload,
-              status: 'sent',
-              selfAnimated: true,
-            },
-          ])
-          itemsRef.current = next
-          return next
-        })
-        setLocationSendOpen(false)
-        setPlusMenuOpen(false)
-        setStubPanel(null)
-        scrollToBottomSmooth()
-        showComposerToast('已发送位置')
-        if (triggerAi) {
-          aiCallingRef.current = true
-          lastUserAiTriggerTsRef.current = ts
-          setAwaitingAiKick(true)
-          syncAiReplyPipelineActive(conversationKey)
-          queueMicrotask(() => {
-            void (async () => {
-              opponentQueueStopRef.current = false
-              deferResetProactiveMessageCountdown()
-              bumpPendingAiRepliesForReply()
-              void flushAiReplies()
-            })()
-          })
-        }
-      } catch {
-        showComposerToast('发送失败，请重试')
-      } finally {
-        setLocationSendBusy(false)
-      }
-    },
-    [
-      bumpPendingAiRepliesForReply,
-      conversationCharacterId,
-      conversationKey,
-      deferResetProactiveMessageCountdown,
-      extractMessages,
-      flushAiReplies,
-      flushOpponentRevealQueueImmediate,
-      getCurrentTimeMs,
-      isSelfMemoChat,
-      locationSendBusy,
-      playerIdentityId,
-      rebuildWithCurrentTime,
-      roomType,
-      scrollToBottomSmooth,
-      showComposerToast,
-      syncAiReplyPipelineActive,
-      useLumiProjectAssistantPrompt,
-    ],
-  )
-
   useEffect(() => {
     if (embedMode !== 'quick-reply' || !onEmbedSendReady) return
     onEmbedSendReady({
@@ -9579,7 +9411,7 @@ export function ChatRoom({
         showCenterToast('无法保存编辑')
         return
       }
-      if (row.images?.length || row.redPacket || row.transfer || row.voice || row.callStatus || row.locationShare) {
+      if (row.images?.length || row.redPacket || row.transfer || row.voice || row.callStatus) {
         showCenterToast('仅支持编辑纯文字消息')
         return
       }
@@ -10310,10 +10142,7 @@ export function ChatRoom({
           setCallSheetOpen(true)
           break
         case 'location':
-          setStubPanel(null)
-          setPlusMenuOpen(false)
-          setLocationSendOpen(true)
-          logger.log('frontend', '点击加号菜单：位置')
+          stub('位置')
           break
         case 'redpacket':
           if (onOpenSendRedPacket) {
@@ -11363,34 +11192,6 @@ export function ChatRoom({
         return wrap(voiceRow, renderDetachedReply(m, isSelf))
       }
 
-      if (m.locationShare) {
-        const rowInner = (
-          <LocationChatRow
-            id={m.id}
-            isSelf={isSelf}
-            data={m.locationShare}
-            bubble={bubble}
-            showAvatar={effectiveShowAvatar}
-            showAvatarColumn={isSelf ? showAvatarColumnSelf : showAvatarColumnOther}
-            chatSelfAvatarUrl={sharedMsgProps.chatSelfAvatarUrl}
-            chatOtherAvatarUrl={sharedRowProps.chatOtherAvatarUrl}
-            chatOtherSenderNickname={chatOtherSenderNickname}
-            chatOtherAvatarRankBadge={chatOtherAvatarRankBadge}
-            chatSelfAvatarRankBadge={chatSelfAvatarRankBadge}
-            groupRankShowBesideNickname={sharedMsgProps.groupRankShowBesideNickname}
-          />
-        )
-        const rowWrapped =
-          !isSelf && m.otherAnimated ? (
-            <ChatMessageEnter isSelf={false}>{rowInner}</ChatMessageEnter>
-          ) : isSelf && m.selfAnimated ? (
-            <ChatMessageEnter isSelf>{rowInner}</ChatMessageEnter>
-          ) : (
-            rowInner
-          )
-        return wrap(rowWrapped, renderDetachedReply(m, isSelf))
-      }
-
       if (m.musicSync) {
         const inviteCoverUrl =
           m.musicSync.kind === 'music_accept'
@@ -12397,18 +12198,6 @@ export function ChatRoom({
         }}
         onPick={(item) => void commitSendFavoriteSharedRecord(item)}
         personaContacts={personaContactsList}
-      />
-
-      <LocationSpoofModal
-        open={locationSendOpen}
-        sending={locationSendBusy}
-        onClose={() => {
-          if (locationSendBusy) return
-          setLocationSendOpen(false)
-        }}
-        onSend={(payload) => void commitSendLocation(payload)}
-        personaCharacterId={personaCharacterId}
-        conversationCharacterId={conversationCharacterId}
       />
 
       <AnimatePresence>
