@@ -39,6 +39,21 @@ function laneStyleFor(mode: DanmakuOverlayBullet['style']): CSSProperties {
   return {}
 }
 
+/** 轨道/topPct 定位时预留单行高度，避免 zone 底部 overflow-hidden 裁切最后一轨 */
+function resolveBulletTop(
+  it: DanmakuOverlayBullet,
+  maxTrackIndex: number,
+  lineHeight: number,
+): string {
+  const laneExtraPx = it.style === 'none' ? 0 : 6
+  const blockHeight = lineHeight + laneExtraPx
+  if (typeof it.topPct === 'number') {
+    return `min(${it.topPct}%, calc(100% - ${blockHeight}px))`
+  }
+  if (maxTrackIndex <= 0) return '0px'
+  return `calc((100% - ${blockHeight}px) * ${it.track} / ${maxTrackIndex})`
+}
+
 export function DanmakuOverlay({
   bullets,
   zoneStyle,
@@ -52,6 +67,11 @@ export function DanmakuOverlay({
         .map((b) => ({ ...b, text: String(b.text ?? '').trim() }))
         .filter((b) => b.text.length > 0),
     [bullets],
+  )
+
+  const maxTrackIndex = useMemo(
+    () => prepared.reduce((m, b) => Math.max(m, b.track), 0),
+    [prepared],
   )
 
   if (!prepared.length) return null
@@ -68,12 +88,8 @@ export function DanmakuOverlay({
         <div className="pointer-events-none absolute inset-x-0 overflow-hidden" style={zoneStyle}>
           {prepared.map((it) => {
             const lineHeight = it.fontPx + 8
-            const laneGapPx = 6
             const tokenStyle = laneStyleFor(it.style)
-            const top =
-              typeof it.topPct === 'number'
-                ? `${it.topPct}%`
-                : it.track * (lineHeight + laneGapPx)
+            const top = resolveBulletTop(it, maxTrackIndex, lineHeight)
             const dur = Math.max(3, it.durationSec)
             const delay = Math.max(0, it.startDelaySec ?? 0)
             return (
