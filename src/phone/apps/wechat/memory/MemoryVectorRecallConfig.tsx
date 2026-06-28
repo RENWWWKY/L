@@ -9,6 +9,9 @@ import { MemoryEngineSoftSwitch } from './MemoryEngineSoftSwitch'
 import { MemoryLocalEmbeddingModelPicker } from './MemoryLocalEmbeddingModelPicker'
 import type { MemoryEmbeddingProviderMode } from './memoryEmbeddingProvider'
 import { getLocalEmbeddingModelOption } from './memoryEmbeddingConstants'
+import {
+  buildLocalEmbeddingModelConfigProbeUrl,
+} from './localEmbeddingRemoteHost'
 import type { ConnectionStatus, VectorAPIConfig } from './memoryEngineConfigTypes'
 import { VectorBridgeConfig } from './VectorBridgeConfig'
 import type { EmbeddingPullSource } from './vectorEmbeddingPullSource'
@@ -175,6 +178,7 @@ export function MemoryVectorRecallConfig({
   const showLocalSection = embeddingProviderMode !== 'api'
   const showApiSection = embeddingProviderMode !== 'local'
   const localModelMeta = getLocalEmbeddingModelOption(localEmbeddingModelId)
+  const localModelProbeUrl = buildLocalEmbeddingModelConfigProbeUrl(localEmbeddingModelId)
 
   return (
     <div className="space-y-4">
@@ -211,7 +215,7 @@ export function MemoryVectorRecallConfig({
             {showLocalSection ? (
               <ConfigBlock
                 title="本地模型"
-                description="从预设列表选择，首次使用需下载到浏览器缓存"
+                description="从预设列表选择，首次使用需下载到浏览器缓存；GitHub Pages / Worker 线路请先开梯子"
               >
                 <MemoryLocalEmbeddingModelPicker
                   value={localEmbeddingModelId}
@@ -229,6 +233,14 @@ export function MemoryVectorRecallConfig({
                       未下载
                     </span>
                   )}
+                  <a
+                    href={localModelProbeUrl}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="inline-flex items-center rounded-full border border-amber-300/90 bg-amber-50 px-3 py-1.5 text-[12px] font-medium text-amber-950 transition-colors hover:bg-amber-100/70"
+                  >
+                    打开梯子下载
+                  </a>
                   <button
                     type="button"
                     disabled={localModelDownloading}

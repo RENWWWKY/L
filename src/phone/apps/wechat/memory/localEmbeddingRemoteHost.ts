@@ -57,3 +57,10 @@ export function formatLocalEmbeddingDownloadError(message: string): string {
   const m = message.trim()
   return m || '下载失败'
 }
+
+/** 供设置页：探测模型 config.json 是否可达（新标签页打开，需梯子时常用） */
+export function buildLocalEmbeddingModelConfigProbeUrl(modelId: string): string {
+  const model = modelId.trim()
+  const host = resolveLocalEmbeddingRemoteHost()
+  return `${host}${model}/resolve/main/config.json`
+}
