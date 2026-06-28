@@ -1,0 +1,6 @@
+name = "hf-mirror-proxy"
+main = "src/index.ts"
+compatibility_date = "2024-12-01"
+
+# 与 link-preview / lumi-push 同一 Cloudflare 账号；部署失败时从控制台复制 account_id 填入
+# account_id = "你的32位账号ID"
