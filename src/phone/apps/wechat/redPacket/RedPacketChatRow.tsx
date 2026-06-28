@@ -7,6 +7,7 @@ import {
 } from '../group/ChatGroupSpeakerAvatarWrap'
 import { useLongPress } from '../hooks/useWeChatLongPress'
 import { RedPacketBubble, type RedPacketBubbleData } from './RedPacketBubble'
+import { resolveMessengerBubbleStyle } from '../wechatMessengerSpecialBubbles'
 
 type Props = {
   id: string
@@ -24,6 +25,7 @@ type Props = {
   selected?: boolean
   onOpen: () => void
   onLongPress?: (anchorRect: DOMRect) => void
+  replyPreview?: { senderName: string; content: string; onClick?: () => void }
 }
 
 /**
@@ -45,6 +47,7 @@ export function RedPacketChatRow({
   selected = false,
   onOpen,
   onLongPress,
+  replyPreview,
 }: Props) {
   const anchorRef = useRef<HTMLDivElement>(null)
   const bubbleRadius = isSelf ? `${bubble.selfBubbleRadiusPx}px` : `${bubble.otherBubbleRadiusPx}px`
@@ -64,13 +67,15 @@ export function RedPacketChatRow({
     onLongPress: () => handleLongPress(),
   })
 
+  const messengerStyle = resolveMessengerBubbleStyle(bubble)
+
   const packetBlock = useMemo(
     () => (
       <div
         ref={anchorRef}
         className="relative inline-block select-none transition-[transform,opacity] duration-150 ease-out"
         style={{
-          borderRadius: bubbleRadius,
+          borderRadius: messengerStyle === 'wechat' ? bubbleRadius : undefined,
           transform: pressing && !selected ? 'scale(0.98)' : 'scale(1)',
           opacity: pressing && !selected ? 0.92 : 1,
           transformOrigin: isSelf ? 'right bottom' : 'left bottom',
@@ -92,7 +97,14 @@ export function RedPacketChatRow({
           if (!selected) onOpen()
         }}
       >
-        <RedPacketBubble data={data} isSelf={isSelf} />
+        <RedPacketBubble
+          data={data}
+          isSelf={isSelf}
+          messengerStyle={messengerStyle}
+          onAction={onOpen}
+          replyPreview={replyPreview}
+          replyIsSelf={isSelf}
+        />
         {selected ? (
           <span
             className="pointer-events-none absolute inset-0 rounded-[14px]"
@@ -102,7 +114,7 @@ export function RedPacketChatRow({
         ) : null}
       </div>
     ),
-    [bind, bubbleRadius, data, isSelf, onOpen, pressing, selected],
+    [bind, bubbleRadius, data, isSelf, messengerStyle, onOpen, pressing, replyPreview, selected],
   )
 
   const showAvatarVisual = showAvatar && showAvatarColumn

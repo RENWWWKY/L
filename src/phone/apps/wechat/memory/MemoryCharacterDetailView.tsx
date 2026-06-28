@@ -32,6 +32,7 @@ export function MemoryCharacterDetailView({
   alignUserTitle,
   alignUserToast,
   children,
+  layout = 'standalone',
 }: {
   character: MemoryCharacterRosterItem
   rosterIndex: number
@@ -56,6 +57,8 @@ export function MemoryCharacterDetailView({
   alignUserTitle?: string
   alignUserToast?: string | null
   children: ReactNode
+  /** standalone：完整角色页；onlineSection：嵌入统一详情，仅线上总结区块 */
+  layout?: 'standalone' | 'onlineSection'
 }) {
   const [toolsOpen, setToolsOpen] = useState(false)
   const toolsRef = useRef<HTMLDivElement | null>(null)
@@ -75,15 +78,18 @@ export function MemoryCharacterDetailView({
     }
   }, [toolsOpen])
 
+  const isOnlineSection = layout === 'onlineSection'
+
   return (
     <div className="pb-6">
-      <div className="px-4 pt-2" style={{ background: ARCHIVE_BG }}>
-        {alignUserToast ? (
+      <div className={isOnlineSection ? 'px-4' : 'px-4 pt-2'} style={{ background: ARCHIVE_BG }}>
+        {alignUserToast && !isOnlineSection ? (
           <p className="mb-3 rounded-2xl bg-white/95 px-4 py-3 text-[11px] leading-relaxed text-gray-500 shadow-sm">
             {alignUserToast}
           </p>
         ) : null}
 
+        {!isOnlineSection ? (
         <div className="relative overflow-hidden rounded-[28px] bg-white px-4 py-5 shadow-[0_10px_40px_rgba(0,0,0,0.04)]">
           <div className="pointer-events-none absolute -right-8 -top-10 h-32 w-32 rounded-full bg-gray-100/80 blur-2xl" />
           <div className="relative flex items-start justify-between gap-3">
@@ -192,11 +198,25 @@ export function MemoryCharacterDetailView({
             ) : null}
           </div>
         </div>
+        ) : null}
 
         <div
-          className="sticky top-0 z-20 mt-4 space-y-3 rounded-[24px] bg-white/95 px-4 py-4 shadow-[0_8px_30px_rgba(0,0,0,0.04)] backdrop-blur-sm"
+          className={`sticky top-0 z-20 space-y-3 rounded-[24px] bg-white/95 px-4 py-4 shadow-[0_8px_30px_rgba(0,0,0,0.04)] backdrop-blur-sm ${
+            isOnlineSection ? 'mt-0 border border-gray-200/60' : 'mt-4'
+          }`}
           style={{ background: 'rgba(255,255,255,0.92)' }}
         >
+          {isOnlineSection ? (
+            <button
+              type="button"
+              data-memory-coach="create"
+              onClick={onCreate}
+              className="flex w-full items-center justify-center gap-2 rounded-2xl bg-gray-900 py-2.5 text-[13px] font-semibold text-white active:opacity-90"
+            >
+              <Plus className="size-4" strokeWidth={2} />
+              刻录记忆
+            </button>
+          ) : null}
           <div data-memory-coach="search" className="flex items-center gap-2.5 rounded-2xl bg-gray-50 px-3.5 py-2.5">
             <Search className="size-4 shrink-0 text-gray-400" strokeWidth={1.25} />
             <input

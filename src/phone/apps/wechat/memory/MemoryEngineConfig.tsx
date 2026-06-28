@@ -5,16 +5,32 @@ import { fetchEmbeddingModels, fetchModels } from '../../api/apiSim'
 import type { ApiConfig } from '../../api/types'
 import { useCurrentApiConfig } from '../../api/ApiSettingsContext'
 import { personaDb } from '../newFriendsPersona/idb'
-import type { CharacterMemoryTriggerMode } from '../newFriendsPersona/types'
+import { DEFAULT_MEMORY_EMBEDDING_MODEL } from './memoryEmbeddingApi'
 import {
-  DEFAULT_MEMORY_EMBEDDING_MODEL,
-  resolveEmbeddingApiCredentials,
-  testMemoryEmbeddingConnection,
-} from './memoryEmbeddingApi'
+  downloadLocalEmbeddingModelManual,
+  getLocalEmbeddingDownloadRecord,
+  type LocalEmbeddingDownloadProgress,
+} from './localEmbeddingClient'
+import {
+  formatLocalEmbeddingDownloadError,
+  probeLocalEmbeddingDownloadChannel,
+} from './localEmbeddingRemoteHost'
+import { DEFAULT_LOCAL_EMBEDDING_MODEL, normalizeLocalEmbeddingModelId } from './memoryEmbeddingConstants'
+import {
+  testMemoryEmbeddingConnectionUnified,
+  type MemoryEmbeddingProviderMode,
+} from './memoryEmbeddingProvider'
 import { ARCHIVE_BG } from './memoryArchiveTheme'
+import {
+  ARCHIVE_SOURCE_OFFLINE_LABEL,
+  ARCHIVE_SOURCE_ONLINE_LABEL,
+  ARCHIVE_SOURCE_SECTION_OFFLINE,
+  ARCHIVE_SOURCE_SECTION_ONLINE,
+} from './memoryArchiveSourceLabels'
 import { MemoryCoachPortal } from './MemoryCoachPortal'
 import {
   MEMORY_ENGINE_COACH_SEEN_KEY,
+  MEMORY_HUB_COACH_SEEN_KEY,
   readMemoryCoachSeen,
   writeMemoryCoachSeen,
 } from './memoryCoachTypes'
@@ -26,7 +42,6 @@ import {
 } from './memoryEngineCoachSteps'
 import { MEMORY_ENGINE_TUTORIAL_SECTIONS } from './memoryEngineTutorialCopy'
 import { MemoryEngineSoftSwitch } from './MemoryEngineSoftSwitch'
-import { MemoryFeatureHelpButton } from './MemoryFeatureHelpButton'
 import { MemoryTutorialButton } from './MemoryTutorialButton'
 import { MemoryTutorialModal } from './MemoryTutorialModal'
 import type { ConnectionStatus, SummaryAPIConfig, VectorAPIConfig } from './memoryEngineConfigTypes'
@@ -35,7 +50,9 @@ import { MemoryApiModeCapsule, type MemoryApiMode } from './MemoryApiModeCapsule
 import { MemorySummaryApiConfig } from './MemorySummaryApiConfig'
 import { testMemorySummaryConnection } from './memorySummaryApi'
 import { resolveSummaryPullSource } from './memorySummaryPullSource'
-import { VectorBridgeConfig } from './VectorBridgeConfig'
+import { testMemoryTimelineSummaryConnection } from './memoryTimelineSummaryApi'
+import { resolveTimelineSummaryPullSource } from './memoryTimelineSummaryPullSource'
+import { MemoryVectorRecallConfig } from './MemoryVectorRecallConfig'
 import { resolveEmbeddingPullSource } from './vectorEmbeddingPullSource'
 import type { AutoSummaryIntervalScope } from './memoryAutoSummaryInterval'
 import {
@@ -48,6 +65,37 @@ import {
   MemoryPerCharacterIntervalList,
 } from './MemoryPerCharacterIntervalList'
 import type { Character } from '../newFriendsPersona/types'
+
+function ConfigSourceIntro({
+  chipClass,
+  label,
+  title,
+  body,
+  bullets,
+}: {
+  chipClass: string
+  label: string
+  title: string
+  body: string
+  bullets?: string[]
+}) {
+  return (
+    <div className="mb-4 rounded-2xl border border-gray-100 bg-gray-50/80 px-4 py-3.5">
+      <div className="flex flex-wrap items-center gap-2">
+        <span className={chipClass}>{label}</span>
+        <p className="text-[13px] font-semibold text-gray-900">{title}</p>
+      </div>
+      <p className="mt-2 text-[12px] leading-relaxed text-gray-600">{body}</p>
+      {bullets?.length ? (
+        <ul className="mt-2 list-inside list-disc space-y-1 text-[11px] leading-relaxed text-gray-500">
+          {bullets.map((item) => (
+            <li key={item}>{item}</li>
+          ))}
+        </ul>
+      ) : null}
+    </div>
+  )
+}
 
 function EngineCard({
   title,
@@ -98,11 +146,12 @@ function SettingRow({
 }
 
 
-type MemoryConfigSubTab = 'summary' | 'summary-model' | 'vector'
+type MemoryConfigSubTab = 'summary' | 'summary-model' | 'timeline-model' | 'vector'
 
 const MEMORY_CONFIG_SUB_TABS: ReadonlyArray<{ id: MemoryConfigSubTab; label: string }> = [
   { id: 'summary', label: '自动总结' },
-  { id: 'summary-model', label: '总结模型' },
+  { id: 'summary-model', label: '线上总结' },
+  { id: 'timeline-model', label: '线下摘要' },
   { id: 'vector', label: '向量召回' },
 ]
 
@@ -115,7 +164,7 @@ function ConfigSubTabNav({
 }) {
   return (
     <nav
-      className="grid w-full grid-cols-3 gap-1 rounded-full bg-gray-100/80 p-1"
+      className="grid w-full grid-cols-4 gap-1 rounded-full bg-gray-100/80 p-1"
       aria-label="记忆配置分类"
       role="tablist"
     >
@@ -147,52 +196,6 @@ function ConfigSubTabNav({
   )
 }
 
-function MemoryTriggerModePicker({
-  value,
-  disabled,
-  onChange,
-}: {
-  value: CharacterMemoryTriggerMode
-  disabled?: boolean
-  onChange: (mode: CharacterMemoryTriggerMode) => void
-}) {
-  const options: { mode: CharacterMemoryTriggerMode; title: string }[] = [
-    { mode: 'keyword', title: '关键词' },
-    { mode: 'always', title: '始终' },
-  ]
-
-  return (
-    <div
-      className={`rounded-2xl border border-gray-100 bg-gray-50/90 p-1 ${disabled ? 'opacity-50' : ''}`}
-      role="radiogroup"
-      aria-label="自动总结的类型"
-    >
-      <div className="grid grid-cols-2 gap-1">
-        {options.map((opt) => {
-          const active = value === opt.mode
-          return (
-            <button
-              key={opt.mode}
-              type="button"
-              disabled={disabled}
-              role="radio"
-              aria-checked={active}
-              onClick={() => onChange(opt.mode)}
-              className={`rounded-xl px-3 py-2.5 text-center transition-all ${
-                active
-                  ? 'bg-white text-gray-900 shadow-[0_2px_12px_rgba(0,0,0,0.06)] ring-1 ring-gray-200/80'
-                  : 'text-gray-600 hover:bg-white/60'
-              }`}
-            >
-              <span className="block text-[13px] font-semibold">{opt.title}</span>
-            </button>
-          )
-        })}
-      </div>
-    </div>
-  )
-}
-
 export function MemoryEngineConfig({
   loading,
   currentWechatAccountId,
@@ -206,13 +209,10 @@ export function MemoryEngineConfig({
   const chatApiConfig = useCurrentApiConfig('chatCard')
 
   const [autoSummaryEnabled, setAutoSummaryEnabled] = useState(true)
-  const [autoSummaryDefaultTrigger, setAutoSummaryDefaultTrigger] =
-    useState<CharacterMemoryTriggerMode>('keyword')
   const [intervalDraft, setIntervalDraft] = useState('10')
   const [intervalScope, setIntervalScope] = useState<AutoSummaryIntervalScope>('global')
   const [characterRows, setCharacterRows] = useState<Character[]>([])
   const [perCharIntervalDrafts, setPerCharIntervalDrafts] = useState<Record<string, string>>({})
-  const [linkedMemoryAutoSummaryEnabled, setLinkedMemoryAutoSummaryEnabled] = useState(true)
   const [summaryDedicatedApiEnabled, setSummaryDedicatedApiEnabled] = useState(false)
   const [summaryConfig, setSummaryConfig] = useState<SummaryAPIConfig>({ endpoint: '', apiKey: '' })
   const [hasSavedSummaryKey, setHasSavedSummaryKey] = useState(false)
@@ -222,7 +222,24 @@ export function MemoryEngineConfig({
   const [summaryModelDropdownOpen, setSummaryModelDropdownOpen] = useState(false)
   const [summaryModelsLoading, setSummaryModelsLoading] = useState(false)
   const [summaryModelsPullMsg, setSummaryModelsPullMsg] = useState<{ ok: boolean; text: string } | null>(null)
+  const [timelineDedicatedApiEnabled, setTimelineDedicatedApiEnabled] = useState(false)
+  const [timelineConfig, setTimelineConfig] = useState<SummaryAPIConfig>({ endpoint: '', apiKey: '' })
+  const [hasSavedTimelineKey, setHasSavedTimelineKey] = useState(false)
+  const [timelineConnectionStatus, setTimelineConnectionStatus] = useState<ConnectionStatus>('idle')
+  const [timelineModelDraft, setTimelineModelDraft] = useState('')
+  const [timelineModelList, setTimelineModelList] = useState<string[]>([])
+  const [timelineModelDropdownOpen, setTimelineModelDropdownOpen] = useState(false)
+  const [timelineModelsLoading, setTimelineModelsLoading] = useState(false)
+  const [timelineModelsPullMsg, setTimelineModelsPullMsg] = useState<{ ok: boolean; text: string } | null>(null)
   const [vectorRecallEnabled, setVectorRecallEnabled] = useState(true)
+  const [embeddingProviderMode, setEmbeddingProviderMode] = useState<MemoryEmbeddingProviderMode>('auto')
+  const [contextVectorRecallEnabled, setContextVectorRecallEnabled] = useState(true)
+  const [localEmbeddingModelId, setLocalEmbeddingModelId] = useState(DEFAULT_LOCAL_EMBEDDING_MODEL)
+  const [localModelDownloaded, setLocalModelDownloaded] = useState(false)
+  const [localModelDownloading, setLocalModelDownloading] = useState(false)
+  const [localModelDownloadProgress, setLocalModelDownloadProgress] =
+    useState<LocalEmbeddingDownloadProgress | null>(null)
+  const [localModelDownloadError, setLocalModelDownloadError] = useState<string | null>(null)
   const [vectorDedicatedApiEnabled, setVectorDedicatedApiEnabled] = useState(false)
   const [vectorConfig, setVectorConfig] = useState<VectorAPIConfig>({
     endpoint: '',
@@ -240,55 +257,95 @@ export function MemoryEngineConfig({
     null,
   )
   const [configHydrated, setConfigHydrated] = useState(false)
+  const [configLoadError, setConfigLoadError] = useState<string | null>(null)
   const [tutorialOpen, setTutorialOpen] = useState(false)
   const [coachOpen, setCoachOpen] = useState(false)
   const [coachStepIndex, setCoachStepIndex] = useState(0)
   const [configSubTab, setConfigSubTab] = useState<MemoryConfigSubTab>('summary')
 
   const reload = useCallback(async () => {
-    const settings = await personaDb.getMemorySettings()
-    const savedModel = settings.memoryEmbeddingModelId?.trim() || ''
-    setAutoSummaryEnabled(settings.autoSummaryEnabled !== false)
-    setAutoSummaryDefaultTrigger(
-      settings.autoSummaryDefaultMemoryTriggerMode === 'always' ? 'always' : 'keyword',
-    )
-    setIntervalDraft(String(settings.autoSummaryInterval))
-    setIntervalScope(settings.autoSummaryIntervalScope === 'per_character' ? 'per_character' : 'global')
-    const chars = await loadAutoSummaryIntervalCharacterCandidates(currentWechatAccountId)
-    setCharacterRows(chars)
-    setPerCharIntervalDrafts({})
-    setLinkedMemoryAutoSummaryEnabled(settings.linkedMemoryAutoSummaryEnabled !== false)
-    setSummaryDedicatedApiEnabled(settings.memorySummaryUseDedicatedApi === true)
-    setSummaryConfig({
-      endpoint: settings.memorySummaryApiUrl?.trim() || '',
-      apiKey: '',
-    })
-    setHasSavedSummaryKey(Boolean(settings.memorySummaryApiKey?.trim()))
-    const savedSummaryModel = settings.memorySummaryModelId?.trim() || ''
-    setSummaryModelDraft(savedSummaryModel)
-    setSummaryModelList((prev) => {
-      if (!savedSummaryModel) return prev
-      if (prev.includes(savedSummaryModel)) return prev
-      return [savedSummaryModel, ...prev]
-    })
-    setSummaryConnectionStatus('idle')
-    setVectorRecallEnabled(settings.memoryVectorRecallEnabled !== false)
-    setVectorDedicatedApiEnabled(settings.memoryEmbeddingUseDedicatedApi === true)
-    setVectorConfig({
-      endpoint: settings.memoryEmbeddingApiUrl?.trim() || '',
-      apiKey: '',
-      collection: settings.memoryVectorCollection?.trim() || '',
-    })
-    setHasSavedEmbeddingKey(Boolean(settings.memoryEmbeddingApiKey?.trim()))
-    setEmbeddingModelDraft(savedModel)
-    setEmbeddingModelList((prev) => {
-      if (!savedModel) return prev
-      if (prev.includes(savedModel)) return prev
-      return [savedModel, ...prev]
-    })
-    setSavedSettings(settings)
-    setConnectionStatus('idle')
-    setConfigHydrated(true)
+    setConfigLoadError(null)
+    try {
+      const settings = await personaDb.getMemorySettings()
+      const savedModel = settings.memoryEmbeddingModelId?.trim() || ''
+      setAutoSummaryEnabled(settings.autoSummaryEnabled !== false)
+      setIntervalDraft(String(settings.autoSummaryInterval))
+      setIntervalScope(settings.autoSummaryIntervalScope === 'per_character' ? 'per_character' : 'global')
+      setSummaryDedicatedApiEnabled(settings.memorySummaryUseDedicatedApi === true)
+      setSummaryConfig({
+        endpoint: settings.memorySummaryApiUrl?.trim() || '',
+        apiKey: '',
+      })
+      setHasSavedSummaryKey(Boolean(settings.memorySummaryApiKey?.trim()))
+      const savedSummaryModel = settings.memorySummaryModelId?.trim() || ''
+      setSummaryModelDraft(savedSummaryModel)
+      setSummaryModelList((prev) => {
+        if (!savedSummaryModel) return prev
+        if (prev.includes(savedSummaryModel)) return prev
+        return [savedSummaryModel, ...prev]
+      })
+      setSummaryConnectionStatus('idle')
+      const savedTimelineModel = settings.memoryTimelineSummaryModelId?.trim() || ''
+      setTimelineDedicatedApiEnabled(settings.memoryTimelineSummaryUseDedicatedApi === true)
+      setTimelineConfig({
+        endpoint: settings.memoryTimelineSummaryApiUrl?.trim() || '',
+        apiKey: '',
+      })
+      setHasSavedTimelineKey(Boolean(settings.memoryTimelineSummaryApiKey?.trim()))
+      setTimelineModelDraft(savedTimelineModel)
+      setTimelineModelList((prev) => {
+        if (!savedTimelineModel) return prev
+        if (prev.includes(savedTimelineModel)) return prev
+        return [savedTimelineModel, ...prev]
+      })
+      setTimelineConnectionStatus('idle')
+      setVectorRecallEnabled(settings.memoryVectorRecallEnabled !== false)
+      setEmbeddingProviderMode(
+        settings.memoryEmbeddingProviderMode === 'api' ||
+          settings.memoryEmbeddingProviderMode === 'local' ||
+          settings.memoryEmbeddingProviderMode === 'auto'
+          ? settings.memoryEmbeddingProviderMode
+          : 'auto',
+      )
+      setContextVectorRecallEnabled(settings.memoryContextVectorRecallEnabled !== false)
+      setLocalEmbeddingModelId(
+        normalizeLocalEmbeddingModelId(settings.memoryLocalEmbeddingModelId),
+      )
+      setVectorDedicatedApiEnabled(settings.memoryEmbeddingUseDedicatedApi === true)
+      setVectorConfig({
+        endpoint: settings.memoryEmbeddingApiUrl?.trim() || '',
+        apiKey: '',
+        collection: settings.memoryVectorCollection?.trim() || '',
+      })
+      setHasSavedEmbeddingKey(Boolean(settings.memoryEmbeddingApiKey?.trim()))
+      setEmbeddingModelDraft(savedModel)
+      setEmbeddingModelList((prev) => {
+        if (!savedModel) return prev
+        if (prev.includes(savedModel)) return prev
+        return [savedModel, ...prev]
+      })
+      setSavedSettings(settings)
+      setConnectionStatus('idle')
+
+      try {
+        const chars = await loadAutoSummaryIntervalCharacterCandidates(currentWechatAccountId)
+        setCharacterRows(chars)
+        setPerCharIntervalDrafts({})
+      } catch (charErr) {
+        console.warn('[memory-engine-config] load character interval candidates failed', charErr)
+        setCharacterRows([])
+        setPerCharIntervalDrafts({})
+      }
+    } catch (e) {
+      console.warn('[memory-engine-config] reload failed', e)
+      setConfigLoadError(
+        e instanceof Error
+          ? e.message
+          : '读取本地记忆配置失败。请刷新页面；若刚导入备份，请先在数据中心尝试「自动恢复」。',
+      )
+    } finally {
+      setConfigHydrated(true)
+    }
   }, [currentWechatAccountId])
 
   const embeddingPullSource = useMemo(
@@ -315,8 +372,39 @@ export function MemoryEngineConfig({
     [summaryConfig, savedSettings, hasSavedSummaryKey, summaryDedicatedApiEnabled, chatApiConfig],
   )
 
+  const timelinePullSource = useMemo(
+    () =>
+      resolveTimelineSummaryPullSource({
+        draft: timelineConfig,
+        saved: savedSettings ?? {
+          memoryTimelineSummaryApiUrl: undefined,
+          memoryTimelineSummaryApiKey: undefined,
+        },
+        hasSavedDedicatedKey: hasSavedTimelineKey,
+        useDedicatedApi: timelineDedicatedApiEnabled,
+        chatApi: chatApiConfig,
+      }),
+    [timelineConfig, savedSettings, hasSavedTimelineKey, timelineDedicatedApiEnabled, chatApiConfig],
+  )
+
   useEffect(() => {
-    void reload()
+    let alive = true
+    const watchdog = window.setTimeout(() => {
+      if (!alive) return
+      setConfigLoadError(
+        (prev) =>
+          prev ??
+          '读取本地记忆配置超时。请完全刷新页面；若刚导入备份，请先在数据中心执行「尝试自动恢复」。',
+      )
+      setConfigHydrated(true)
+    }, 12000)
+    void reload().finally(() => {
+      if (alive) window.clearTimeout(watchdog)
+    })
+    return () => {
+      alive = false
+      window.clearTimeout(watchdog)
+    }
   }, [reload])
 
   useEffect(() => {
@@ -352,6 +440,7 @@ export function MemoryEngineConfig({
       return
     }
     if (loading) return
+    if (!readMemoryCoachSeen(MEMORY_HUB_COACH_SEEN_KEY)) return
     if (readMemoryCoachSeen(MEMORY_ENGINE_COACH_SEEN_KEY)) return
     const id = window.setTimeout(() => startLiveCoach(), 640)
     return () => window.clearTimeout(id)
@@ -375,6 +464,61 @@ export function MemoryEngineConfig({
     if (tab) setConfigSubTab(tab)
   }, [coachOpen, coachStepIndex])
 
+  useEffect(() => {
+    if (!configHydrated) return
+    let cancelled = false
+    void (async () => {
+      const model = localEmbeddingModelId
+      const record = await getLocalEmbeddingDownloadRecord(model)
+      if (!cancelled) {
+        setLocalModelDownloaded(!!record)
+        setLocalModelDownloadError(null)
+        setLocalModelDownloadProgress(null)
+      }
+    })()
+    return () => {
+      cancelled = true
+    }
+  }, [configHydrated, localEmbeddingModelId])
+
+  const runLocalModelDownload = useCallback(
+    async (force = false) => {
+      const model = localEmbeddingModelId
+      setLocalModelDownloading(true)
+      setLocalModelDownloadProgress(null)
+      setLocalModelDownloadError(null)
+      try {
+        await probeLocalEmbeddingDownloadChannel(model)
+        await downloadLocalEmbeddingModelManual(
+          model,
+          (p) => {
+            setLocalModelDownloadProgress(p)
+          },
+          { force },
+        )
+        setLocalModelDownloaded(true)
+        setLocalModelDownloadProgress(null)
+      } catch (e) {
+        setLocalModelDownloadError(formatLocalEmbeddingDownloadError(e instanceof Error ? e.message : String(e)))
+        if (force) setLocalModelDownloaded(false)
+      } finally {
+        setLocalModelDownloading(false)
+      }
+    },
+    [localEmbeddingModelId],
+  )
+
+  const setLocalEmbeddingModelPersist = async (modelId: string) => {
+    const normalized = normalizeLocalEmbeddingModelId(modelId)
+    setLocalEmbeddingModelId(normalized)
+    setLocalModelDownloadError(null)
+    setLocalModelDownloadProgress(null)
+    await personaDb.putMemorySettings({ memoryLocalEmbeddingModelId: normalized })
+    setSavedSettings(await personaDb.getMemorySettings())
+    const record = await getLocalEmbeddingDownloadRecord(normalized)
+    setLocalModelDownloaded(!!record)
+  }
+
   const patchSummary = (patch: Partial<SummaryAPIConfig>) => {
     setSummaryConfig((prev) => ({ ...prev, ...patch }))
     setSummaryConnectionStatus('idle')
@@ -391,6 +535,27 @@ export function MemoryEngineConfig({
     if (keyTyped) {
       setSummaryConfig((prev) => ({ ...prev, apiKey: '' }))
       setHasSavedSummaryKey(true)
+    }
+    const fresh = await personaDb.getMemorySettings()
+    setSavedSettings(fresh)
+  }
+
+  const patchTimeline = (patch: Partial<SummaryAPIConfig>) => {
+    setTimelineConfig((prev) => ({ ...prev, ...patch }))
+    setTimelineConnectionStatus('idle')
+  }
+
+  const commitTimelineFields = async () => {
+    if (!timelineDedicatedApiEnabled) return
+    const v = summaryConfigFromDraft(timelineConfig)
+    const keyTyped = v.apiKey
+    await personaDb.putMemorySettings({
+      memoryTimelineSummaryApiUrl: v.endpoint ? v.endpoint.slice(0, 512) : undefined,
+      ...(keyTyped ? { memoryTimelineSummaryApiKey: keyTyped.slice(0, 2048) } : {}),
+    })
+    if (keyTyped) {
+      setTimelineConfig((prev) => ({ ...prev, apiKey: '' }))
+      setHasSavedTimelineKey(true)
     }
     const fresh = await personaDb.getMemorySettings()
     setSavedSettings(fresh)
@@ -441,22 +606,7 @@ export function MemoryEngineConfig({
   const toggleAutoSummary = async () => {
     const next = !autoSummaryEnabled
     setAutoSummaryEnabled(next)
-    if (!next) {
-      setLinkedMemoryAutoSummaryEnabled(false)
-      await personaDb.putMemorySettings({
-        autoSummaryEnabled: false,
-        linkedMemoryAutoSummaryEnabled: false,
-      })
-      return
-    }
-    await personaDb.putMemorySettings({ autoSummaryEnabled: true })
-  }
-
-  const toggleLinkedMemoryAutoSummary = async () => {
-    if (!autoSummaryEnabled) return
-    const next = !linkedMemoryAutoSummaryEnabled
-    setLinkedMemoryAutoSummaryEnabled(next)
-    await personaDb.putMemorySettings({ linkedMemoryAutoSummaryEnabled: next })
+    await personaDb.putMemorySettings({ autoSummaryEnabled: next })
   }
 
   const setSummaryApiMode = async (mode: MemoryApiMode) => {
@@ -468,9 +618,13 @@ export function MemoryEngineConfig({
     await personaDb.putMemorySettings({ memorySummaryUseDedicatedApi: next })
   }
 
-  const commitAutoSummaryDefaultTrigger = async (mode: CharacterMemoryTriggerMode) => {
-    setAutoSummaryDefaultTrigger(mode)
-    await personaDb.putMemorySettings({ autoSummaryDefaultMemoryTriggerMode: mode })
+  const setTimelineApiMode = async (mode: MemoryApiMode) => {
+    const next = mode === 'dedicated'
+    if (next === timelineDedicatedApiEnabled) return
+    setTimelineDedicatedApiEnabled(next)
+    setTimelineModelDropdownOpen(false)
+    setTimelineConnectionStatus('idle')
+    await personaDb.putMemorySettings({ memoryTimelineSummaryUseDedicatedApi: next })
   }
 
   const toggleVectorRecall = async () => {
@@ -580,7 +734,7 @@ export function MemoryEngineConfig({
         setSummaryModelsPullMsg({
           ok: false,
           text: summaryDedicatedApiEnabled
-            ? '还缺地址或密钥：请在下面填好总结专用接口。'
+            ? '还缺地址或密钥：请在下面填好线上总结专用接口。'
             : '还缺地址或密钥：请先在全局里配好聊天 API。',
         })
         return
@@ -610,7 +764,7 @@ export function MemoryEngineConfig({
       } else if (!summaryDedicatedApiEnabled && !draft) {
         await personaDb.putMemorySettings({ memorySummaryModelId: undefined })
       }
-      const via = source.kind === 'dedicated' ? '总结专用接口' : '聊天主接口'
+      const via = source.kind === 'dedicated' ? '线上总结专用接口' : '聊天主接口'
       setSummaryModelsPullMsg({
         ok: true,
         text: picked.length
@@ -628,6 +782,70 @@ export function MemoryEngineConfig({
     }
   }
 
+  const pullTimelineModels = async () => {
+    setTimelineModelsPullMsg(null)
+    setTimelineModelsLoading(true)
+    try {
+      const s = savedSettings ?? (await personaDb.getMemorySettings())
+      const source = resolveTimelineSummaryPullSource({
+        draft: timelineConfig,
+        saved: s,
+        hasSavedDedicatedKey: hasSavedTimelineKey,
+        useDedicatedApi: timelineDedicatedApiEnabled,
+        chatApi: chatApiConfig,
+      })
+      if (!source?.apiUrl || !source.apiKey) {
+        setTimelineModelsPullMsg({
+          ok: false,
+          text: timelineDedicatedApiEnabled
+            ? '还缺地址或密钥：请在下面填好线下摘要专用接口。'
+            : '还缺地址或密钥：请先在全局里配好聊天 API。',
+        })
+        return
+      }
+      const cfg: ApiConfig = {
+        apiUrl: source.apiUrl,
+        apiKey: source.apiKey,
+        modelId: '',
+        modelList: [],
+      }
+      const res = await fetchModels(cfg)
+      if (!res.ok) {
+        setTimelineModelsPullMsg({ ok: false, text: res.error })
+        return
+      }
+      const picked = Array.from(new Set(res.models)).sort((a, b) => a.localeCompare(b))
+      setTimelineModelList(picked)
+      const savedModel = (await personaDb.getMemorySettings()).memoryTimelineSummaryModelId?.trim() || ''
+      const draft = timelineModelDraft.trim()
+      const chatDefault = chatApiConfig?.modelId?.trim() || ''
+      const preferred = draft || savedModel
+      let nextId = preferred && picked.includes(preferred) ? preferred : ''
+      if (!nextId && timelineDedicatedApiEnabled && picked.length) nextId = picked[0] || ''
+      if (nextId) {
+        setTimelineModelDraft(nextId)
+        await personaDb.putMemorySettings({ memoryTimelineSummaryModelId: nextId })
+      } else if (!timelineDedicatedApiEnabled && !draft) {
+        await personaDb.putMemorySettings({ memoryTimelineSummaryModelId: undefined })
+      }
+      const via = source.kind === 'dedicated' ? '线下摘要专用接口' : '聊天主接口'
+      setTimelineModelsPullMsg({
+        ok: true,
+        text: picked.length
+          ? `已从${via}拉到 ${picked.length} 个可用模型`
+          : `接口有响应，但未返回模型列表`,
+      })
+      if (!timelineDedicatedApiEnabled && !draft && chatDefault) {
+        setTimelineModelsPullMsg({
+          ok: true,
+          text: `已拉取 ${picked.length} 个模型；未单独指定时将跟随聊天主模型（${chatDefault}）`,
+        })
+      }
+    } finally {
+      setTimelineModelsLoading(false)
+    }
+  }
+
   const runRealSummaryTest = async (cfg: SummaryAPIConfig): Promise<ConnectionStatus> => {
     const s = await personaDb.getMemorySettings()
     const url = cfg.endpoint.trim() || s.memorySummaryApiUrl?.trim() || ''
@@ -637,22 +855,45 @@ export function MemoryEngineConfig({
     return r.ok ? 'connected' : 'failed'
   }
 
+  const runRealTimelineTest = async (cfg: SummaryAPIConfig): Promise<ConnectionStatus> => {
+    const s = await personaDb.getMemorySettings()
+    const url = cfg.endpoint.trim() || s.memoryTimelineSummaryApiUrl?.trim() || ''
+    const key = cfg.apiKey.trim() || s.memoryTimelineSummaryApiKey?.trim() || ''
+    if (!url || !key) return 'failed'
+    const r = await testMemoryTimelineSummaryConnection({ apiUrl: url, apiKey: key })
+    return r.ok ? 'connected' : 'failed'
+  }
+
   const runRealEmbeddingTest = async (cfg: VectorAPIConfig): Promise<ConnectionStatus> => {
     const s = await personaDb.getMemorySettings()
     const model =
       embeddingModelDraft.trim() || s.memoryEmbeddingModelId?.trim() || DEFAULT_MEMORY_EMBEDDING_MODEL
-    const cred = resolveEmbeddingApiCredentials(
+    const r = await testMemoryEmbeddingConnectionUnified(
       {
         ...s,
+        memoryEmbeddingProviderMode: embeddingProviderMode,
+        memoryLocalEmbeddingModelId: localEmbeddingModelId,
         memoryEmbeddingUseDedicatedApi: vectorDedicatedApiEnabled,
         memoryEmbeddingApiUrl: cfg.endpoint.trim() || s.memoryEmbeddingApiUrl,
         memoryEmbeddingApiKey: cfg.apiKey.trim() || s.memoryEmbeddingApiKey,
       },
       chatApiConfig?.apiUrl?.trim() && chatApiConfig?.apiKey?.trim() ? chatApiConfig : null,
+      model,
     )
-    if (!cred) return 'failed'
-    const r = await testMemoryEmbeddingConnection(cred, model)
     return r.ok ? 'connected' : 'failed'
+  }
+
+  const setEmbeddingProviderModePersist = async (mode: MemoryEmbeddingProviderMode) => {
+    setEmbeddingProviderMode(mode)
+    await personaDb.putMemorySettings({ memoryEmbeddingProviderMode: mode })
+    setSavedSettings(await personaDb.getMemorySettings())
+  }
+
+  const toggleContextVectorRecall = async () => {
+    const next = !contextVectorRecallEnabled
+    setContextVectorRecallEnabled(next)
+    await personaDb.putMemorySettings({ memoryContextVectorRecallEnabled: next })
+    setSavedSettings(await personaDb.getMemorySettings())
   }
 
   const chatDefaultModelHint = chatApiConfig?.modelId?.trim() || ''
@@ -678,7 +919,7 @@ export function MemoryEngineConfig({
         className="sticky top-0 z-10 -mx-4 mb-5 flex items-center gap-2 px-4 pb-2 pt-1"
         style={{ background: ARCHIVE_BG }}
       >
-        <div className="min-w-0 flex-1">
+        <div className="min-w-0 flex-1" data-memory-coach="config-subtabs">
           <ConfigSubTabNav value={configSubTab} onChange={setConfigSubTab} />
         </div>
         <MemoryTutorialButton
@@ -689,6 +930,22 @@ export function MemoryEngineConfig({
       </div>
 
       <div className="flex-1 space-y-5">
+        {configLoadError ? (
+          <div
+            className="rounded-2xl border border-amber-200/80 bg-amber-50/90 px-4 py-3 text-[13px] leading-relaxed text-amber-950"
+            role="alert"
+          >
+            <p className="font-semibold">配置未能完整加载</p>
+            <p className="mt-1">{configLoadError}</p>
+            <button
+              type="button"
+              className="mt-3 rounded-full border border-amber-300/80 bg-white px-4 py-1.5 text-[12px] font-semibold text-amber-950"
+              onClick={() => void reload()}
+            >
+              重试
+            </button>
+          </div>
+        ) : null}
         <div
           className={configSubTab === 'summary' ? 'space-y-5' : 'hidden'}
           aria-hidden={configSubTab !== 'summary'}
@@ -697,50 +954,20 @@ export function MemoryEngineConfig({
         <div data-memory-coach="auto-summary">
           <SettingRow
             label="自动总结"
+            hint={
+              autoSummaryEnabled
+                ? '开启后：微信私聊 / 群聊 / 遇见按下方间隔写 prose 长期记忆（关键词触发召回）；线下约会每轮写摘要表并同步尾声判断；相关人脉配角自动收到关联摘要。'
+                : '关闭后不再自动写入；仍可在「角色总结」手动刻录 prose，或在「线上总结进度」手动总结。'
+            }
             control={<MemoryEngineSoftSwitch on={autoSummaryEnabled} onToggle={() => void toggleAutoSummary()} />}
           />
         </div>
-        <div data-memory-coach="trigger-mode" className="space-y-3">
-          <div className="flex items-center gap-1.5">
-            <p className="text-[14px] font-medium text-gray-900">自动总结的类型</p>
-            <MemoryFeatureHelpButton
-              featureTitle="自动总结的类型"
-              blocks={[
-                {
-                  kind: 'text',
-                  text: '自动总结入库的新记忆，默认按此处选择参与聊天召回。',
-                },
-                {
-                  kind: 'bullets',
-                  title: '关键词',
-                  items: [
-                    '仅当上下文命中本条提炼词，或向量召回相近时纳入参考',
-                    '更省 token，适合记忆条目较多时',
-                  ],
-                },
-                {
-                  kind: 'bullets',
-                  title: '始终',
-                  items: [
-                    '每轮私聊更可能带上本条（仍受条数上限约束）',
-                    '适合希望关键记忆长期跟随时',
-                  ],
-                },
-                {
-                  kind: 'tip',
-                  text: '不论选哪种，入库时仍会保存模型提炼的触发词备份；之后可在记忆编辑里单独修改。',
-                },
-              ]}
-            />
-          </div>
-          <MemoryTriggerModePicker
-            value={autoSummaryDefaultTrigger}
-            disabled={!autoSummaryEnabled}
-            onChange={(mode) => void commitAutoSummaryDefaultTrigger(mode)}
-          />
-        </div>
         <div data-memory-coach="summary-interval" className="space-y-3">
-          <p className="text-[13px] font-medium text-gray-800">总结间隔</p>
+          <p className="text-[13px] font-medium text-gray-800">线上总结间隔</p>
+          <p className="text-[12px] leading-relaxed text-gray-500">
+            仅微信私聊、群聊与遇见临时会话：每满 N 轮 AI 回复合并一次 prose 长期记忆；游标后的消息仍以原文注入聊天。
+            线下约会走「每轮写摘要表」，不计入此处计轮。
+          </p>
           <MemoryIntervalScopeCapsule
             value={intervalScope}
             onChange={(scope) => void commitIntervalScope(scope)}
@@ -749,7 +976,7 @@ export function MemoryEngineConfig({
           {intervalScope === 'global' ? (
             <SettingRow
               label="每满 N 轮 AI 回复"
-              hint="微信私聊与线下约会共用此间隔计轮"
+              hint="作用于私聊、群聊与遇见；线下约会每轮写摘要表，不受此项影响且不计入「线上总结进度」。"
               control={
                 <div className="rounded-2xl bg-gray-50 px-3 py-2 transition-colors focus-within:bg-gray-100">
                   <input
@@ -781,52 +1008,6 @@ export function MemoryEngineConfig({
             />
           )}
         </div>
-        <div data-memory-coach="linked-summary">
-          <SettingRow
-            label="关联记忆总结"
-            labelExtra={
-              <MemoryFeatureHelpButton
-                featureTitle="关联记忆总结"
-                blocks={[
-                  {
-                    kind: 'text',
-                    text: '约会推剧情时，是否给人脉配角自动写入「关联记忆」。',
-                  },
-                  {
-                    kind: 'bullets',
-                    title: '开启后',
-                    items: [
-                      '场景出现人脉配角时，相关片段写入该配角名下',
-                      '私聊这位配角时单独注入，不混进主角自己的记忆',
-                      '其它未出场角色看不到这些条目',
-                    ],
-                  },
-                  {
-                    kind: 'bullets',
-                    title: '关闭后',
-                    items: [
-                      '主角自有约会记忆仍随自动总结间隔写入',
-                      '不会再自动给配角写关联条',
-                      '配角私聊时通常不知道别处的线下剧情，除非直接聊过或手动刻录',
-                    ],
-                  },
-                  {
-                    kind: 'tip',
-                    title: '推荐',
-                    text: '玩约会 + 人脉网、希望配角能「听说」相关剧情 → 建议开启。只要主角私聊记忆，或担心配角记忆过多 → 可关闭。',
-                  },
-                ]}
-              />
-            }
-            control={
-              <MemoryEngineSoftSwitch
-                on={linkedMemoryAutoSummaryEnabled && autoSummaryEnabled}
-                disabled={!autoSummaryEnabled}
-                onToggle={() => void toggleLinkedMemoryAutoSummary()}
-              />
-            }
-          />
-        </div>
           </EngineCard>
         </div>
 
@@ -834,13 +1015,24 @@ export function MemoryEngineConfig({
           className={configSubTab === 'summary-model' ? 'space-y-5' : 'hidden'}
           aria-hidden={configSubTab !== 'summary-model'}
         >
-          <EngineCard title="总结模型">
+          <EngineCard title="接口与模型">
+            <ConfigSourceIntro
+              chipClass={ARCHIVE_SOURCE_SECTION_ONLINE}
+              label={ARCHIVE_SOURCE_ONLINE_LABEL}
+              title="prose 长期记忆"
+              body="用于微信私聊、群聊、遇见的自动总结，以及手动刻录。按下方间隔把多轮 AI 对话合并写入长期记忆 prose，展示在档案馆「角色总结」的线上区块。"
+              bullets={[
+                '与「线下摘要」独立：此处只负责 prose，不写按轮摘要表',
+                '可选聊天主接口，或单独配置线上总结专用副接口与模型',
+              ]}
+            />
         <div data-memory-coach="summary-api">
+          <p className="mb-2 text-[11px] font-medium text-gray-500">接口来源</p>
           <MemoryApiModeCapsule
-            layoutId="memory-summary-api-mode"
             value={summaryDedicatedApiEnabled ? 'dedicated' : 'main'}
             onChange={(mode) => void setSummaryApiMode(mode)}
             disabled={!autoSummaryEnabled}
+            aria-label="线上总结接口来源"
           />
         </div>
         <MemorySummaryApiConfig
@@ -875,58 +1067,107 @@ export function MemoryEngineConfig({
         </div>
 
         <div
-          className={configSubTab === 'vector' ? 'space-y-5' : 'hidden'}
-          aria-hidden={configSubTab !== 'vector'}
+          className={configSubTab === 'timeline-model' ? 'space-y-5' : 'hidden'}
+          aria-hidden={configSubTab !== 'timeline-model'}
         >
-          <EngineCard title="语义向量召回">
-        <div data-memory-coach="vector-recall">
-          <SettingRow
-            label="开启语义召回"
-            control={<MemoryEngineSoftSwitch on={vectorRecallEnabled} onToggle={() => void toggleVectorRecall()} />}
-          />
-        </div>
-        {vectorRecallEnabled ? (
-          <div data-memory-coach="extra-api">
-            <MemoryApiModeCapsule
-              layoutId="memory-vector-api-mode"
-              value={vectorDedicatedApiEnabled ? 'dedicated' : 'main'}
-              onChange={(mode) => void setVectorApiMode(mode)}
+          <EngineCard title="接口与模型">
+            <ConfigSourceIntro
+              chipClass={ARCHIVE_SOURCE_SECTION_OFFLINE}
+              label={ARCHIVE_SOURCE_OFFLINE_LABEL}
+              title="按轮剧情摘要表"
+              body="用于约会 / 私聊每轮写入的剧情时间轴：摘要行、状态锚点、关联配角摘要等，展示在档案馆「角色总结」的线下区块。"
+              bullets={[
+                '主模型 JSON 自带 timeline 时直接落库；未带时会用此处接口单独补救',
+                '不计入「线上总结进度」计轮；与 prose 长期记忆分轨存储',
+                '可选聊天主接口，或单独配置线下摘要专用副接口与模型',
+              ]}
             />
-          </div>
-        ) : null}
-          </EngineCard>
-
-          {vectorRecallEnabled ? (
-            <div data-memory-coach="vector-model">
-              <VectorBridgeConfig
-                mode={vectorDedicatedApiEnabled ? 'dedicated' : 'main'}
-                config={vectorDedicatedApiEnabled ? vectorConfig : undefined}
-                onConfigChange={vectorDedicatedApiEnabled ? patchVector : undefined}
-                onVectorFieldsBlur={vectorDedicatedApiEnabled ? () => void commitVectorFields() : undefined}
-                hasSavedKey={vectorDedicatedApiEnabled ? hasSavedEmbeddingKey : undefined}
-                connectionStatus={vectorDedicatedApiEnabled ? connectionStatus : undefined}
-                onConnectionStatusChange={vectorDedicatedApiEnabled ? setConnectionStatus : undefined}
-                onTestConnection={vectorDedicatedApiEnabled ? runRealEmbeddingTest : undefined}
-                pullSource={embeddingPullSource}
-                embeddingModelDraft={embeddingModelDraft}
-                onEmbeddingModelChange={(m) => {
-                  setEmbeddingModelDraft(m)
-                  setEmbeddingModelDropdownOpen(false)
-                  setEmbeddingModelList((prev) => (prev.includes(m) ? prev : [m, ...prev]))
-                  void (async () => {
-                    await personaDb.putMemorySettings({ memoryEmbeddingModelId: m })
-                    setSavedSettings(await personaDb.getMemorySettings())
-                  })()
-                }}
-                embeddingModelList={embeddingModelList}
-                embeddingModelsLoading={embeddingModelsLoading}
-                modelsPullMsg={modelsPullMsg}
-                onPullModels={() => void pullEmbeddingModels()}
-                embeddingModelDropdownOpen={embeddingModelDropdownOpen}
-                onEmbeddingModelDropdownToggle={() => setEmbeddingModelDropdownOpen((v) => !v)}
+            <div data-memory-coach="timeline-api">
+              <p className="mb-2 text-[11px] font-medium text-gray-500">接口来源</p>
+              <MemoryApiModeCapsule
+                value={timelineDedicatedApiEnabled ? 'dedicated' : 'main'}
+                onChange={(mode) => void setTimelineApiMode(mode)}
+                disabled={!autoSummaryEnabled}
+                aria-label="线下摘要接口来源"
               />
             </div>
-          ) : null}
+            <MemorySummaryApiConfig
+              variant="timeline"
+              mode={timelineDedicatedApiEnabled ? 'dedicated' : 'main'}
+              config={timelineDedicatedApiEnabled ? timelineConfig : undefined}
+              onConfigChange={timelineDedicatedApiEnabled ? patchTimeline : undefined}
+              onSummaryFieldsBlur={timelineDedicatedApiEnabled ? () => void commitTimelineFields() : undefined}
+              hasSavedKey={timelineDedicatedApiEnabled ? hasSavedTimelineKey : undefined}
+              connectionStatus={timelineDedicatedApiEnabled ? timelineConnectionStatus : undefined}
+              onConnectionStatusChange={timelineDedicatedApiEnabled ? setTimelineConnectionStatus : undefined}
+              onTestConnection={timelineDedicatedApiEnabled ? runRealTimelineTest : undefined}
+              pullSource={timelinePullSource}
+              disabled={!autoSummaryEnabled}
+              summaryModelDraft={timelineModelDraft}
+              onSummaryModelChange={(m) => {
+                setTimelineModelDraft(m)
+                setTimelineModelDropdownOpen(false)
+                setTimelineModelList((prev) => (m && !prev.includes(m) ? [m, ...prev] : prev))
+                void personaDb.putMemorySettings({
+                  memoryTimelineSummaryModelId: m ? m.slice(0, 120) : undefined,
+                })
+              }}
+              summaryModelList={timelineModelList}
+              summaryModelsLoading={timelineModelsLoading}
+              modelsPullMsg={timelineModelsPullMsg}
+              onPullModels={() => void pullTimelineModels()}
+              summaryModelDropdownOpen={timelineModelDropdownOpen}
+              onSummaryModelDropdownToggle={() => setTimelineModelDropdownOpen((v) => !v)}
+              chatDefaultModelHint={chatDefaultModelHint}
+            />
+          </EngineCard>
+        </div>
+
+        <div
+          className={configSubTab === 'vector' ? '' : 'hidden'}
+          aria-hidden={configSubTab !== 'vector'}
+        >
+          <MemoryVectorRecallConfig
+            vectorRecallEnabled={vectorRecallEnabled}
+            onToggleVectorRecall={() => void toggleVectorRecall()}
+            embeddingProviderMode={embeddingProviderMode}
+            onEmbeddingProviderModeChange={(mode) => void setEmbeddingProviderModePersist(mode)}
+            localEmbeddingModelId={localEmbeddingModelId}
+            onLocalEmbeddingModelChange={(modelId) => void setLocalEmbeddingModelPersist(modelId)}
+            localModelDownloaded={localModelDownloaded}
+            localModelDownloading={localModelDownloading}
+            localModelDownloadProgress={localModelDownloadProgress}
+            localModelDownloadError={localModelDownloadError}
+            onLocalModelDownload={(force) => void runLocalModelDownload(force)}
+            contextVectorRecallEnabled={contextVectorRecallEnabled}
+            onToggleContextVectorRecall={() => void toggleContextVectorRecall()}
+            vectorDedicatedApiEnabled={vectorDedicatedApiEnabled}
+            onVectorApiModeChange={(mode) => void setVectorApiMode(mode)}
+            vectorConfig={vectorConfig}
+            onVectorConfigChange={patchVector}
+            onVectorFieldsBlur={() => void commitVectorFields()}
+            hasSavedEmbeddingKey={hasSavedEmbeddingKey}
+            connectionStatus={connectionStatus}
+            onConnectionStatusChange={setConnectionStatus}
+            onTestConnection={runRealEmbeddingTest}
+            embeddingPullSource={embeddingPullSource}
+            embeddingModelDraft={embeddingModelDraft}
+            onEmbeddingModelChange={(m) => {
+              setEmbeddingModelDraft(m)
+              setEmbeddingModelDropdownOpen(false)
+              setEmbeddingModelList((prev) => (prev.includes(m) ? prev : [m, ...prev]))
+              void (async () => {
+                await personaDb.putMemorySettings({ memoryEmbeddingModelId: m })
+                setSavedSettings(await personaDb.getMemorySettings())
+              })()
+            }}
+            embeddingModelList={embeddingModelList}
+            embeddingModelsLoading={embeddingModelsLoading}
+            modelsPullMsg={modelsPullMsg}
+            onPullEmbeddingModels={() => void pullEmbeddingModels()}
+            embeddingModelDropdownOpen={embeddingModelDropdownOpen}
+            onEmbeddingModelDropdownToggle={() => setEmbeddingModelDropdownOpen((v) => !v)}
+          />
         </div>
       </div>
 
@@ -934,7 +1175,7 @@ export function MemoryEngineConfig({
         open={tutorialOpen}
         onClose={() => setTutorialOpen(false)}
         title="记忆配置 · 怎么用"
-        subtitle="自动总结、总结模型与向量召回"
+        subtitle="自动记记忆 · 微信与约会分开设 · 按意思找记忆"
         sections={MEMORY_ENGINE_TUTORIAL_SECTIONS}
         onStartLiveCoach={startLiveCoach}
         zIndex={55000}
@@ -948,7 +1189,7 @@ export function MemoryEngineConfig({
         onSkip={() => finishCoach()}
         onComplete={(opts) => finishCoach(opts)}
         scopeRoot="memory-engine"
-        layoutEpoch={`${configSubTab}-${vectorRecallEnabled}-${vectorDedicatedApiEnabled}-${vectorRecallEnabled && vectorDedicatedApiEnabled ? 'dedicated' : 'main'}`}
+        layoutEpoch={`${configSubTab}-${vectorRecallEnabled}-${embeddingProviderMode}-${vectorDedicatedApiEnabled}-${vectorRecallEnabled && vectorDedicatedApiEnabled ? 'dedicated' : 'main'}`}
         zIndex={54000}
       />
     </div>

@@ -1,67 +1,84 @@
 import type { MemoryCoachStep } from './memoryCoachTypes'
 
 export type MemoryArchiveCoachTargetId =
-  | 'search'
-  | 'type-filter'
-  | 'source'
   | 'roster'
+  | 'source'
+  | 'search'
   | 'align'
   | 'create'
+  | 'detail-source-tabs'
+  | 'type-filter'
   | 'list'
-  | 'archive-tutorial'
+  | 'memories-tab-tutorial'
+
+export const MEMORY_ARCHIVE_START_COACH_EVENT = 'memory-archive-start-coach'
 
 export const MEMORY_ARCHIVE_COACH_STEPS: MemoryCoachStep[] = [
   {
     target: null,
     centered: true,
-    title: '欢迎来到记忆档案馆',
-    body: '记忆已按角色分类：先选一位联系人或群聊，再进入查看其名下各类长期记忆。接下来用高亮带你认一圈，约半分钟；可随时跳过。',
+    title: '角色总结',
+    body: '这里按角色查看已记下的内容。先认一圈这个页上的按钮；可随时跳过。',
   },
   {
     target: 'roster',
-    title: '按角色浏览',
-    body: '列表展示当前查看账号下有记忆的角色与群聊。卡片上的数字是条数，彩色标签表示常见场景（私聊、遇见、线下、关联等）。点选进入详情。',
-  },
-  {
-    target: 'search',
-    title: '检索',
-    body: '在角色列表可搜角色名或场景；进入某角色后可搜该角色记忆正文、触发词等。',
+    title: '先选一位角色',
+    body: '每个卡片是一位联系人或群聊。角标数字是记忆条数；小标签表示常见场景（私聊、遇见、线下等）。点进去看详情。',
+    cardPlacement: 'below',
   },
   {
     target: 'source',
-    title: '查看账号',
-    body: '选择用哪个微信账号浏览角色记忆。Lumi Meet 的遇见记忆不按账号分线，请用下方「遇见应用」标签筛选。',
+    title: '用哪个微信账号看',
+    body: '你有几个微信马甲时，在这里切换，列表会跟着变。遇见记的内容不按马甲分，要用分类标签里的「遇见应用」来筛。',
+    cardPlacement: 'below',
   },
   {
-    target: 'type-filter',
-    title: '记忆分类',
-    body: '可按私聊、群聊、朋友圈、遇见应用、线下等场景多选筛选。标签颜色与下方记忆卡片一致。',
+    target: 'search',
+    title: '搜角色',
+    body: '在列表页可以搜角色名或场景。进到某位角色里面之后，搜索框会变成搜该角色的记忆正文。',
+    cardPlacement: 'below',
   },
   {
     target: 'align',
     title: '对齐 {{user}}',
-    body: '一键把未绑定的玩家占位符按来源线或当前扮演身份补全；已有绑定不会被覆盖。',
+    body: '记忆里若写了 {{user}} 这类玩家占位符，点这里可以按当前身份批量补全。已经手动绑好的不会被改掉。',
+    cardPlacement: 'below',
   },
   {
     target: 'create',
-    title: '刻录新记忆',
-    body: '手动写入一条长期记忆。若已打开某位角色，新建时会默认归属该联系人。',
+    title: '手动加一条记忆',
+    body: '右上角加号：自己写一条长期记忆。如果已经打开了某位角色，新建时会默认记在这个人名下。',
+    cardPlacement: 'above',
+  },
+  {
+    target: 'detail-source-tabs',
+    title: '线上 / 线下分开看',
+    body: '点进角色后，在这里切换：「线上总结」是微信聊天收成的大段文字；「线下摘要」是约会每轮的一行小摘要。',
+    cardPlacement: 'below',
+  },
+  {
+    target: 'type-filter',
+    title: '按场景筛选',
+    body: '进入某位角色后可以多选：私聊、群聊、遇见、线下等。只看你关心的那几类记忆。',
+    cardPlacement: 'below',
   },
   {
     target: 'list',
-    title: '记忆列表',
-    body: '每张卡片展示展开预览、场景标签与触发方式。点按即可修订、删除。',
+    title: '记忆卡片',
+    body: '每条记忆一张卡片，点进去能改、能删。标签颜色表示来自哪种聊天或场景。',
+    cardPlacement: 'above',
   },
   {
-    target: 'archive-tutorial',
-    title: '随时回看',
-    body: '右上角「教程」可打开文字说明，也能再开一遍你现在看到的高亮引导。',
+    target: 'memories-tab-tutorial',
+    title: '忘了再看',
+    body: '点页内「教程」打开文字说明，也可以再跑一遍本页的高亮引导。五个总标签的说明在档案馆右上角「教程」。',
+    cardPlacement: 'below',
   },
   {
     target: null,
     centered: true,
     isOutro: true,
-    title: '引导完成',
-    body: '平时想查详细说明，点右上角「教程」即可。下面可以打开文字版小抄，也可以直接开始翻阅记忆。',
+    title: '好啦',
+    body: '可以开始翻记忆了。想查五个标签分别是干什么的，回到列表页点右上角「教程」。',
   },
 ]

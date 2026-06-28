@@ -62,3 +62,13 @@ export function stripPromptPolicyBlocksForTraceDisplay(text: string): string {
 
   return s
 }
+
+/** 尚未总结·私聊/群聊摘录行前的系统落库时刻；仅用于思维溯源等 UI，不影响 prompt 注入 */
+const UNS_ONLINE_LINE_TS_RE =
+  /(^|\n)(- )\[(?:\d{4}年\d{1,2}月\d{1,2}日 星期[一二三四五六日] \d{2}:\d{2}|（时刻未知）)\] (?=\[(?:私聊|群))/gm
+
+export function stripUnsummarizedOnlineTimestampsForDisplay(text: string): string {
+  const s = String(text ?? '')
+  if (!s.trim()) return ''
+  return s.replace(UNS_ONLINE_LINE_TS_RE, '$1$2')
+}

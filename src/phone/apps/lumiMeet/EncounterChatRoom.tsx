@@ -810,6 +810,7 @@ export function EncounterChatRoom({ npc, onBack }: { npc: EncounterNPC; onBack: 
           characterRealName: resolveMeetNpcPeerRealName(liveNpc),
           sessionPlayerIdentityId: profile.baseWeChatIdentityId,
           meetContactWechatId: profile.contactWechatId,
+          latestRoundBody: outbound.map((p) => p.text.trim()).filter(Boolean).join('\n'),
         })
       }
     },
@@ -1219,6 +1220,7 @@ export function EncounterChatRoom({ npc, onBack }: { npc: EncounterNPC; onBack: 
           characterRealName: resolveMeetNpcPeerRealName(liveNpc),
           sessionPlayerIdentityId: profile.baseWeChatIdentityId,
           meetContactWechatId: profile.contactWechatId,
+          latestRoundBody: covenantOutbound.map((p) => p.text.trim()).filter(Boolean).join('\n'),
         })
       }
     } catch {

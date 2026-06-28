@@ -3,12 +3,17 @@ import { personaDb } from '../newFriendsPersona/idb'
 import { loadDatingPlotsFromKv, type DatingPlotSnapshotItem } from '../unifiedMemoryAutoSummary'
 import { DATING_AI_OFFLINE_UNSUMMARIZED_CHAR_CAP } from './types'
 import {
+  MEMORY_UNSUMMARIZED_OFFLINE_INJECT_AI_ROUNDS,
+  selectRecentDatingPlotsAiRoundWindow,
+} from '../memory/memorySummaryRetention'
+import {
   collectCharacterMentionSearchTokens,
   resolveOfflineDatingArchiveContext,
 } from './offlineDatingArchiveResolve'
 import { offlinePlotBodyRelevantToNpcForLinkedExcerpt } from './offlineDatingNpcSpeakerDetect'
 import { splitDatingAssistantOutput } from './plotCoT'
 import { extractVnVoiceParamsBlock } from './vnVoiceParamsStrip'
+import { formatSystemRecordTime, resolvePlotSystemRecordedAtMs } from '../wechatCrossChannelTimeline'
 
 function plotBodyForPrompt(p: DatingPlotSnapshotItem): string {
   const raw = String(p.content || '').trim()
@@ -18,13 +23,8 @@ function plotBodyForPrompt(p: DatingPlotSnapshotItem): string {
   return extractVnVoiceParamsBlock(prose).cleanedText.trim()
 }
 
-function pad2(n: number) {
-  return String(n).padStart(2, '0')
-}
-
 function formatPlotTraceDate(ts: number): string {
-  const d = new Date(Number.isFinite(ts) ? ts : Date.now())
-  return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())} ${pad2(d.getHours())}:${pad2(d.getMinutes())}`
+  return formatSystemRecordTime(ts)
 }
 
 function clipSnippet(s: string, max: number) {
@@ -50,6 +50,8 @@ export type OfflinePlotBuildOpts = {
   peerLabel?: string
   filterNpc?: (plot: DatingPlotSnapshotItem, body: string) => boolean
   maxChars: number
+  /** 游标后 tail 再收窄为最近 N 轮 AI 剧情（含其间玩家输入） */
+  retainAiRounds?: number
 }
 
 function filterPlotTail(opts: OfflinePlotBuildOpts): DatingPlotSnapshotItem[] {
@@ -73,6 +75,10 @@ function filterPlotTail(opts: OfflinePlotBuildOpts): DatingPlotSnapshotItem[] {
     }
     tail = tail.filter((_, i) => kept.has(i))
   }
+  const rounds = opts.retainAiRounds
+  if (typeof rounds === 'number' && rounds > 0 && tail.length) {
+    tail = selectRecentDatingPlotsAiRoundWindow(tail, rounds)
+  }
   return tail
 }
 
@@ -86,9 +92,11 @@ export function buildOfflinePlotsFullText(opts: OfflinePlotBuildOpts): string {
   for (const p of tail) {
     const t = plotBodyForPrompt(p)
     if (!t) continue
-    if (p.type === 'player') lines.push(`我：${t}`)
-    else if (borrowed) lines.push(`「${rootName}」（线下剧情）：${t}`)
-    else lines.push(`${peerLabel}：${t}`)
+    const ts = resolvePlotSystemRecordedAtMs(p)
+    const timePrefix = formatPlotTraceDate(ts)
+    if (p.type === 'player') lines.push(`- [${timePrefix}] [线下・我] ${t}`)
+    else if (borrowed) lines.push(`- [${timePrefix}] [线下・「${rootName}」] ${t}`)
+    else lines.push(`- [${timePrefix}] [线下・${peerLabel}] ${t}`)
   }
   if (borrowed && !lines.length) {
     const hint =
@@ -125,12 +133,23 @@ function filterPlotsForNpcBorrowedArchive(
 export async function listUnsummarizedOfflinePlotTraceItems(
   characterId: string | null | undefined,
   peerDisplayName?: string | null,
-  opts?: { maxItems?: number; snippetChars?: number; /** 不作条内字数截断（思维溯源完整展示） */ fullSnippet?: boolean },
+  opts?: {
+    maxItems?: number
+    snippetChars?: number
+    /** 不作条内字数截断（思维溯源完整展示） */
+    fullSnippet?: boolean
+    /** 与 prompt 注入一致：最近 N 轮 AI 剧情窗口 */
+    retainAiRounds?: number
+    /** 思维溯源：仅展示 AI 剧情条，不含玩家输入 */
+    aiOnly?: boolean
+  },
 ): Promise<Array<{ date: string; snippet: string }>> {
   const cid = characterId?.trim()
   if (!cid) return []
   const maxItems = Math.max(1, Math.min(2000, opts?.maxItems ?? 16))
   const snippetChars = Math.max(80, Math.min(2000, opts?.snippetChars ?? 420))
+  const retainAiRounds = opts?.retainAiRounds ?? MEMORY_UNSUMMARIZED_OFFLINE_INJECT_AI_ROUNDS
+  const aiOnly = opts?.aiOnly === true
   try {
     const ctx = await resolveOfflineDatingArchiveContext(cid)
     if (!ctx) return []
@@ -143,12 +162,18 @@ export async function listUnsummarizedOfflinePlotTraceItems(
         return ts > dMin
       })
       .sort((a, b) => (a.timestamp ?? 1) - (b.timestamp ?? 1))
-      .slice(-maxItems)
 
     const borrowed = ctx.perspectiveCharacterId !== ctx.archiveCharacterId
     if (borrowed) {
       tail = filterPlotsForNpcBorrowedArchive(tail, ctx.perspective)
     }
+    if (tail.length && retainAiRounds > 0) {
+      tail = selectRecentDatingPlotsAiRoundWindow(tail, retainAiRounds)
+    }
+    if (aiOnly) {
+      tail = tail.filter((p) => p.type === 'ai')
+    }
+    tail = tail.slice(-maxItems)
 
     const rootName = (ctx.archiveOwner?.name ?? '').trim() || '主角'
     const peerLabel = peerDisplayName?.trim() || (ctx.perspective?.name ?? '').trim() || '对方'
@@ -156,7 +181,7 @@ export async function listUnsummarizedOfflinePlotTraceItems(
     for (const p of tail) {
       const body = plotBodyForPrompt(p)
       if (!body) continue
-      const ts = typeof p.timestamp === 'number' && Number.isFinite(p.timestamp) ? p.timestamp : Date.now()
+      const ts = resolvePlotSystemRecordedAtMs(p)
       let role: string
       if (p.type === 'player') {
         role = '我'
@@ -178,8 +203,8 @@ export async function listUnsummarizedOfflinePlotTraceItems(
 }
 
 /**
- * 与约会页 `getOnlineMemoryContext` / `generateDatingAi` 使用同一规则：
- * plot 游标之后、尚未写入长期记忆的材料（正文全文）。
+ * plot 游标之后、尚未写入长期记忆的材料；
+ * 默认仅保留最近 {@link MEMORY_UNSUMMARIZED_OFFLINE_INJECT_AI_ROUNDS} 轮 AI 剧情（含其间玩家输入）。
  */
 export async function buildUnsummarizedOfflineDatingText(
   characterId: string | null | undefined,
@@ -208,6 +233,7 @@ export async function buildUnsummarizedOfflineDatingText(
               offlinePlotBodyRelevantToNpcForLinkedExcerpt(body, ctx.perspective, tokens)
           : undefined,
       maxChars: DATING_AI_OFFLINE_UNSUMMARIZED_CHAR_CAP,
+      retainAiRounds: MEMORY_UNSUMMARIZED_OFFLINE_INJECT_AI_ROUNDS,
     })
   } catch {
     return ''
@@ -227,6 +253,7 @@ export async function formatOfflineUnsummarizedBlockFromPlotSnapshots(
     plotCursorMin: -1,
     peerLabel,
     maxChars: cap,
+    retainAiRounds: MEMORY_UNSUMMARIZED_OFFLINE_INJECT_AI_ROUNDS,
   })
 }
 
@@ -242,11 +269,12 @@ export async function loadOfflineDatingPlotsPromptBlock(
   const ctx = cid ? await resolveOfflineDatingArchiveContext(cid) : null
   const borrowed = !!(ctx && ctx.perspectiveCharacterId !== ctx.archiveCharacterId)
 
+  const rounds = MEMORY_UNSUMMARIZED_OFFLINE_INJECT_AI_ROUNDS
   const header = borrowed
     ? `【尚未总结·关联主角线下剧情（节选）】` +
-      `你与「${(ctx?.archiveOwner?.name ?? '').trim() || '主角'}」同属一条时间线；下列为 plot 总结游标之后的正文摘录（节选）。`
+      `你与「${(ctx?.archiveOwner?.name ?? '').trim() || '主角'}」同属一条时间线；下列为游标后**最近 ${rounds} 轮 AI 剧情**及其间玩家输入；**每条前缀 \`[YYYY年M月D日 星期X HH:mm]\` 为系统落库时刻**（真实生成钟点，**不是**故事内剧情时间；更早段由【剧情时间轴】/长期记忆/语义召回承接）。`
     : `【尚未总结·线下剧情（约会页 plot 总结游标之后）】` +
-      `与当前会话为**同一角色、同一时间线**；须参考下列事实自然衔接，**禁止**与线下已发生内容明显矛盾。`
+      `与当前会话为**同一角色、同一时间线**；下列为游标后**最近 ${rounds} 轮 AI 剧情**及其间玩家输入；**每条前缀 \`[YYYY年M月D日 星期X HH:mm]\` 为系统落库时刻**（真实生成钟点，**不是**故事内剧情时间；更早段由【剧情时间轴】/长期记忆/语义召回承接），须自然衔接、**禁止**明显矛盾。`
 
   return `${header}\n\n${body}`
 }
@@ -254,6 +282,28 @@ export async function loadOfflineDatingPlotsPromptBlock(
 /** 模型注入块里的「尚未总结·线下剧情」说明段（单行，后接空行再是正文）。 */
 const OFFLINE_PLOT_INJECT_HEADER_RE =
   /【尚未总结·(?:关联主角线下剧情（节选）|线下剧情（约会页 plot 总结游标之后）)】[^\n]*\n\n/g
+
+/** 思维溯源 ACTIVE CONTEXT：与 prompt 注入同源，最近 N 轮 AI 线下剧情（仅 AI 条）。 */
+export async function listInjectedOfflinePlotTraceRowsForMemoryTrace(
+  characterId: string | null | undefined,
+  peerDisplayName?: string | null,
+): Promise<Array<{ date: string; snippet: string }>> {
+  return listUnsummarizedOfflinePlotTraceItems(characterId, peerDisplayName, {
+    retainAiRounds: MEMORY_UNSUMMARIZED_OFFLINE_INJECT_AI_ROUNDS,
+    aiOnly: true,
+    maxItems: MEMORY_UNSUMMARIZED_OFFLINE_INJECT_AI_ROUNDS,
+    fullSnippet: true,
+  })
+}
+
+/** 思维溯源：展示已注入 prompt 的线下剧情正文（fallback：整段注入块）。 */
+export function buildOfflinePlotTraceRowsFromInjectedContext(
+  injectedContext: string | undefined | null,
+): Array<{ date: string; snippet: string }> {
+  const plain = stripOfflineDatingPlotsInjectHeaderForTraceDisplay(String(injectedContext ?? ''))
+  if (!plain) return []
+  return [{ date: '—', snippet: plain }]
+}
 
 /** 思维溯源 / UI：去掉仅注入模型用的前言，只保留正文摘录。 */
 export function stripOfflineDatingPlotsInjectHeaderForTraceDisplay(text: string): string {

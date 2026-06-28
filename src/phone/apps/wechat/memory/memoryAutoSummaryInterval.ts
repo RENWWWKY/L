@@ -50,6 +50,18 @@ export function resolveAutoSummaryIntervalForConversationKey(
   return resolveGlobalAutoSummaryInterval(settings)
 }
 
+/** 只读预判：下一轮 AI 回复计轮 +1 后是否会触发自动总结（不修改计数）。 */
+export function peekWillSummarizeOnNextAiRound(
+  settings: MemorySettingsRow,
+  conversationKey: string,
+): boolean {
+  const ck = conversationKey.trim()
+  if (!ck || settings.autoSummaryEnabled === false) return false
+  const interval = resolveAutoSummaryIntervalForConversationKey(settings, ck)
+  const prev = settings.aiRoundCountByConversation?.[ck] ?? 0
+  return prev + 1 >= interval
+}
+
 /** 仅私聊 AI 主角可配置总结间隔：排除玩家身份、人脉 NPC、账号本人人设。 */
 export function isAutoSummaryIntervalEligibleCharacter(
   ch: Character,

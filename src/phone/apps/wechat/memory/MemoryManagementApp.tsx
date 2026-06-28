@@ -1,5 +1,5 @@
-import { ArrowLeft, ChevronLeft, ChevronRight } from 'lucide-react'
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { ArrowLeft } from 'lucide-react'
+import { useCallback, useEffect, useState } from 'react'
 import { personaDb } from '../newFriendsPersona/idb'
 import type { WeChatContactRow } from '../../../../components/WeChatContactsInstagram'
 import { ListenNumericText } from '../../../../components/discoverListen/ListenNum'
@@ -7,64 +7,61 @@ import { Pressable } from '../../../components/Pressable'
 import { MemoryDashboard } from './MemoryDashboard'
 import { MemoryEngineConfig } from './MemoryEngineConfig'
 import { MemorySummaryProgressPanel } from './MemorySummaryProgressPanel'
+import { MemoryEpiloguePanel } from './MemoryEpiloguePanel'
 import { MemorySummaryRetryPanel } from './MemorySummaryRetryPanel'
 import { ARCHIVE_BG } from './memoryArchiveTheme'
 import type { MemoryCharacterPageMeta } from './memoryArchiveTypes'
-import { MEMORY_ARCHIVE_TUTORIAL_SECTIONS } from './memoryArchiveTutorialCopy'
+import { MemoryCoachPortal } from './MemoryCoachPortal'
 import { MemoryTutorialModal } from './MemoryTutorialModal'
 import { MemoryTutorialButton } from './MemoryTutorialButton'
+import { MEMORY_HUB_COACH_STEPS, MEMORY_HUB_START_COACH_EVENT } from './memoryHubCoachSteps'
+import { MEMORY_HUB_TUTORIAL_SECTIONS } from './memoryHubTutorialCopy'
+import {
+  MEMORY_HUB_COACH_SEEN_KEY,
+  readMemoryCoachSeen,
+  writeMemoryCoachSeen,
+} from './memoryCoachTypes'
+import { dispatchMemoryTabCoachForHubTab } from './useMemoryTabCoach'
 
-const MEMORY_ARCHIVE_START_COACH_EVENT = 'memory-archive-start-coach'
+const MEMORY_ARCHIVE_TABS = [
+  { id: 'config' as const, label: '记忆配置' },
+  { id: 'memories' as const, label: '角色总结' },
+  { id: 'epilogue' as const, label: '尾声延展' },
+  { id: 'progress' as const, label: '线上总结进度' },
+  { id: 'retry' as const, label: '补全总结' },
+] as const
+
+type MemoryArchiveTabId = (typeof MEMORY_ARCHIVE_TABS)[number]['id']
 
 function TopBar({
   title,
   subtitle,
   onBack,
   onOpenTutorial,
-  onPrevCharacter,
-  onNextCharacter,
-  canPrevCharacter,
-  canNextCharacter,
+  backLabel = '返回',
 }: {
   title: string
   subtitle?: string
   onBack: () => void
   onOpenTutorial?: () => void
-  onPrevCharacter?: () => void
-  onNextCharacter?: () => void
-  canPrevCharacter?: boolean
-  canNextCharacter?: boolean
+  backLabel?: string
 }) {
-  const showCharNav = onPrevCharacter != null && onNextCharacter != null
-
   return (
     <div
-      className="sticky top-0 z-30 shrink-0"
+      className="sticky top-0 z-30 shrink-0 border-b border-gray-200/60"
       style={{
-        background: '#FFFFFF',
+        background: ARCHIVE_BG,
         paddingTop: 'max(10px, env(safe-area-inset-top,0px))',
-        boxShadow: '0 8px 30px rgba(0,0,0,0.03)',
       }}
     >
       <div className="flex items-center gap-1 px-3 py-3">
         <Pressable
           onClick={onBack}
           className="flex h-10 w-10 shrink-0 items-center justify-center rounded-[12px] transition-all duration-200 ease-out hover:bg-gray-50"
-          aria-label={showCharNav ? '返回浏览记忆' : '返回'}
+          aria-label={backLabel}
         >
           <ArrowLeft className="size-5 text-gray-900" strokeWidth={1.75} />
         </Pressable>
-
-        {showCharNav ? (
-          <Pressable
-            onClick={onPrevCharacter}
-            disabled={!canPrevCharacter}
-            className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-gray-500 transition-colors hover:bg-gray-50 disabled:opacity-25"
-            aria-label="上一位角色"
-          >
-            <ChevronLeft className="size-5" strokeWidth={1.75} />
-          </Pressable>
-        ) : null}
 
         <div className="min-w-0 flex-1 px-1 text-center">
           <p className="truncate text-[17px] font-semibold tracking-tight text-gray-900">{title}</p>
@@ -72,22 +69,13 @@ function TopBar({
             <p className="mt-0.5 truncate text-[11px] text-gray-400">
               <ListenNumericText text={subtitle} />
             </p>
+          ) : title === '记忆档案馆' ? (
+            <p className="mt-0.5 truncate text-[11px] text-gray-400">微信长期记忆管理</p>
           ) : null}
         </div>
 
-        {showCharNav ? (
-          <Pressable
-            onClick={onNextCharacter}
-            disabled={!canNextCharacter}
-            className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-gray-500 transition-colors hover:bg-gray-50 disabled:opacity-25"
-            aria-label="下一位角色"
-          >
-            <ChevronRight className="size-5" strokeWidth={1.75} />
-          </Pressable>
-        ) : null}
-
         {onOpenTutorial ? (
-          <MemoryTutorialButton onClick={onOpenTutorial} />
+          <MemoryTutorialButton compact onClick={onOpenTutorial} coachTarget="hub-tutorial" />
         ) : (
           <div className="h-10 w-10 shrink-0" aria-hidden />
         )}
@@ -101,43 +89,75 @@ export function MemoryManagementApp({
   playerIdentityId,
   playerDisplayName,
   currentWechatAccountId,
+  apiConfig,
   onBack,
 }: {
   contacts: WeChatContactRow[]
   playerIdentityId: string | null
   playerDisplayName: string
   currentWechatAccountId?: string
+  apiConfig?: import('../../api/types').ApiConfig | null
   onBack: () => void
 }) {
-  const [activeTab, setActiveTab] = useState<'config' | 'memories' | 'progress' | 'retry'>('memories')
+  const [activeTab, setActiveTab] = useState<MemoryArchiveTabId>('memories')
   const [retryCount, setRetryCount] = useState(0)
   const [hubTutorialOpen, setHubTutorialOpen] = useState(false)
+  const [hubCoachOpen, setHubCoachOpen] = useState(false)
+  const [hubCoachStepIndex, setHubCoachStepIndex] = useState(0)
   const [characterPage, setCharacterPage] = useState<MemoryCharacterPageMeta | null>(null)
-  const characterNavRef = useRef<{ prev: () => void; next: () => void } | null>(null)
+  const [epilogueCharacterPage, setEpilogueCharacterPage] = useState<MemoryCharacterPageMeta | null>(null)
 
   const pid = playerIdentityId?.trim() ?? ''
-  const onCharacterPage = characterPage != null
-  const configCoachActive = activeTab === 'config' && !onCharacterPage
-  const archiveCoachActive = activeTab === 'memories'
+  const onCharacterPage =
+    (activeTab === 'epilogue' && epilogueCharacterPage != null) ||
+    (activeTab === 'memories' && characterPage != null)
+  const hubCoachActive = !onCharacterPage
+  const configCoachActive = activeTab === 'config' && hubCoachActive
+  const archiveCoachActive = activeTab === 'memories' && hubCoachActive
+  const progressCoachActive = activeTab === 'progress' && hubCoachActive
+  const retryCoachActive = activeTab === 'retry' && hubCoachActive
+  const epilogueCoachActive = activeTab === 'epilogue' && !epilogueCharacterPage
+
+  const startHubCoach = useCallback(() => {
+    setHubCoachStepIndex(0)
+    setHubCoachOpen(true)
+  }, [])
+
+  const finishHubCoach = useCallback(
+    (opts?: { openTutorial?: boolean }) => {
+      writeMemoryCoachSeen(MEMORY_HUB_COACH_SEEN_KEY)
+      setHubCoachOpen(false)
+      setHubCoachStepIndex(0)
+      if (opts?.openTutorial) {
+        setHubTutorialOpen(true)
+        return
+      }
+      window.setTimeout(() => dispatchMemoryTabCoachForHubTab(activeTab), 420)
+    },
+    [activeTab],
+  )
 
   const handleTopBack = useCallback(() => {
+    if (activeTab === 'epilogue' && epilogueCharacterPage) {
+      setEpilogueCharacterPage(null)
+      return
+    }
     if (characterPage) {
       setCharacterPage(null)
       return
     }
     onBack()
-  }, [characterPage, onBack])
+  }, [activeTab, characterPage, epilogueCharacterPage, onBack])
 
-  const topTitle = characterPage ? `${characterPage.displayName}的记忆` : '记忆档案馆'
-  const topSubtitle = characterPage
-    ? characterPage.rosterIndex >= 0
-      ? `${characterPage.rosterIndex + 1} / ${characterPage.rosterTotal}`
-      : undefined
-    : undefined
-
-  const registerCharacterNav = useCallback((nav: { prev: () => void; next: () => void } | null) => {
-    characterNavRef.current = nav
-  }, [])
+  const topTitle = (() => {
+    if (activeTab === 'epilogue' && epilogueCharacterPage) {
+      return `${epilogueCharacterPage.displayName}的尾声延展`
+    }
+    if (activeTab === 'memories' && characterPage) {
+      return `${characterPage.displayName}的角色总结`
+    }
+    return '记忆档案馆'
+  })()
 
   const reloadRetryCount = useCallback(async () => {
     const list = await personaDb.listMemorySummaryRetries()
@@ -162,99 +182,98 @@ export function MemoryManagementApp({
     return () => window.removeEventListener('wechat-memory-summary-result', onResult as EventListener)
   }, [reloadRetryCount])
 
+  useEffect(() => {
+    if (!hubCoachActive) {
+      setHubCoachOpen(false)
+      setHubCoachStepIndex(0)
+      return
+    }
+    if (readMemoryCoachSeen(MEMORY_HUB_COACH_SEEN_KEY)) return
+    const id = window.setTimeout(() => startHubCoach(), 640)
+    return () => window.clearTimeout(id)
+  }, [hubCoachActive, startHubCoach])
+
+  useEffect(() => {
+    const onStart = () => startHubCoach()
+    window.addEventListener(MEMORY_HUB_START_COACH_EVENT, onStart)
+    return () => window.removeEventListener(MEMORY_HUB_START_COACH_EVENT, onStart)
+  }, [startHubCoach])
+
   return (
-    <div className="flex h-full min-h-0 flex-col overflow-hidden text-gray-900" style={{ background: ARCHIVE_BG }}>
+    <div
+      data-memory-coach-root="memory-management"
+      className="flex h-full min-h-0 flex-col overflow-hidden text-gray-900"
+      style={{ background: ARCHIVE_BG }}
+    >
       <TopBar
         title={topTitle}
-        subtitle={topSubtitle}
         onBack={handleTopBack}
-        onOpenTutorial={
-          activeTab === 'memories' && !onCharacterPage ? () => setHubTutorialOpen(true) : undefined
-        }
-        onPrevCharacter={onCharacterPage ? () => characterNavRef.current?.prev() : undefined}
-        onNextCharacter={onCharacterPage ? () => characterNavRef.current?.next() : undefined}
-        canPrevCharacter={characterPage?.canPrev}
-        canNextCharacter={characterPage?.canNext}
+        backLabel={onCharacterPage ? '返回浏览' : '返回'}
+        onOpenTutorial={hubCoachActive ? () => setHubTutorialOpen(true) : undefined}
       />
 
-      {activeTab === 'memories' && !onCharacterPage ? (
+      {hubCoachActive ? (
         <MemoryTutorialModal
           open={hubTutorialOpen}
           onClose={() => setHubTutorialOpen(false)}
-          title="记忆档案馆 · 怎么看"
-          subtitle="列表、配置与注入规则小抄"
-          sections={MEMORY_ARCHIVE_TUTORIAL_SECTIONS}
+          title="记忆档案馆 · 五个标签"
+          subtitle="先认入口，再进各页细看"
+          sections={MEMORY_HUB_TUTORIAL_SECTIONS}
           onStartLiveCoach={() => {
             setHubTutorialOpen(false)
-            window.setTimeout(() => {
-              window.dispatchEvent(new CustomEvent(MEMORY_ARCHIVE_START_COACH_EVENT))
-            }, 280)
+            window.setTimeout(() => startHubCoach(), 280)
           }}
           zIndex={52000}
         />
       ) : null}
+
+      <MemoryCoachPortal
+        open={hubCoachOpen && hubCoachActive}
+        steps={MEMORY_HUB_COACH_STEPS}
+        stepIndex={hubCoachStepIndex}
+        onStepChange={setHubCoachStepIndex}
+        onSkip={() => finishHubCoach()}
+        onComplete={(opts) => finishHubCoach(opts)}
+        scopeRoot="memory-management"
+        layoutEpoch={activeTab}
+        zIndex={57000}
+      />
+
       <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
         {!onCharacterPage ? (
-          <div className="shrink-0 px-4 pb-2 pt-2" style={{ background: ARCHIVE_BG }}>
-            <div className="mx-auto grid max-w-xl grid-cols-4 gap-1 rounded-full bg-gray-100/80 p-1">
-              <Pressable
-                type="button"
-                role="tab"
-                aria-selected={activeTab === 'config'}
-                onClick={() => setActiveTab('config')}
-                className={`min-h-[44px] rounded-full py-2.5 text-center text-[13px] font-semibold transition-colors ${
-                  activeTab === 'config'
-                    ? 'bg-white text-gray-900 shadow-[0_4px_16px_rgba(0,0,0,0.04)]'
-                    : 'text-gray-500 hover:text-gray-800'
-                }`}
-              >
-                配置
-              </Pressable>
-              <Pressable
-                type="button"
-                role="tab"
-                aria-selected={activeTab === 'progress'}
-                onClick={() => setActiveTab('progress')}
-                className={`min-h-[44px] rounded-full py-2.5 text-center text-[13px] font-semibold transition-colors ${
-                  activeTab === 'progress'
-                    ? 'bg-white text-gray-900 shadow-[0_4px_16px_rgba(0,0,0,0.04)]'
-                    : 'text-gray-500 hover:text-gray-800'
-                }`}
-              >
-                进度
-              </Pressable>
-              <Pressable
-                type="button"
-                role="tab"
-                aria-selected={activeTab === 'retry'}
-                onClick={() => setActiveTab('retry')}
-                className={`relative min-h-[44px] rounded-full py-2.5 text-center text-[13px] font-semibold transition-colors ${
-                  activeTab === 'retry'
-                    ? 'bg-white text-gray-900 shadow-[0_4px_16px_rgba(0,0,0,0.04)]'
-                    : 'text-gray-500 hover:text-gray-800'
-                }`}
-              >
-                待总结
-                {retryCount > 0 ? (
-                  <span className="absolute -right-0.5 -top-0.5 flex h-4 min-w-4 items-center justify-center rounded-full bg-rose-500 px-1 text-[10px] font-bold text-white">
-                    {retryCount > 9 ? '9+' : retryCount}
-                  </span>
-                ) : null}
-              </Pressable>
-              <Pressable
-                type="button"
-                role="tab"
-                aria-selected={activeTab === 'memories'}
-                onClick={() => setActiveTab('memories')}
-                className={`min-h-[44px] rounded-full py-2.5 text-center text-[13px] font-semibold transition-colors ${
-                  activeTab === 'memories'
-                    ? 'bg-white text-gray-900 shadow-[0_4px_16px_rgba(0,0,0,0.04)]'
-                    : 'text-gray-500 hover:text-gray-800'
-                }`}
-              >
-                记忆管理
-              </Pressable>
-            </div>
+          <div className="shrink-0 px-4 pb-2 pt-1.5" style={{ background: ARCHIVE_BG }}>
+            <nav
+              className="mx-auto flex max-w-xl gap-1 overflow-x-auto rounded-2xl bg-white p-1 shadow-[0_4px_20px_rgba(0,0,0,0.03)] [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
+              role="tablist"
+              aria-label="记忆档案馆分区"
+            >
+              {MEMORY_ARCHIVE_TABS.map((tab) => {
+                const active = activeTab === tab.id
+                const showRetryBadge = tab.id === 'retry' && retryCount > 0
+                return (
+                  <Pressable
+                    key={tab.id}
+                    type="button"
+                    role="tab"
+                    aria-selected={active}
+                    data-memory-coach={`hub-tab-${tab.id}`}
+                    onClick={() => setActiveTab(tab.id)}
+                    className={`relative shrink-0 rounded-xl px-3.5 py-2 text-[12px] font-semibold whitespace-nowrap transition-colors ${
+                      active
+                        ? 'bg-gray-900 text-white shadow-[0_2px_8px_rgba(0,0,0,0.12)]'
+                        : 'text-gray-500 hover:bg-gray-50 hover:text-gray-800'
+                    }`}
+                  >
+                    {tab.label}
+                    {showRetryBadge ? (
+                      <span className="absolute -right-0.5 -top-0.5 flex h-4 min-w-4 items-center justify-center rounded-full bg-gray-700 px-1 text-[10px] font-bold text-white ring-2 ring-white">
+                        {retryCount > 9 ? '9+' : retryCount}
+                      </span>
+                    ) : null}
+                  </Pressable>
+                )
+              })}
+            </nav>
           </div>
         ) : null}
         <div
@@ -278,6 +297,7 @@ export function MemoryManagementApp({
             contacts={contacts}
             currentWechatAccountId={currentWechatAccountId}
             playerIdentityId={playerIdentityId}
+            coachActive={progressCoachActive}
           />
         </div>
         <div
@@ -286,22 +306,37 @@ export function MemoryManagementApp({
           }`}
           aria-hidden={activeTab !== 'retry' || onCharacterPage}
         >
-          <MemorySummaryRetryPanel />
+          <MemorySummaryRetryPanel coachActive={retryCoachActive} />
         </div>
         <div
           className={`flex min-h-0 flex-1 flex-col overflow-hidden ${
-            activeTab === 'memories' || onCharacterPage ? '' : 'hidden'
+            activeTab === 'epilogue' ? '' : 'hidden'
           }`}
-          aria-hidden={activeTab !== 'memories' && !onCharacterPage}
+          aria-hidden={activeTab !== 'epilogue'}
+        >
+          <MemoryEpiloguePanel
+            contacts={contacts}
+            apiConfig={apiConfig ?? null}
+            currentWechatAccountId={currentWechatAccountId}
+            activeCharacterPageId={epilogueCharacterPage?.charId ?? null}
+            onCharacterPageChange={setEpilogueCharacterPage}
+            coachActive={epilogueCoachActive}
+          />
+        </div>
+        <div
+          className={`flex min-h-0 flex-1 flex-col overflow-hidden ${
+            activeTab === 'memories' ? '' : 'hidden'
+          }`}
+          aria-hidden={activeTab !== 'memories'}
         >
           <MemoryDashboard
             contacts={contacts}
             playerIdentityId={pid || '__none__'}
             playerDisplayName={playerDisplayName.trim() || '我'}
             currentWechatAccountId={currentWechatAccountId}
+            apiConfig={apiConfig ?? null}
             activeCharacterPageId={characterPage?.charId ?? null}
             onCharacterPageChange={setCharacterPage}
-            onRegisterCharacterNav={registerCharacterNav}
             coachActive={archiveCoachActive}
           />
         </div>

@@ -20,7 +20,10 @@ export const CHAT_BUBBLE_ENTER_ANIMATE = {
   y: 0,
 }
 
-export function chatBubbleTransformOrigin(isSelf: boolean): { originX: number; originY: number } {
+export function chatBubbleTransformOrigin(
+  isSelf: boolean,
+  _tailStyle: 'wechat' | 'imessage' | 'telegram' | 'talkmaker' = 'wechat',
+): { originX: number; originY: number } {
   return {
     originX: isSelf ? 1 : 0,
     originY: 1,

@@ -51,22 +51,44 @@ function renderMixedChunk(chunk: string, keyPrefix: string) {
   })
 }
 
-/** 原生输入框：仅数字 0–9 → Corbel Light（@font-face unicode-range）；中文/英文仍 --wx-font */
+/** 原生输入框：Messenger 模版走 --wx-chat-font；默认 Lumi 气泡仍用 Corbel 数字 + 全局衬线 */
 export const wechatChatComposerFontStyle: CSSProperties = {
-  fontFamily: '"WeChatChatComposerDigits", var(--wx-font)',
+  fontFamily: 'var(--wx-chat-font, "WeChatChatComposerDigits", var(--wx-font))',
 }
 
-/** 混排文案：拉丁字母与数字 → Corbel Light；https 链接整段渲染避免拆成数百 span */
+/** 混排文案：Messenger 模版统一走 --wx-chat-font；默认 Lumi 气泡拉丁/数字 → Corbel Light */
 export function WeChatChatMixedText({
   text,
   className,
   style,
+  templateFont = false,
 }: {
   text: string
   className?: string
   style?: CSSProperties
+  /** true：使用当前气泡模版字体栈，不做 Corbel 拆字 */
+  templateFont?: boolean
 }) {
   const segments = splitTextAndUrls(String(text ?? ''))
+  if (templateFont) {
+    return (
+      <span
+        className={className}
+        style={{ fontFamily: 'var(--wx-chat-font)', ...style }}
+      >
+        {segments.map((seg, index) => {
+          if (seg.kind === 'url') {
+            return (
+              <span key={`url-${index}`} style={{ wordBreak: 'break-all', overflowWrap: 'anywhere' }}>
+                {seg.value}
+              </span>
+            )
+          }
+          return <span key={`txt-${index}`}>{seg.value}</span>
+        })}
+      </span>
+    )
+  }
   return (
     <span className={className} style={style}>
       {segments.map((seg, index) => {

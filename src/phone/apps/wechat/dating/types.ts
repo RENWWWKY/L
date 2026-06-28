@@ -1,3 +1,5 @@
+import type { StoryTimelineSummaryDelta } from '../memory/storyTimelineTypes'
+
 export type DateMode = 'normal' | 'vn'
 export type NarrativePerspective = 'first' | 'second' | 'third'
 /** 剧情 AI 目标正文字数（汉字）：与 DatingStoryPage、generateDatingAi 共用 */
@@ -139,6 +141,14 @@ export type PlotItem = {
   versions?: string[]
   /** 与 `versions` 等长时，各版对应的思维链文本 */
   versionLogicPasses?: (string | undefined)[]
+  /** 与 `versions` 等长时，各版对应的剧情时间轴 JSON 增量展示文本 */
+  versionTimelineSnapshots?: (string | undefined)[]
+  /** 与 `versions` 等长时，各版对应的 timeline JSON 增量（重建 IndexedDB 行表用） */
+  versionTimelineDeltas?: (StoryTimelineSummaryDelta | undefined)[]
+  /** 当前展示版本对应的剧情时间轴表（折叠面板） */
+  timelineSnapshot?: string
+  /** 当前展示版本对应的 timeline JSON 增量 */
+  timelineDelta?: StoryTimelineSummaryDelta
   /** 当前展示版本下标，默认指向最新 */
   currentVersionIndex?: number
   /**

@@ -58,6 +58,8 @@ function VectorEmbeddingModelSection({
   mode,
   pullSource,
   disabled,
+  embedded,
+  sectionClassName,
   embeddingModelDraft,
   onEmbeddingModelChange,
   embeddingModelList,
@@ -70,6 +72,8 @@ function VectorEmbeddingModelSection({
   mode: 'dedicated' | 'main'
   pullSource: EmbeddingPullSource | null
   disabled?: boolean
+  embedded?: boolean
+  sectionClassName?: string
   embeddingModelDraft: string
   onEmbeddingModelChange: (modelId: string) => void
   embeddingModelList: string[]
@@ -91,7 +95,8 @@ function VectorEmbeddingModelSection({
   const canPull = Boolean(pullSource) && !disabled
 
   return (
-    <div className={mode === 'dedicated' ? 'mt-6 border-t border-gray-100/80 pt-5' : ''}>
+    <div className={sectionClassName ?? (mode === 'dedicated' && !embedded ? 'mt-6 border-t border-gray-100/80 pt-5' : '')}>
+      {embedded ? <p className="mb-3 text-[13px] font-semibold text-gray-900">Embedding 模型</p> : null}
       {!pullSource ? (
         <div className="rounded-2xl bg-amber-50/80 px-3.5 py-2.5 text-[11px] leading-relaxed text-amber-900/70">
           {pullHint}
@@ -157,6 +162,7 @@ function VectorEmbeddingModelSection({
 
 export function VectorBridgeConfig({
   mode = 'dedicated',
+  embedded = false,
   config,
   onConfigChange,
   hasSavedKey,
@@ -176,6 +182,8 @@ export function VectorBridgeConfig({
   onVectorFieldsBlur,
 }: {
   mode?: 'dedicated' | 'main'
+  /** 嵌入记忆配置页时去掉外层卡片，避免重复白底 */
+  embedded?: boolean
   config?: VectorAPIConfig
   onConfigChange?: (patch: Partial<VectorAPIConfig>) => void
   hasSavedKey?: boolean
@@ -231,15 +239,20 @@ export function VectorBridgeConfig({
     onEmbeddingModelDropdownToggle,
   }
 
+  const shellClass = embedded
+    ? ''
+    : 'rounded-[24px] bg-white px-5 py-5 shadow-[0_8px_30px_rgba(0,0,0,0.03)]'
+  const titleClass = embedded
+    ? 'text-[13px] font-semibold text-gray-900'
+    : 'text-[17px] font-semibold tracking-tight text-gray-900'
+  const sectionDivider = embedded ? 'mt-4 border-t border-gray-100/80 pt-4' : 'mt-6 border-t border-gray-100/80 pt-5'
+
   if (mode === 'main') {
     return (
-      <div
-        className="rounded-[24px] bg-white px-5 py-5 shadow-[0_8px_30px_rgba(0,0,0,0.03)]"
-        style={{ opacity: disabled ? 0.55 : 1 }}
-      >
-        <h3 className="text-[17px] font-semibold tracking-tight text-gray-900">向量模型</h3>
-        <div className="mt-4">
-          <VectorEmbeddingModelSection {...modelSectionProps} />
+      <div className={shellClass} style={{ opacity: disabled ? 0.55 : 1 }}>
+        {!embedded ? <h3 className={titleClass}>向量模型</h3> : null}
+        <div className={embedded ? '' : 'mt-4'}>
+          <VectorEmbeddingModelSection {...modelSectionProps} embedded={embedded} />
         </div>
       </div>
     )
@@ -248,13 +261,16 @@ export function VectorBridgeConfig({
   if (!config || !onConfigChange) return null
 
   return (
-    <div
-      className="rounded-[24px] bg-white px-5 py-5 shadow-[0_8px_30px_rgba(0,0,0,0.03)]"
-      style={{ opacity: disabled ? 0.55 : 1 }}
-    >
-      <h3 className="text-[17px] font-semibold tracking-tight text-gray-900">向量接口与模型</h3>
+    <div className={shellClass} style={{ opacity: disabled ? 0.55 : 1 }}>
+      {!embedded ? <h3 className={titleClass}>向量接口与模型</h3> : null}
 
-      <div className="mt-5 space-y-4">
+      <div
+        className={
+          embedded
+            ? 'space-y-3 rounded-2xl border border-gray-100/90 bg-white/80 p-3.5'
+            : 'mt-5 space-y-4'
+        }
+      >
         <MemoryEngineSoftField label="接口地址">
           <MemoryEngineSoftInput
             value={config.endpoint}
@@ -305,7 +321,7 @@ export function VectorBridgeConfig({
       </div>
 
       {onConnectionStatusChange && connectionStatus ? (
-        <div className="mt-6 flex flex-wrap items-center gap-3">
+        <div className={`${embedded ? 'mt-4' : 'mt-6'} flex flex-wrap items-center gap-3`}>
           <motion.button
             type="button"
             disabled={disabled || pinging}
@@ -320,7 +336,7 @@ export function VectorBridgeConfig({
         </div>
       ) : null}
 
-      <VectorEmbeddingModelSection {...modelSectionProps} />
+      <VectorEmbeddingModelSection {...modelSectionProps} embedded={embedded} sectionClassName={sectionDivider} />
     </div>
   )
 }

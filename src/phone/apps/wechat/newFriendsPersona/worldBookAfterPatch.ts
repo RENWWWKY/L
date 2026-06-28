@@ -13,6 +13,8 @@ export const WORLD_BOOK_AFTER_PATCH_UPDATED_EVENT = 'phone:worldbook-after-patch
 export type WorldBookAfterPatchUpdatedEventDetail = {
   /** 本轮模型 JSON 中、且已成功写入人设的补丁条数 */
   appliedPatchCount: number
+  /** 补丁来源：模型 inline / 回合间编辑助手 / 自动总结 / 每轮专用判断 */
+  source?: 'model_inline' | 'post_reply' | 'auto_summary' | 'per_round'
 }
 
 const MAX_ITEM_CONTENT_CHARS = 12000
@@ -95,8 +97,8 @@ export function hasChatAfterWorldBookItems(character: Character | null | undefin
 
 export function listChatAfterWorldBookItems(
   character: Character | null | undefined,
-): Array<{ worldBookId: string; itemId: string; bookName: string; itemName: string; content: string }> {
-  const out: Array<{ worldBookId: string; itemId: string; bookName: string; itemName: string; content: string }> = []
+): Array<{ worldBookId: string; itemId: string; bookName: string; itemName: string; content: string; contentPrevious?: string }> {
+  const out: Array<{ worldBookId: string; itemId: string; bookName: string; itemName: string; content: string; contentPrevious?: string }> = []
   if (!character?.worldBooks?.length) return out
   for (const w of character.worldBooks) {
     if (!w?.enabled) continue
@@ -111,6 +113,9 @@ export function listChatAfterWorldBookItems(
         bookName,
         itemName: String(it.name ?? '').trim() || '条目',
         content: body.slice(0, MAX_ITEM_CONTENT_CHARS),
+        ...(String(it.contentPrevious ?? '').trim()
+          ? { contentPrevious: String(it.contentPrevious).slice(0, MAX_ITEM_CONTENT_CHARS) }
+          : {}),
       })
     }
   }
@@ -131,7 +136,7 @@ export function buildChatAfterWorldBookDynamicSection(character: Character | nul
 ---
 【世界书·生效时机铁律（剧情与人设一致性）】
 - **序言介入**条目（priority=before）：角色的**恒常基底**（如先天性格模板、长期不变的立场）。用户在线上私聊、线下剧情中如何互动，**都不得**动摇这些条目所描述的「底层设定」——除非你在编辑器里手动改条目。
-- **尾声延展**条目（priority=after）：角色的**当前关系态 / 态度快照**（类似好感度层）：角色应**基于以下最新正文**对用户与情境做出合理反应；当本轮回复所体现的态度、关系、承诺已明显与某条「尾声延展」正文**不一致**时，你须在输出末尾按协议提交覆盖稿，使数据库中的「尾声延展」条目与剧情同步。
+- **尾声延展**条目（priority=after）：角色的**当前关系态 / 态度快照**（类似好感度层）：角色应**基于以下最新正文**对用户与情境做出合理反应；当本轮回复所体现的态度、关系、承诺与某条「尾声延展」正文**不一致或已出现可持续渐变**时，你须在输出末尾按协议提交覆盖稿；**尾声是动态快照，不是永久锁死**——持续偏离旧快照时以更新快照为准，而非用旧文否定本轮表现。
 - 若系统另注「当前发言人 ≠ 档案主绑定」：尾声延展中写明的你对**主绑定玩家（第三人）**的暗恋/好感/纠结等**仍约束你的内心**；分线仅禁止把**当前窗口这位**当成主绑定，**不授权**为此对第三人感情 OOC 翻篇或与世界书正面冲突的全盘否认。
 - 下列为当前绑定人设中**已启用**的「尾声延展」条目（仅列可变层；固定层见上文世界书全文）：
 ${lines}
@@ -142,7 +147,7 @@ export function buildWorldBookAfterPatchOutputAppendix(): string {
   return `
 ---------------------
 【同一回复内追加：尾声延展·世界书覆盖 JSON（仅在有变更时输出）】
-在你写完**全部**可见聊天正文（及可选 <danmaku>、SPEAKER 等协议内容）之后：若且仅当你判断本轮回复与某一「尾声延展」条目所描述的关系态/态度**已产生可核对的变化**（例如条目仍写「冷漠」但本轮语气已明显缓和），则**另起一行**输出分隔行（必须完全一致）：
+在你写完**全部**可见聊天正文（及可选 <danmaku>、SPEAKER 等协议内容）之后：若且仅当你判断本轮回复与某一「尾声延展」条目所描述的关系态/态度**已产生可核对的变化或可持续倾向变化**（例如条目仍写「冷漠」但本轮语气已明显缓和，或连续几轮互动已比条目更亲近），则**另起一行**输出分隔行（必须完全一致）：
 ---WB_AFTER_PATCH---
 分隔行下一行起输出**恰好一个** JSON 对象（可用 markdown \`\`\`json 围栏包裹），结构如下（字段名固定）：
 {
@@ -244,11 +249,26 @@ export function extractWorldBookAfterPatchBlock(raw: string): { rest: string; pa
   return { rest, patches }
 }
 
-function patchItemContent(items: WorldBookItem[], itemId: string, nextContent: string): WorldBookItem[] {
+function patchItemContent(
+  items: WorldBookItem[],
+  itemId: string,
+  nextContent: string,
+  opts?: { recordPrevious?: boolean },
+): WorldBookItem[] {
   const now = Date.now()
-  return items.map((it) =>
-    it.id === itemId ? { ...it, content: nextContent, updatedAt: now } : it,
-  )
+  return items.map((it) => {
+    if (it.id !== itemId) return it
+    const cur = String(it.content ?? '')
+    const next = String(nextContent ?? '')
+    if (cur.trim() === next.trim()) return it
+    const recordPrevious = opts?.recordPrevious !== false
+    return {
+      ...it,
+      content: nextContent,
+      ...(recordPrevious ? { contentPrevious: cur } : {}),
+      updatedAt: now,
+    }
+  })
 }
 
 /** 将补丁应用到单个人设记录（仅改 priority===after 且 id 匹配的条目） */
@@ -304,7 +324,7 @@ export function applyWorldBookAfterRevertEntries(
       continue
     }
     if (String(it.content ?? '') === e.contentBefore) continue
-    const nextItems = patchItemContent(wb.items, e.itemId, e.contentBefore)
+    const nextItems = patchItemContent(wb.items, e.itemId, e.contentBefore, { recordPrevious: false })
     worldBooks = worldBooks.map((w) => (w.id === wb.id ? { ...w, items: nextItems } : w))
     changed = true
   }

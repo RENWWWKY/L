@@ -25,6 +25,8 @@ export type WorldBookItem = {
   keywords: string
   content: string
   updatedAt: number
+  /** 上一次自动/补丁写库前的正文（仅保留上一版，供档案馆对照） */
+  contentPrevious?: string
   collapsed?: boolean
   /** 与正文中从左到右每个 `{{user}}` 一一对应 */
   userPlaceholderBindings?: WorldBookUserPlaceholderBinding[]
@@ -535,8 +537,7 @@ export type MemorySettingsRow = {
    */
   meetSummaryCursorTimestampByCharacterId?: Record<string, number>
   /**
-   * 是否把合并自动总结里的「关联记忆」（人脉 NPC 的 `[关联线下]` 条目）写入数据库。
-   * 显式 `false` 关闭；缺省为开启。关闭后仍可与约会/合并总结同一请求生成正文，仅不落库关联条。
+   * @deprecated 随「自动总结」常开；旧档 `false` 亦忽略。
    */
   linkedMemoryAutoSummaryEnabled?: boolean
   /**
@@ -580,6 +581,18 @@ export type MemorySettingsRow = {
   /** 外部向量库集合 / 命名空间（UI：记忆切片簇） */
   memoryVectorCollection?: string
   /**
+   * 向量计算模式：`api` 仅远程；`local` 仅浏览器 WASM；`auto` 本地优先、失败回落 API。
+   * 缺省为 `auto`。
+   */
+  memoryEmbeddingProviderMode?: 'api' | 'local' | 'auto'
+  /** 本地向量模型（Transformers.js）；缺省 Xenova/bge-small-zh-v1.5 */
+  memoryLocalEmbeddingModelId?: string
+  /**
+   * 是否对已入库长期记忆 / 剧情时间轴摘要建索引并语义召回；显式 `false` 关闭。
+   * 不含游标后未总结原文（由「尚未总结」块全文注入）。缺省开启（需语义召回总开关开启）。
+   */
+  memoryContextVectorRecallEnabled?: boolean
+  /**
    * 自动总结是否启用专用 chat/completions 接口；显式 `false` 时沿用聊天主接口。
    * 若本地曾保存过专用 url/key 且无显式 `false`，读取时兼容为 `true`。
    */
@@ -590,6 +603,25 @@ export type MemorySettingsRow = {
   memorySummaryApiKey?: string
   /** 自动总结使用的 chat 模型；留空则回落全局聊天主模型 */
   memorySummaryModelId?: string
+  /**
+   * 剧情摘要表（timeline）是否启用专用 chat/completions 接口；显式 `false` 时沿用聊天主接口。
+   * 若本地曾保存过专用 url/key 且无显式 `false`，读取时兼容为 `true`。
+   */
+  memoryTimelineSummaryUseDedicatedApi?: boolean
+  /** 剧情摘要表专用 API 根地址（OpenAI 兼容 chat/completions） */
+  memoryTimelineSummaryApiUrl?: string
+  /** 剧情摘要表专用 API Key；留空则回落聊天 apiKey（仅当未开专用或专用未填时） */
+  memoryTimelineSummaryApiKey?: string
+  /** 剧情摘要表使用的 chat 模型；留空则回落全局聊天主模型 */
+  memoryTimelineSummaryModelId?: string
+  /**
+   * @deprecated 随「自动总结」常开；旧档 `false` 亦忽略。线下约会每轮写摘要表 + 关联 fan-out。
+   */
+  memoryRowPerRoundMode?: boolean
+  /**
+   * @deprecated 尾声延展每轮判断已常开，不再提供 UI 开关；旧档 `false` 亦忽略。
+   */
+  worldBookAfterPerRoundSyncEnabled?: boolean
   /** 自动总结失败、待用户在记忆档案馆手动补跑的会话队列 */
   memorySummaryRetryQueue?: MemorySummaryRetryItem[]
 }
@@ -654,6 +686,8 @@ export type WeChatVoicePayload = {
   ttsScript?: string
   audioUrl?: string
   transcriptText?: string
+  /** 对方语音：用户点击播放后为 true，隐藏未读红点 */
+  voicePlayed?: boolean
 }
 
 /** 同频共听邀约 / 回应卡片（持久化于 chatMessages.musicSync） */
@@ -926,6 +960,8 @@ export type WeChatChatMessage = {
   /** 发起撤回的身份（群主/管理员代撤回他人消息为 `moderator`） */
   recalledBy?: 'player' | 'character' | 'moderator'
   timestamp: number
+  /** 本条消息在本机真实落库的公历毫秒（与 timestamp 剧情/展示时钟独立；缺省时回退 timestamp） */
+  systemRecordedAt?: number
   isRead: boolean
   /** `${characterId}::${playerIdentityId}`，便于索引 */
   conversationKey: string

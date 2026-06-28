@@ -13,6 +13,9 @@ export type DatingPlotRetentionItem = {
  */
 export const MEMORY_RECENT_AI_ROUNDS_REFERENCE = 6
 
+/** 游标后「尚未总结·线下剧情」注入 prompt / 思维溯源：最近 N 轮 AI 剧情（含其间玩家输入）。 */
+export const MEMORY_UNSUMMARIZED_OFFLINE_INJECT_AI_ROUNDS = 2
+
 /** @deprecated 使用 {@link MEMORY_RECENT_AI_ROUNDS_REFERENCE} */
 export const MEMORY_POST_SUMMARY_RETAIN_AI_ROUNDS = MEMORY_RECENT_AI_ROUNDS_REFERENCE
 

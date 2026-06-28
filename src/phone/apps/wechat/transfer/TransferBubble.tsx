@@ -3,6 +3,13 @@ import { useEffect, useState } from 'react'
 
 import type { LumiTransferRecord } from './lumiTransferStorage'
 import { getLumiTransferFresh } from './lumiTransferStorage'
+import {
+  ImessageApplePayCashCard,
+  TalkmakerPayCard,
+  TelegramInvoiceCard,
+  type MessengerBubbleStyle,
+} from '../wechatMessengerSpecialBubbles'
+import { WechatTransferBubbleFace } from '../wechatBubbleWechatUi'
 
 export type TransferBubbleVisualStatus = 'pending' | 'accepted' | 'returned'
 
@@ -31,15 +38,76 @@ export function TransferBubbleFace({
   amountYuan,
   remark,
   perspective = 'incoming',
-}: TransferBubbleFaceProps) {
+  messengerStyle = 'lumi',
+  onAction,
+  replyPreview,
+  replyIsSelf,
+}: TransferBubbleFaceProps & {
+  messengerStyle?: MessengerBubbleStyle
+  onAction?: () => void
+  replyPreview?: { senderName: string; content: string; onClick?: () => void }
+  replyIsSelf?: boolean
+}) {
+  if (messengerStyle === 'imessage') {
+    return <ImessageApplePayCashCard amountYuan={amountYuan} remark={remark} />
+  }
+  if (messengerStyle === 'talkmaker') {
+    return (
+      <TalkmakerPayCard
+        amountYuan={amountYuan}
+        remark={remark}
+        status={status}
+        onAction={onAction}
+      />
+    )
+  }
+  if (messengerStyle === 'telegram') {
+    const title = status === 'pending' ? 'Payment Request' : status === 'accepted' ? 'Payment Received' : 'Payment Returned'
+    const desc =
+      remark?.trim() ||
+      (status === 'pending'
+        ? perspective === 'outgoing'
+          ? 'Awaiting acceptance'
+          : 'Transfer to you'
+        : status === 'accepted'
+          ? 'Completed'
+          : 'Returned')
+    const btn =
+      status === 'pending'
+        ? `Pay ${amountYuan != null ? `¥${amountYuan.toFixed(2)}` : ''}`.trim()
+        : status === 'accepted'
+          ? 'View Receipt'
+          : 'View Details'
+    return (
+      <TelegramInvoiceCard
+        title={title}
+        description={desc}
+        amountYuan={amountYuan}
+        buttonLabel={btn}
+        emoji={status === 'pending' ? '🧾' : status === 'accepted' ? '✅' : '↩️'}
+        onAction={onAction}
+        replyPreview={replyPreview}
+        replyIsSelf={replyIsSelf}
+      />
+    )
+  }
+
+  if (messengerStyle === 'wechat') {
+    return <WechatTransferBubbleFace status={status} amountYuan={amountYuan} perspective={perspective} />
+  }
+
   const pending = status === 'pending'
   const accepted = status === 'accepted'
   const returned = status === 'returned'
   const outgoing = perspective === 'outgoing'
   const r = (remark ?? '').trim()
 
-  const leftBar =
-    pending ? 'border-l-[#D4AF37]' : accepted ? 'border-l-[#B8D4C8]' : 'border-l-[#9CA3AF]'
+  const leftBarVar =
+    pending
+      ? 'var(--wx-special-tf-accent-pending, #D4AF37)'
+      : accepted
+        ? 'var(--wx-special-tf-accent-accepted, #B8D4C8)'
+        : 'var(--wx-special-tf-accent-returned, #9CA3AF)'
   const faceShadow =
     returned
       ? 'shadow-[0_2px_10px_rgba(15,23,42,0.04)]'
@@ -49,27 +117,35 @@ export function TransferBubbleFace({
 
   return (
     <div
+      data-wx-msg-kind="transfer"
       className={`select-none text-left transition-opacity duration-150 ease-out ${
         pending ? 'w-[min(240px,72vw)] max-w-full shrink-0' : 'max-w-[min(280px,72vw)]'
       } ${accepted ? 'opacity-60' : 'opacity-100'}`}
     >
       <div
-        className={`rounded-[14px] border-l-2 pl-[14px] pr-3.5 py-3 transition-[background-color,box-shadow,border-color] duration-150 ease-out ${leftBar} ${faceShadow} ${
-          returned ? 'bg-[#F9FAFB]' : 'bg-white'
+        data-wx-special-card
+        className={`rounded-[14px] border-l-2 pl-[14px] pr-3.5 py-3 transition-[background-color,box-shadow,border-color] duration-150 ease-out ${faceShadow} ${
+          returned ? 'bg-[#F9FAFB]' : ''
         }`}
+        style={{
+          borderLeftColor: leftBarVar,
+          backgroundColor: returned ? undefined : 'var(--wx-special-tf-bg, #ffffff)',
+        }}
       >
         <p
           className={`text-[17px] tabular-nums tracking-tight transition-colors duration-300 ${
-            returned ? 'text-[#CBD5E1]' : 'text-[#0f172a]'
+            returned ? 'text-[#CBD5E1]' : ''
           }`}
+          style={returned ? undefined : { color: 'var(--wx-special-tf-amount, #0f172a)' }}
         >
           {formatAmountLine(amountYuan)}
         </p>
         {r ? (
           <p
             className={`mt-1 truncate text-[11px] transition-colors duration-300 ${
-              returned ? 'text-[#CBD5E1]' : accepted ? 'text-[#94a3b8]' : 'text-[#64748B]'
+              returned ? 'text-[#CBD5E1]' : accepted ? 'text-[#94a3b8]' : ''
             }`}
+            style={returned || accepted ? undefined : { color: 'var(--wx-special-tf-muted, #64748B)' }}
           >
             {r}
           </p>
@@ -138,11 +214,19 @@ export function TransferBubble({
   getCurrentTime,
   onRefresh,
   perspective = 'incoming',
+  messengerStyle = 'lumi',
+  onAction,
+  replyPreview,
+  replyIsSelf,
 }: {
   transferId: string
   getCurrentTime: () => number
   onRefresh?: number
   perspective?: TransferBubblePerspective
+  messengerStyle?: MessengerBubbleStyle
+  onAction?: () => void
+  replyPreview?: { senderName: string; content: string; onClick?: () => void }
+  replyIsSelf?: boolean
 }) {
   const [rec, setRec] = useState<LumiTransferRecord | null>(() => getLumiTransferFresh(transferId, getCurrentTime))
 
@@ -166,7 +250,16 @@ export function TransferBubble({
   }, [pending, transferId, getCurrentTime])
 
   const face = recordToFace(rec)
-  return <TransferBubbleFace {...face} perspective={perspective} />
+  return (
+    <TransferBubbleFace
+      {...face}
+      perspective={perspective}
+      messengerStyle={messengerStyle}
+      onAction={onAction}
+      replyPreview={replyPreview}
+      replyIsSelf={replyIsSelf}
+    />
+  )
 }
 
 /** Story / 验收：四种转账视觉（含记录未就绪占位） */

@@ -7,6 +7,7 @@ import {
 } from '../group/ChatGroupSpeakerAvatarWrap'
 import { useLongPress } from '../hooks/useWeChatLongPress'
 import { TransferBubble, type TransferBubblePerspective } from './TransferBubble'
+import { resolveMessengerBubbleStyle } from '../wechatMessengerSpecialBubbles'
 
 type Props = {
   id: string
@@ -28,6 +29,7 @@ type Props = {
   selected?: boolean
   onOpen: () => void
   onLongPress?: (anchorRect: DOMRect) => void
+  replyPreview?: { senderName: string; content: string; onClick?: () => void }
 }
 
 export function TransferChatRow({
@@ -49,6 +51,7 @@ export function TransferChatRow({
   selected = false,
   onOpen,
   onLongPress,
+  replyPreview,
 }: Props) {
   const anchorRef = useRef<HTMLDivElement>(null)
   const bubbleRadius = isSelf ? `${bubble.selfBubbleRadiusPx}px` : `${bubble.otherBubbleRadiusPx}px`
@@ -68,13 +71,15 @@ export function TransferChatRow({
     onLongPress: () => handleLongPress(),
   })
 
+  const messengerStyle = resolveMessengerBubbleStyle(bubble)
+
   const block = useMemo(
     () => (
       <div
         ref={anchorRef}
         className="relative inline-block select-none transition-[transform,opacity] duration-150 ease-out"
         style={{
-          borderRadius: bubbleRadius,
+          borderRadius: messengerStyle === 'wechat' ? bubbleRadius : undefined,
           transform: pressing && !selected ? 'scale(0.98)' : 'scale(1)',
           opacity: pressing && !selected ? 0.92 : 1,
           transformOrigin: isSelf ? 'right bottom' : 'left bottom',
@@ -101,13 +106,17 @@ export function TransferChatRow({
           getCurrentTime={getCurrentTime}
           onRefresh={refreshTick}
           perspective={transferBubblePerspective ?? (isSelf ? 'outgoing' : 'incoming')}
+          messengerStyle={messengerStyle}
+          onAction={onOpen}
+          replyPreview={replyPreview}
+          replyIsSelf={isSelf}
         />
         {selected ? (
           <span className="pointer-events-none absolute inset-0 rounded-[14px]" style={{ background: 'rgba(0,0,0,0.06)' }} aria-hidden />
         ) : null}
       </div>
     ),
-    [bind, bubbleRadius, getCurrentTime, isSelf, onOpen, pressing, selected, transferBubblePerspective, transferId, refreshTick],
+    [bind, bubbleRadius, getCurrentTime, isSelf, messengerStyle, onOpen, pressing, replyPreview, selected, transferBubblePerspective, transferId, refreshTick],
   )
 
   const showAvatarVisual = showAvatar && showAvatarColumn

@@ -101,6 +101,11 @@ export function StoryBlock({
     }
   }, [plot])
 
+  const timelineSnapshotText = useMemo(() => {
+    if (plot.type !== 'ai') return ''
+    return getAiPlotVersionSlices(plot).timelineSnapshot?.trim() ?? ''
+  }, [plot])
+
   const [editing, setEditing] = useState(false)
   const [draft, setDraft] = useState('')
   const [ctxOpen, setCtxOpen] = useState(false)
@@ -398,6 +403,25 @@ export function StoryBlock({
             style={suppressSystemTextUi.style}
           >
             {thinkingText}
+          </pre>
+        </details>
+      ) : null}
+
+      {timelineSnapshotText ? (
+        <details className="listen-together-cn-text mb-2 rounded-lg border border-emerald-200/80 bg-emerald-50/50 px-2.5 py-1.5">
+          <summary
+            onContextMenu={suppressSystemTextUi.onContextMenu}
+            className="cursor-pointer select-none touch-manipulation list-none text-[12px] text-emerald-800/90 [-webkit-touch-callout:none] [-webkit-user-select:none] [&::-webkit-details-marker]:hidden"
+            style={suppressSystemTextUi.style}
+          >
+            剧情时间轴（点击展开/收起）
+          </summary>
+          <pre
+            onContextMenu={suppressSystemTextUi.onContextMenu}
+            className="mt-1 max-h-[min(40vh,280px)] overflow-y-auto whitespace-pre-wrap break-words font-sans text-[12px] leading-relaxed text-emerald-950/85 select-none [-webkit-touch-callout:none] [-webkit-user-select:none]"
+            style={suppressSystemTextUi.style}
+          >
+            {timelineSnapshotText}
           </pre>
         </details>
       ) : null}

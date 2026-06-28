@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { ListenNumericText } from '../../../../components/discoverListen/ListenNum'
 import type { WeChatContactRow } from '../../../../components/WeChatContactsInstagram'
 import { personaDb } from '../newFriendsPersona/idb'
 import type { CharacterMemory } from '../newFriendsPersona/types'
@@ -34,6 +35,30 @@ import { MemoryCharacterDetailView } from './MemoryCharacterDetailView'
 import { MemoryCharacterRoster } from './MemoryCharacterRoster'
 import { MemoryList } from './MemoryList'
 import { MemoryEditorSheet } from './MemoryEditorSheet'
+import { MemoryStoryTimelineDetailSection } from './MemoryStoryTimelineDetailSection'
+import { MemoryUnifiedCharacterHero } from './MemoryUnifiedCharacterHero'
+import {
+  MemoryCharacterSourceTabNav,
+  type MemoryCharacterSourceTab,
+} from './MemoryCharacterSourceTabNav'
+import { gatherLatestRoundBodyForEpilogue } from './memoryEpilogueArchive'
+import {
+  buildStoryTimelineArchiveRoster,
+  loadStoryTimelineArchiveForCharacter,
+  purgeOrphanStoryTimelineArchiveData,
+  type StoryTimelineArchiveRosterItem,
+} from './memoryStoryTimelineArchive'
+import {
+  StoryTimelineEditorSheet,
+  type StoryTimelineEditorTarget,
+} from './StoryTimelineEditorSheet'
+import {
+  prepareStoryTimelineArchiveDisplayText,
+  type StoryTimelinePlotRow,
+} from './storyTimelineTypes'
+import { runManualStoryTimelineSummary } from './storyTimelinePerRoundSync'
+import { buildUnifiedSummaryRoster, type MemoryUnifiedRosterItem } from './memoryUnifiedSummaryArchive'
+import type { ApiConfig } from '../../api/types'
 import { ARCHIVE_BG } from './memoryArchiveTheme'
 import { useDebouncedValue } from './useDebouncedValue'
 import { resolveWorldBookUserInsertContext } from '../charUserPlaceholders'
@@ -41,12 +66,13 @@ import {
   alignAllStoredMemoryUserPlaceholders,
   summarizeMemoryUserPlaceholders,
 } from '../memoryUserPlaceholderBindings'
-import { MEMORY_ARCHIVE_COACH_STEPS } from './memoryArchiveCoachSteps'
+import { MEMORY_ARCHIVE_COACH_STEPS, MEMORY_ARCHIVE_START_COACH_EVENT } from './memoryArchiveCoachSteps'
 import { MEMORY_ARCHIVE_TUTORIAL_SECTIONS } from './memoryArchiveTutorialCopy'
 import { MemoryCoachPortal } from './MemoryCoachPortal'
 import { MemoryTutorialModal } from './MemoryTutorialModal'
 import {
   MEMORY_ARCHIVE_COACH_SEEN_KEY,
+  MEMORY_HUB_COACH_SEEN_KEY,
   readMemoryCoachSeen,
   writeMemoryCoachSeen,
 } from './memoryCoachTypes'
@@ -57,12 +83,11 @@ function stripMemoryPrefixForDisplay(raw: string): string {
   return parseMemorySourcePrefix(raw).body.trim() || raw.trim()
 }
 
-const MEMORY_ARCHIVE_START_COACH_EVENT = 'memory-archive-start-coach'
-
 export function MemoryArchivePanel({
   contacts,
   currentWechatAccountId,
   playerIdentityId,
+  apiConfig,
   activeCharacterPageId,
   onCharacterPageChange,
   onRegisterCharacterNav,
@@ -71,6 +96,7 @@ export function MemoryArchivePanel({
   contacts: WeChatContactRow[]
   currentWechatAccountId?: string
   playerIdentityId?: string
+  apiConfig?: ApiConfig | null
   /** 顶栏返回浏览页时置 null，面板退回角色列表 */
   activeCharacterPageId?: string | null
   onCharacterPageChange?: (meta: MemoryCharacterPageMeta | null) => void
@@ -108,6 +134,19 @@ export function MemoryArchivePanel({
   const scrollerRef = useRef<HTMLDivElement | null>(null)
   const [showBackToTop, setShowBackToTop] = useState(false)
   const [charRealNameById, setCharRealNameById] = useState<Map<string, string>>(() => new Map())
+  const [offlineRoster, setOfflineRoster] = useState<StoryTimelineArchiveRosterItem[]>([])
+  const [detailTimelineRows, setDetailTimelineRows] = useState<StoryTimelinePlotRow[]>([])
+  const [timelineRowDisplayById, setTimelineRowDisplayById] = useState<Map<string, string>>(
+    () => new Map(),
+  )
+  const [timelineEditorOpen, setTimelineEditorOpen] = useState(false)
+  const [timelineEditorTarget, setTimelineEditorTarget] = useState<StoryTimelineEditorTarget | null>(
+    null,
+  )
+  const [timelineAlignDraft, setTimelineAlignDraft] = useState('')
+  const [timelineAlignBusy, setTimelineAlignBusy] = useState(false)
+  const [timelineAlignFeedback, setTimelineAlignFeedback] = useState('')
+  const [detailSourceTab, setDetailSourceTab] = useState<MemoryCharacterSourceTab>('online')
 
   const reload = useCallback(async (opts?: { silent?: boolean }) => {
     if (!opts?.silent) setLoading(true)
@@ -171,6 +210,10 @@ export function MemoryArchivePanel({
       entries.sort((a, b) => b.timestamp - a.timestamp)
       setRawById(rawMap)
       setAllEntries(entries)
+
+      await purgeOrphanStoryTimelineArchiveData({ contacts })
+      const offline = await buildStoryTimelineArchiveRoster({ contacts })
+      setOfflineRoster(offline)
     } finally {
       setLoading(false)
     }
@@ -233,6 +276,7 @@ export function MemoryArchivePanel({
       return
     }
     if (loading) return
+    if (!readMemoryCoachSeen(MEMORY_HUB_COACH_SEEN_KEY)) return
     if (readMemoryCoachSeen(MEMORY_ARCHIVE_COACH_SEEN_KEY)) return
     const id = window.setTimeout(() => startLiveCoach(), 640)
     return () => window.clearTimeout(id)
@@ -334,31 +378,134 @@ export function MemoryArchivePanel({
     [accountScoped, charRealNameById, remarkByCharId],
   )
 
+  const unifiedRoster = useMemo(
+    () => buildUnifiedSummaryRoster({ onlineRoster: characterRoster, offlineRoster }),
+    [characterRoster, offlineRoster],
+  )
+
   const rosterForDisplay = useMemo(() => {
     const q = debouncedSearch.trim()
-    if (!q) return characterRoster
-    return characterRoster.filter((item) => {
+    if (!q) return unifiedRoster
+    return unifiedRoster.filter((item) => {
       if (rosterMatchesSearch(item, q)) return true
-      return accountScoped.some((e) => {
-        if (e.charId !== item.charId) return false
-        const raw = rawById.get(e.id)
-        return raw ? memoryTextMatchesQuery(raw, q) : e.content.toLowerCase().includes(q.toLowerCase())
-      })
+      if (item.onlineMemoryCount > 0) {
+        return accountScoped.some((e) => {
+          if (e.charId !== item.charId) return false
+          const raw = rawById.get(e.id)
+          return raw ? memoryTextMatchesQuery(raw, q) : e.content.toLowerCase().includes(q.toLowerCase())
+        })
+      }
+      return false
     })
-  }, [characterRoster, debouncedSearch, accountScoped, rawById])
+  }, [unifiedRoster, debouncedSearch, accountScoped, rawById])
 
   const rosterSummary = useMemo(
     () => ({
       characterCount: rosterForDisplay.length,
       memoryCount: rosterForDisplay.reduce((sum, item) => sum + item.memoryCount, 0),
+      onlineCount: rosterForDisplay.reduce((sum, item) => sum + item.onlineMemoryCount, 0),
+      offlineCount: rosterForDisplay.reduce((sum, item) => sum + item.offlineRowCount, 0),
     }),
     [rosterForDisplay],
   )
 
   const selectedRosterIndex = useMemo(
-    () => (selectedCharId ? characterRoster.findIndex((c) => c.charId === selectedCharId) : -1),
-    [characterRoster, selectedCharId],
+    () => (selectedCharId ? unifiedRoster.findIndex((c) => c.charId === selectedCharId) : -1),
+    [unifiedRoster, selectedCharId],
   )
+
+  const selectedUnifiedCharacter = useMemo((): MemoryUnifiedRosterItem | null => {
+    if (!selectedCharId) return null
+    return unifiedRoster.find((r) => r.charId === selectedCharId) ?? null
+  }, [selectedCharId, unifiedRoster])
+
+  const loadTimelineDetail = useCallback(async (charId: string) => {
+    const { rows } = await loadStoryTimelineArchiveForCharacter(charId)
+    setDetailTimelineRows(rows)
+    const expandedRows = await Promise.all(
+      rows.map(async (row) =>
+        prepareStoryTimelineArchiveDisplayText(
+          await personaDb.expandStoryTimelineTextForDisplay(charId, row.rowText),
+          row.recordedAt,
+        ),
+      ),
+    )
+    const displayMap = new Map<string, string>()
+    rows.forEach((row, i) => {
+      displayMap.set(row.id, expandedRows[i] ?? row.rowText)
+    })
+    setTimelineRowDisplayById(displayMap)
+    const latest = await gatherLatestRoundBodyForEpilogue(charId)
+    setTimelineAlignDraft(latest)
+    setTimelineAlignFeedback('')
+  }, [])
+
+  useEffect(() => {
+    if (archiveView === 'detail' && selectedCharId) void loadTimelineDetail(selectedCharId)
+  }, [archiveView, selectedCharId, loadTimelineDetail, offlineRoster])
+
+  const refreshAfterTimelineMutation = useCallback(async () => {
+    await reload({ silent: true })
+    if (selectedCharId) await loadTimelineDetail(selectedCharId)
+  }, [reload, loadTimelineDetail, selectedCharId])
+
+  const openTimelineEditor = useCallback((target: StoryTimelineEditorTarget) => {
+    setTimelineEditorTarget(target)
+    setTimelineEditorOpen(true)
+  }, [])
+
+  const handleTimelineEditRow = useCallback(
+    (row: StoryTimelinePlotRow) => {
+      openTimelineEditor({ kind: 'row-edit', row })
+    },
+    [openTimelineEditor],
+  )
+
+  const handleTimelineDeleteRow = useCallback(
+    async (rowId: string) => {
+      await personaDb.deleteStoryTimelinePlotRowById(rowId)
+      await refreshAfterTimelineMutation()
+    },
+    [refreshAfterTimelineMutation],
+  )
+
+  const handleTimelineRunAlign = useCallback(async () => {
+    if (!selectedCharId || !selectedUnifiedCharacter || timelineAlignBusy) return
+    setTimelineAlignBusy(true)
+    setTimelineAlignFeedback('')
+    try {
+      const outcome = await runManualStoryTimelineSummary({
+        apiConfig: apiConfig ?? null,
+        characterId: selectedCharId,
+        latestRoundBody: timelineAlignDraft,
+        displayName: selectedUnifiedCharacter.displayName,
+      })
+      if (outcome.status === 'applied') {
+        setTimelineAlignFeedback('已生成并写入剧情摘要表。')
+        await loadTimelineDetail(selectedCharId)
+        await reload({ silent: true })
+      } else {
+        setTimelineAlignFeedback(outcome.reason || '生成失败，请检查记忆配置中的 API。')
+      }
+    } finally {
+      setTimelineAlignBusy(false)
+    }
+  }, [
+    selectedCharId,
+    selectedUnifiedCharacter,
+    timelineAlignBusy,
+    timelineAlignDraft,
+    apiConfig,
+    loadTimelineDetail,
+    reload,
+  ])
+
+  const handleTimelineGatherLatest = useCallback(async () => {
+    if (!selectedCharId) return
+    const latest = await gatherLatestRoundBodyForEpilogue(selectedCharId)
+    if (latest) setTimelineAlignDraft(latest)
+    else setTimelineAlignFeedback('未找到最近私聊或约会剧情正文，请手动粘贴。')
+  }, [selectedCharId])
 
   const detailCharacter = useMemo(() => {
     if (!selectedCharId) return null
@@ -385,20 +532,20 @@ export function MemoryArchivePanel({
       onCharacterPageChange(null)
       return
     }
-    const idx = characterRoster.findIndex((c) => c.charId === selectedCharId)
+    const idx = unifiedRoster.findIndex((c) => c.charId === selectedCharId)
     onCharacterPageChange({
       charId: selectedCharId,
       displayName: detailCharacter.displayName,
       rosterIndex: idx,
-      rosterTotal: characterRoster.length,
+      rosterTotal: unifiedRoster.length,
       canPrev: idx > 0,
-      canNext: idx >= 0 && idx < characterRoster.length - 1,
+      canNext: idx >= 0 && idx < unifiedRoster.length - 1,
     })
   }, [
     archiveView,
     selectedCharId,
     detailCharacter,
-    characterRoster,
+    unifiedRoster,
     onCharacterPageChange,
   ])
 
@@ -406,13 +553,16 @@ export function MemoryArchivePanel({
     (delta: -1 | 1) => {
       const idx = selectedRosterIndex
       if (idx < 0) return
-      const next = characterRoster[idx + delta]
+      const next = unifiedRoster[idx + delta]
       if (!next) return
       setSelectedCharId(next.charId)
+      setDetailSourceTab(
+        next.onlineMemoryCount <= 0 && next.offlineRowCount > 0 ? 'offline' : 'online',
+      )
       setTypeFilters(new Set())
       scrollerRef.current?.scrollTo({ top: 0, behavior: 'auto' })
     },
-    [selectedRosterIndex, characterRoster],
+    [selectedRosterIndex, unifiedRoster],
   )
 
   const availableTypeFilters = useMemo(() => {
@@ -462,13 +612,20 @@ export function MemoryArchivePanel({
     scrollerRef.current?.scrollTo({ top: 0, behavior: 'smooth' })
   }, [])
 
-  const openCharacter = useCallback((charId: string) => {
-    setClearAllConfirmOpen(false)
-    setSelectedCharId(charId)
-    setTypeFilters(new Set())
-    setArchiveView('detail')
-    scrollerRef.current?.scrollTo({ top: 0, behavior: 'auto' })
-  }, [])
+  const openCharacter = useCallback(
+    (charId: string) => {
+      setClearAllConfirmOpen(false)
+      setSelectedCharId(charId)
+      setTypeFilters(new Set())
+      const item = unifiedRoster.find((r) => r.charId === charId)
+      setDetailSourceTab(
+        item && item.onlineMemoryCount <= 0 && item.offlineRowCount > 0 ? 'offline' : 'online',
+      )
+      setArchiveView('detail')
+      scrollerRef.current?.scrollTo({ top: 0, behavior: 'auto' })
+    },
+    [unifiedRoster],
+  )
 
   const backToRoster = useCallback(() => {
     setClearAllConfirmOpen(false)
@@ -515,16 +672,31 @@ export function MemoryArchivePanel({
     if (!coachOpen) return
     const step = MEMORY_ARCHIVE_COACH_STEPS[coachStepIndex]
     const target = step?.target
-    if (
-      (target === 'type-filter' || target === 'list') &&
-      archiveView === 'roster' &&
-      rosterForDisplay.length > 0
-    ) {
+    if (!target) return
+
+    const rosterSteps = new Set([
+      'roster',
+      'source',
+      'search',
+      'align',
+      'create',
+      'memories-tab-tutorial',
+    ])
+    const detailSteps = new Set(['detail-source-tabs', 'type-filter', 'list'])
+
+    if (rosterSteps.has(target) && archiveView === 'detail') {
+      backToRoster()
+      return
+    }
+    if (detailSteps.has(target) && archiveView === 'roster' && rosterForDisplay.length > 0) {
       openCharacter(rosterForDisplay[0]!.charId)
       return
     }
-    if (target === 'roster' && archiveView === 'detail') {
-      backToRoster()
+    if ((target === 'type-filter' || target === 'list') && archiveView === 'detail') {
+      setDetailSourceTab('online')
+    }
+    if (target === 'detail-source-tabs' && archiveView === 'detail') {
+      setDetailSourceTab('online')
     }
   }, [coachOpen, coachStepIndex, archiveView, rosterForDisplay, openCharacter, backToRoster])
 
@@ -612,21 +784,65 @@ export function MemoryArchivePanel({
                 }
                 onAlignUser={runAlignUserPlaceholders}
                 alignUserToast={alignUserToast}
-                onOpenTutorial={() => setTutorialOpen(true)}
                 rosterSummary={rosterSummary}
+                onOpenTutorial={() => setTutorialOpen(true)}
               />
+              {!loading && rosterForDisplay.length > 0 ? (
+                <div className="mx-auto max-w-xl px-4 pb-1 pt-2">
+                  <p className="text-[11px] font-medium tracking-wide text-gray-400">
+                    <ListenNumericText text={`${rosterForDisplay.length} 位角色`} />
+                  </p>
+                </div>
+              ) : null}
               <MemoryCharacterRoster
                 items={rosterForDisplay}
                 loading={loading}
                 searchQuery={debouncedSearch}
                 onSelect={openCharacter}
+                showArchiveSourceLabels
               />
             </>
-          ) : archiveView === 'detail' && selectedCharId && detailCharacter ? (
-            <MemoryCharacterDetailView
-              character={detailCharacter}
-              rosterIndex={selectedRosterIndex}
-              rosterTotal={characterRoster.length}
+          ) : archiveView === 'detail' && selectedCharId && detailCharacter && selectedUnifiedCharacter ? (
+            <>
+              <MemoryUnifiedCharacterHero
+                character={selectedUnifiedCharacter}
+                rosterIndex={selectedRosterIndex}
+                rosterTotal={unifiedRoster.length}
+              />
+              <div
+                className="sticky top-0 z-20 px-4 pb-2 pt-1"
+                style={{ background: ARCHIVE_BG }}
+              >
+                <MemoryCharacterSourceTabNav
+                  value={detailSourceTab}
+                  onChange={(tab) => {
+                    setDetailSourceTab(tab)
+                    scrollerRef.current?.scrollTo({ top: 0, behavior: 'auto' })
+                  }}
+                  onlineCount={selectedUnifiedCharacter.onlineMemoryCount}
+                  offlineCount={selectedUnifiedCharacter.offlineRowCount}
+                />
+              </div>
+              {detailSourceTab === 'offline' ? (
+                <MemoryStoryTimelineDetailSection
+                  showSectionHeading={false}
+                  rows={detailTimelineRows}
+                  rowDisplayById={timelineRowDisplayById}
+                  onEditRow={handleTimelineEditRow}
+                  onDeleteRow={(id) => void handleTimelineDeleteRow(id)}
+                  alignDraft={timelineAlignDraft}
+                  alignBusy={timelineAlignBusy}
+                  alignFeedback={timelineAlignFeedback}
+                  onAlignDraftChange={setTimelineAlignDraft}
+                  onRunAlign={() => void handleTimelineRunAlign()}
+                  onGatherLatest={() => void handleTimelineGatherLatest()}
+                />
+              ) : (
+                <MemoryCharacterDetailView
+                  character={detailCharacter}
+                  rosterIndex={selectedRosterIndex}
+                  rosterTotal={unifiedRoster.length}
+                  layout="onlineSection"
               search={search}
               onSearchChange={setSearch}
               accountOptions={accountOptions}
@@ -669,6 +885,8 @@ export function MemoryArchivePanel({
                 onDelete={(e) => void handleDelete(e)}
               />
             </MemoryCharacterDetailView>
+              )}
+            </>
           ) : null}
         </div>
         <MemoryArchiveBackToTop visible={showBackToTop} onClick={scrollArchiveToTop} />
@@ -690,8 +908,8 @@ export function MemoryArchivePanel({
       <MemoryTutorialModal
         open={tutorialOpen}
         onClose={() => setTutorialOpen(false)}
-        title="记忆档案馆 · 怎么看"
-        subtitle="长期记忆小抄，随时可回看"
+        title="角色总结 · 怎么看"
+        subtitle="按角色浏览线上与线下记忆"
         sections={MEMORY_ARCHIVE_TUTORIAL_SECTIONS}
         onStartLiveCoach={startLiveCoach}
         zIndex={55000}
@@ -705,8 +923,8 @@ export function MemoryArchivePanel({
         onSkip={() => finishCoach()}
         onComplete={(opts) => finishCoach(opts)}
         scopeRoot="memory-archive"
-        layoutEpoch={`${archiveView}-${selectedAccountId}-${selectedCharId ?? 'none'}`}
-        zIndex={54000}
+        layoutEpoch={`${archiveView}-${selectedAccountId}-${selectedCharId ?? 'none'}-${detailSourceTab}`}
+        zIndex={56000}
       />
 
       <MemoryEditorSheet
@@ -723,6 +941,16 @@ export function MemoryArchivePanel({
         groupOptions={groupOptions}
         onClose={() => setEditorOpen(false)}
         onSaved={() => void reload()}
+      />
+
+      <StoryTimelineEditorSheet
+        open={timelineEditorOpen}
+        target={timelineEditorTarget}
+        onClose={() => {
+          setTimelineEditorOpen(false)
+          setTimelineEditorTarget(null)
+        }}
+        onSaved={() => void refreshAfterTimelineMutation()}
       />
     </div>
   )

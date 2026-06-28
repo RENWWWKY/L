@@ -5,6 +5,17 @@ import {
 } from '../group/ChatGroupSpeakerAvatarWrap'
 import type { WeChatLocationPayload } from '../newFriendsPersona/types'
 import { LocationMessageCard } from './LocationMessageCard'
+import {
+  ImessageLocationCard,
+  TelegramLocationBubble,
+  TalkmakerLocationCard,
+  resolveMessengerBubbleStyle,
+} from '../wechatMessengerSpecialBubbles'
+import { formatTelegramBubbleTime } from '../wechatBubbleTelegramUi'
+import {
+  formatTalkmakerExternalTime,
+  TalkmakerExternalTimestamp,
+} from '../wechatBubbleTalkmakerUi'
 
 type Props = {
   id: string
@@ -13,6 +24,10 @@ type Props = {
   bubble: WeChatBubbleTheme
   showAvatar: boolean
   showAvatarColumn: boolean
+  showBubbleTail?: boolean
+  bubbleTailMaskColor?: string
+  messageTimestampMs?: number
+  telegramShowReadChecks?: boolean
   chatSelfAvatarUrl?: string
   chatOtherAvatarUrl?: string
   chatOtherSenderNickname?: string
@@ -29,6 +44,10 @@ export function LocationChatRow({
   bubble,
   showAvatar,
   showAvatarColumn,
+  showBubbleTail = false,
+  bubbleTailMaskColor = 'var(--wx-chat-room-bg, #EDEDED)',
+  messageTimestampMs,
+  telegramShowReadChecks = true,
   chatSelfAvatarUrl,
   chatOtherAvatarUrl,
   chatOtherSenderNickname,
@@ -37,7 +56,46 @@ export function LocationChatRow({
   groupRankShowBesideNickname = true,
 }: Props) {
   const avatarPx = 40
-  const card = <LocationMessageCard data={data} />
+  const messengerStyle = resolveMessengerBubbleStyle(bubble)
+  const talkmakerTimeLabel =
+    messengerStyle === 'talkmaker' && typeof messageTimestampMs === 'number'
+      ? formatTalkmakerExternalTime(messageTimestampMs)
+      : null
+  const cardInner =
+    messengerStyle === 'imessage' ? (
+      <ImessageLocationCard
+        data={data}
+        isSelf={isSelf}
+        showTail={showBubbleTail}
+        bubbleTailMaskColor={bubbleTailMaskColor}
+        bubble={bubble}
+      />
+    ) : messengerStyle === 'telegram' ? (
+      <TelegramLocationBubble
+        data={data}
+        isSelf={isSelf}
+        bubble={bubble}
+        showTail={showBubbleTail}
+        timeLabel={
+          typeof messageTimestampMs === 'number' ? formatTelegramBubbleTime(messageTimestampMs) : undefined
+        }
+        showReadChecks={telegramShowReadChecks}
+      />
+    ) : messengerStyle === 'talkmaker' ? (
+      <TalkmakerLocationCard data={data} isSelf={isSelf} showTail={showBubbleTail} />
+    ) : (
+      <LocationMessageCard data={data} wechatClassic={messengerStyle === 'wechat'} />
+    )
+  const card =
+    talkmakerTimeLabel ? (
+      <div className={`flex items-end gap-1 ${isSelf ? 'justify-end' : ''}`}>
+        {isSelf ? <TalkmakerExternalTimestamp timeLabel={talkmakerTimeLabel} /> : null}
+        {cardInner}
+        {!isSelf ? <TalkmakerExternalTimestamp timeLabel={talkmakerTimeLabel} /> : null}
+      </div>
+    ) : (
+      cardInner
+    )
   const showAvatarVisual = showAvatar && showAvatarColumn
   const reserveAvatarGutter = showAvatar
   const rankBeside = groupRankShowBesideNickname !== false
@@ -55,6 +113,13 @@ export function LocationChatRow({
   )
 
   if (isSelf) {
+    if (messengerStyle === 'talkmaker') {
+      return (
+        <div className="w-[100vw] max-w-[100vw] shrink-0 overflow-x-visible" data-wx-msg-id={id}>
+          <div className="ml-auto mr-[24px] flex max-w-full flex-row-reverse items-start">{card}</div>
+        </div>
+      )
+    }
     return (
       <div className="w-[100vw] max-w-[100vw] shrink-0 overflow-x-visible" data-wx-msg-id={id}>
         <div className="ml-auto mr-[24px] flex max-w-full flex-row-reverse items-start gap-[12px]">

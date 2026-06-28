@@ -8,6 +8,41 @@ import { MemoryEngineSoftField, MemoryEngineSoftInput } from './MemoryEngineSoft
 import type { ConnectionStatus, SummaryAPIConfig } from './memoryEngineConfigTypes'
 import { isSummaryConfigReadyForPing } from './memoryEngineConfigTypes'
 import type { SummaryPullSource } from './memorySummaryPullSource'
+import type { TimelineSummaryPullSource } from './memoryTimelineSummaryPullSource'
+
+export type MemorySummaryApiConfigVariant = 'summary' | 'timeline'
+
+const VARIANT_COPY: Record<
+  MemorySummaryApiConfigVariant,
+  {
+    sectionTitle: string
+    modelDropdownLabel: string
+    pullHintMain: string
+    pullHintDedicated: string
+    endpointPlaceholder: string
+    keyPlaceholderSaved: string
+    keyPlaceholderEmpty: string
+  }
+> = {
+  summary: {
+    sectionTitle: '线上总结模型',
+    modelDropdownLabel: '线上总结所用模型',
+    pullHintMain: '线上总结将沿用全局聊天 API。请先在全局配置里填好聊天 API，才能拉模型列表。',
+    pullHintDedicated: '线上总结将使用专用副接口。请先在下面填好专用地址和密钥，才能拉模型列表。',
+    endpointPlaceholder: '例如 https://你的网关/v1',
+    keyPlaceholderSaved: '已保存过密钥，输入新内容可覆盖',
+    keyPlaceholderEmpty: '请输入密钥',
+  },
+  timeline: {
+    sectionTitle: '线下摘要模型',
+    modelDropdownLabel: '线下摘要所用模型',
+    pullHintMain: '线下摘要将沿用全局聊天 API。请先在全局配置里填好聊天 API，才能拉模型列表。',
+    pullHintDedicated: '线下摘要将使用专用副接口。请先在下面填好专用地址和密钥，才能拉模型列表。',
+    endpointPlaceholder: '例如 https://你的网关/v1',
+    keyPlaceholderSaved: '已保存过密钥，输入新内容可覆盖',
+    keyPlaceholderEmpty: '请输入密钥',
+  },
+}
 
 const STATUS_COPY: Record<
   ConnectionStatus,
@@ -58,9 +93,13 @@ function SummaryModelSection({
   summaryModelDropdownOpen,
   onSummaryModelDropdownToggle,
   chatDefaultModelHint,
+  sectionTitle = '总结模型',
+  modelDropdownLabel = '当前总结模型',
+  pullHintMain = '请先在全局配置里填好聊天 API，才能拉模型列表。',
+  pullHintDedicated = '请先在下面填好总结专用地址和密钥，才能拉模型列表。',
 }: {
   mode: 'dedicated' | 'main'
-  pullSource: SummaryPullSource | null
+  pullSource: SummaryPullSource | TimelineSummaryPullSource | null
   disabled?: boolean
   summaryModelDraft: string
   onSummaryModelChange: (modelId: string) => void
@@ -71,15 +110,17 @@ function SummaryModelSection({
   summaryModelDropdownOpen: boolean
   onSummaryModelDropdownToggle: () => void
   chatDefaultModelHint?: string
+  sectionTitle?: string
+  modelDropdownLabel?: string
+  pullHintMain?: string
+  pullHintDedicated?: string
 }) {
   const pullHint = useMemo(() => {
     if (!pullSource) {
-      return mode === 'main'
-        ? '请先在全局配置里填好聊天 API，才能拉模型列表。'
-        : '请先在下面填好总结专用地址和密钥，才能拉模型列表。'
+      return mode === 'main' ? pullHintMain : pullHintDedicated
     }
     return pullSource.label
-  }, [pullSource, mode])
+  }, [pullSource, mode, pullHintMain, pullHintDedicated])
 
   const canPull = Boolean(pullSource) && !disabled
   const modelOptions = useMemo(() => {
@@ -99,7 +140,7 @@ function SummaryModelSection({
 
   return (
     <div className={mode === 'dedicated' ? 'mt-6 border-t border-gray-100/80 pt-5' : 'mt-4'}>
-      <p className="text-[14px] font-medium text-gray-900">总结模型</p>
+      <p className="text-[14px] font-medium text-gray-900">{sectionTitle}</p>
 
       {!pullSource ? (
         <div className="mt-3 rounded-2xl bg-amber-50/80 px-3.5 py-2.5 text-[11px] leading-relaxed text-amber-900/70">
@@ -127,7 +168,7 @@ function SummaryModelSection({
       {modelOptions.length ? (
         <div className="mt-4">
           <InlineDropdown
-            label="当前总结模型"
+            label={modelDropdownLabel}
             valueText={
               summaryModelDraft.trim() ? (
                 <MemoryModelIdText text={summaryModelDraft.trim()} />
@@ -193,6 +234,7 @@ export function MemorySummaryApiConfig({
   onSummaryModelDropdownToggle,
   chatDefaultModelHint,
   onSummaryFieldsBlur,
+  variant = 'summary',
 }: {
   mode?: 'dedicated' | 'main'
   config?: SummaryAPIConfig
@@ -202,7 +244,7 @@ export function MemorySummaryApiConfig({
   onConnectionStatusChange?: (s: ConnectionStatus) => void
   onTestConnection?: (config: SummaryAPIConfig) => Promise<ConnectionStatus>
   disabled?: boolean
-  pullSource: SummaryPullSource | null
+  pullSource: SummaryPullSource | TimelineSummaryPullSource | null
   summaryModelDraft: string
   onSummaryModelChange: (modelId: string) => void
   summaryModelList: string[]
@@ -213,8 +255,10 @@ export function MemorySummaryApiConfig({
   onSummaryModelDropdownToggle: () => void
   chatDefaultModelHint?: string
   onSummaryFieldsBlur?: () => void
+  variant?: MemorySummaryApiConfigVariant
 }) {
   const [keyVisible, setKeyVisible] = useState(false)
+  const copy = VARIANT_COPY[variant]
 
   const handleTestConnection = useCallback(async () => {
     if (!config || !onConnectionStatusChange || connectionStatus === 'pinging') return
@@ -249,6 +293,10 @@ export function MemorySummaryApiConfig({
     summaryModelDropdownOpen,
     onSummaryModelDropdownToggle,
     chatDefaultModelHint,
+    sectionTitle: copy.sectionTitle,
+    modelDropdownLabel: copy.modelDropdownLabel,
+    pullHintMain: copy.pullHintMain,
+    pullHintDedicated: copy.pullHintDedicated,
   }
 
   if (mode === 'main') {
@@ -269,7 +317,7 @@ export function MemorySummaryApiConfig({
             value={config.endpoint}
             onChange={(v) => onConfigChange({ endpoint: v })}
             onBlur={onSummaryFieldsBlur}
-            placeholder="例如 https://你的网关/v1"
+            placeholder={copy.endpointPlaceholder}
             disabled={disabled}
           />
         </MemoryEngineSoftField>
@@ -283,7 +331,7 @@ export function MemorySummaryApiConfig({
                 disabled={disabled}
                 onChange={(e) => onConfigChange({ apiKey: e.target.value })}
                 onBlur={onSummaryFieldsBlur}
-                placeholder={hasSavedKey ? '已保存过密钥，输入新内容可覆盖' : '请输入密钥'}
+                placeholder={hasSavedKey ? copy.keyPlaceholderSaved : copy.keyPlaceholderEmpty}
                 className="w-full border-0 bg-transparent text-[14px] text-gray-900 outline-none placeholder:text-gray-400"
                 spellCheck={false}
                 autoCapitalize="off"

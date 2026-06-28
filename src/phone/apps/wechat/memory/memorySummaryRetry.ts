@@ -107,3 +107,44 @@ export function formatMemorySummaryRetrySubtitle(item: MemorySummaryRetryItem): 
   const reason = item.failureReason?.trim()
   return reason ? `${kind} · ${reason}` : kind
 }
+
+/** 档案馆 · 线上总结进度：手动触发一次 prose 总结（不额外消耗计轮）。 */
+export async function runManualMemorySummaryFromProgress(params: {
+  kind: 'private' | 'group'
+  apiConfig: ApiConfig | null
+  conversationKey: string
+  displayName: string
+  characterId: string
+  groupId?: string
+  sessionPlayerIdentityId: string
+  wechatAccountId?: string | null
+}): Promise<{ ok: boolean; primaryWritten: boolean }> {
+  const ck = params.conversationKey.trim()
+  if (!ck) return { ok: false, primaryWritten: false }
+
+  if (params.kind === 'group') {
+    const gid = params.groupId?.trim() || params.characterId.trim()
+    if (!gid) return { ok: false, primaryWritten: false }
+    return runGroupChatMemorySummaryAfterThreshold({
+      apiConfig: params.apiConfig,
+      conversationKey: ck,
+      groupId: gid,
+      playerIdentityId: params.sessionPlayerIdentityId.trim(),
+      isManualRetry: true,
+    })
+  }
+
+  const cid = params.characterId.trim()
+  if (!cid) return { ok: false, primaryWritten: false }
+  return runUnifiedAutoMemorySummaryAfterThreshold({
+    apiConfig: params.apiConfig,
+    conversationKey: ck,
+    characterId: cid,
+    characterRealName: params.displayName.trim() || '对方',
+    sessionPlayerIdentityId: params.sessionPlayerIdentityId.trim() || null,
+    wechatAccountId: params.wechatAccountId?.trim() || null,
+    skipConversationRoundBump: true,
+    isManualRetry: true,
+    summaryNotifyKind: 'private',
+  })
+}

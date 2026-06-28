@@ -2,7 +2,15 @@ import { motion } from 'framer-motion'
 import { ChevronRight, Users } from 'lucide-react'
 import { ListenNumericText } from '../../../../components/discoverListen/ListenNum'
 import type { MemoryCharacterRosterItem, MemorySceneTag } from './memoryArchiveTypes'
+import { ARCHIVE_MONO_SCENE_CHIP } from './memoryArchiveTheme'
+import {
+  ARCHIVE_SOURCE_OFFLINE_CHIP,
+  ARCHIVE_SOURCE_OFFLINE_LABEL,
+  ARCHIVE_SOURCE_ONLINE_CHIP,
+  ARCHIVE_SOURCE_ONLINE_LABEL,
+} from './memoryArchiveSourceLabels'
 import { MEMORY_SCENE_CHIP_CLASS, memorySceneFilterLabel } from './memorySceneChipStyles'
+import type { MemoryUnifiedRosterItem } from './memoryUnifiedSummaryArchive'
 
 const ROSTER_TAG_PRIORITY: MemorySceneTag[] = ['私聊', '群聊', '朋友圈', '遇见', '线下', '关联线下']
 
@@ -21,11 +29,26 @@ export function MemoryCharacterRoster({
   loading,
   searchQuery,
   onSelect,
+  subtitleForCount,
+  monochromeSceneTags = false,
+  plainNumericBadge = false,
+  showArchiveSourceLabels = false,
+  firstItemCoachTarget = 'roster',
 }: {
-  items: MemoryCharacterRosterItem[]
+  items: (MemoryCharacterRosterItem | MemoryUnifiedRosterItem)[]
   loading: boolean
   searchQuery: string
   onSelect: (charId: string) => void
+  /** 列表副标题；默认「共 N 条记忆」 */
+  subtitleForCount?: (count: number) => string
+  /** 第一项的高亮引导 id；默认 roster */
+  firstItemCoachTarget?: string
+  /** 为 true 时场景标签用柔和灰阶，不显示彩色 chip */
+  monochromeSceneTags?: boolean
+  /** 为 true 时角标数字用系统默认字体；默认走全局衬线数字（ListenNumericText） */
+  plainNumericBadge?: boolean
+  /** 为 true 时在卡片上展示「线上总结 / 线下摘要」来源标签 */
+  showArchiveSourceLabels?: boolean
 }) {
   if (loading) {
     return (
@@ -59,27 +82,30 @@ export function MemoryCharacterRoster({
   }
 
   return (
-    <ul className="mx-auto flex w-full max-w-lg flex-col gap-2.5 px-4 pb-6 pt-1">
+    <ul className="mx-auto flex w-full max-w-xl flex-col gap-2 px-4 pb-8 pt-0.5">
       {items.map((item, i) => {
         const isGroup = item.charId.startsWith('__group__')
         const displayTags = pickRosterSceneTags(item.sceneTags)
         const extraTagCount = Math.max(0, item.sceneTags.length - displayTags.length)
+        const unified = showArchiveSourceLabels ? (item as MemoryUnifiedRosterItem) : null
+        const onlineCount = unified?.onlineMemoryCount ?? 0
+        const offlineCount = unified?.offlineRowCount ?? 0
 
         return (
           <motion.li
             key={item.charId}
-            initial={{ opacity: 0, y: 8 }}
+            initial={{ opacity: 0, y: 6 }}
             animate={{ opacity: 1, y: 0 }}
-            transition={{ delay: Math.min(i * 0.03, 0.18), duration: 0.24 }}
+            transition={{ delay: Math.min(i * 0.025, 0.15), duration: 0.22 }}
           >
             <button
               type="button"
-              data-memory-coach={i === 0 ? 'roster' : undefined}
+              data-memory-coach={i === 0 ? firstItemCoachTarget : undefined}
               onClick={() => onSelect(item.charId)}
-              className="group flex w-full items-center gap-3.5 rounded-[22px] bg-white px-4 py-3.5 text-left shadow-[0_6px_24px_rgba(0,0,0,0.035)] transition-[transform,box-shadow] active:scale-[0.995] active:shadow-[0_4px_16px_rgba(0,0,0,0.03)]"
+              className="group flex w-full items-center gap-3 rounded-[20px] border border-gray-200/50 bg-white px-3.5 py-3 text-left shadow-[0_4px_18px_rgba(0,0,0,0.025)] transition-[transform,box-shadow,border-color] active:scale-[0.995] active:border-gray-200 active:shadow-[0_2px_12px_rgba(0,0,0,0.02)]"
             >
               <div className="relative shrink-0">
-                <div className="flex h-[52px] w-[52px] items-center justify-center overflow-hidden rounded-full bg-gray-100 ring-[3px] ring-gray-50">
+                <div className="flex h-12 w-12 items-center justify-center overflow-hidden rounded-full bg-gray-100 ring-2 ring-gray-50">
                   {item.avatarUrl ? (
                     <img src={item.avatarUrl} alt="" className="h-full w-full object-cover" />
                   ) : isGroup ? (
@@ -89,7 +115,7 @@ export function MemoryCharacterRoster({
                   )}
                 </div>
                 <span className="absolute -bottom-0.5 -right-0.5 flex h-[18px] min-w-[18px] items-center justify-center rounded-full bg-gray-900 px-1 text-[10px] font-semibold leading-none text-white ring-2 ring-white">
-                  <ListenNumericText text={String(item.memoryCount)} />
+                  {plainNumericBadge ? String(item.memoryCount) : <ListenNumericText text={String(item.memoryCount)} />}
                 </span>
               </div>
 
@@ -99,17 +125,45 @@ export function MemoryCharacterRoster({
                 </div>
                 {item.wechatRemarkName ? (
                   <p className="mt-0.5 truncate text-[12px] text-gray-400">备注 {item.wechatRemarkName}</p>
-                ) : (
+                ) : !showArchiveSourceLabels ? (
                   <p className="mt-0.5 text-[12px] text-gray-400">
-                    <ListenNumericText text={`共 ${item.memoryCount} 条记忆`} />
+                    {subtitleForCount?.(item.memoryCount) ?? `共 ${item.memoryCount} 条记忆`}
                   </p>
+                ) : (
+                  <p className="mt-0.5 text-[12px] text-gray-400">共 {item.memoryCount} 条记录</p>
                 )}
-                {displayTags.length ? (
-                  <div className="mt-2 flex flex-wrap items-center gap-1">
+                {showArchiveSourceLabels ? (
+                  <div className="mt-1.5 flex flex-wrap items-center gap-1">
+                    {onlineCount > 0 ? (
+                      <span className={ARCHIVE_SOURCE_ONLINE_CHIP}>
+                        {ARCHIVE_SOURCE_ONLINE_LABEL} {onlineCount}
+                      </span>
+                    ) : null}
+                    {offlineCount > 0 ? (
+                      <span className={ARCHIVE_SOURCE_OFFLINE_CHIP}>
+                        {ARCHIVE_SOURCE_OFFLINE_LABEL} {offlineCount}
+                      </span>
+                    ) : null}
+                    {displayTags.map((tag) => (
+                      <span key={tag} className={ARCHIVE_MONO_SCENE_CHIP}>
+                        {memorySceneFilterLabel(tag)}
+                      </span>
+                    ))}
+                    {extraTagCount > 0 ? (
+                      <span className={ARCHIVE_MONO_SCENE_CHIP}>+{extraTagCount}</span>
+                    ) : null}
+                  </div>
+                ) : null}
+                {!showArchiveSourceLabels && displayTags.length ? (
+                  <div className="mt-1.5 flex flex-wrap items-center gap-1">
                     {displayTags.map((tag) => (
                       <span
                         key={tag}
-                        className={`rounded-full px-2 py-0.5 text-[10px] font-medium ${MEMORY_SCENE_CHIP_CLASS[tag]}`}
+                        className={
+                          monochromeSceneTags
+                            ? ARCHIVE_MONO_SCENE_CHIP
+                            : `rounded-full px-2 py-0.5 text-[10px] font-medium ${MEMORY_SCENE_CHIP_CLASS[tag]}`
+                        }
                       >
                         {memorySceneFilterLabel(tag)}
                       </span>

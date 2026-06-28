@@ -26,11 +26,25 @@ type ChatThemeContextValue = {
 
 const ChatThemeContext = createContext<ChatThemeContextValue | null>(null)
 
+function mergeChatThemeInputBar(
+  prev: ChatTheme['inputBar'],
+  patch?: Partial<ChatTheme['inputBar']>,
+): ChatTheme['inputBar'] {
+  if (!patch) return prev
+  const merged: ChatTheme['inputBar'] = { ...prev, ...patch }
+  if (patch.layout === 'wechat' || patch.layout === 'lumi') {
+    delete merged.sendButtonColor
+  } else if ('sendButtonColor' in patch && patch.sendButtonColor === undefined) {
+    delete merged.sendButtonColor
+  }
+  return merged
+}
+
 function mergeChatTheme(prev: ChatTheme, patch: ChatThemePatch): ChatTheme {
   return {
     ...prev,
     ...patch,
-    inputBar: { ...prev.inputBar, ...patch.inputBar },
+    inputBar: mergeChatThemeInputBar(prev.inputBar, patch.inputBar),
     bubble: { ...prev.bubble, ...patch.bubble },
   }
 }

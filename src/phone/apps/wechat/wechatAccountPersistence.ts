@@ -93,9 +93,33 @@ export async function attachOrphanCharactersToWechatAccount(wechatAccountId: str
   await personaDb.attachOrphanCharactersToWechatAccount(wechatAccountId)
 }
 
-/** 多账号：按各马甲通讯录归属补标无 wechatAccountId 的旧人设；无引用时回落主账号 */
-export async function attachOrphanCharactersByContactOwnership(bundle: WechatAccountsBundle): Promise<void> {
-  await personaDb.attachOrphanCharactersByContactOwnership(bundle)
+/** 多账号：按通讯录归属补全 / 修复人设 wechatAccountId；无引用时回落当前或主账号 */
+export async function attachOrphanCharactersByContactOwnership(bundle: WechatAccountsBundle): Promise<number> {
+  return personaDb.attachOrphanCharactersByContactOwnership(bundle)
+}
+
+/** 归档导入或名册空白时：对齐人设归属并跑全局微信号兼容迁移 */
+export async function reconcileWeChatCharacterOwnershipAfterArchiveImport(): Promise<{
+  charactersRepaired: number
+}> {
+  const bundle = await loadAccountsBundle()
+  if (!bundle?.accounts.length) return { charactersRepaired: 0 }
+  const charactersRepaired = await personaDb.attachOrphanCharactersByContactOwnership(bundle)
+  const { runLegacyGlobalCharacterCompatibilityMigration } = await import('./wechatGlobalCharacterRegistry')
+  const migratedBundle = await runLegacyGlobalCharacterCompatibilityMigration(bundle)
+  const active =
+    findAccountById(migratedBundle ?? bundle, (migratedBundle ?? bundle).currentAccountId) ??
+    (migratedBundle ?? bundle).accounts[0]
+  if (active) {
+    const sessionId = resolveAccountSessionIdentityId(active)
+    await migrateAllLegacyWeChatConversationsToAccountScope({
+      wechatAccountId: active.accountId,
+      appSessionPlayerIdentityId: sessionId,
+    })
+    const { repairSplitPrivateChatHistoriesForWechatAccount } = await import('./wechatAccountPrivateChatStorage')
+    await repairSplitPrivateChatHistoriesForWechatAccount(active.accountId)
+  }
+  return { charactersRepaired }
 }
 
 export function resolveAccountSessionIdentityId(account: UserAccount): string {

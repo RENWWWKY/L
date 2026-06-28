@@ -4,6 +4,8 @@ import { useCallback, useEffect, useMemo, useState } from 'react'
 import { createPortal } from 'react-dom'
 
 import { Pressable } from '../../../components/Pressable'
+import { ShareContactSheet } from '../favorites/ShareContactSheet'
+import { requestOpenWeChatPersonaChat } from '../wechatFocusChatNavigation'
 import { LocationMessageCard } from './LocationMessageCard'
 import {
   buildDefaultLocationSpoofDraft,
@@ -55,12 +57,17 @@ export function LocationSpoofModal({
   sending,
   onClose,
   onSend,
+  onSendToContact,
   conversationCharacterId,
 }: {
   open: boolean
   sending: boolean
   onClose: () => void
   onSend: (payload: NonNullable<ReturnType<typeof buildWeChatLocationPayload>>) => void
+  onSendToContact?: (
+    characterId: string,
+    payload: NonNullable<ReturnType<typeof buildWeChatLocationPayload>>,
+  ) => Promise<void>
   conversationCharacterId: string
   personaCharacterId?: string | null
   userAvatarUrl?: string
@@ -72,6 +79,11 @@ export function LocationSpoofModal({
   const [loading, setLoading] = useState(false)
   const [draft, setDraft] = useState<LocationSpoofDraft | null>(null)
   const [distanceInput, setDistanceInput] = useState('')
+  const [shareOpen, setShareOpen] = useState(false)
+  const [shareSending, setShareSending] = useState(false)
+  const [shareError, setShareError] = useState('')
+
+  const busy = sending || shareSending
 
   const distanceKm = draft && draft.distanceMeters >= 0 ? draft.distanceMeters / 1000 : 0
 
@@ -122,9 +134,34 @@ export function LocationSpoofModal({
     }
   }
 
+  useEffect(() => {
+    if (!open) {
+      setShareOpen(false)
+      setShareSending(false)
+      setShareError('')
+    }
+  }, [open])
+
   const handleSend = () => {
-    if (!previewPayload || sending) return
+    if (!previewPayload || busy) return
     onSend(previewPayload)
+  }
+
+  const handleShareConfirm = async (characterId: string) => {
+    if (!previewPayload || busy || !onSendToContact) return
+    setShareSending(true)
+    setShareError('')
+    try {
+      await onSendToContact(characterId, previewPayload)
+      setShareOpen(false)
+      if (characterId.trim() !== conversationCharacterId.trim()) {
+        requestOpenWeChatPersonaChat(characterId)
+      }
+    } catch (err) {
+      setShareError(err instanceof Error ? err.message : '发送失败')
+    } finally {
+      setShareSending(false)
+    }
   }
 
   const content = (
@@ -140,7 +177,7 @@ export function LocationSpoofModal({
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
             onClick={() => {
-              if (!sending) onClose()
+              if (!busy) onClose()
             }}
           />
           <motion.div
@@ -161,7 +198,7 @@ export function LocationSpoofModal({
               </div>
               <Pressable
                 onClick={onClose}
-                disabled={sending}
+                disabled={busy}
                 className="flex size-8 items-center justify-center rounded-full text-neutral-500 hover:bg-black/5 disabled:opacity-40"
                 aria-label="关闭"
               >
@@ -234,9 +271,12 @@ export function LocationSpoofModal({
                   className="shrink-0 border-t border-neutral-200/80 bg-white/70 px-5 py-4 backdrop-blur-xl"
                   style={{ paddingBottom: 'max(16px, env(safe-area-inset-bottom, 0px))' }}
                 >
+                  {shareError ? (
+                    <p className="mb-2 text-center text-[12px] text-red-500">{shareError}</p>
+                  ) : null}
                   <Pressable
                     onClick={handleSend}
-                    disabled={sending || !previewPayload}
+                    disabled={busy || !previewPayload}
                     className="flex h-12 w-full items-center justify-center rounded-none bg-black font-mono text-[12px] uppercase tracking-[0.22em] text-white disabled:opacity-40"
                   >
                     {sending ? (
@@ -245,6 +285,19 @@ export function LocationSpoofModal({
                       '发送坐标 · Transmit Signal'
                     )}
                   </Pressable>
+                  {onSendToContact ? (
+                    <Pressable
+                      onClick={() => {
+                        if (busy || !previewPayload) return
+                        setShareError('')
+                        setShareOpen(true)
+                      }}
+                      disabled={busy || !previewPayload}
+                      className="mt-2 flex h-11 w-full items-center justify-center border border-neutral-300 bg-white font-mono text-[11px] uppercase tracking-[0.18em] text-neutral-700 disabled:opacity-40"
+                    >
+                      发送给… · Send To
+                    </Pressable>
+                  ) : null}
                 </div>
               </>
             )}
@@ -254,8 +307,33 @@ export function LocationSpoofModal({
     </AnimatePresence>
   )
 
-  if (!portalRoot) return content
-  return createPortal(content, portalRoot)
+  const sheet = onSendToContact ? (
+    <ShareContactSheet
+      open={shareOpen}
+      sending={shareSending}
+      onClose={() => {
+        if (shareSending) return
+        setShareOpen(false)
+        setShareError('')
+      }}
+      onConfirm={handleShareConfirm}
+    />
+  ) : null
+
+  if (!portalRoot) {
+    return (
+      <>
+        {content}
+        {sheet}
+      </>
+    )
+  }
+  return (
+    <>
+      {createPortal(content, portalRoot)}
+      {sheet}
+    </>
+  )
 }
 
 export const LocationSendSheet = LocationSpoofModal

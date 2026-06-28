@@ -19,11 +19,7 @@ import {
   buildMemoryRelevanceHaystack,
   formatUnsummarizedPrivateChatBlock,
 } from './wechatMemoryPromptBlocks'
-import {
-  formatRecentAiRoundsPrivateChatReferenceBlock,
-  formatRecentOfflinePlotsAiRoundsReference,
-  formatRecentMeetAiRoundsReferenceBlock,
-} from './memory/recentAiRoundsReferencePrompt'
+import { loadStoryTimelinePromptBlock } from './memory/storyTimelinePersist'
 
 /**
  * 「新朋友-验证申请」侧模型注入：与 ChatRoom 私聊 persona 轮次对齐——
@@ -91,6 +87,7 @@ export async function buildFriendRequestPrivatePromptPack(params: {
   recentPrivateAiRounds: string
   recentOfflineAiRounds: string
   recentMeetAiRounds: string
+  storyTimeline: string
 }> {
   const cid = params.characterId.trim()
   const ck = params.conversationKey.trim()
@@ -107,6 +104,7 @@ export async function buildFriendRequestPrivatePromptPack(params: {
       recentPrivateAiRounds: '',
       recentOfflineAiRounds: '',
       recentMeetAiRounds: '',
+      storyTimeline: '',
     }
   }
 
@@ -120,8 +118,7 @@ export async function buildFriendRequestPrivatePromptPack(params: {
     sid,
   )
 
-  const [meetEncounterMemoriesContext, unsMeet, unsPrivateRaw, recentPrivateRef, recentOfflineRef, recentMeetRef] =
-    await Promise.all([
+  const [meetEncounterMemoriesContext, unsMeet, unsPrivateRaw] = await Promise.all([
     fromMeet ? loadMeetEncounterMemoriesPromptBlock(cid) : Promise.resolve(''),
     fromMeet
       ? formatUnsummarizedMeetChatBlock({ characterId: cid, maxMessages: 120, maxChars: 3200 })
@@ -131,18 +128,6 @@ export async function buildFriendRequestPrivatePromptPack(params: {
       maxMessages: 100,
       maxChars: 3200,
     }),
-    strangerMemoryGuard
-      ? Promise.resolve('')
-      : formatRecentAiRoundsPrivateChatReferenceBlock({ conversationKey: ck }).then((s) => s.trim()),
-    strangerMemoryGuard
-      ? Promise.resolve('')
-      : formatRecentOfflinePlotsAiRoundsReference(
-          cid,
-          chRow?.name ?? chRow?.wechatNickname ?? null,
-        ).then((s) => s.trim()),
-    strangerMemoryGuard || !fromMeet
-      ? Promise.resolve('')
-      : formatRecentMeetAiRoundsReferenceBlock({ characterId: cid }).then((s) => s.trim()),
   ])
 
   const scopeForWrap =
@@ -153,14 +138,28 @@ export async function buildFriendRequestPrivatePromptPack(params: {
       ? await wrapUnsummarizedPrivateBlockWithLineLabel(unsPrivateRaw, scopeForWrap, 'current')
       : unsPrivateRaw.trim()
   const unsPrivateMerged = unsPrivateCurrent
+  const unsMeetTrimmed = strangerMemoryGuard ? '' : String(unsMeet ?? '').trim()
 
   const hayFull = buildMemoryRelevanceHaystack([
     ...params.transcript.slice(-32).map((t) => t.text),
     params.biasTextForMemoryHaystack,
     fromMeet ? String(meetEncounterMemoriesContext ?? '').trim().slice(0, 2800) : '',
-    fromMeet ? String(unsMeet ?? '').trim().slice(0, 2800) : '',
+    unsMeetTrimmed.slice(0, 2800),
     unsPrivateMerged.slice(0, 4800),
   ])
+  let storyTimeline = ''
+  if (!strangerMemoryGuard) {
+    try {
+      storyTimeline = (
+        await loadStoryTimelinePromptBlock(cid, {
+          relevanceText: hayFull,
+          apiConfig: apiOk,
+        })
+      ).trim()
+    } catch {
+      storyTimeline = ''
+    }
+  }
   const { formatCharacterMemoriesForPromptInjectionPack } = await import(
     './memory/formatCharacterMemoriesForPromptInjection'
   )
@@ -182,10 +181,11 @@ export async function buildFriendRequestPrivatePromptPack(params: {
     recentGroupChatsReference: '',
     offlineDatingPlotsContext: '',
     meetEncounterMemoriesContext: fromMeet ? String(meetEncounterMemoriesContext ?? '').trim() : '',
-    unsMeet: fromMeet ? String(unsMeet ?? '').trim() : '',
-    recentPrivateAiRounds: recentPrivateRef,
-    recentOfflineAiRounds: recentOfflineRef,
-    recentMeetAiRounds: recentMeetRef,
+    unsMeet: unsMeetTrimmed,
+    recentPrivateAiRounds: '',
+    recentOfflineAiRounds: '',
+    recentMeetAiRounds: '',
+    storyTimeline,
   }
 }
 

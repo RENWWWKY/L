@@ -1,5 +1,5 @@
 import type { CharacterMemory } from './newFriendsPersona/types'
-import { stripPromptPolicyBlocksForTraceDisplay } from './memoryTraceDisplaySanitize'
+import { stripPromptPolicyBlocksForTraceDisplay, stripUnsummarizedOnlineTimestampsForDisplay } from './memoryTraceDisplaySanitize'
 import { personaDb } from './newFriendsPersona/idb'
 import { loadAccountsBundle } from './wechatAccountPersistence'
 import { formatPlayerIdentityDisplayName } from './wechatCharacterPlayerIdentity'
@@ -272,13 +272,15 @@ export function parseLineScopedUnsummarizedTextForTrace(text: string): MemoryTra
       }
       break
     }
-    let snippet = stripPromptPolicyBlocksForTraceDisplay(lines.slice(start).join('\n'))
+    let snippet = stripUnsummarizedOnlineTimestampsForDisplay(
+      stripPromptPolicyBlocksForTraceDisplay(lines.slice(start).join('\n')),
+    )
     snippet = snippet.replace(/\n*（↑[\s\S]*$/, '').trim()
     if (snippet) out.push({ sourceLineLabel, lineRelation, snippet })
   }
 
   if (!out.length) {
-    const fallback = stripPromptPolicyBlocksForTraceDisplay(raw)
+    const fallback = stripUnsummarizedOnlineTimestampsForDisplay(stripPromptPolicyBlocksForTraceDisplay(raw))
     if (fallback) out.push({ sourceLineLabel: '私聊摘录', lineRelation: 'unlabeled', snippet: fallback })
   }
   return out
@@ -302,7 +304,9 @@ export async function buildPrivateUnsummarizedTraceBlocks(params: {
     const label = params.lineScope
       ? await formatPlayerLineScopeLabel(params.lineScope)
       : '当前私聊'
-    const snippet = stripPromptPolicyBlocksForTraceDisplay(params.currentLineRaw)
+    const snippet = stripUnsummarizedOnlineTimestampsForDisplay(
+      stripPromptPolicyBlocksForTraceDisplay(params.currentLineRaw),
+    )
     if (snippet) {
       blocks.push({
         sourceLineLabel: label,

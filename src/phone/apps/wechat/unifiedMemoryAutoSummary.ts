@@ -11,6 +11,8 @@ import { extractVnVoiceParamsBlock } from './dating/vnVoiceParamsStrip'
 import { findGroupMember } from './groupChatUtils'
 import { buildNpcLinkedOfflineExcerptUserBlock } from './memory/linkedOfflineExcerptsForAutoSummary'
 import { resolveAutoSummaryApiConfig } from './memory/memorySummaryApi'
+import { isOfflineDatingRowPerRoundMode, isLinkedMemoryAutoSummaryEnabled, isWeChatOnlineRowPerRoundMode } from './memory/memoryRowPerRoundMode'
+import { buildEligibleLinkedMemoryRosterForDatingAppendix } from './memory/linkedMemoryEligiblePeers'
 import {
   listAllLinkedMemoryEligibleCharacters,
   buildMemoryIdPlaceholderCorrections,
@@ -38,6 +40,9 @@ import {
   parseUnifiedMemorySummaryWithLinkedModelOutput,
   requestDatingLinkedMemoryFallbackSummary,
   requestGroupChatMemorySummary,
+  formatUnifiedMemoryOnlineBlock,
+  buildDatingCombinedMemoryUserAppendix,
+  splitDatingAiResponseAndUnifiedMemoryJson,
   requestUnifiedMemorySummaryWithLinked,
   type ChatTranscriptTurn,
   type UnifiedMemorySummaryWithLinkedResult,
@@ -63,6 +68,27 @@ import {
   resolveMemoryUserInsertContextFromSource,
 } from './memoryUserPlaceholderBindings'
 import { buildAutoSummaryMemoryKeywordsBackup } from './memory/memoryTriggerUtils'
+import { writePerRoundStoryTimelineWithSeparateAttempt } from './memory/storyTimelinePerRoundSync'
+import { dispatchStoryTimelinePerRoundSyncResult } from './memory/storyTimelinePerRoundResultEvents'
+import { persistStoryTimelineFromSummaryDelta } from './memory/storyTimelinePersist'
+import {
+  buildDatingStoryTimelineFallbackMaterial,
+  buildUnifiedStoryTimelineFallbackMaterial,
+  fetchStoryTimelineSummaryFallback,
+  type StoryTimelineSummaryFallbackParams,
+} from './memory/storyTimelineSummaryFallback'
+import {
+  deleteStoryTimelineLinkedRowsForDatingRound,
+  fanOutStoryTimelineLinkedRows,
+  resolveNpcDisplayLabel,
+} from './memory/storyTimelineLinkedFanOut'
+import { hasTimelineDeltaContent, type StoryTimelineEventScope } from './memory/storyTimelineTypes'
+import { resolveStoryTimeHintMsFromPlots, buildStoryTimelineCalendarContextBlock } from './memory/storyTimelineCalendarContext'
+import {
+  applyEpiloguePatchesFromAutoSummary,
+  finalizeWorldBookAfterAutoSummaryPhase,
+  finalizeWorldBookAfterPerAiRound,
+} from './newFriendsPersona/worldBookAfterSync'
 import {
   sanitizeGroupMemorySummaryBody,
   sanitizeUnifiedLinkedMemoryBody,
@@ -85,9 +111,8 @@ import { loadAccountsBundle } from './wechatAccountPersistence'
 
 const DATING_ARCHIVES_KV = 'wechat-dating-archives-v1'
 
-async function resolveAutoSummaryMemoryTriggerMode(): Promise<'always' | 'keyword'> {
-  const s = await personaDb.getMemorySettings()
-  return s.autoSummaryDefaultMemoryTriggerMode === 'always' ? 'always' : 'keyword'
+async function resolveAutoSummaryMemoryTriggerMode(): Promise<'keyword'> {
+  return 'keyword'
 }
 
 export type DatingPlotSnapshotItem = {
@@ -514,10 +539,7 @@ export async function runDatingLinkedMemoryFallbackWhenNoJsonTail(params: {
     return { applied: false, linkedNpcNamesWritten: [] }
   }
   const memSettings = await personaDb.getMemorySettings()
-  if (
-    memSettings.autoSummaryEnabled === false ||
-    memSettings.linkedMemoryAutoSummaryEnabled === false
-  ) {
+  if (!isLinkedMemoryAutoSummaryEnabled(memSettings)) {
     return { applied: false, linkedNpcNamesWritten: [] }
   }
   try {
@@ -538,6 +560,12 @@ export async function runDatingLinkedMemoryFallbackWhenNoJsonTail(params: {
       deferPrimaryAndUnifiedCursors: true,
       datingAiPlotId: params.datingAiPlotId,
       suppressLinkedMemoryToast: true,
+      timelineFallback: buildTimelineFallbackParamsFromGather(
+        params.gather,
+        params.apiConfig,
+        params.latestAiPlotBody,
+        params.offlinePlotsForCursorAdvance,
+      ),
     })
     return {
       applied: !!r?.wroteAny,
@@ -555,6 +583,42 @@ export function linkedMemoryOwnerIdsForGather(gather: UnifiedMemoryGatherResult)
   const b = gather.plotsArchiveId.trim()
   const c = gather.characterId.trim()
   return [...new Set([a, b, c].filter(Boolean))]
+}
+
+function resolveStoryTimelineScopeForGather(
+  gather: UnifiedMemoryGatherResult,
+  hadOfflineTag: boolean,
+): StoryTimelineEventScope {
+  if (gather.hadMeet && !gather.hadOnline && !hadOfflineTag) return 'meet'
+  if (hadOfflineTag || gather.hadOfflinePrior) return 'offline'
+  return 'private'
+}
+
+export function buildTimelineFallbackParamsFromGather(
+  gather: UnifiedMemoryGatherResult,
+  chatFallback: ApiConfig | null,
+  latestRoundBody?: string,
+  plotsForTimeHint?: DatingPlotSnapshotItem[],
+): StoryTimelineSummaryFallbackParams {
+  const plots = plotsForTimeHint?.length ? plotsForTimeHint : gather.offlinePlotsPrior
+  return {
+    chatFallback,
+    materialBlock: buildUnifiedStoryTimelineFallbackMaterial({
+      onlineBlock: formatUnifiedMemoryOnlineBlock(
+        gather.onlineTranscript,
+        gather.characterRealName || '对方',
+      ),
+      meetBlock:
+        gather.hadMeet && gather.meetTranscript.length
+          ? formatUnifiedMemoryOnlineBlock(gather.meetTranscript, gather.characterRealName || '对方')
+          : '',
+      offlineBlock: gather.hadOfflinePrior ? gather.offlineBlock : '',
+      npcLinkedBlock: gather.npcLinked.block,
+    }),
+    peerCharacterId: gather.characterId,
+    latestRoundBody,
+    storyTimeHintMs: resolveStoryTimeHintMsFromPlots(plots),
+  }
 }
 
 /**
@@ -583,11 +647,20 @@ export async function applyUnifiedMemoryFromParsedSummary(
     summaryNotifyKind?: MemorySummaryRetryKind
     /** 手动补跑总结失败时不回滚计轮（外层 runUnified 已处理） */
     suppressRoundRollbackOnFailure?: boolean
+    timelineFallback?: StoryTimelineSummaryFallbackParams
   },
-): Promise<{ wroteAny: boolean; linkedNpcNamesWritten: string[]; primaryWritten: boolean }> {
+): Promise<{
+  wroteAny: boolean
+  linkedNpcNamesWritten: string[]
+  primaryWritten: boolean
+  epiloguePatchesApplied: number
+  timelineWritten: boolean
+}> {
   const skipBump = opts.skipConversationRoundBump === true
   const roundChannel: MemoryAiRoundCountChannel = opts.aiRoundCountChannel ?? 'wechat'
   const defer = opts.deferPrimaryAndUnifiedCursors === true
+  const memSettingsRow = await personaDb.getMemorySettings()
+  const rowPerRoundMode = isOfflineDatingRowPerRoundMode(memSettingsRow)
   const cid = gather.characterId
   const ck = gather.conversationKey
   const linkedOwnerId = gather.npcLinked.linkedArchiveOwnerId.trim() || gather.plotsArchiveId
@@ -632,6 +705,8 @@ export async function applyUnifiedMemoryFromParsedSummary(
       /* 保持原文，避免总结整体失败 */
     }
   }
+  if (rowPerRoundMode) primaryBody = ''
+
   const allowedNpc = gather.npcLinked.allowedNpcIds
   const boundProtagonistIdSet = new Set(
     boundProtagonists.map((p) => p.id.trim()).filter((id) => id && id !== cid),
@@ -672,18 +747,26 @@ export async function applyUnifiedMemoryFromParsedSummary(
   }
 
   const memSettingsForLinked = await personaDb.getMemorySettings()
-  const linkedMemoryPersistEnabled =
-    memSettingsForLinked.autoSummaryEnabled !== false &&
-    memSettingsForLinked.linkedMemoryAutoSummaryEnabled !== false
+  const linkedMemoryPersistEnabled = isLinkedMemoryAutoSummaryEnabled(memSettingsForLinked)
   const linkedWritesToPersist = linkedMemoryPersistEnabled ? linkedWrites : []
 
   const hadOfflineTag = gather.hadOfflinePrior || opts.tagOfflineIncludesNewAiTurn
   const datingRound = opts.datingAiPlotId?.trim()
   const linkedDeleteOwners = linkedMemoryOwnerIdsForGather(gather)
+  let timelineDelta = summary.primary.timeline
+  if ((!timelineDelta || !hasTimelineDeltaContent(timelineDelta)) && opts.timelineFallback) {
+    const fetched = await fetchStoryTimelineSummaryFallback(opts.timelineFallback)
+    if (fetched) timelineDelta = fetched
+  }
+  const hasTimeline = timelineDelta != null && hasTimelineDeltaContent(timelineDelta)
 
-  const wroteAny = defer
-    ? linkedWritesToPersist.length > 0
-    : !!(primaryBody || linkedWritesToPersist.length)
+  const wroteAny = rowPerRoundMode
+    ? hasTimeline ||
+      linkedWritesToPersist.length > 0 ||
+      (summary.epiloguePatches?.length ?? 0) > 0
+    : defer
+      ? linkedWritesToPersist.length > 0 || hasTimeline
+      : !!(primaryBody || linkedWritesToPersist.length || hasTimeline)
 
   if (!wroteAny) {
     /**
@@ -693,17 +776,26 @@ export async function applyUnifiedMemoryFromParsedSummary(
     if (!defer && skipBump && !opts.suppressRoundRollbackOnFailure) {
       await rollbackMemoryAiRoundCountForChannel(ck, roundChannel)
     }
-    return { wroteAny: false, linkedNpcNamesWritten: [], primaryWritten: false }
+    return { wroteAny: false, linkedNpcNamesWritten: [], primaryWritten: false, epiloguePatchesApplied: 0, timelineWritten: false }
   }
 
+  let timelinePersisted = false
   if (datingRound && linkedDeleteOwners.length) {
-    await personaDb.deleteAutoLinkedMemoriesForDatingRoundMulti(linkedDeleteOwners, datingRound)
+    if (rowPerRoundMode) {
+      const npcIds = linkedWritesToPersist.map((e) => e.characterId.trim()).filter(Boolean)
+      await deleteStoryTimelineLinkedRowsForDatingRound({
+        characterIds: [...new Set([...linkedDeleteOwners, ...npcIds, cid])],
+        plotId: datingRound,
+      })
+    } else {
+      await personaDb.deleteAutoLinkedMemoriesForDatingRoundMulti(linkedDeleteOwners, datingRound)
+    }
   }
 
   const now = Date.now()
   const triggerMode = await resolveAutoSummaryMemoryTriggerMode()
 
-  if (!defer && primaryBody) {
+  if (!defer && primaryBody && !rowPerRoundMode) {
     const tagPrefix =
       `${gather.hadMeet ? '[遇见]' : ''}${gather.hadOnline ? '[私聊]' : ''}${hadOfflineTag ? '[线下]' : ''}${gather.hadMeet || gather.hadOnline || hadOfflineTag ? ' ' : ''}`
     const trimmed = tagPrefix + primaryBody
@@ -738,7 +830,53 @@ export async function applyUnifiedMemoryFromParsedSummary(
     })
   }
 
+  if (timelineDelta) {
+    const plotIdForRow = defer ? opts.datingAiPlotId?.trim() : undefined
+    if (defer && plotIdForRow) {
+      /** 约会每轮：行表与 state 由 {@link rebuildStoryTimelineFromDatingPlots} 统一重建 */
+    } else {
+      await persistStoryTimelineFromSummaryDelta(
+        cid,
+        timelineDelta,
+        resolveStoryTimelineScopeForGather(gather, hadOfflineTag),
+        plotIdForRow ? { plotId: plotIdForRow } : undefined,
+      )
+      timelinePersisted = true
+    }
+  }
+
+  if (rowPerRoundMode && hasTimeline && gather.hadOnline && gather.chunkMessages.length && !datingRound) {
+    const perKey = gather.onlineCursorAdvancesByConversationKey ?? {}
+    const entries = Object.entries(perKey).filter(
+      ([key, ts]) => key.trim() && typeof ts === 'number' && Number.isFinite(ts),
+    )
+    if (entries.length > 0) {
+      for (const [key, latestTs] of entries) {
+        await personaDb.setMemorySummaryCursorTimestamp(key, latestTs)
+      }
+    } else {
+      const latestTs = gather.chunkMessages[gather.chunkMessages.length - 1]!.timestamp
+      if (typeof latestTs === 'number' && Number.isFinite(latestTs)) {
+        await personaDb.setMemorySummaryCursorTimestamp(ck, latestTs)
+      }
+    }
+  }
+
+  let epiloguePatchesApplied = 0
+  if (summary.epiloguePatches?.length) {
+    try {
+      epiloguePatchesApplied = await applyEpiloguePatchesFromAutoSummary(
+        summary.epiloguePatches,
+        cid,
+        networkEligibleIdSet,
+      )
+    } catch {
+      /* 尾声补丁写库失败不阻断 */
+    }
+  }
+
   const linkedNpcNamesWritten: string[] = []
+  const fanOutEntries: { characterId: string; content: string }[] = []
   for (const entry of linkedWritesToPersist) {
     let lb = applyMemoryIdPlaceholderCorrections(
       entry.content.trim(),
@@ -747,6 +885,23 @@ export async function applyUnifiedMemoryFromParsedSummary(
       .trim()
       .slice(0, 2000)
     if (!lb) continue
+    if (rowPerRoundMode) {
+      try {
+        const sanitized = await sanitizeUnifiedLinkedMemoryBody(
+          lb,
+          entry.characterId.trim(),
+          linkedOwnerId,
+          cid,
+          userBindCtx,
+          { conversationKey: ck },
+        )
+        lb = sanitized.content.slice(0, 2000)
+      } catch {
+        /* keep lb */
+      }
+      fanOutEntries.push({ characterId: entry.characterId.trim(), content: lb })
+      continue
+    }
     let linkedBindings: import('./newFriendsPersona/types').WorldBookUserPlaceholderBinding[] = []
     try {
       const sanitized = await sanitizeUnifiedLinkedMemoryBody(
@@ -816,7 +971,19 @@ export async function applyUnifiedMemoryFromParsedSummary(
     })
   }
 
-  const primaryWritten = !defer && !!primaryBody
+  if (rowPerRoundMode && fanOutEntries.length) {
+    linkedNpcNamesWritten.push(
+      ...(await fanOutStoryTimelineLinkedRows({
+        entries: fanOutEntries,
+        scope: 'linked',
+        plotId: datingRound,
+        recordedAtMs: now,
+        resolveNpcLabel: resolveNpcDisplayLabel,
+      })),
+    )
+  }
+
+  const primaryWritten = !rowPerRoundMode && !defer && !!primaryBody
   const advanceUnifiedCursors = primaryWritten
 
   if (advanceUnifiedCursors && gather.hadOnline && gather.chunkMessages.length) {
@@ -897,7 +1064,7 @@ export async function applyUnifiedMemoryFromParsedSummary(
     })
   }
 
-  return { wroteAny, linkedNpcNamesWritten, primaryWritten }
+  return { wroteAny, linkedNpcNamesWritten, primaryWritten, epiloguePatchesApplied, timelineWritten: timelinePersisted }
 }
 
 /** 解析约会同一 HTTP 返回尾部的合并记忆 JSON 并落库；失败返回 false（调用方可改跑独立总结）。 */
@@ -918,10 +1085,19 @@ export async function tryApplyDatingCombinedMemoryJsonTail(params: {
    * 避免 JSON 尾解析失败时 rollback 把计数设回 interval-1（如 9），而后续补跑总结成功后仍显示 9/10。
    */
   skipConversationRoundBump?: boolean
-}): Promise<{ applied: boolean; linkedNpcNamesWritten: string[]; primaryWritten: boolean }> {
+  chatFallback?: ApiConfig | null
+  latestAiPlotBody?: string
+}): Promise<{
+  applied: boolean
+  linkedNpcNamesWritten: string[]
+  primaryWritten: boolean
+  epiloguePatchesApplied: number
+  timelineWritten: boolean
+}> {
   try {
     const summary = parseUnifiedMemorySummaryWithLinkedModelOutput(params.memoryJsonText)
     const full = params.writePrimaryAndAdvanceCursors === true
+    const plotBody = String(params.latestAiPlotBody || '').trim()
     const r = await applyUnifiedMemoryFromParsedSummary(summary, params.gather, {
       offlinePlotsForCursorAdvance: params.offlinePlotsForCursorAdvance,
       tagOfflineIncludesNewAiTurn: true,
@@ -930,14 +1106,33 @@ export async function tryApplyDatingCombinedMemoryJsonTail(params: {
       datingAiPlotId: params.datingAiPlotId,
       suppressLinkedMemoryToast: true,
       summaryNotifyKind: params.summaryNotifyKind ?? 'dating',
+      timelineFallback: params.chatFallback
+        ? {
+            chatFallback: params.chatFallback,
+            materialBlock: buildDatingStoryTimelineFallbackMaterial({
+              offlineBlock: params.gather.offlineBlock,
+              plotBody,
+            }),
+            peerCharacterId: params.gather.characterId,
+            latestRoundBody: plotBody,
+          }
+        : undefined,
     })
     return {
       applied: !!r?.wroteAny,
       primaryWritten: !!r?.primaryWritten,
       linkedNpcNamesWritten: Array.isArray(r?.linkedNpcNamesWritten) ? r.linkedNpcNamesWritten : [],
+      epiloguePatchesApplied: r?.epiloguePatchesApplied ?? 0,
+      timelineWritten: !!r?.timelineWritten,
     }
   } catch {
-    return { applied: false, linkedNpcNamesWritten: [], primaryWritten: false }
+    return {
+      applied: false,
+      linkedNpcNamesWritten: [],
+      primaryWritten: false,
+      epiloguePatchesApplied: 0,
+      timelineWritten: false,
+    }
   }
 }
 
@@ -1079,6 +1274,7 @@ export async function runUnifiedAutoMemorySummaryAfterThreshold(params: {
         : roundChannel === 'meet'
           ? 'meet'
           : 'private'),
+    timelineFallback: buildTimelineFallbackParamsFromGather(gather, params.apiConfig),
   })
 
   const primaryWritten = applied.primaryWritten
@@ -1086,6 +1282,53 @@ export async function runUnifiedAutoMemorySummaryAfterThreshold(params: {
 
   if (primaryWritten) {
     await resetMemoryAiRoundCountForChannel(ck, roundChannel)
+    try {
+      const mainRow = await personaDb.getCharacter(cid)
+      const peerName = params.characterRealName.trim() || '对方'
+      const recentTranscript = gather.onlineTranscript
+        .slice(-12)
+        .map((t) => {
+          const who = t.from === 'self' ? '我' : peerName
+          const body = String(t.text ?? '').trim().slice(0, 800)
+          return body ? `${who}：${body}` : ''
+        })
+        .filter(Boolean)
+        .join('\n')
+      const summaryMaterials = [
+        gather.hadOfflinePrior && gather.offlineBlock.trim()
+          ? `【线下】\n${gather.offlineBlock.trim()}`
+          : '',
+        gather.npcLinked.block?.trim() ? `【人脉】\n${gather.npcLinked.block.trim()}` : '',
+        gather.hadMeet && gather.meetTranscript.length
+          ? `【遇见】\n${gather.meetTranscript
+              .slice(-8)
+              .map((t) => {
+                const who = t.from === 'self' ? '我' : peerName
+                return `${who}：${String(t.text ?? '').trim()}`
+              })
+              .filter(Boolean)
+              .join('\n')}`
+          : '',
+      ]
+        .filter(Boolean)
+        .join('\n\n')
+      const latestReplyHint =
+        [...gather.onlineTranscript].reverse().find((t) => t.from === 'other')?.text?.trim() ||
+        summary.primary.content.trim() ||
+        recentTranscript.split('\n').pop()?.trim() ||
+        ''
+      await finalizeWorldBookAfterAutoSummaryPhase({
+        apiConfig: params.apiConfig,
+        conversationKey: ck,
+        character: mainRow,
+        epiloguePatchesApplied: applied.epiloguePatchesApplied,
+        recentTranscript,
+        latestReplyHint,
+        summaryMaterialsBlock: summaryMaterials,
+      })
+    } catch {
+      /* 尾声补救失败不阻断总结成功 */
+    }
   } else if (!params.isManualRetry) {
     await rollbackMemoryAiRoundCountForChannel(ck, roundChannel)
   }
@@ -1403,4 +1646,229 @@ export async function runGroupChatMemorySummaryAfterThreshold(params: {
   }
 
   return { ok: primaryWritten, primaryWritten, failureReason }
+}
+
+export async function buildPrivateChatPerRoundMemoryAppendixForTurn(params: {
+  characterId: string
+  characterRealName: string
+  conversationKey: string
+  sessionPlayerIdentityId?: string | null
+  wechatAccountId?: string | null
+}): Promise<string> {
+  const memSettings = await personaDb.getMemorySettings()
+  if (!isWeChatOnlineRowPerRoundMode(memSettings)) return ''
+  if (memSettings.autoSummaryEnabled === false) return ''
+
+  const gather = await gatherUnifiedMemoryInputsForDatingTurn({
+    characterId: params.characterId,
+    characterRealName: params.characterRealName,
+    datingPlotsSnapshot: [],
+    sessionPlayerIdentityId: params.sessionPlayerIdentityId ?? null,
+    wechatAccountId: params.wechatAccountId ?? null,
+    conversationKey: params.conversationKey,
+  })
+  if (!gather) return ''
+
+  let roster = '（当前无可关联角色）'
+  try {
+    roster = await buildEligibleLinkedMemoryRosterForDatingAppendix(gather.plotsArchiveId, params.characterId)
+  } catch {
+    /* keep default */
+  }
+
+  const calendarContextBlock = await buildStoryTimelineCalendarContextBlock({
+    peerCharacterId: params.characterId,
+    sessionPlayerIdentityId: params.sessionPlayerIdentityId,
+    storyTimeHintMs: resolveStoryTimeHintMsFromPlots(gather.offlinePlotsPrior),
+  })
+
+  return buildDatingCombinedMemoryUserAppendix({
+    onlineTranscript: gather.onlineTranscript,
+    peerLabel: params.characterRealName.trim() || '对方',
+    offlinePriorBlock: gather.offlineBlock,
+    npcLinkedExcerptsBlock: gather.npcLinked.block,
+    datingPeerCharacterId: params.characterId,
+    eligibleLinkedNpcRoster: roster,
+    summaryRoundDue: false,
+    calendarContextBlock,
+  })
+}
+
+export async function finalizePerRoundMemoryAfterAiReply(params: {
+  apiConfig: ApiConfig | null
+  rawAiText: string
+  characterId: string
+  characterRealName: string
+  conversationKey: string
+  sessionPlayerIdentityId?: string | null
+  wechatAccountId?: string | null
+  inlineWorldBookPatchApplied?: boolean
+  timelineScope?: StoryTimelineEventScope
+  summaryNotifyKind?: MemorySummaryRetryKind
+  /** 无尾段 JSON 时优先用于 timeline fallback 的本轮正文 */
+  latestRoundBodyHint?: string
+}): Promise<void> {
+  const memSettings = await personaDb.getMemorySettings()
+  if (!isOfflineDatingRowPerRoundMode(memSettings)) return
+  if (memSettings.autoSummaryEnabled === false) return
+
+  const timelineScope = params.timelineScope ?? 'private'
+  const summaryNotifyKind = params.summaryNotifyKind ?? 'private'
+
+  const gather = await gatherUnifiedMemoryInputsForDatingTurn({
+    characterId: params.characterId,
+    characterRealName: params.characterRealName,
+    datingPlotsSnapshot: [],
+    sessionPlayerIdentityId: params.sessionPlayerIdentityId ?? null,
+    wechatAccountId: params.wechatAccountId ?? null,
+    conversationKey: params.conversationKey,
+  })
+  if (!gather) return
+
+  const split = splitDatingAiResponseAndUnifiedMemoryJson(params.rawAiText)
+  const latestRoundBody =
+    split.plotRaw.trim() || params.latestRoundBodyHint?.trim() || params.rawAiText.trim()
+  let epiloguePatchesApplied = 0
+  let timelineWritten = false
+
+  const hint = params.latestRoundBodyHint?.trim()
+  const latestLines =
+    hint ||
+    gather.onlineTranscript
+      .slice(-4)
+      .map((t) => {
+        const who = t.from === 'self' ? '我' : params.characterRealName || '对方'
+        return `${who}：${String(t.text || '').trim()}`
+      })
+      .filter((s) => s.length > 3)
+      .join('\n')
+
+  const advanceTimelineCursors = async () => {
+    if (timelineScope === 'meet' && gather.meetMessagesSummarized.length) {
+      const lastMeet = gather.meetMessagesSummarized[gather.meetMessagesSummarized.length - 1]
+      const meetTs = lastMeet?.ts
+      if (typeof meetTs === 'number' && Number.isFinite(meetTs)) {
+        await personaDb.setMeetSummaryCursorTimestamp(params.characterId.trim(), meetTs)
+      }
+    } else if (gather.chunkMessages.length) {
+      const latestTs = gather.chunkMessages[gather.chunkMessages.length - 1]!.timestamp
+      if (typeof latestTs === 'number' && Number.isFinite(latestTs)) {
+        await personaDb.setMemorySummaryCursorTimestamp(gather.conversationKey, latestTs)
+      }
+    }
+  }
+
+  const onlineBlock =
+    timelineScope === 'meet' && gather.meetTranscript.length
+      ? formatUnifiedMemoryOnlineBlock(gather.meetTranscript, params.characterRealName || '对方')
+      : formatUnifiedMemoryOnlineBlock(gather.onlineTranscript, params.characterRealName || '对方')
+  const fallbackMaterial = buildUnifiedStoryTimelineFallbackMaterial({
+    onlineBlock,
+    offlineBlock: gather.offlineBlock,
+    npcLinkedBlock: gather.npcLinked.block,
+  })
+
+  if (split.memoryJsonText?.trim()) {
+    const r = await tryApplyDatingCombinedMemoryJsonTail({
+      memoryJsonText: split.memoryJsonText.trim(),
+      gather,
+      offlinePlotsForCursorAdvance: [],
+      writePrimaryAndAdvanceCursors: false,
+      summaryNotifyKind,
+      chatFallback: params.apiConfig,
+      latestAiPlotBody: latestRoundBody,
+    })
+    epiloguePatchesApplied = r.epiloguePatchesApplied
+    timelineWritten = r.timelineWritten
+    if (!timelineWritten && latestLines.trim()) {
+      dispatchStoryTimelinePerRoundSyncResult({
+        ok: false,
+        displayName: params.characterRealName || '对方',
+        failureReason: undefined,
+      })
+    }
+  } else if (latestLines.trim()) {
+    timelineWritten = await writePerRoundStoryTimelineWithSeparateAttempt({
+      chatFallback: params.apiConfig,
+      characterId: params.characterId,
+      displayName: params.characterRealName || '对方',
+      timelineScope,
+      fallback: {
+        materialBlock: fallbackMaterial,
+        peerCharacterId: params.characterId,
+        latestRoundBody: latestLines,
+      },
+      advanceCursors: advanceTimelineCursors,
+      notifyOnFailure: true,
+    })
+  }
+
+  try {
+    const ch = await personaDb.getCharacter(params.characterId)
+    await finalizeWorldBookAfterPerAiRound({
+      apiConfig: params.apiConfig,
+      character: ch,
+      latestRoundBody,
+      displayName: params.characterRealName,
+      inlinePatchApplied: params.inlineWorldBookPatchApplied,
+      epiloguePatchesApplied,
+    })
+  } catch (e) {
+    console.warn(`[wechat] per-round epilogue sync failed (${timelineScope})`, e)
+  }
+}
+
+export async function finalizeGroupChatPerRoundMemoryAfterAiTurn(params: {
+  apiConfig: ApiConfig | null
+  conversationKey: string
+  groupId: string
+  playerIdentityId: string
+  speakerTurns: Array<{ characterId: string; displayName: string; bubbleText: string }>
+  inlinePatchAppliedByCharacterId?: Map<string, boolean>
+}): Promise<void> {
+  const gid = params.groupId.trim()
+  const ck = params.conversationKey.trim()
+  if (!gid || !ck) return
+  const group = await personaDb.getGroupChat(gid)
+  const seen = new Set<string>()
+  for (const turn of params.speakerTurns) {
+    const cid = turn.characterId.trim()
+    const text = turn.bubbleText.trim()
+    if (!cid || !text || seen.has(cid)) continue
+    if (cid === WECHAT_GROUP_BOT_CHARACTER_ID || cid === WECHAT_GROUP_USER_CHAR_ID) continue
+    seen.add(cid)
+    const displayName =
+      turn.displayName.trim() ||
+      findGroupMember(group, cid)?.groupNickname?.trim() ||
+      '群成员'
+    await finalizePerRoundMemoryAfterAiReply({
+      apiConfig: params.apiConfig,
+      rawAiText: text,
+      characterId: cid,
+      characterRealName: displayName,
+      conversationKey: ck,
+      sessionPlayerIdentityId: params.playerIdentityId,
+      timelineScope: 'group',
+      summaryNotifyKind: 'group',
+      latestRoundBodyHint: text,
+      inlineWorldBookPatchApplied: params.inlinePatchAppliedByCharacterId?.get(cid) === true,
+    })
+  }
+}
+
+export async function finalizePrivateChatPerRoundMemoryAfterAiReply(params: {
+  apiConfig: ApiConfig | null
+  rawAiText: string
+  characterId: string
+  characterRealName: string
+  conversationKey: string
+  sessionPlayerIdentityId?: string | null
+  wechatAccountId?: string | null
+  inlineWorldBookPatchApplied?: boolean
+}): Promise<void> {
+  await finalizePerRoundMemoryAfterAiReply({
+    ...params,
+    timelineScope: 'private',
+    summaryNotifyKind: 'private',
+  })
 }

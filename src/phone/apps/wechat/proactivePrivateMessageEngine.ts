@@ -428,6 +428,7 @@ async function fireProactiveMessage(row: ChatConversationSettingsRow): Promise<v
         unsummarizedPrivateNotes: pack.unsPrivate || undefined,
         unsummarizedGroupNotes: pack.unsGroup || undefined,
         unsummarizedMeetNotes: pack.unsMeet || undefined,
+        storyTimelineNotes: pack.storyTimeline || undefined,
         recentPrivateAiRoundsNotes: pack.recentPrivateAiRounds || undefined,
         recentOfflineAiRoundsNotes: pack.recentOfflineAiRounds || undefined,
         recentMeetAiRoundsNotes: pack.recentMeetAiRounds || undefined,

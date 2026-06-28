@@ -34,6 +34,7 @@ export function MemoryList({
   if (!entries.length) {
     return (
       <motion.div
+        data-memory-coach="list"
         initial={{ opacity: 0, y: 8 }}
         animate={{ opacity: 1, y: 0 }}
         className="mx-auto max-w-md px-8 py-24 text-center"

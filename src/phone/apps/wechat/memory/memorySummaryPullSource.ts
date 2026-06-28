@@ -25,7 +25,7 @@ export function resolveSummaryPullSource(params: {
         apiUrl: mainUrl,
         apiKey: mainKey,
         kind: 'main',
-        label: '将按当前聊天主接口（全局 API 配置）去拉模型',
+        label: '将按当前聊天主接口（全局 API 配置）拉取线上总结模型',
       }
     }
     return null
@@ -41,7 +41,7 @@ export function resolveSummaryPullSource(params: {
       apiUrl: dedicatedUrl,
       apiKey: dedicatedKey,
       kind: 'dedicated',
-      label: '将按你在下面填写的「总结专用接口」去拉模型',
+      label: '将按你在下面填写的「线上总结专用接口」拉取模型',
     }
   }
 

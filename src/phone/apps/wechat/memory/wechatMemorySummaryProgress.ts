@@ -1,9 +1,7 @@
 import type { WeChatContactRow } from '../../../../components/WeChatContactsInstagram'
 import type { WeChatPersonaContact } from '../../../types'
-import { resolveOfflineDatingArchiveContext } from '../dating/offlineDatingArchiveResolve'
 import { personaDb } from '../newFriendsPersona/idb'
 import type { CharacterMemory, GroupChatRow } from '../newFriendsPersona/types'
-import { loadDatingPlotsFromKv } from '../unifiedMemoryAutoSummary'
 import {
   findAccountById,
   isSecondaryWechatAccountInBundle,
@@ -38,13 +36,13 @@ export type WechatMemorySummaryProgressRow = {
   avatarUrl?: string
   accountLineLabel?: string
   conversationKey: string
+  wechatAccountId: string
+  sessionPlayerIdentityId: string
   interval: number
   roundsSinceLastSummary: number
   roundsUntilNext: number
   autoSummaryEnabled: boolean
-  datingCountsTowardRounds: boolean
   hasPendingChat: boolean
-  hasPendingOfflinePlot: boolean
   memoryCount: number
 }
 
@@ -54,6 +52,8 @@ export type WechatGroupMemorySummaryProgressRow = {
   avatarUrl?: string
   accountLineLabel?: string
   conversationKey: string
+  wechatAccountId: string
+  sessionPlayerIdentityId: string
   interval: number
   roundsSinceLastSummary: number
   roundsUntilNext: number
@@ -150,7 +150,6 @@ export async function loadWechatMemorySummaryProgress(params: {
 }): Promise<WechatMemorySummaryProgressRow[]> {
   const settings = await personaDb.getMemorySettings()
   const autoSummaryEnabled = settings.autoSummaryEnabled !== false
-  const datingCountsTowardRounds = autoSummaryEnabled
   const roundMap = settings.aiRoundCountByConversation ?? {}
   const summaryCursorMap = settings.summaryCursorTimestampByConversation ?? {}
 
@@ -189,18 +188,6 @@ export async function loadWechatMemorySummaryProgress(params: {
         return ts >= chatFromTs
       })
 
-      let hasPendingOfflinePlot = false
-      const archiveCtx = await resolveOfflineDatingArchiveContext(charId)
-      if (archiveCtx) {
-        const plotCursor = await personaDb.getDatingPlotSummaryCursor(archiveCtx.archiveCharacterId)
-        const plotFromTs = (plotCursor ?? 0) + 1
-        const plots = await loadDatingPlotsFromKv(archiveCtx.archiveCharacterId)
-        hasPendingOfflinePlot = plots.some((p) => {
-          const ts = typeof p.timestamp === 'number' && Number.isFinite(p.timestamp) ? p.timestamp : 0
-          return ts >= plotFromTs
-        })
-      }
-
       const memList = params.memoriesByChar?.get(charId)
       const memoryCount = Array.isArray(memList)
         ? memList.filter((m) => m.memoryScope !== 'linked' && m.memoryScope !== 'group').length
@@ -212,13 +199,13 @@ export async function loadWechatMemorySummaryProgress(params: {
         avatarUrl: contact.avatarUrl,
         accountLineLabel,
         conversationKey,
+        wechatAccountId: wechatAccountId ?? '',
+        sessionPlayerIdentityId: sessionPid,
         interval: charInterval,
         roundsSinceLastSummary,
         roundsUntilNext,
         autoSummaryEnabled,
-        datingCountsTowardRounds,
         hasPendingChat,
-        hasPendingOfflinePlot,
         memoryCount,
       })
     } catch (err) {
@@ -230,13 +217,13 @@ export async function loadWechatMemorySummaryProgress(params: {
         avatarUrl: contact.avatarUrl,
         accountLineLabel,
         conversationKey: '',
+        wechatAccountId: wechatAccountId ?? '',
+        sessionPlayerIdentityId: appHint ?? '',
         interval: fallbackInterval,
         roundsSinceLastSummary: 0,
         roundsUntilNext: fallbackInterval,
         autoSummaryEnabled,
-        datingCountsTowardRounds,
         hasPendingChat: false,
-        hasPendingOfflinePlot: false,
         memoryCount: Array.isArray(params.memoriesByChar?.get(charId))
           ? params.memoriesByChar!.get(charId)!.filter((m) => m.memoryScope !== 'linked' && m.memoryScope !== 'group')
               .length
@@ -330,6 +317,8 @@ async function buildGroupProgressRow(
       avatarUrl: group.avatar?.trim() || undefined,
       accountLineLabel: ctx.accountLineLabel,
       conversationKey,
+      wechatAccountId: ctx.wechatAccountId,
+      sessionPlayerIdentityId: ctx.sessionPid,
       interval: ctx.interval,
       roundsSinceLastSummary,
       roundsUntilNext,
@@ -346,6 +335,8 @@ async function buildGroupProgressRow(
       avatarUrl: group.avatar?.trim() || undefined,
       accountLineLabel: ctx.accountLineLabel,
       conversationKey: '',
+      wechatAccountId: ctx.wechatAccountId,
+      sessionPlayerIdentityId: ctx.sessionPid,
       interval: ctx.interval,
       roundsSinceLastSummary: 0,
       roundsUntilNext: ctx.interval,
@@ -360,8 +351,8 @@ async function buildGroupProgressRow(
 function sortPrivateProgressRows(rows: WechatMemorySummaryProgressRow[]) {
   rows.sort((a, b) => {
     if (a.roundsUntilNext !== b.roundsUntilNext) return a.roundsUntilNext - b.roundsUntilNext
-    const aPending = a.hasPendingChat || a.hasPendingOfflinePlot
-    const bPending = b.hasPendingChat || b.hasPendingOfflinePlot
+    const aPending = a.hasPendingChat
+    const bPending = b.hasPendingChat
     if (aPending !== bPending) return aPending ? -1 : 1
     const line = (a.accountLineLabel ?? '').localeCompare(b.accountLineLabel ?? '', 'zh-CN')
     if (line !== 0) return line

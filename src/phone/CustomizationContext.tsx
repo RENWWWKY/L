@@ -10,6 +10,8 @@ import {
 } from 'react'
 import { flushSync } from 'react-dom'
 import { personaDb, pullPhoneKvWithLocalStorageLegacy } from './apps/wechat/newFriendsPersona/idb'
+import { wechatChatRoomBgFallbackColor } from './apps/wechat/wechatChatRoomBg'
+import { mergeWeChatBubbleGlobal, migrateMislabeledLumiDefaultBubble } from './apps/wechat/wechatBubblePresets'
 import { bumpWeChatPersonaContactsUserMutation } from './apps/wechat/wechatPersonaContactsUserMutation'
 import {
   DEFAULT_CUSTOMIZATION,
@@ -30,6 +32,7 @@ import {
   type DockStyle,
   type DockFillMode,
   type WeChatTheme,
+  type WeChatChatRoomBg,
   type WeChatBubbleTheme,
   wechatBubbleThemesEqual,
   type WxFillStyle,
@@ -248,6 +251,22 @@ function normalizeWeChatTheme(parsed: unknown): WeChatTheme {
     }
   }
 
+  const normalizeChatRoomBg = (b: unknown, fallback: WeChatChatRoomBg): WeChatChatRoomBg => {
+    if (!b || typeof b !== 'object') return fallback
+    const r = b as Partial<WeChatChatRoomBg>
+    if (r.mode === 'image') {
+      return {
+        mode: 'image',
+        imageUrl: migrateLegacyRootPublicUrl(pick(r.imageUrl, fallback.mode === 'image' ? fallback.imageUrl : '')),
+        fallbackColor: pick(r.fallbackColor, fallback.mode === 'image' ? fallback.fallbackColor : '#EDEDED'),
+      }
+    }
+    if (r.mode === 'solid') {
+      return { mode: 'solid', color: pick(r.color, fallback.mode === 'solid' ? fallback.color : '#EDEDED') }
+    }
+    return fallback
+  }
+
   const normalizeBubble = (b: unknown, fallback: WeChatBubbleTheme): WeChatBubbleTheme => {
     if (!b || typeof b !== 'object') return fallback
     const r = b as Partial<WeChatBubbleTheme>
@@ -259,6 +278,13 @@ function normalizeWeChatTheme(parsed: unknown): WeChatTheme {
       showAvatar: bool(r.showAvatar, fallback.showAvatar),
       avatarRadiusPx: clamp(r.avatarRadiusPx, 0, 18, fallback.avatarRadiusPx),
       showBubbleTail: bool(r.showBubbleTail, fallback.showBubbleTail),
+      bubbleTailStyle:
+        r.bubbleTailStyle === 'imessage' ||
+        r.bubbleTailStyle === 'telegram' ||
+        r.bubbleTailStyle === 'wechat' ||
+        r.bubbleTailStyle === 'talkmaker'
+          ? r.bubbleTailStyle
+          : fallback.bubbleTailStyle,
       mergeConsecutiveAvatarGroup: bool(r.mergeConsecutiveAvatarGroup, fallback.mergeConsecutiveAvatarGroup),
     }
   }
@@ -266,7 +292,7 @@ function normalizeWeChatTheme(parsed: unknown): WeChatTheme {
   const LEGACY_OTHER_BUBBLE_SEMI = 'rgba(0, 0, 0, 0.04)'
   const OTHER_BUBBLE_SOLID_DEFAULT = '#EEEFF2'
 
-  let bubbleGlobal = normalizeBubble(raw.bubbleGlobal, base.bubbleGlobal)
+  let bubbleGlobal = migrateMislabeledLumiDefaultBubble(normalizeBubble(raw.bubbleGlobal, base.bubbleGlobal))
   if (bubbleGlobal.otherBubbleBg === LEGACY_OTHER_BUBBLE_SEMI) {
     bubbleGlobal = { ...bubbleGlobal, otherBubbleBg: OTHER_BUBBLE_SOLID_DEFAULT }
   }
@@ -275,7 +301,7 @@ function normalizeWeChatTheme(parsed: unknown): WeChatTheme {
   if (raw.bubbleByRole && typeof raw.bubbleByRole === 'object') {
     for (const [k, v] of Object.entries(raw.bubbleByRole as Record<string, unknown>)) {
       if (!k) continue
-      let roleBubble = normalizeBubble(v, bubbleGlobal)
+      let roleBubble = migrateMislabeledLumiDefaultBubble(normalizeBubble(v, bubbleGlobal))
       if (roleBubble.otherBubbleBg === LEGACY_OTHER_BUBBLE_SEMI) {
         roleBubble = { ...roleBubble, otherBubbleBg: OTHER_BUBBLE_SOLID_DEFAULT }
       }
@@ -382,6 +408,7 @@ function normalizeWeChatTheme(parsed: unknown): WeChatTheme {
 
     chatInputBg: pick(raw.chatInputBg, base.chatInputBg),
     chatInputBorder: pick(raw.chatInputBorder, base.chatInputBorder),
+    chatRoomDefaultBg: normalizeChatRoomBg(raw.chatRoomDefaultBg, base.chatRoomDefaultBg),
     bubbleGlobal,
     bubbleByRole,
     selfBubbleText: pick(raw.selfBubbleText, base.selfBubbleText),
@@ -626,6 +653,7 @@ function wechatThemeToStyle(theme: WeChatTheme, globalFontFamily: string): React
     '--wx-other-bubble-radius': `${theme.bubbleGlobal.otherBubbleRadiusPx}px`,
     '--wx-avatar-radius': `${theme.bubbleGlobal.avatarRadiusPx}px`,
     '--wx-timestamp-text': theme.timestampText,
+    '--wx-chat-room-bg': wechatChatRoomBgFallbackColor(theme.chatRoomDefaultBg),
   } as React.CSSProperties
 }
 
@@ -967,7 +995,7 @@ export function CustomizationProvider({ children }: { children: ReactNode }) {
         return { ...s, wechatTheme: { ...prev, ...patch } }
       }
       const prevGlobal = prev.bubbleGlobal
-      const mergedGlobal = { ...prevGlobal, ...patch.bubbleGlobal }
+      const mergedGlobal = mergeWeChatBubbleGlobal(prevGlobal, patch.bubbleGlobal)
       const bubbleByRole = syncBubbleByRoleWithNewGlobal(
         prevGlobal,
         mergedGlobal,

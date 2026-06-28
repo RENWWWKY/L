@@ -4,6 +4,10 @@ import type { GroupChatRow, WeChatChatMessage } from './newFriendsPersona/types'
 import { isMeetImportedWeChatMessageId } from '../lumiMeet/meetMemoryConstants'
 import { personaDb } from './newFriendsPersona/idb'
 import {
+  formatSystemRecordTime,
+  resolveMessageSystemRecordedAtMs,
+} from './wechatCrossChannelTimeline'
+import {
   parseGroupIdFromConversationKey,
   WECHAT_GROUP_BOT_CHARACTER_ID,
   wechatConversationKey,
@@ -39,7 +43,26 @@ function clipOneLine(s: string, max = 220): string {
   return `${t.slice(0, max)}…`
 }
 
-export function formatPrivateLineUnsummarized(m: WeChatChatMessage): string | null {
+function resolveUnsummarizedFromTimestamp(
+  memoryCursorTs: number | null,
+  minMessageTimestamp?: number,
+): number {
+  const memFloor = (memoryCursorTs ?? 0) + 1
+  const extraFloor =
+    typeof minMessageTimestamp === 'number' && Number.isFinite(minMessageTimestamp)
+      ? minMessageTimestamp + 1
+      : 0
+  return Math.max(memFloor, extraFloor)
+}
+
+function formatWechatUnsummarizedLineTime(m: Pick<WeChatChatMessage, 'timestamp' | 'systemRecordedAt'>): string {
+  return formatSystemRecordTime(resolveMessageSystemRecordedAtMs(m))
+}
+
+export function formatPrivateLineUnsummarized(
+  m: WeChatChatMessage,
+  opts?: { includeTimestamp?: boolean },
+): string | null {
   if (m.isRecalled) return null
   let raw = stripWechatGroupEventNoticePrefix(String(m.content ?? '')).trim()
   if (m.redPacket) raw = raw || '[红包]'
@@ -52,7 +75,11 @@ export function formatPrivateLineUnsummarized(m: WeChatChatMessage): string | nu
   }
   if (!raw) return null
   const who = m.type === 'player' ? '用户' : '对方'
-  return `- [私聊・${who}] ${clipOneLine(raw)}`
+  const timePrefix =
+    opts?.includeTimestamp && m.timestamp
+      ? `[${formatWechatUnsummarizedLineTime(m)}] `
+      : ''
+  return `- ${timePrefix}[私聊・${who}] ${clipOneLine(raw)}`
 }
 
 /**
@@ -80,7 +107,12 @@ export function formatGroupSpeakerLabelForPrivateContext(
   return c.slice(0, 12)
 }
 
-function formatGroupLineUnsummarized(m: WeChatChatMessage, group: GroupChatRow | null, npcCharacterId?: string): string | null {
+function formatGroupLineUnsummarized(
+  m: WeChatChatMessage,
+  group: GroupChatRow | null,
+  npcCharacterId?: string,
+  opts?: { includeTimestamp?: boolean },
+): string | null {
   if (m.isRecalled) return null
   const gidLabel = (group?.name || '').trim() || '群聊'
   let raw = stripWechatGroupEventNoticePrefix(String(m.content ?? '')).trim()
@@ -99,7 +131,11 @@ function formatGroupLineUnsummarized(m: WeChatChatMessage, group: GroupChatRow |
   if (!raw) return null
 
   const who = formatGroupSpeakerLabelForPrivateContext(m, group, npcCharacterId)
-  return `- [群「${gidLabel}」·${who}] ${clipOneLine(raw)}`
+  const timePrefix =
+    opts?.includeTimestamp && m.timestamp
+      ? `[${formatWechatUnsummarizedLineTime(m)}] `
+      : ''
+  return `- ${timePrefix}[群「${gidLabel}」·${who}] ${clipOneLine(raw)}`
 }
 
 /**
@@ -109,11 +145,19 @@ export async function formatUnsummarizedPrivateChatBlock(params: {
   conversationKey: string
   maxMessages?: number
   maxChars?: number
+  /** 晚于记忆游标时，再抬高下限（约会：仅贴上一轮线下 AI 之后的线上段） */
+  minMessageTimestamp?: number
+  /** 为每条前缀公历系统落库时刻（真实生成/发送钟点，非剧情时间） */
+  includeMessageTimestamps?: boolean
+  /** 超长时保留较新消息（约会注入默认 true） */
+  clipPreferRecent?: boolean
+  /** 替换默认块尾说明 */
+  footerNote?: string
 }): Promise<string> {
   const ck = params.conversationKey.trim()
   if (!ck) return ''
   const cursor = await personaDb.getMemorySummaryCursorTimestamp(ck)
-  const fromTs = (cursor ?? 0) + 1
+  const fromTs = resolveUnsummarizedFromTimestamp(cursor, params.minMessageTimestamp)
   const lim = Math.max(
     1,
     Math.min(MEMORY_UNSUMMARIZED_GATHER_MESSAGE_LIMIT, Math.floor(params.maxMessages ?? MEMORY_UNSUMMARIZED_GATHER_MESSAGE_LIMIT)),
@@ -124,10 +168,11 @@ export async function formatUnsummarizedPrivateChatBlock(params: {
     limit: lim,
   })
   if (!rows.length) return ''
+  const includeTs = params.includeMessageTimestamps === true
   const lines: string[] = []
   for (const m of rows) {
     if (isMeetImportedWeChatMessageId(m.id)) continue
-    const line = formatPrivateLineUnsummarized(m)
+    const line = formatPrivateLineUnsummarized(m, { includeTimestamp: includeTs })
     if (line) lines.push(line)
   }
   if (!lines.length) return ''
@@ -138,11 +183,23 @@ export async function formatUnsummarizedPrivateChatBlock(params: {
   )
   if (body.length > charCap) {
     const parts = body.split('\n')
-    while (parts.join('\n').length > charCap && parts.length > 4) parts.pop()
+    const preferRecent = params.clipPreferRecent === true
+    while (parts.join('\n').length > charCap && parts.length > 4) {
+      if (preferRecent) parts.shift()
+      else parts.pop()
+    }
     body = parts.join('\n')
-    if (body.length > charCap) body = `${body.slice(0, charCap)}\n…（更晚未总结私聊下次总结继续）`
+    const truncNote = preferRecent ? '更早未总结私聊已截断' : '更晚未总结私聊下次总结继续'
+    if (body.length > charCap) {
+      body = preferRecent
+        ? `${body.slice(-charCap)}\n…（${truncNote}）`
+        : `${body.slice(0, charCap)}\n…（${truncNote}）`
+    }
   }
-  return `${body}\n（↑ 尚未经自动总结写入长期记忆的私聊片段；若与上文气泡重叠，以衔接「总结空白期」为主。）`
+  const footer =
+    params.footerNote?.trim() ||
+    `（↑ 尚未经自动总结写入长期记忆的私聊片段；若与上文气泡重叠，以衔接「总结空白期」为主。）`
+  return `${body}\n${footer}`
 }
 
 /**
@@ -230,6 +287,9 @@ export async function buildNpcGroupChatsUnsummarizedDigestForPrivatePrompt(param
   anchorGroupId?: string | null | undefined
   maxMessagesPerGroup?: number
   charCap?: number
+  minMessageTimestamp?: number
+  includeMessageTimestamps?: boolean
+  groupFooterNote?: string
 }): Promise<string> {
   const npcId = params.npcCharacterId.trim()
   if (!npcId) return ''
@@ -253,6 +313,11 @@ export async function buildNpcGroupChatsUnsummarizedDigestForPrivatePrompt(param
   const groupById = new Map(relevant.map((g) => [g.id.trim(), g]))
   const perLim = Math.max(8, Math.min(120, Math.floor(params.maxMessagesPerGroup ?? 60)))
   const charCapTotal = Math.max(800, Math.min(UNSUMMARIZED_BLOCK_CHAR_HARD_MAX, Math.floor(params.charCap ?? 4200)))
+  const includeTs = params.includeMessageTimestamps === true
+  const groupLineOpts = { includeTimestamp: includeTs }
+  const defaultGroupFooter =
+    params.groupFooterNote?.trim() ||
+    `（↑ 各群「自动总结游标」之后尚未落库为长期记忆的片段；私聊回复时请承接群内语境。）\n【说话人｜勿混淆】前缀「用户」仅指真人玩家本人；「对方角色·某某」表示**当前私聊对象（会话对方角色）**在该群的发言，**不是**用户。**禁止**把对方角色在群里的原话误当成用户说的（例如不可写「你刚才在群里嚷着吃火锅」若实为对方角色发的）。其他群成员仅用群内昵称标注。\n`
 
   const anchorGid = params.anchorGroupId?.trim()
   if (anchorGid) {
@@ -262,7 +327,7 @@ export async function buildNpcGroupChatsUnsummarizedDigestForPrivatePrompt(param
       let anchorBatch: WeChatChatMessage[] = []
       try {
         const cursor = await personaDb.getMemorySummaryCursorTimestamp(anchorCk)
-        const fromTs = (cursor ?? 0) + 1
+        const fromTs = resolveUnsummarizedFromTimestamp(cursor, params.minMessageTimestamp)
         anchorBatch = await personaDb.listWeChatChatMessagesFromTimestampAsc({
           conversationKey: anchorCk,
           fromTimestampInclusive: fromTs,
@@ -273,7 +338,7 @@ export async function buildNpcGroupChatsUnsummarizedDigestForPrivatePrompt(param
       }
       const anchorLines: string[] = []
       for (const m of anchorBatch.sort((a, b) => a.timestamp - b.timestamp)) {
-        const line = formatGroupLineUnsummarized(m, anchorRow, npcId)
+        const line = formatGroupLineUnsummarized(m, anchorRow, npcId, groupLineOpts)
         if (line) anchorLines.push(line)
       }
       const merged: WeChatChatMessage[] = []
@@ -282,7 +347,7 @@ export async function buildNpcGroupChatsUnsummarizedDigestForPrivatePrompt(param
         const ck = wechatGroupConversationKey(g.id, pid)
         try {
           const cursor = await personaDb.getMemorySummaryCursorTimestamp(ck)
-          const fromTs = (cursor ?? 0) + 1
+          const fromTs = resolveUnsummarizedFromTimestamp(cursor, params.minMessageTimestamp)
           const batch = await personaDb.listWeChatChatMessagesFromTimestampAsc({
             conversationKey: ck,
             fromTimestampInclusive: fromTs,
@@ -297,7 +362,7 @@ export async function buildNpcGroupChatsUnsummarizedDigestForPrivatePrompt(param
       for (const m of merged.sort((a, b) => a.timestamp - b.timestamp)) {
         const gkey = parseGroupIdFromConversationKey(m.conversationKey)
         const g = gkey ? groupById.get(gkey) ?? null : null
-        const line = formatGroupLineUnsummarized(m, g, npcId)
+        const line = formatGroupLineUnsummarized(m, g, npcId, groupLineOpts)
         if (line) otherLines.push(line)
       }
 
@@ -344,7 +409,7 @@ export async function buildNpcGroupChatsUnsummarizedDigestForPrivatePrompt(param
     const ck = wechatGroupConversationKey(g.id, pid)
     try {
       const cursor = await personaDb.getMemorySummaryCursorTimestamp(ck)
-      const fromTs = (cursor ?? 0) + 1
+      const fromTs = resolveUnsummarizedFromTimestamp(cursor, params.minMessageTimestamp)
       const batch = await personaDb.listWeChatChatMessagesFromTimestampAsc({
         conversationKey: ck,
         fromTimestampInclusive: fromTs,
@@ -362,7 +427,7 @@ export async function buildNpcGroupChatsUnsummarizedDigestForPrivatePrompt(param
   for (const m of sorted) {
     const gkey = parseGroupIdFromConversationKey(m.conversationKey)
     const g = gkey ? groupById.get(gkey) ?? null : null
-    const line = formatGroupLineUnsummarized(m, g, npcId)
+    const line = formatGroupLineUnsummarized(m, g, npcId, groupLineOpts)
     if (line) lines.push(line)
   }
   if (!lines.length) return ''
@@ -375,7 +440,7 @@ export async function buildNpcGroupChatsUnsummarizedDigestForPrivatePrompt(param
     body = parts.join('\n')
     if (body.length > charCap) body = `${body.slice(-charCap)}\n…（更早未总结群聊已截断）`
   }
-  return `${body}\n（↑ 各群「自动总结游标」之后尚未落库为长期记忆的片段；私聊回复时请承接群内语境。）\n【说话人｜勿混淆】前缀「用户」仅指真人玩家本人；「对方角色·某某」表示**当前私聊对象（会话对方角色）**在该群的发言，**不是**用户。**禁止**把对方角色在群里的原话误当成用户说的（例如不可写「你刚才在群里嚷着吃火锅」若实为对方角色发的）。其他群成员仅用群内昵称标注。\n`
+  return `${body}\n${defaultGroupFooter}`
 }
 
 /**

@@ -72,35 +72,56 @@ export async function formatRecentAiRoundsPrivateChatByCharacter(params: {
   )
 }
 
+function formatRecentOfflinePlotsAiRoundsBody(params: {
+  plots: import('../unifiedMemoryAutoSummary').DatingPlotSnapshotItem[]
+  borrowed: boolean
+  rootName: string
+  peerLabel: string
+  maxChars?: number
+}): string {
+  const window = selectRecentDatingPlotsAiRoundWindow(params.plots)
+  if (!window.length) return ''
+  const body = buildOfflinePlotsFullText({
+    plots: window,
+    plotCursorMin: -1,
+    borrowed: params.borrowed,
+    rootName: params.rootName,
+    peerLabel: params.peerLabel,
+    maxChars: Math.floor(params.maxChars ?? RECENT_REF_CHAR_CAP),
+  }).trim()
+  if (!body) return ''
+  return (
+    `【最近线下剧情参考（最近 ${MEMORY_RECENT_AI_ROUNDS_REFERENCE} 轮 AI 剧情及其间玩家输入；可能已写入长期记忆，仅供承接口吻，**非**待总结游标材料）】\n\n` +
+    body
+  )
+}
+
 /** 后台注入：最近 AI 轮线下剧情（全量 plot，不受 plot 总结游标限制）。 */
 export async function formatRecentOfflinePlotsAiRoundsReference(
   characterId: string | null | undefined,
   peerDisplayName?: string | null,
   maxChars?: number,
+  /** 与当前 UI / 本轮 generate 同源的快照；传入时不再读 KV，避免删改后仍注入旧稿。 */
+  plotsSnapshot?: import('../unifiedMemoryAutoSummary').DatingPlotSnapshotItem[] | null,
 ): Promise<string> {
   const cid = characterId?.trim()
   if (!cid) return ''
   try {
     const ctx = await resolveOfflineDatingArchiveContext(cid)
     if (!ctx) return ''
-    const plots = await loadDatingPlotsFromKv(ctx.archiveCharacterId)
-    const window = selectRecentDatingPlotsAiRoundWindow(plots)
-    if (!window.length) return ''
+    const plots =
+      plotsSnapshot != null
+        ? plotsSnapshot
+        : await loadDatingPlotsFromKv(ctx.archiveCharacterId)
     const borrowed = ctx.perspectiveCharacterId !== ctx.archiveCharacterId
     const peerLabel = peerDisplayName?.trim() || (ctx.perspective?.name ?? '').trim() || '对方'
-    const body = buildOfflinePlotsFullText({
-      plots: window,
-      plotCursorMin: -1,
+    return formatRecentOfflinePlotsAiRoundsBody({
+      plots,
       borrowed,
       rootName: (ctx.archiveOwner?.name ?? '').trim() || '主角',
       peerLabel,
-      maxChars: Math.floor(maxChars ?? RECENT_REF_CHAR_CAP),
-    }).trim()
-    if (!body) return ''
-    return (
-      `【最近线下剧情参考（最近 ${MEMORY_RECENT_AI_ROUNDS_REFERENCE} 轮 AI 剧情及其间玩家输入；可能已写入长期记忆，仅供承接口吻，**非**待总结游标材料）】\n\n` +
-      body
-    )
+      maxChars,
+    })
   } catch {
     return ''
   }

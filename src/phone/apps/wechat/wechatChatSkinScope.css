@@ -1,0 +1,47 @@
+/**
+ * 聊天页美化变量默认值 — 仅作用于 [data-wx-chat-skin-scope]。
+ * 用户可在「外观 → 自定义 CSS」中覆盖同名变量。
+ */
+[data-wx-chat-skin-scope] {
+  --wx-chat-header-bg: var(--wx-surface);
+  --wx-chat-header-text: var(--wx-text);
+  --wx-chat-header-muted: var(--wx-text-muted);
+  --wx-chat-header-border: var(--wx-border);
+
+  --wx-chat-input-bar-bg: var(--wx-input-bg);
+  --wx-chat-input-bar-border: #e5e5e5;
+  --wx-chat-input-shell-bg: #ffffff;
+  --wx-chat-input-shell-border: #e5e5e5;
+  --wx-chat-input-shell-radius: 6px;
+  --wx-chat-input-btn-color: #191919;
+  --wx-chat-input-text-color: var(--wx-text);
+  --wx-chat-input-placeholder: #8e8e93;
+
+  --wx-special-rp-bg: #ffffff;
+  --wx-special-rp-border: rgba(212, 175, 55, 0.3);
+  --wx-special-rp-accent: #d4af37;
+  --wx-special-rp-text: #1f2937;
+  --wx-special-rp-tag: rgba(212, 175, 55, 0.55);
+
+  --wx-special-tf-bg: #ffffff;
+  --wx-special-tf-accent-pending: #d4af37;
+  --wx-special-tf-accent-accepted: #b8d4c8;
+  --wx-special-tf-accent-returned: #9ca3af;
+  --wx-special-tf-amount: #0f172a;
+  --wx-special-tf-muted: #64748b;
+
+  --wx-special-voice-bg-self: #faf8f5;
+  --wx-special-voice-bg-other: #ffffff;
+  --wx-special-voice-border-self: #e7e2d9;
+  --wx-special-voice-border-other: #ececec;
+  --wx-special-voice-play-bg: #ffffff;
+  --wx-special-voice-wave-active-self: #d4af37;
+  --wx-special-voice-wave-active-other: #8d8d8d;
+  --wx-special-voice-wave-idle: #b6b6b6;
+  --wx-special-voice-duration: #555555;
+
+  --wx-special-loc-pin: #d4af37;
+  --wx-special-loc-title: #0a0a0a;
+  --wx-special-loc-muted: #9ca3af;
+  --wx-special-loc-distance: #8b7355;
+}

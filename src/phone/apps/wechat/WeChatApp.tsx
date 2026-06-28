@@ -108,6 +108,7 @@ import {
   resolvePrivateChatSessionPlayerIdentityId,
   resolveGroupWeChatStorageConversationKey,
   resolvePrivateWeChatStorageConversationKey,
+  resolveWeChatPrivateChatTarget,
   parseWechatAccountPrivateConversationKey,
   wechatConversationKey,
   wechatGroupPeerCharacterId,
@@ -134,7 +135,21 @@ import { contactEntryFromCharacter } from './wechatPersonaContactsSync'
 import { pruneCharacterVoiceMappings } from '../voiceprint/characterVoiceMapStorage'
 import { applyWechatContactRemovalDataClear } from './wechatContactRemoval'
 import { resolveCharacterAvatarUrl, resolveWeChatContactAvatarUrl } from '../../utils/characterAvatarUrl'
-import { WeChatMessageBubbleRow } from './WeChatMessageBubbleRow'
+import { WeChatMessengerChatHeader } from './WeChatMessengerChatHeader'
+import { WeChatBubblePresetCards } from './WeChatBubblePresetCards'
+import {
+  WECHAT_BUBBLE_PRESETS,
+  type WeChatBubblePreset,
+  migrateMislabeledLumiDefaultBubble,
+  resolveEffectiveChatInputBarForBubble,
+  resolvePreviewWechatThemeForBubble,
+} from './wechatBubblePresets'
+import { buildWeChatChatSkinExport, buildWeChatChatSkinAiPrompt, WECHAT_CHAT_SKIN_EXPORT_UI_ENABLED } from './wechatChatSkinExport'
+import { WeChatChatSkinPreviewPanel } from './WeChatChatSkinPreviewPanel'
+import {
+  resolveChatDisplayFontFamily,
+} from './wechatBubbleTemplateFonts'
+import { wechatChatRoomBgFallbackColor, wechatChatRoomBgToStyle } from './wechatChatRoomBg'
 import { WeChatForwardSelectChatScreen, type WeChatForwardMode } from './WeChatForwardSelectChatScreen'
 import type { GroupChatRow, WeChatChatHistoryPayload, WeChatChatMessage } from './newFriendsPersona/types'
 import { ChatHistoryViewer } from './chatHistory/ChatHistoryViewer'
@@ -149,6 +164,7 @@ import { resolveAutoSummaryApiConfig } from './memory/memorySummaryApi'
 import { sanitizePrivateMemorySummaryBody } from './memory/autoSummaryPlaceholderSanitize'
 import { resolveMemoryUserInsertContextFromSource } from './memoryUserPlaceholderBindings'
 import { buildAutoSummaryMemoryKeywordsBackup } from './memory/memoryTriggerUtils'
+import { persistStoryTimelineFromSummaryDelta } from './memory/storyTimelinePersist'
 import { uid } from './newFriendsPersona/utils'
 import { formatWorldBackgroundForPrompt } from './newFriendsPersona/worldBackgroundFormat'
 import {
@@ -632,6 +648,10 @@ function downloadTextFile(filename: string, text: string) {
   URL.revokeObjectURL(url)
 }
 
+async function copyTextToClipboard(text: string) {
+  await navigator.clipboard.writeText(text)
+}
+
 function Icon({ path, active }: { path: string; active: boolean }) {
   return (
     <svg
@@ -895,11 +915,13 @@ function Header({
 
   return (
     <header
+      data-wx-chat-header
       className="relative flex shrink-0 items-center justify-between gap-2 border-b px-3 pb-2"
       style={{
         paddingTop: 'max(0px, env(safe-area-inset-top, 0px))',
-        borderColor: 'var(--wx-border)',
-        background: 'var(--wx-surface)',
+        borderColor: 'var(--wx-chat-header-border, var(--wx-border))',
+        background: 'var(--wx-chat-header-bg, var(--wx-surface))',
+        color: 'var(--wx-chat-header-text, var(--wx-text))',
       }}
     >
       <div className={`relative z-20 flex ${balancedSideSlot} shrink-0 items-center justify-start`}>
@@ -1885,7 +1907,71 @@ function ThemePanel({
     setBubbleRole(WECHAT_LUMI_PEER_CHARACTER_ID)
   }, [bubbleRole])
 
-  const activeBubble = bubbleScope === 'role' ? bubbleForRole(wechatTheme, bubbleRole) : wechatTheme.bubbleGlobal
+  const activeBubble = useMemo(() => {
+    const raw =
+      bubbleScope === 'role' ? bubbleForRole(wechatTheme, bubbleRole) : wechatTheme.bubbleGlobal
+    return migrateMislabeledLumiDefaultBubble(raw)
+  }, [bubbleScope, bubbleRole, wechatTheme])
+  const activeBubbleTailStyle = activeBubble.bubbleTailStyle
+
+  const applyBubblePreset = useCallback(
+    (preset: WeChatBubblePreset) => {
+      if (preset.chatThemePatch) {
+        if (preset.id === 'wechat-app-default') {
+          updateChatTheme({
+            ...preset.chatThemePatch,
+            inputBar: {
+              ...preset.chatThemePatch.inputBar,
+              layout: 'lumi',
+              sendButtonColor: undefined,
+            },
+          })
+        } else {
+          updateChatTheme(preset.chatThemePatch)
+        }
+      }
+      if (bubbleScope === 'global') {
+        setWeChatTheme({
+          bubbleGlobal: preset.bubble,
+          selfBubbleText: preset.selfBubbleText,
+          otherBubbleText: preset.otherBubbleText,
+          ...(preset.wechatThemePatch ?? {}),
+        })
+        return
+      }
+      setWeChatTheme({
+        bubbleByRole: { ...wechatTheme.bubbleByRole, [bubbleRole]: preset.bubble },
+        selfBubbleText: preset.selfBubbleText,
+        otherBubbleText: preset.otherBubbleText,
+      })
+    },
+    [bubbleRole, bubbleScope, setWeChatTheme, updateChatTheme, wechatTheme.bubbleByRole],
+  )
+
+  const bubblePreviewBgStyle = useMemo(
+    () => wechatChatRoomBgToStyle(wechatTheme.chatRoomDefaultBg, resolvePublicImageUrl),
+    [wechatTheme.chatRoomDefaultBg],
+  )
+
+  const previewTailMaskColor = useMemo(
+    () => wechatChatRoomBgFallbackColor(wechatTheme.chatRoomDefaultBg),
+    [wechatTheme.chatRoomDefaultBg],
+  )
+
+  const previewInputBar = useMemo(
+    () => resolveEffectiveChatInputBarForBubble(chatTheme.inputBar, activeBubble),
+    [activeBubble, chatTheme.inputBar],
+  )
+
+  const previewChatTheme = useMemo(
+    () => ({ ...chatTheme, inputBar: previewInputBar }),
+    [chatTheme, previewInputBar],
+  )
+
+  const previewWechatTheme = useMemo(
+    () => resolvePreviewWechatThemeForBubble(wechatTheme, activeBubble),
+    [activeBubble, wechatTheme],
+  )
 
   const bgFill: WxFillStyle =
     bgTarget === 'global'
@@ -1938,6 +2024,23 @@ function ThemePanel({
       '/* - Boolean & enum options live in JSON state (showAvatar, timestampStyle). */',
     ].join('\n')
   }, [theme.fontFamily, wechatTheme])
+
+  const chatSkinExport = useMemo(
+    () =>
+      WECHAT_CHAT_SKIN_EXPORT_UI_ENABLED
+        ? buildWeChatChatSkinExport({
+            wechatTheme,
+            chatTheme,
+            globalFontFamily: theme.fontFamily,
+          })
+        : '',
+    [chatTheme, theme.fontFamily, wechatTheme],
+  )
+
+  const chatSkinAiPrompt = useMemo(
+    () => (WECHAT_CHAT_SKIN_EXPORT_UI_ENABLED ? buildWeChatChatSkinAiPrompt() : ''),
+    [],
+  )
 
   async function onPickLocalImage(file: File | null) {
     if (!file || !pendingImage) return
@@ -3037,112 +3140,67 @@ function ThemePanel({
 
                   <div className="rounded-[18px] border p-3" style={{ borderColor: 'var(--wx-border)', background: 'var(--wx-surface)' }}>
                     <p className="text-[12px] font-medium" style={{ color: 'var(--wx-text)' }}>
-                      预览
+                      气泡模版
                     </p>
-                    {/* 最初版本的预览结构：时间戳 + 双方气泡 + 头像 */}
                     <div className="mt-3">
-                      {wechatTheme.timestampStyle === 'hidden' ? null : (
-                        <div className="flex justify-center">
-                          <span
-                            className="rounded-full px-3 py-1 text-[12px]"
-                            style={{
-                              color: 'var(--wx-timestamp-text)',
-                              background: 'rgba(0,0,0,0.03)',
-                              lineHeight: 1.1,
-                            }}
-                          >
-                            <span style={{ fontFamily: 'var(--wx-font)' }}>今天&nbsp;</span>
-                            <span
-                              style={{
-                                fontFamily: 'var(--wx-num-font)',
-                                fontVariantNumeric: 'tabular-nums lining-nums',
-                                fontFeatureSettings: '"tnum" 1, "lnum" 1',
-                                display: 'inline-block',
-                              }}
-                            >
-                              09:41
-                            </span>
-                          </span>
-                        </div>
-                      )}
-
-                      <div className={wechatTheme.timestampStyle === 'hidden' ? '' : 'mt-4'}>
-                        <WeChatMessageBubbleRow
-                          messageText="这是对方气泡预览：低饱和、留白、干净。"
-                          isSelf={false}
-                          bubble={activeBubble}
-                          showAvatar={activeBubble.showAvatar}
-                          showBubbleTail={activeBubble.showBubbleTail && activeBubble.showAvatar}
-                          variant="preview"
-                        />
-                      </div>
-
-                      <div className="mt-2">
-                        <WeChatMessageBubbleRow
-                          messageText={
-                            activeBubble.mergeConsecutiveAvatarGroup && activeBubble.showAvatar
-                              ? '连续对方消息：本行无头像，左侧占位与首条气泡对齐。'
-                              : '连续对方消息：每条均显示头像。'
-                          }
-                          isSelf={false}
-                          bubble={activeBubble}
-                          showAvatar={activeBubble.showAvatar}
-                          showBubbleTail={activeBubble.showBubbleTail && activeBubble.showAvatar}
-                          variant="preview"
-                          showAvatarColumn={
-                            !(activeBubble.mergeConsecutiveAvatarGroup && activeBubble.showAvatar)
-                          }
-                        />
-                      </div>
-
-                      <div className="mt-4">
-                        {activeBubble.mergeConsecutiveAvatarGroup && activeBubble.showAvatar ? (
-                          <>
-                            <WeChatMessageBubbleRow
-                              messageText="这是我方气泡预览：主色弱点缀，圆角克制。（同组首条右侧带头像）"
-                              isSelf
-                              bubble={activeBubble}
-                              showAvatar={activeBubble.showAvatar}
-                              showBubbleTail={activeBubble.showBubbleTail && activeBubble.showAvatar}
-                              variant="preview"
-                            />
-                            <div className="mt-2">
-                              <WeChatMessageBubbleRow
-                                messageText="连续我方消息：本行无头像，右侧占位与首条气泡对齐。"
-                                isSelf
-                                bubble={activeBubble}
-                                showAvatar={activeBubble.showAvatar}
-                                showBubbleTail={activeBubble.showBubbleTail && activeBubble.showAvatar}
-                                variant="preview"
-                                showAvatarColumn={false}
-                              />
-                            </div>
-                          </>
-                        ) : (
-                          <>
-                            <WeChatMessageBubbleRow
-                              messageText="这是我方气泡预览：主色弱点缀，圆角克制。"
-                              isSelf
-                              bubble={activeBubble}
-                              showAvatar={activeBubble.showAvatar}
-                              showBubbleTail={activeBubble.showBubbleTail && activeBubble.showAvatar}
-                              variant="preview"
-                            />
-                            <div className="mt-2">
-                              <WeChatMessageBubbleRow
-                                messageText="连续我方消息：每条均显示头像。"
-                                isSelf
-                                bubble={activeBubble}
-                                showAvatar={activeBubble.showAvatar}
-                                showBubbleTail={activeBubble.showBubbleTail && activeBubble.showAvatar}
-                                variant="preview"
-                              />
-                            </div>
-                          </>
-                        )}
-                      </div>
+                      <WeChatBubblePresetCards
+                        presets={WECHAT_BUBBLE_PRESETS}
+                        activeBubble={activeBubble}
+                        selfBubbleText={wechatTheme.selfBubbleText}
+                        otherBubbleText={wechatTheme.otherBubbleText}
+                        wechatTheme={wechatTheme}
+                        bubbleScope={bubbleScope}
+                        onApply={applyBubblePreset}
+                      />
                     </div>
                   </div>
+
+                  <div className="rounded-[18px] border p-3" style={{ borderColor: 'var(--wx-border)', background: 'var(--wx-surface)' }}>
+                    <p className="text-[12px] font-medium" style={{ color: 'var(--wx-text)' }}>
+                      预览
+                    </p>
+                    <p className="mt-1 text-[11px] leading-relaxed" style={{ color: 'var(--wx-text-muted)' }}>
+                      对照文字气泡、顶栏、输入栏、红包、转账、语音与位置卡片；切换上方模版或调整颜色后可即时查看。
+                    </p>
+                    <WeChatChatSkinPreviewPanel
+                      wechatTheme={previewWechatTheme}
+                      chatTheme={previewChatTheme}
+                      bubble={activeBubble}
+                      roomBgStyle={bubblePreviewBgStyle}
+                      tailMaskColor={previewTailMaskColor}
+                    />
+                  </div>
+
+                  {WECHAT_CHAT_SKIN_EXPORT_UI_ENABLED ? (
+                  <div className="rounded-[18px] border p-3" style={{ borderColor: 'var(--wx-border)', background: 'var(--wx-surface)' }}>
+                    <p className="text-[12px] font-medium" style={{ color: 'var(--wx-text)' }}>
+                      导出聊天美化模版
+                    </p>
+                    <p className="mt-1 text-[11px] leading-relaxed" style={{ color: 'var(--wx-text-muted)' }}>
+                      复制 AI 提示词后，在文末「需求填写模版」里按区块填空（留空表示不改），整段发给 AI；把返回的 CSS 贴到「外观 → 自定义 CSS」。
+                    </p>
+                    <div className="mt-2 flex flex-wrap gap-2">
+                      <Pressable
+                        onClick={() => downloadTextFile('lumi-wechat-chat-skin.template.css', chatSkinExport)}
+                        className="flex-1 rounded-[14px] border px-3 py-2 text-[12px]"
+                        style={{ borderColor: 'var(--wx-border)', background: 'rgba(0,0,0,0.06)', color: 'var(--wx-text)' }}
+                      >
+                        导出 CSS 模版
+                      </Pressable>
+                      <Pressable
+                        onClick={() => {
+                          void copyTextToClipboard(chatSkinAiPrompt).catch(() => {
+                            window.alert('复制失败，请重试')
+                          })
+                        }}
+                        className="flex-1 rounded-[14px] border px-3 py-2 text-[12px]"
+                        style={{ borderColor: 'var(--wx-border)', background: 'transparent', color: 'var(--wx-text)' }}
+                      >
+                        复制 AI 提示词
+                      </Pressable>
+                    </div>
+                  </div>
+                  ) : null}
 
                   <div className="grid grid-cols-2 gap-3">
                     <div className="rounded-[16px] border p-3" style={{ borderColor: 'var(--wx-border)', background: 'var(--wx-surface)' }}>
@@ -3348,8 +3406,11 @@ function ThemePanel({
                       连续消息头像
                     </p>
                     <p className="mt-1 text-[11px] leading-snug" style={{ color: 'var(--wx-text-muted)' }}>
-                      开启后，同一人连续发送的多条消息仅在<strong>首条</strong>显示头像列；关闭则每条都占位（需「显示头像」为开时在聊天页生效）。
+                      {activeBubbleTailStyle === 'wechat'
+                        ? '微信气泡模板固定为每条消息均显示头像。'
+                        : '开启后，同一人连续发送的多条消息仅在首条显示头像列；关闭则每条都占位（需「显示头像」为开时在聊天页生效）。'}
                     </p>
+                    {activeBubbleTailStyle === 'wechat' ? null : (
                     <div className="mt-2 flex gap-2">
                       <Pressable
                         onClick={() => {
@@ -3382,6 +3443,7 @@ function ThemePanel({
                         每条都显示
                       </Pressable>
                     </div>
+                    )}
                   </div>
 
                   <div className="rounded-[18px] border p-3" style={{ borderColor: 'var(--wx-border)', background: 'var(--wx-surface)' }}>
@@ -3790,9 +3852,15 @@ function WeChatAppInner({ onBack }: Props) {
   }, [])
 
   const openPersonaChatByCharacterId = useCallback((characterId: string) => {
-    const id = characterId.trim()
-    if (!id) return
-    setRoute({ name: 'chat', chat: { kind: 'persona', characterId: id } })
+    const target = resolveWeChatPrivateChatTarget(characterId)
+    if (!target) return
+    const chat: WxActiveChat =
+      target.kind === 'lumi'
+        ? { kind: 'lumi' }
+        : target.kind === 'self'
+          ? { kind: 'self' }
+          : { kind: 'persona', characterId: target.characterId }
+    setRoute({ name: 'chat', chat })
   }, [])
 
   const openGroupChatByGroupId = useCallback((groupId: string) => {
@@ -4023,6 +4091,24 @@ function WeChatAppInner({ onBack }: Props) {
     if (layer.kind === 'group') return wechatGroupPeerCharacterId(layer.groupId)
     return layer.characterId
   }, [wxDockChat])
+
+  const chatActiveBubble = useMemo(() => {
+    const key = activeConversationCharacterId?.trim() ?? ''
+    return key ? bubbleForRole(state.wechatTheme, key) : state.wechatTheme.bubbleGlobal
+  }, [activeConversationCharacterId, state.wechatTheme])
+
+  const chatMessengerHeaderVariant =
+    route.name === 'chat' && chatActiveBubble.bubbleTailStyle
+      ? chatActiveBubble.bubbleTailStyle === 'imessage'
+        ? 'imessage'
+        : chatActiveBubble.bubbleTailStyle === 'telegram'
+          ? 'telegram'
+          : chatActiveBubble.bubbleTailStyle === 'talkmaker'
+            ? 'talkmaker'
+            : 'wechat'
+      : null
+
+  const chatMessengerFontFamily = resolveChatDisplayFontFamily(chatActiveBubble) ?? undefined
 
   const activeChatForRoute = useMemo<WxActiveChat | null>(() => wxDockChat, [wxDockChat])
 
@@ -5777,9 +5863,7 @@ function WeChatAppInner({ onBack }: Props) {
             }
             if (memText) {
               const now = Date.now()
-              const memSettings = await personaDb.getMemorySettings()
-              const triggerMode =
-                memSettings.autoSummaryDefaultMemoryTriggerMode === 'always' ? 'always' : 'keyword'
+              const triggerMode = 'keyword'
               const kwBackup = buildAutoSummaryMemoryKeywordsBackup({
                 memoryTriggerCategory: memParsed.memoryTriggerCategory,
                 memoryTriggerPrecise: memParsed.memoryTriggerPrecise,
@@ -5807,6 +5891,9 @@ function WeChatAppInner({ onBack }: Props) {
                 memoryTriggerEmotionNeed: memParsed.memoryTriggerEmotionNeed,
                 memoryKeywords: kwBackup?.length ? kwBackup : undefined,
               })
+              if (memParsed.timeline) {
+                await persistStoryTimelineFromSummaryDelta(target.characterId, memParsed.timeline, 'private')
+              }
             }
           } catch {
             // 记忆写入失败不影响当前聊天回复
@@ -5853,7 +5940,39 @@ function WeChatAppInner({ onBack }: Props) {
       />
       <div className="relative z-[1] flex min-h-0 flex-1 flex-col">
       <WeChatWelcomeRevealLayer slot="header" className="shrink-0">
-      {hideTabChrome || hideWeChatHeader ? null : (
+      {hideTabChrome || hideWeChatHeader ? null : chatMessengerHeaderVariant ? (
+        <WeChatMessengerChatHeader
+          variant={chatMessengerHeaderVariant}
+          title={chatPeerContact?.remarkName ?? title}
+          avatarUrl={chatPeerContact?.avatarUrl}
+          fontFamily={chatMessengerFontFamily}
+          onBack={() => exitChatToMessages()}
+          onOpenSettings={() => setChatSettingsOpen(true)}
+          onOpenPsycheRadar={() => setPsycheRadarOpen(true)}
+          showPsycheRadar={chatHeaderShowPsycheRadar}
+          backBadgeCount={messagesTabUnreadTotal}
+          showTyping={chatOtherTyping || (chatOpponentRevealPending && !chatOtherTyping)}
+          typingText={route.name === 'chat' && route.chat.kind === 'group' ? '成员正在输入…' : '对方正在输入…'}
+          onCenterClick={() => setChatSettingsOpen(true)}
+          customRight={
+            chatMultiSelectActive ? (
+              <Pressable
+                type="button"
+                aria-label="取消多选"
+                onClick={() => setChatMultiSelectExitSignal((n) => n + 1)}
+                className={
+                  chatMessengerHeaderVariant === 'imessage'
+                    ? 'rounded-[10px] px-2 py-1 text-[15px] active:opacity-60'
+                    : 'rounded-[10px] px-2 py-1 text-[15px] text-[#191919] active:opacity-60'
+                }
+                style={chatMessengerHeaderVariant === 'imessage' ? { color: '#0B93F6' } : undefined}
+              >
+                取消
+              </Pressable>
+            ) : undefined
+          }
+        />
+      ) : (
         <Header
           title={route.name === 'chat' && chatPeerContact ? chatPeerContact.remarkName : title}
           titleSub={route.name === 'chat' && chatPeerContact?.tag ? chatPeerContact.tag : undefined}
@@ -6071,6 +6190,7 @@ function WeChatAppInner({ onBack }: Props) {
                 peerAvatarUrl={chatPeerContact?.avatarUrl}
                 peerNotifyTitle={chatPeerContact?.remarkName ?? '聊天'}
                 chatBackgroundUrl={chatSessionPrefs?.bg || undefined}
+                chatRoomDefaultBg={wechatTheme.chatRoomDefaultBg}
                 danmakuEnabled={chatSessionPrefs?.danmaku ?? false}
                 showGroupMemberNicknameInChat={chatSessionPrefs?.showGroupMemberNicknameInChat !== false}
                 showGroupRankBadgesInChat={!!chatSessionPrefs?.showGroupRankBadgesInChat}
@@ -6690,6 +6810,7 @@ function WeChatAppInner({ onBack }: Props) {
                 playerIdentityId={playerIdentityId}
                 playerDisplayName={state.profile.displayName || '我'}
                 currentWechatAccountId={currentAccountId ?? undefined}
+                apiConfig={apiConfig}
                 onBack={() => setRoute({ name: 'tabs', tab: 'profile' })}
               />
             </motion.div>

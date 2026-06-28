@@ -1,5 +1,3 @@
-import { motion } from 'framer-motion'
-
 export type MemoryApiMode = 'main' | 'dedicated'
 
 const OPTIONS: ReadonlyArray<{ id: MemoryApiMode; label: string }> = [
@@ -11,14 +9,11 @@ export function MemoryApiModeCapsule({
   value,
   onChange,
   disabled,
-  layoutId,
   'aria-label': ariaLabel = '接口来源',
 }: {
   value: MemoryApiMode
   onChange: (mode: MemoryApiMode) => void
   disabled?: boolean
-  /** 同一页多个胶囊时需不同 layoutId，避免滑动指示器串位 */
-  layoutId: string
   'aria-label'?: string
 }) {
   return (
@@ -42,11 +37,7 @@ export function MemoryApiModeCapsule({
             } ${disabled ? 'cursor-not-allowed' : ''}`}
           >
             {active ? (
-              <motion.span
-                layoutId={layoutId}
-                className="absolute inset-0 rounded-full bg-white shadow-sm"
-                transition={{ type: 'spring', stiffness: 420, damping: 34 }}
-              />
+              <span className="absolute inset-0 rounded-full bg-white shadow-sm" aria-hidden />
             ) : null}
             <span className="relative z-10 whitespace-nowrap">{opt.label}</span>
           </button>

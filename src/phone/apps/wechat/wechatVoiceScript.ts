@@ -45,6 +45,13 @@ export function sanitizeVoiceTranscriptDisplay(input: string): string {
     .trim()
 }
 
+/** 无录音时根据台词估算语音时长（约 4 字/秒，1～60 秒） */
+export function estimateVoiceDurationSecFromScript(input: string): number {
+  const plain = sanitizeVoiceTranscriptDisplay(input) || String(input ?? '').trim()
+  if (!plain) return 1
+  return Math.max(1, Math.min(60, Math.ceil(plain.length / 4)))
+}
+
 /** 比较聊天正文/语音转写是否大体重复（用于同轮文字+语音去重） */
 export function normalizeChatContentForCompare(input: string): string {
   return String(input ?? '')

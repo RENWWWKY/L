@@ -7,13 +7,14 @@ import {
   ChevronDown,
   Flame,
   Heart,
+  Save,
   Sparkles,
   User,
   UserRound,
   X,
   Users,
 } from 'lucide-react'
-import { useMemo, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import type { ApiConfig } from '../../api/types'
 import { MEET_MBTI_SIXTEEN } from '../../lumiMeet/meetPersonaPrompt'
 import type { Character, Gender, PlayerIdentity } from './types'
@@ -43,6 +44,12 @@ import {
   PERSONA_AI_SPEECH_STYLE_PRESETS,
   type PersonaAiGenerateForm,
 } from './personaAiGenerateTypes'
+import {
+  clearPersonaAiGenerateFormDraft,
+  loadPersonaAiGenerateFormDraft,
+  savePersonaAiGenerateFormDraft,
+  shouldPersistPersonaAiGenerateForm,
+} from './personaAiGenerateFormPersist'
 import { PlatinumSwitch } from './PlatinumSwitch'
 import { WeChatThemePageBackdrop } from './WeChatThemePageBackdrop'
 
@@ -247,9 +254,18 @@ function countFilledHints(form: PersonaAiGenerateForm): number {
 
 const TOTAL_HINT_SLOTS = 18
 
+function formatSavedAt(ms: number): string {
+  const d = new Date(ms)
+  const hh = String(d.getHours()).padStart(2, '0')
+  const mm = String(d.getMinutes()).padStart(2, '0')
+  return `${hh}:${mm}`
+}
+
 export function PersonaAiGeneratePage({
   draft,
   playerIdentity,
+  playerIdentityId,
+  wechatAccountId,
   apiConfig,
   worldBackgroundPrompt,
   onBack,
@@ -257,6 +273,8 @@ export function PersonaAiGeneratePage({
 }: {
   draft: Character
   playerIdentity: PlayerIdentity | null
+  playerIdentityId: string
+  wechatAccountId?: string | null
   apiConfig: ApiConfig | null
   worldBackgroundPrompt?: string
   onBack: () => void
@@ -280,7 +298,48 @@ export function PersonaAiGeneratePage({
     previousIssueCount?: number
   } | null>(null)
   const [recoveryBusy, setRecoveryBusy] = useState<'complete' | 'fix' | null>(null)
+  const [saveBusy, setSaveBusy] = useState(false)
+  const [savedAt, setSavedAt] = useState<number | null>(null)
+  const [draftDirty, setDraftDirty] = useState(false)
+  const [formHydrated, setFormHydrated] = useState(false)
   const avatarInputRef = useRef<HTMLInputElement>(null)
+  const formRef = useRef(form)
+  formRef.current = form
+  const wechatAccountIdRef = useRef(wechatAccountId)
+  wechatAccountIdRef.current = wechatAccountId
+  const playerIdentityIdRef = useRef(playerIdentityId)
+  playerIdentityIdRef.current = playerIdentityId
+
+  useEffect(() => {
+    let cancelled = false
+    void (async () => {
+      try {
+        const saved = await loadPersonaAiGenerateFormDraft(wechatAccountId, playerIdentityId)
+        if (cancelled || !saved) return
+        setForm(saved.form)
+        setSavedAt(saved.savedAt)
+        setDraftDirty(false)
+      } finally {
+        if (!cancelled) setFormHydrated(true)
+      }
+    })()
+    return () => {
+      cancelled = true
+    }
+  }, [playerIdentityId, wechatAccountId])
+
+  useEffect(() => {
+    return () => {
+      if (!formHydrated) return
+      const f = formRef.current
+      if (!shouldPersistPersonaAiGenerateForm(f)) return
+      void savePersonaAiGenerateFormDraft(
+        wechatAccountIdRef.current,
+        playerIdentityIdRef.current,
+        f,
+      )
+    }
+  }, [formHydrated])
 
   const avatarPreview = useMemo(() => {
     return resolveCharacterAvatarUrl({ avatarUrl: form.avatarUrl }) || ''
@@ -294,7 +353,31 @@ export function PersonaAiGeneratePage({
   const progressPct = Math.min(100, Math.round((filledCount / TOTAL_HINT_SLOTS) * 100))
 
   const patch = (partial: Partial<PersonaAiGenerateForm>) => {
+    setDraftDirty(true)
     setForm((prev) => ({ ...prev, ...partial }))
+  }
+
+  const finishGenerated = (character: Character) => {
+    void clearPersonaAiGenerateFormDraft(wechatAccountId, playerIdentityId)
+    onGenerated(character)
+  }
+
+  const runSaveDraft = async () => {
+    if (saveBusy || generating) return
+    if (!shouldPersistPersonaAiGenerateForm(form)) {
+      window.alert('当前没有可保存的填写内容')
+      return
+    }
+    setSaveBusy(true)
+    try {
+      const at = await savePersonaAiGenerateFormDraft(wechatAccountId, playerIdentityId, form)
+      setSavedAt(at)
+      setDraftDirty(false)
+    } catch {
+      window.alert('保存失败，请稍后重试')
+    } finally {
+      setSaveBusy(false)
+    }
   }
 
   const presetTokens = (value: string) =>
@@ -345,7 +428,7 @@ export function PersonaAiGeneratePage({
         worldBackgroundPrompt,
       })
       if (result.issues.length === 0) {
-        onGenerated(result.character)
+        finishGenerated(result.character)
       } else {
         setRecoveryOffer({ result })
         setError(`生成不完整，有 ${result.issues.length} 项待补全或纠正`)
@@ -390,7 +473,7 @@ export function PersonaAiGeneratePage({
       })
       if (next.issues.length === 0) {
         setRecoveryOffer(null)
-        onGenerated(next.character)
+        finishGenerated(next.character)
       } else {
         setRecoveryOffer({ result: next, previousIssueCount })
         setError(`仍有 ${next.issues.length} 项待处理，可继续补全或纠正`)
@@ -407,7 +490,7 @@ export function PersonaAiGeneratePage({
 
   const adoptPartialDraft = () => {
     if (!recoveryOffer) return
-    onGenerated(recoveryOffer.result.character)
+    finishGenerated(recoveryOffer.result.character)
     setRecoveryOffer(null)
     setError(null)
   }
@@ -963,19 +1046,41 @@ export function PersonaAiGeneratePage({
           className="shrink-0 border-t border-neutral-200/80 bg-[#F5F5F4]/95 px-4 pt-3 backdrop-blur-md"
           style={{ paddingBottom: 'calc(14px + env(safe-area-inset-bottom, 0px))' }}
         >
-          <button
-            type="button"
-            disabled={generating}
-            onClick={() => void runGenerate()}
-            className="mx-auto flex w-full max-w-lg items-center justify-center gap-2 rounded-2xl px-4 py-3.5 text-[15px] font-semibold text-white transition-all duration-200 active:scale-[0.99] disabled:opacity-50"
-            style={{
-              background: 'linear-gradient(180deg, #262626 0%, #171717 100%)',
-              boxShadow: '0 8px 24px rgba(23,23,23,0.18)',
-            }}
-          >
-            <Sparkles className="size-[18px]" strokeWidth={2} />
-            {generating ? '正在生成…' : '开始 AI 生成'}
-          </button>
+          <div className="mx-auto flex w-full max-w-lg flex-col gap-2">
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                disabled={generating || saveBusy}
+                onClick={() => void runSaveDraft()}
+                className="flex shrink-0 items-center justify-center gap-1.5 rounded-2xl border border-neutral-200 bg-white px-4 py-3.5 text-[14px] font-semibold text-neutral-800 transition-all duration-200 active:scale-[0.99] disabled:opacity-50"
+              >
+                <Save className="size-[16px]" strokeWidth={2} />
+                {saveBusy ? '保存中…' : '保存填写'}
+              </button>
+              <button
+                type="button"
+                disabled={generating}
+                onClick={() => void runGenerate()}
+                className="flex min-w-0 flex-1 items-center justify-center gap-2 rounded-2xl px-4 py-3.5 text-[15px] font-semibold text-white transition-all duration-200 active:scale-[0.99] disabled:opacity-50"
+                style={{
+                  background: 'linear-gradient(180deg, #262626 0%, #171717 100%)',
+                  boxShadow: '0 8px 24px rgba(23,23,23,0.18)',
+                }}
+              >
+                <Sparkles className="size-[18px]" strokeWidth={2} />
+                {generating ? '正在生成…' : '开始 AI 生成'}
+              </button>
+            </div>
+            <p className="px-0.5 text-center text-[11px] text-neutral-400">
+              {saveBusy
+                ? '正在写入本地草稿…'
+                : savedAt && !draftDirty
+                  ? `已保存 · ${formatSavedAt(savedAt)}（切换页面后再进入会自动恢复）`
+                  : draftDirty
+                    ? '有未保存修改；离开页面前建议点「保存填写」'
+                    : '填写后可保存草稿，生成成功后会自动清除'}
+            </p>
+          </div>
         </div>
       </div>
 

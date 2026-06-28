@@ -1,3 +1,6 @@
+import { migrateLegacyRootPublicUrl } from '../../../../publicAssetUrl'
+import { repairCharacterAvatarForBundleImport } from '../../../utils/characterAvatarUrl'
+import { parseCharacterProfileImageHistory } from '../wechatCharacterProfileImageHistory'
 import type {
   Character,
   CharacterMemory,
@@ -78,15 +81,17 @@ import {
   normalizeStoredMemoryEmotionNeedList,
   trimMemoryTriggerText,
 } from '../memory/memoryTriggerUtils'
-import { fetchEmbeddingVector, resolveEmbeddingApiCredentials } from '../memory/memoryEmbeddingApi'
-import { migrateLegacyRootPublicUrl } from '../../../../publicAssetUrl'
-import { repairCharacterAvatarForBundleImport } from '../../../utils/characterAvatarUrl'
-import { parseCharacterProfileImageHistory } from '../wechatCharacterProfileImageHistory'
-import { DEFAULT_GROUP_ROBOT_AVATAR_URL, findGroupMember } from '../groupChatUtils'
-import { pickRandomWechatDefaultAvatar } from '../wechatDefaultAvatars'
+import { fetchEmbeddingVectorUnified } from '../memory/memoryEmbeddingProvider'
+import { appendContextVectorRecallToMemoryText } from '../memory/memoryContextVectorRecall'
+import {
+  type MemoryContextVectorEntry,
+  computeContextVectorTextHash,
+} from '../memory/memoryContextVectorTypes'
 import {
   backfillMemoryEmbeddingsBestEffort,
+  filterKeywordHitsByVectorConfirm,
   isMemoryVectorRecallEnabled,
+  memoryKeywordHitVectorSim,
   MEMORY_VECTOR_MIN_SIM,
   MEMORY_VECTOR_TOP_GROUP,
   MEMORY_VECTOR_TOP_PRIVATE,
@@ -95,6 +100,15 @@ import {
   resolveMemoryEmbeddingModelId,
   type MemoryVectorRecallOpts,
 } from '../memory/memoryVectorRecall'
+import {
+  computeStoryTimelineRowTextHash,
+  normalizeStoryTimelineRowTitle,
+  STORY_TIMELINE_COSTUME_DESC_MAX,
+  STORY_TIMELINE_ROWS_CAP,
+  type StoryTimelinePlotRow,
+  type StoryTimelineState,
+} from '../memory/storyTimelineTypes'
+import { loadStoryTimelinePromptBlock } from '../memory/storyTimelinePersist'
 import { isCharacterLinkedMemory, isCharacterOwnPrivateMemory } from '../memory/memoryCharacterScope'
 import {
   buildLinkedMemoryIdDisplayNameMap,
@@ -107,7 +121,12 @@ import {
   resolveMemoryLineRelation,
   type MemoryLineRelation,
 } from '../wechatMemoryLineScope'
-import { parseGroupRobotTriggerWordInput } from '../groupChatUtils'
+import {
+  DEFAULT_GROUP_ROBOT_AVATAR_URL,
+  findGroupMember,
+  parseGroupRobotTriggerWordInput,
+} from '../groupChatUtils'
+import { pickRandomWechatDefaultAvatar } from '../wechatDefaultAvatars'
 import { formatWeChatMessageListTimestamp as formatWeChatMessageListTimestampFn } from './chatMessageTimestampFormat'
 import { emptyWorldBackgroundSettings, formatTimelineEventDate } from './types'
 import { DEFAULT_WORLD_BACKGROUND_ID } from './worldBackgroundConstants'
@@ -162,7 +181,7 @@ import { characterBelongsToWechatAccount, stampWechatAccountOwner } from '../wec
 import { WECHAT_USER_PROFILE_KV_KEY, WECHAT_USER_PROFILE_KV_KEY_LEGACY } from '../wechatProfileTypes'
 
 const DB_NAME = 'wechat-personas-v1'
-const DB_VERSION = 26
+const DB_VERSION = 29
 
 /** 复合索引：按会话 + 时间戳范围查询（日历、按日跳转） */
 const CHAT_MSG_INDEX_CONV_TS = 'conversationKey_timestamp'
@@ -197,6 +216,9 @@ const FAVORITES_STORE = 'favorites'
 const HEART_WHISPER_STORE = 'heartWhispers'
 const GROUP_PSYCHE_STORE = 'groupPsyche'
 const INDEXED_TRASH_STORE = 'indexedTrash'
+const STORY_TIMELINE_STORE = 'storyTimelineState'
+const STORY_TIMELINE_ROWS_STORE = 'storyTimelineRows'
+const MEMORY_CONTEXT_VECTOR_STORE = 'memoryContextVectors'
 
 /** 与 DatingContext / loadOfflineDatingPlotsForWechatPrompt 一致（IndexedDB phoneKv） */
 const WECHAT_DATING_ARCHIVES_KV_KEY = 'wechat-dating-archives-v1'
@@ -799,6 +821,20 @@ function normalizeCharacter(input: unknown): Stored {
   }
 }
 
+/** 读库容错：单条损坏/缺依赖时不拖死整个人设列表 */
+function tryNormalizeCharacter(input: unknown): Stored | null {
+  try {
+    return normalizeCharacter(input)
+  } catch (e) {
+    const id =
+      input && typeof input === 'object' && typeof (input as { id?: unknown }).id === 'string'
+        ? (input as { id: string }).id
+        : '?'
+    console.warn('[persona-db] normalizeCharacter failed for', id, e)
+    return null
+  }
+}
+
 function clampPct(n: number): number {
   if (!Number.isFinite(n)) return 50
   return Math.min(100, Math.max(0, n))
@@ -1002,6 +1038,11 @@ function normalizeWeChatChatMessage(input: unknown): WeChatChatMessage | null {
     })
     .filter((x): x is { base64: string; type: 'image/jpeg' | 'image/png' | 'image/gif' | 'image/webp' } => !!x)
   const timestamp = typeof m.timestamp === 'number' ? m.timestamp : Date.now()
+  const systemRecordedAt =
+    typeof (m as { systemRecordedAt?: unknown }).systemRecordedAt === 'number' &&
+    Number.isFinite((m as { systemRecordedAt: number }).systemRecordedAt)
+      ? Math.floor((m as { systemRecordedAt: number }).systemRecordedAt)
+      : undefined
   const isRead = typeof m.isRead === 'boolean' ? m.isRead : false
   const conversationKey =
     typeof m.conversationKey === 'string' && m.conversationKey.trim()
@@ -1376,6 +1417,7 @@ function normalizeWeChatChatMessage(input: unknown): WeChatChatMessage | null {
     recallTimestamp,
     recalledBy,
     timestamp,
+    ...(systemRecordedAt != null ? { systemRecordedAt } : {}),
     isRead,
     conversationKey,
     quiet,
@@ -1768,6 +1810,235 @@ type PlayerLinksRecord = {
   updatedAt: number
 }
 
+function normalizeStoryTimelineState(input: unknown): StoryTimelineState | null {
+  const r = (input ?? {}) as Partial<StoryTimelineState>
+  const cid = typeof r.characterId === 'string' ? r.characterId.trim() : ''
+  if (!cid) return null
+  const costumes = Array.isArray(r.costumes)
+    ? (r.costumes as unknown[])
+        .map((x) => {
+          const row = (x ?? {}) as { character?: unknown; outfit?: unknown }
+          const character = String(row.character ?? '').trim().slice(0, 64)
+          const outfit = String(row.outfit ?? '').trim().slice(0, STORY_TIMELINE_COSTUME_DESC_MAX)
+          if (!character || !outfit) return null
+          return { character, outfit }
+        })
+        .filter((x): x is { character: string; outfit: string } => !!x)
+        .slice(0, 32)
+    : []
+  const items = Array.isArray(r.items)
+    ? (r.items as unknown[])
+        .map((x) => {
+          const row = (x ?? {}) as { name?: unknown; note?: unknown; tier?: unknown }
+          const name = String(row.name ?? '').trim().slice(0, 80)
+          if (!name) return null
+          const note = String(row.note ?? '').trim().slice(0, 120)
+          const tierRaw = String(row.tier ?? '').trim().toLowerCase()
+          const tier =
+            tierRaw === 'important' || tierRaw === 'critical' || tierRaw === 'normal'
+              ? (tierRaw as 'normal' | 'important' | 'critical')
+              : undefined
+          return {
+            name,
+            ...(note ? { note } : {}),
+            ...(tier ? { tier } : {}),
+          }
+        })
+        .filter((x): x is NonNullable<typeof x> => !!x)
+        .slice(0, 40)
+    : []
+  const foreshadows = Array.isArray(r.foreshadows)
+    ? (r.foreshadows as unknown[])
+        .map((x) => {
+          const row = (x ?? {}) as { text?: unknown; status?: unknown }
+          const text = String(row.text ?? '').trim().slice(0, 160)
+          if (!text) return null
+          const st = String(row.status ?? '').trim().toLowerCase()
+          const status: 'open' | 'resolved' = st === 'resolved' ? 'resolved' : 'open'
+          return { text, status }
+        })
+        .filter((x): x is { text: string; status: 'open' | 'resolved' } => !!x)
+        .slice(0, 24)
+    : []
+  const recentEvents = Array.isArray(r.recentEvents)
+    ? (r.recentEvents as unknown[])
+        .map((x) => {
+          const row = (x ?? {}) as Partial<StoryTimelineState['recentEvents'][number]>
+          const eventSummary = String(row.eventSummary ?? '').trim().slice(0, 160)
+          const id = typeof row.id === 'string' && row.id.trim() ? row.id.trim() : `evt-${Date.now()}`
+          if (!eventSummary) return null
+          const recordedAt =
+            typeof row.recordedAt === 'number' && Number.isFinite(row.recordedAt)
+              ? Math.floor(row.recordedAt)
+              : Date.now()
+          return {
+            id,
+            eventSummary,
+            recordedAt,
+            ...(typeof row.storyDay === 'string' && row.storyDay.trim()
+              ? { storyDay: row.storyDay.trim().slice(0, 48) }
+              : {}),
+            ...(typeof row.storyTime === 'string' && row.storyTime.trim()
+              ? { storyTime: row.storyTime.trim().slice(0, 48) }
+              : {}),
+            ...(typeof row.relativeTime === 'string' && row.relativeTime.trim()
+              ? { relativeTime: row.relativeTime.trim().slice(0, 48) }
+              : {}),
+            ...(typeof row.location === 'string' && row.location.trim()
+              ? { location: row.location.trim().slice(0, 120) }
+              : {}),
+            ...(Array.isArray(row.charactersPresent) && row.charactersPresent.length
+              ? {
+                  charactersPresent: (row.charactersPresent as unknown[])
+                    .map((c) => String(c ?? '').trim())
+                    .filter(Boolean)
+                    .slice(0, 12),
+                }
+              : {}),
+            ...(row.sourceScope === 'private' ||
+            row.sourceScope === 'offline' ||
+            row.sourceScope === 'meet' ||
+            row.sourceScope === 'group' ||
+            row.sourceScope === 'linked'
+              ? { sourceScope: row.sourceScope }
+              : {}),
+          }
+        })
+        .filter((x): x is NonNullable<typeof x> => !!x)
+        .slice(0, 16)
+    : []
+  const updatedAt =
+    typeof r.updatedAt === 'number' && Number.isFinite(r.updatedAt) ? Math.floor(r.updatedAt) : Date.now()
+  return {
+    characterId: cid,
+    updatedAt,
+    ...(typeof r.currentStoryDay === 'string' && r.currentStoryDay.trim()
+      ? { currentStoryDay: r.currentStoryDay.trim().slice(0, 48) }
+      : {}),
+    ...(typeof r.currentStoryTime === 'string' && r.currentStoryTime.trim()
+      ? { currentStoryTime: r.currentStoryTime.trim().slice(0, 48) }
+      : {}),
+    ...(typeof r.currentLocation === 'string' && r.currentLocation.trim()
+      ? { currentLocation: r.currentLocation.trim().slice(0, 120) }
+      : {}),
+    ...(Array.isArray(r.charactersPresent) && r.charactersPresent.length
+      ? {
+          charactersPresent: (r.charactersPresent as unknown[])
+            .map((c) => String(c ?? '').trim())
+            .filter(Boolean)
+            .slice(0, 12),
+        }
+      : {}),
+    costumes,
+    items,
+    foreshadows: foreshadows.filter((f) => f.status === 'open'),
+    recentEvents,
+    ...(typeof r.manualAnchorBlock === 'string' && r.manualAnchorBlock.trim()
+      ? { manualAnchorBlock: r.manualAnchorBlock.trim().slice(0, 8000) }
+      : {}),
+  }
+}
+
+function normalizeStoryTimelinePlotRow(input: unknown): StoryTimelinePlotRow | null {
+  const r = (input ?? {}) as Partial<StoryTimelinePlotRow>
+  const id = typeof r.id === 'string' ? r.id.trim() : ''
+  const characterId = typeof r.characterId === 'string' ? r.characterId.trim() : ''
+  const rowText = typeof r.rowText === 'string' ? r.rowText.trim() : ''
+  if (!id || !characterId || !rowText) return null
+  const recordedAt =
+    typeof r.recordedAt === 'number' && Number.isFinite(r.recordedAt) ? Math.floor(r.recordedAt) : Date.now()
+  const sourceScope =
+    r.sourceScope === 'private' ||
+    r.sourceScope === 'offline' ||
+    r.sourceScope === 'meet' ||
+    r.sourceScope === 'group' ||
+    r.sourceScope === 'linked'
+      ? r.sourceScope
+      : 'offline'
+  const textHash =
+    typeof r.textHash === 'string' && r.textHash.trim()
+      ? r.textHash.trim().slice(0, 32)
+      : computeStoryTimelineRowTextHash(rowText)
+  const embeddingRaw = r.embedding
+  const embedding: number[] = []
+  if (Array.isArray(embeddingRaw)) {
+    for (const x of embeddingRaw) {
+      const n = typeof x === 'number' ? x : Number(x)
+      if (Number.isFinite(n)) embedding.push(n)
+    }
+  }
+  return {
+    id,
+    characterId,
+    recordedAt,
+    sourceScope,
+    rowText: rowText.slice(0, 4000),
+    textHash,
+    ...(typeof r.plotId === 'string' && r.plotId.trim() ? { plotId: r.plotId.trim().slice(0, 64) } : {}),
+    ...(typeof r.rowTitle === 'string' && r.rowTitle.trim()
+      ? { rowTitle: normalizeStoryTimelineRowTitle(r.rowTitle) }
+      : {}),
+    ...(embedding.length >= 8 ? { embedding } : {}),
+    ...(r.embeddingProvider === 'api' || r.embeddingProvider === 'local'
+      ? { embeddingProvider: r.embeddingProvider }
+      : {}),
+    ...(typeof r.embeddingModelId === 'string' && r.embeddingModelId.trim()
+      ? { embeddingModelId: r.embeddingModelId.trim().slice(0, 160) }
+      : {}),
+    ...(typeof r.embeddingHash === 'string' && r.embeddingHash.trim()
+      ? { embeddingHash: r.embeddingHash.trim().slice(0, 32) }
+      : {}),
+  }
+}
+
+function normalizeMemoryContextVectorEntry(input: unknown): MemoryContextVectorEntry | null {
+  const r = (input ?? {}) as Partial<MemoryContextVectorEntry>
+  const id = typeof r.id === 'string' ? r.id.trim() : ''
+  const characterId = typeof r.characterId === 'string' ? r.characterId.trim() : ''
+  const sourceKey = typeof r.sourceKey === 'string' ? r.sourceKey.trim() : ''
+  const text = typeof r.text === 'string' ? r.text.trim() : ''
+  if (!id || !characterId || !sourceKey || !text) return null
+  const sourceKind =
+    r.sourceKind === 'private_chat' || r.sourceKind === 'offline_plot' || r.sourceKind === 'meet_chat'
+      ? r.sourceKind
+      : 'private_chat'
+  const embeddingRaw = (r as { embedding?: unknown }).embedding
+  const embedding: number[] = []
+  if (Array.isArray(embeddingRaw)) {
+    for (const x of embeddingRaw) {
+      const n = typeof x === 'number' ? x : Number(x)
+      if (Number.isFinite(n)) embedding.push(n)
+    }
+  }
+  if (embedding.length < 8) return null
+  const textHash =
+    typeof r.textHash === 'string' && r.textHash.trim()
+      ? r.textHash.trim().slice(0, 32)
+      : computeContextVectorTextHash(text)
+  const embeddingProvider = r.embeddingProvider === 'api' ? 'api' : 'local'
+  const embeddingModelId =
+    typeof r.embeddingModelId === 'string' && r.embeddingModelId.trim()
+      ? r.embeddingModelId.trim().slice(0, 160)
+      : 'unknown'
+  const updatedAt =
+    typeof r.updatedAt === 'number' && Number.isFinite(r.updatedAt) ? Math.floor(r.updatedAt) : Date.now()
+  return {
+    id,
+    characterId,
+    sourceKind,
+    sourceKey,
+    text: text.slice(0, 4000),
+    textHash,
+    embedding,
+    embeddingProvider,
+    embeddingModelId,
+    ...(typeof r.messageTimestamp === 'number' && Number.isFinite(r.messageTimestamp)
+      ? { messageTimestamp: Math.floor(r.messageTimestamp) }
+      : {}),
+    updatedAt,
+  }
+}
+
 function normalizeCharacterMemory(input: unknown): CharacterMemory | null {
   const m = (input ?? {}) as Partial<CharacterMemory>
   if (typeof m.id !== 'string' || typeof m.characterId !== 'string') return null
@@ -2025,6 +2296,15 @@ function normalizeMemorySettingsRow(input: unknown): MemorySettingsRow {
   const memCollRaw = (r as { memoryVectorCollection?: unknown }).memoryVectorCollection
   const memoryVectorCollection: MemorySettingsRow['memoryVectorCollection'] =
     typeof memCollRaw === 'string' && memCollRaw.trim() ? memCollRaw.trim().slice(0, 128) : undefined
+  const embedModeRaw = (r as { memoryEmbeddingProviderMode?: unknown }).memoryEmbeddingProviderMode
+  const memoryEmbeddingProviderMode: MemorySettingsRow['memoryEmbeddingProviderMode'] =
+    embedModeRaw === 'api' || embedModeRaw === 'local' || embedModeRaw === 'auto' ? embedModeRaw : undefined
+  const localModelRaw = (r as { memoryLocalEmbeddingModelId?: unknown }).memoryLocalEmbeddingModelId
+  const memoryLocalEmbeddingModelId: MemorySettingsRow['memoryLocalEmbeddingModelId'] =
+    typeof localModelRaw === 'string' && localModelRaw.trim() ? localModelRaw.trim().slice(0, 160) : undefined
+  const ctxVecRaw = (r as { memoryContextVectorRecallEnabled?: unknown }).memoryContextVectorRecallEnabled
+  const memoryContextVectorRecallEnabled: MemorySettingsRow['memoryContextVectorRecallEnabled'] =
+    ctxVecRaw === false ? false : ctxVecRaw === true ? true : undefined
   const memSummaryUrlRaw = (r as { memorySummaryApiUrl?: unknown }).memorySummaryApiUrl
   const memorySummaryApiUrl: MemorySettingsRow['memorySummaryApiUrl'] =
     typeof memSummaryUrlRaw === 'string' && memSummaryUrlRaw.trim()
@@ -2049,6 +2329,37 @@ function normalizeMemorySettingsRow(input: unknown): MemorySettingsRow {
         : memorySummaryApiUrl?.trim() || memorySummaryApiKey?.trim()
           ? true
           : undefined
+  const memTimelineUrlRaw = (r as { memoryTimelineSummaryApiUrl?: unknown }).memoryTimelineSummaryApiUrl
+  const memoryTimelineSummaryApiUrl: MemorySettingsRow['memoryTimelineSummaryApiUrl'] =
+    typeof memTimelineUrlRaw === 'string' && memTimelineUrlRaw.trim()
+      ? memTimelineUrlRaw.trim().slice(0, 512)
+      : undefined
+  const memTimelineKeyRaw = (r as { memoryTimelineSummaryApiKey?: unknown }).memoryTimelineSummaryApiKey
+  const memoryTimelineSummaryApiKey: MemorySettingsRow['memoryTimelineSummaryApiKey'] =
+    typeof memTimelineKeyRaw === 'string' && memTimelineKeyRaw.trim()
+      ? memTimelineKeyRaw.trim().slice(0, 2048)
+      : undefined
+  const memTimelineModelRaw = (r as { memoryTimelineSummaryModelId?: unknown }).memoryTimelineSummaryModelId
+  const memoryTimelineSummaryModelId: MemorySettingsRow['memoryTimelineSummaryModelId'] =
+    typeof memTimelineModelRaw === 'string' && memTimelineModelRaw.trim()
+      ? memTimelineModelRaw.trim().slice(0, 120)
+      : undefined
+  const memTimelineDedicatedRaw = (r as { memoryTimelineSummaryUseDedicatedApi?: unknown })
+    .memoryTimelineSummaryUseDedicatedApi
+  const memoryTimelineSummaryUseDedicatedApi: MemorySettingsRow['memoryTimelineSummaryUseDedicatedApi'] =
+    memTimelineDedicatedRaw === true
+      ? true
+      : memTimelineDedicatedRaw === false
+        ? false
+        : memoryTimelineSummaryApiUrl?.trim() || memoryTimelineSummaryApiKey?.trim()
+          ? true
+          : undefined
+  const rowPerRoundRaw = (r as { memoryRowPerRoundMode?: unknown }).memoryRowPerRoundMode
+  const memoryRowPerRoundMode: MemorySettingsRow['memoryRowPerRoundMode'] =
+    rowPerRoundRaw === false ? false : rowPerRoundRaw === true ? true : undefined
+  const wbPerRoundRaw = (r as { worldBookAfterPerRoundSyncEnabled?: unknown }).worldBookAfterPerRoundSyncEnabled
+  const worldBookAfterPerRoundSyncEnabled: MemorySettingsRow['worldBookAfterPerRoundSyncEnabled'] =
+    wbPerRoundRaw === false ? false : wbPerRoundRaw === true ? true : undefined
   const linkedMemRaw = (r as { linkedMemoryAutoSummaryEnabled?: unknown }).linkedMemoryAutoSummaryEnabled
   const linkedMemoryAutoSummaryEnabled: MemorySettingsRow['linkedMemoryAutoSummaryEnabled'] =
     linkedMemRaw === false ? false : linkedMemRaw === true ? true : undefined
@@ -2135,10 +2446,19 @@ function normalizeMemorySettingsRow(input: unknown): MemorySettingsRow {
     memoryEmbeddingApiUrl,
     memoryEmbeddingApiKey,
     memoryVectorCollection,
+    memoryEmbeddingProviderMode,
+    memoryLocalEmbeddingModelId,
+    memoryContextVectorRecallEnabled,
     memorySummaryUseDedicatedApi,
     memorySummaryApiUrl,
     memorySummaryApiKey,
     memorySummaryModelId,
+    memoryTimelineSummaryUseDedicatedApi,
+    memoryTimelineSummaryApiUrl,
+    memoryTimelineSummaryApiKey,
+    memoryTimelineSummaryModelId,
+    memoryRowPerRoundMode,
+    worldBookAfterPerRoundSyncEnabled,
     aiRoundCountByConversation:
       Object.keys(aiRoundCountByConversation).length > 0 ? aiRoundCountByConversation : undefined,
     summaryCursorTimestampByConversation:
@@ -2444,6 +2764,19 @@ function openDb(): Promise<IDBDatabase> {
         const gs = db.createObjectStore(CROSS_BINDING_GRAPH_LAYOUT_STORE, { keyPath: 'id' })
         gs.createIndex('anchorType', 'anchorType', { unique: false })
         gs.createIndex('anchorId', 'anchorId', { unique: false })
+      }
+      if (!db.objectStoreNames.contains(STORY_TIMELINE_STORE)) {
+        db.createObjectStore(STORY_TIMELINE_STORE, { keyPath: 'characterId' })
+      }
+      if (!db.objectStoreNames.contains(STORY_TIMELINE_ROWS_STORE)) {
+        const tr = db.createObjectStore(STORY_TIMELINE_ROWS_STORE, { keyPath: 'id' })
+        tr.createIndex('characterId', 'characterId', { unique: false })
+        tr.createIndex('recordedAt', 'recordedAt', { unique: false })
+      }
+      if (!db.objectStoreNames.contains(MEMORY_CONTEXT_VECTOR_STORE)) {
+        const cv = db.createObjectStore(MEMORY_CONTEXT_VECTOR_STORE, { keyPath: 'id' })
+        cv.createIndex('characterId', 'characterId', { unique: false })
+        cv.createIndex('updatedAt', 'updatedAt', { unique: false })
       }
     }
     req.onsuccess = () => resolve(req.result)
@@ -2784,7 +3117,7 @@ export class PersonaDb {
     })
     await txDone(tx)
     db.close()
-    const all = res.map(normalizeCharacter).sort((a, b) => (b.updatedAt ?? 0) - (a.updatedAt ?? 0))
+    const all = res.map(tryNormalizeCharacter).filter((x): x is Stored => !!x).sort((a, b) => (b.updatedAt ?? 0) - (a.updatedAt ?? 0))
     const acc = wechatAccountId?.trim()
     if (!acc) return all
     return all.filter((row) => row.wechatAccountId?.trim() === acc)
@@ -2801,7 +3134,7 @@ export class PersonaDb {
     })
     await txDone(tx)
     db.close()
-    return res ? normalizeCharacter(res) : null
+    return res ? tryNormalizeCharacter(res) : null
   }
 
   /** 读取玩家身份；若指定微信账号且归属不一致则返回 null（防多账号串读） */
@@ -3087,7 +3420,7 @@ export class PersonaDb {
     })
     await txDone(tx)
     db.close()
-    return res.map(normalizeCharacter).sort((a, b) => (b.updatedAt ?? 0) - (a.updatedAt ?? 0))
+    return res.map(tryNormalizeCharacter).filter((x): x is Stored => !!x).sort((a, b) => (b.updatedAt ?? 0) - (a.updatedAt ?? 0))
   }
 
   /** 仅主角/独立角色（人脉 NPC、玩家身份行不在列表展示） */
@@ -3131,10 +3464,20 @@ export class PersonaDb {
     }
   }
 
-  /** 按各马甲通讯录引用为无归属旧人设补 wechatAccountId；未被任何通讯录引用时回落 bundle 首账号 */
+  /**
+   * 按通讯录归属补全 / 修复人设 wechatAccountId。
+   * 导入 .lumi 后常见：IndexedDB 有人设，但 wechatAccountId 为空或指向已不存在的马甲 → 名册与聊天均读不出。
+   */
   async attachOrphanCharactersByContactOwnership(bundle: {
     accounts: { accountId: string; personaContacts: { characterId: string }[] }[]
-  }): Promise<void> {
+    currentAccountId?: string
+  }): Promise<number> {
+    const validAccounts = new Set(
+      bundle.accounts.map((a) => a.accountId.trim()).filter(Boolean),
+    )
+    const fallback =
+      bundle.currentAccountId?.trim() || bundle.accounts[0]?.accountId?.trim() || ''
+
     const ownerByChar = new Map<string, string>()
     for (const acc of bundle.accounts) {
       const aid = acc.accountId.trim()
@@ -3144,14 +3487,27 @@ export class PersonaDb {
         if (cid) ownerByChar.set(cid, aid)
       }
     }
-    const fallback = bundle.accounts[0]?.accountId?.trim()
+    for (const [cid, aid] of [...ownerByChar.entries()]) {
+      try {
+        const canon = await resolveCanonicalCharacterId(cid)
+        if (canon && canon !== cid && !ownerByChar.has(canon)) ownerByChar.set(canon, aid)
+      } catch {
+        /* ignore */
+      }
+    }
+
     const all = await this.listCharacters()
+    let fixed = 0
     for (const row of all) {
-      if (row.wechatAccountId?.trim()) continue
+      const current = row.wechatAccountId?.trim() || ''
+      if (current && validAccounts.has(current)) continue
       const owner = ownerByChar.get(row.id) || fallback
       if (!owner) continue
+      if (current === owner) continue
       await this.upsertCharacter(stampWechatAccountOwner(row, owner))
+      fixed++
     }
+    return fixed
   }
 
   /** 将挂在别名角色 id 上的长期记忆迁到全局 canonical（跨马甲共享记忆） */
@@ -3198,7 +3554,7 @@ export class PersonaDb {
     })
     await txDone(tx)
     db.close()
-    return res ? normalizeCharacter(res) : null
+    return res ? tryNormalizeCharacter(res) : null
   }
 
   async getCharacter(id: string): Promise<Stored | null> {
@@ -3521,6 +3877,7 @@ export class PersonaDb {
     }
     await txDone(tx)
     db.close()
+    await this.purgeStoryTimelineDataForCharacterIds([...idsToRemove])
     await unregisterGlobalWechatCharacterForCharacterId(deleteId)
     emitWeChatStorageChanged()
     const { notifyUserWeChatDataClear } = await import('../wechatDataInventoryNotify')
@@ -3656,6 +4013,12 @@ export class PersonaDb {
         },
         { emit: false },
       )
+    } catch {
+      // ignore
+    }
+
+    try {
+      await this.purgeStoryTimelineDataForCharacterIds(ids)
     } catch {
       // ignore
     }
@@ -4280,7 +4643,14 @@ export class PersonaDb {
     const { notifyPeerTitle, quiet, ...msgRow } = row
     const conversationKey =
       msgRow.conversationKey?.trim() || wechatConversationKey(msgRow.characterId, msgRow.playerIdentityId)
-    const normalized = normalizeWeChatChatMessage({ ...msgRow, conversationKey })
+    const normalized = normalizeWeChatChatMessage({
+      ...msgRow,
+      conversationKey,
+      systemRecordedAt:
+        typeof msgRow.systemRecordedAt === 'number' && Number.isFinite(msgRow.systemRecordedAt)
+          ? Math.floor(msgRow.systemRecordedAt)
+          : Date.now(),
+    })
     if (!normalized) return
     const tx = db.transaction(CHAT_MSG_STORE, 'readwrite')
     tx.objectStore(CHAT_MSG_STORE).put(normalized)
@@ -5692,6 +6062,349 @@ export class PersonaDb {
     if (opts?.emit !== false) emitWeChatStorageChanged()
   }
 
+  async getStoryTimelineState(characterId: string): Promise<StoryTimelineState | null> {
+    const cid = characterId.trim()
+    if (!cid) return null
+    const db = await openDb()
+    if (!db.objectStoreNames.contains(STORY_TIMELINE_STORE)) {
+      db.close()
+      return null
+    }
+    const tx = db.transaction(STORY_TIMELINE_STORE, 'readonly')
+    const req = tx.objectStore(STORY_TIMELINE_STORE).get(cid)
+    const res = await new Promise<unknown>((resolve, reject) => {
+      req.onsuccess = () => resolve(req.result)
+      req.onerror = () => reject(req.error ?? new Error('get storyTimelineState'))
+    })
+    await txDone(tx)
+    db.close()
+    return normalizeStoryTimelineState(res)
+  }
+
+  async listAllStoryTimelineStates(): Promise<StoryTimelineState[]> {
+    const db = await openDb()
+    if (!db.objectStoreNames.contains(STORY_TIMELINE_STORE)) {
+      db.close()
+      return []
+    }
+    const tx = db.transaction(STORY_TIMELINE_STORE, 'readonly')
+    const req = tx.objectStore(STORY_TIMELINE_STORE).getAll()
+    const rows = await new Promise<unknown[]>((resolve, reject) => {
+      req.onsuccess = () => resolve(Array.isArray(req.result) ? req.result : [])
+      req.onerror = () => reject(req.error ?? new Error('listAll storyTimelineState'))
+    })
+    await txDone(tx)
+    db.close()
+    return rows
+      .map((r) => normalizeStoryTimelineState(r))
+      .filter((x): x is StoryTimelineState => !!x)
+  }
+
+  async listAllStoryTimelinePlotRows(): Promise<StoryTimelinePlotRow[]> {
+    const db = await openDb()
+    if (!db.objectStoreNames.contains(STORY_TIMELINE_ROWS_STORE)) {
+      db.close()
+      return []
+    }
+    const tx = db.transaction(STORY_TIMELINE_ROWS_STORE, 'readonly')
+    const req = tx.objectStore(STORY_TIMELINE_ROWS_STORE).getAll()
+    const rows = await new Promise<unknown[]>((resolve, reject) => {
+      req.onsuccess = () => resolve(Array.isArray(req.result) ? req.result : [])
+      req.onerror = () => reject(req.error ?? new Error('listAll storyTimelineRows'))
+    })
+    await txDone(tx)
+    db.close()
+    return rows
+      .map((r) => normalizeStoryTimelinePlotRow(r))
+      .filter((x): x is StoryTimelinePlotRow => !!x)
+      .sort((a, b) => a.recordedAt - b.recordedAt)
+  }
+
+  async putStoryTimelineState(row: StoryTimelineState): Promise<void> {
+    const normalized = normalizeStoryTimelineState(row)
+    if (!normalized) return
+    const db = await openDb()
+    if (!db.objectStoreNames.contains(STORY_TIMELINE_STORE)) {
+      db.close()
+      return
+    }
+    const tx = db.transaction(STORY_TIMELINE_STORE, 'readwrite')
+    tx.objectStore(STORY_TIMELINE_STORE).put(normalized)
+    await txDone(tx)
+    db.close()
+    emitWeChatStorageChanged()
+  }
+
+  async listStoryTimelinePlotRowsByCharacterId(characterId: string): Promise<StoryTimelinePlotRow[]> {
+    const cid = characterId.trim()
+    if (!cid) return []
+    const db = await openDb()
+    if (!db.objectStoreNames.contains(STORY_TIMELINE_ROWS_STORE)) {
+      db.close()
+      return []
+    }
+    const tx = db.transaction(STORY_TIMELINE_ROWS_STORE, 'readonly')
+    const idx = tx.objectStore(STORY_TIMELINE_ROWS_STORE).index('characterId')
+    const req = idx.getAll(cid)
+    const rows = await new Promise<unknown[]>((resolve, reject) => {
+      req.onsuccess = () => resolve(Array.isArray(req.result) ? req.result : [])
+      req.onerror = () => reject(req.error ?? new Error('list storyTimelineRows'))
+    })
+    await txDone(tx)
+    db.close()
+    return rows
+      .map((r) => normalizeStoryTimelinePlotRow(r))
+      .filter((x): x is StoryTimelinePlotRow => !!x)
+      .sort((a, b) => a.recordedAt - b.recordedAt)
+  }
+
+  async upsertStoryTimelinePlotRow(row: StoryTimelinePlotRow): Promise<void> {
+    const normalized = normalizeStoryTimelinePlotRow(row)
+    if (!normalized) return
+    const db = await openDb()
+    if (!db.objectStoreNames.contains(STORY_TIMELINE_ROWS_STORE)) {
+      db.close()
+      return
+    }
+    const tx = db.transaction(STORY_TIMELINE_ROWS_STORE, 'readwrite')
+    tx.objectStore(STORY_TIMELINE_ROWS_STORE).put(normalized)
+    await txDone(tx)
+    db.close()
+    emitWeChatStorageChanged()
+  }
+
+  async deleteStoryTimelinePlotRowById(rowId: string): Promise<void> {
+    const id = rowId.trim()
+    if (!id) return
+    const db = await openDb()
+    if (!db.objectStoreNames.contains(STORY_TIMELINE_ROWS_STORE)) {
+      db.close()
+      return
+    }
+    const tx = db.transaction(STORY_TIMELINE_ROWS_STORE, 'readwrite')
+    tx.objectStore(STORY_TIMELINE_ROWS_STORE).delete(id)
+    await txDone(tx)
+    db.close()
+    emitWeChatStorageChanged()
+  }
+
+  async deleteStoryTimelineState(characterId: string): Promise<void> {
+    const cid = characterId.trim()
+    if (!cid) return
+    const db = await openDb()
+    if (!db.objectStoreNames.contains(STORY_TIMELINE_STORE)) {
+      db.close()
+      return
+    }
+    const tx = db.transaction(STORY_TIMELINE_STORE, 'readwrite')
+    tx.objectStore(STORY_TIMELINE_STORE).delete(cid)
+    await txDone(tx)
+    db.close()
+    emitWeChatStorageChanged()
+  }
+
+  async appendStoryTimelinePlotRow(row: StoryTimelinePlotRow): Promise<void> {
+    const normalized = normalizeStoryTimelinePlotRow(row)
+    if (!normalized) return
+    await this.upsertStoryTimelinePlotRow(normalized)
+    const all = await this.listStoryTimelinePlotRowsByCharacterId(normalized.characterId)
+    if (all.length <= STORY_TIMELINE_ROWS_CAP) {
+      emitWeChatStorageChanged()
+      return
+    }
+    const drop = all.slice(0, all.length - STORY_TIMELINE_ROWS_CAP)
+    if (!drop.length) {
+      emitWeChatStorageChanged()
+      return
+    }
+    const db = await openDb()
+    if (!db.objectStoreNames.contains(STORY_TIMELINE_ROWS_STORE)) {
+      db.close()
+      emitWeChatStorageChanged()
+      return
+    }
+    const tx = db.transaction(STORY_TIMELINE_ROWS_STORE, 'readwrite')
+    const store = tx.objectStore(STORY_TIMELINE_ROWS_STORE)
+    for (const d of drop) store.delete(d.id)
+    await txDone(tx)
+    db.close()
+    emitWeChatStorageChanged()
+  }
+
+  async deleteStoryTimelinePlotRowsWithPlotIdForCharacter(characterId: string): Promise<void> {
+    const cid = characterId.trim()
+    if (!cid) return
+    const rows = await this.listStoryTimelinePlotRowsByCharacterId(cid)
+    const toDrop = rows.filter((r) => r.plotId?.trim())
+    if (!toDrop.length) return
+    const db = await openDb()
+    if (!db.objectStoreNames.contains(STORY_TIMELINE_ROWS_STORE)) {
+      db.close()
+      return
+    }
+    const tx = db.transaction(STORY_TIMELINE_ROWS_STORE, 'readwrite')
+    const store = tx.objectStore(STORY_TIMELINE_ROWS_STORE)
+    for (const d of toDrop) store.delete(d.id)
+    await txDone(tx)
+    db.close()
+    emitWeChatStorageChanged()
+  }
+
+  async deleteStoryTimelinePlotRowsByPlotIdForCharacter(characterId: string, plotId: string): Promise<void> {
+    const cid = characterId.trim()
+    const pid = plotId.trim()
+    if (!cid || !pid) return
+    const rows = await this.listStoryTimelinePlotRowsByCharacterId(cid)
+    const toDrop = rows.filter((r) => r.plotId?.trim() === pid)
+    if (!toDrop.length) return
+    const db = await openDb()
+    if (!db.objectStoreNames.contains(STORY_TIMELINE_ROWS_STORE)) {
+      db.close()
+      return
+    }
+    const tx = db.transaction(STORY_TIMELINE_ROWS_STORE, 'readwrite')
+    const store = tx.objectStore(STORY_TIMELINE_ROWS_STORE)
+    for (const d of toDrop) store.delete(d.id)
+    await txDone(tx)
+    db.close()
+    emitWeChatStorageChanged()
+  }
+
+  /** 删除角色时同步清剧情时间轴 state / 行表 / 未总结片段向量 */
+  async purgeStoryTimelineDataForCharacterIds(characterIds: Iterable<string>): Promise<void> {
+    const ids = [...new Set([...characterIds].map((x) => String(x ?? '').trim()).filter(Boolean))]
+    if (!ids.length) return
+    const idSet = new Set(ids)
+    const db = await openDb()
+    const storeNames: string[] = []
+    if (db.objectStoreNames.contains(STORY_TIMELINE_STORE)) storeNames.push(STORY_TIMELINE_STORE)
+    if (db.objectStoreNames.contains(STORY_TIMELINE_ROWS_STORE)) storeNames.push(STORY_TIMELINE_ROWS_STORE)
+    if (db.objectStoreNames.contains(MEMORY_CONTEXT_VECTOR_STORE)) storeNames.push(MEMORY_CONTEXT_VECTOR_STORE)
+    if (!storeNames.length) {
+      db.close()
+      return
+    }
+    const tx = db.transaction(storeNames, 'readwrite')
+    if (db.objectStoreNames.contains(STORY_TIMELINE_STORE)) {
+      const st = tx.objectStore(STORY_TIMELINE_STORE)
+      for (const cid of ids) st.delete(cid)
+    }
+    if (db.objectStoreNames.contains(STORY_TIMELINE_ROWS_STORE)) {
+      const st = tx.objectStore(STORY_TIMELINE_ROWS_STORE)
+      const all = await new Promise<unknown[]>((resolve, reject) => {
+        const req = st.getAll()
+        req.onsuccess = () => resolve(Array.isArray(req.result) ? req.result : [])
+        req.onerror = () => reject(req.error ?? new Error('purge storyTimelineRows getAll'))
+      })
+      for (const raw of all) {
+        const row = normalizeStoryTimelinePlotRow(raw)
+        if (row && idSet.has(row.characterId)) st.delete(row.id)
+      }
+    }
+    if (db.objectStoreNames.contains(MEMORY_CONTEXT_VECTOR_STORE)) {
+      const st = tx.objectStore(MEMORY_CONTEXT_VECTOR_STORE)
+      const all = await new Promise<unknown[]>((resolve, reject) => {
+        const req = st.getAll()
+        req.onsuccess = () => resolve(Array.isArray(req.result) ? req.result : [])
+        req.onerror = () => reject(req.error ?? new Error('purge memoryContextVectors getAll'))
+      })
+      for (const raw of all) {
+        const row = normalizeMemoryContextVectorEntry(raw)
+        if (row && idSet.has(row.characterId)) st.delete(row.id)
+      }
+    }
+    await txDone(tx)
+    db.close()
+    emitWeChatStorageChanged()
+  }
+
+  async formatStoryTimelineForPrompt(
+    characterId: string,
+    opts?: import('../memory/storyTimelineTypes').StoryTimelinePromptLoadOpts,
+  ): Promise<string> {
+    return loadStoryTimelinePromptBlock(characterId, opts)
+  }
+
+  // -------- 未总结片段向量 memoryContextVectors --------
+
+  async listMemoryContextVectorsByCharacterId(characterId: string): Promise<MemoryContextVectorEntry[]> {
+    const cid = characterId.trim()
+    if (!cid) return []
+    const db = await openDb()
+    if (!db.objectStoreNames.contains(MEMORY_CONTEXT_VECTOR_STORE)) {
+      db.close()
+      return []
+    }
+    const tx = db.transaction(MEMORY_CONTEXT_VECTOR_STORE, 'readonly')
+    const idx = tx.objectStore(MEMORY_CONTEXT_VECTOR_STORE).index('characterId')
+    const req = idx.getAll(cid)
+    const rows = await new Promise<unknown[]>((resolve, reject) => {
+      req.onsuccess = () => resolve(Array.isArray(req.result) ? req.result : [])
+      req.onerror = () => reject(req.error ?? new Error('list memoryContextVectors'))
+    })
+    await txDone(tx)
+    db.close()
+    return rows
+      .map((r) => normalizeMemoryContextVectorEntry(r))
+      .filter((x): x is MemoryContextVectorEntry => !!x)
+  }
+
+  async upsertMemoryContextVector(entry: MemoryContextVectorEntry): Promise<void> {
+    const normalized = normalizeMemoryContextVectorEntry(entry)
+    if (!normalized) return
+    const db = await openDb()
+    if (!db.objectStoreNames.contains(MEMORY_CONTEXT_VECTOR_STORE)) {
+      db.close()
+      return
+    }
+    const tx = db.transaction(MEMORY_CONTEXT_VECTOR_STORE, 'readwrite')
+    tx.objectStore(MEMORY_CONTEXT_VECTOR_STORE).put(normalized)
+    await txDone(tx)
+    db.close()
+  }
+
+  async pruneMemoryContextVectors(characterId: string, maxCount: number): Promise<void> {
+    const cid = characterId.trim()
+    if (!cid || maxCount < 1) return
+    const rows = await this.listMemoryContextVectorsByCharacterId(cid)
+    if (rows.length <= maxCount) return
+    rows.sort((a, b) => b.updatedAt - a.updatedAt)
+    const drop = rows.slice(maxCount)
+    if (!drop.length) return
+    const db = await openDb()
+    if (!db.objectStoreNames.contains(MEMORY_CONTEXT_VECTOR_STORE)) {
+      db.close()
+      return
+    }
+    const tx = db.transaction(MEMORY_CONTEXT_VECTOR_STORE, 'readwrite')
+    const store = tx.objectStore(MEMORY_CONTEXT_VECTOR_STORE)
+    for (const row of drop) store.delete(row.id)
+    await txDone(tx)
+    db.close()
+  }
+
+  /** 按角色 + 来源类型批量删除未总结片段向量（如删改线下 plot 后清 offline_plot）。 */
+  async deleteMemoryContextVectorsBySourceKind(
+    characterId: string,
+    sourceKind: MemoryContextVectorEntry['sourceKind'],
+  ): Promise<void> {
+    const cid = characterId.trim()
+    if (!cid) return
+    const rows = await this.listMemoryContextVectorsByCharacterId(cid)
+    const drop = rows.filter((r) => r.sourceKind === sourceKind)
+    if (!drop.length) return
+    const db = await openDb()
+    if (!db.objectStoreNames.contains(MEMORY_CONTEXT_VECTOR_STORE)) {
+      db.close()
+      return
+    }
+    const tx = db.transaction(MEMORY_CONTEXT_VECTOR_STORE, 'readwrite')
+    const store = tx.objectStore(MEMORY_CONTEXT_VECTOR_STORE)
+    for (const row of drop) store.delete(row.id)
+    await txDone(tx)
+    db.close()
+  }
+
   async listMemorySummaryRetries(): Promise<MemorySummaryRetryItem[]> {
     const settings = await this.getMemorySettings()
     return [...(settings.memorySummaryRetryQueue ?? [])].sort((a, b) => b.failedAt - a.failedAt)
@@ -6291,6 +7004,77 @@ export class PersonaDb {
   }
 
   /**
+   * 剧情摘要表展示 / 注入：将 `{{user}}` / `{{char}}` / `{{id:…}}` 展开为绑定姓名（与长期记忆列表一致）。
+   * 入库仍保留占位符，便于换绑身份后语义一致。
+   */
+  async expandStoryTimelineTextForDisplay(characterId: string, text: string): Promise<string> {
+    const raw = String(text ?? '').trim()
+    const owner = characterId.trim()
+    if (!raw || !owner) return raw
+    if (!raw.includes('{{')) return raw
+
+    const ownerRow = await this.getCharacter(owner)
+    let playerIden: PlayerIdentity | null = null
+    const boundPid = ownerRow?.playerIdentityId?.trim()
+    if (boundPid && boundPid !== '__none__') {
+      try {
+        playerIden = await this.getPlayerIdentity(boundPid)
+      } catch {
+        playerIden = null
+      }
+    }
+    let playerDisplayFallback = ''
+    try {
+      const cur = await this.getCurrentIdentity()
+      if (cur) {
+        playerDisplayFallback =
+          String(cur.wechatNickname ?? '').trim() ||
+          String(cur.name ?? '').trim() ||
+          String(cur.remark ?? '').trim() ||
+          ''
+      }
+    } catch {
+      playerDisplayFallback = ''
+    }
+    const baseNames = resolveCharUserNamesForPrompt({
+      character: ownerRow,
+      playerIdentity: playerIden,
+      playerDisplayName: playerDisplayFallback,
+    })
+
+    let npcNetworkIdMap: Record<string, string> = {}
+    let npcArchiveMainDisplayName: string | undefined
+    const npcRootId = ownerRow?.generatedForCharacterId?.trim()
+    if (npcRootId) {
+      npcNetworkIdMap = await buildLinkedMemoryIdDisplayNameMap(npcRootId)
+      npcArchiveMainDisplayName = npcNetworkIdMap[npcRootId]
+    } else if (owner) {
+      npcNetworkIdMap = await buildLinkedMemoryIdDisplayNameMap(owner)
+    }
+
+    const ownerIdMap: Record<string, string> = { [owner]: baseNames.charName }
+    const globalIdMap = await resolveMissingIdPlaceholderDisplayNames(
+      { ...npcNetworkIdMap, ...ownerIdMap },
+      [raw],
+      [...Object.keys(npcNetworkIdMap), owner],
+    )
+
+    let archiveCharName: string | undefined
+    if (npcArchiveMainDisplayName) {
+      archiveCharName = npcArchiveMainDisplayName
+    } else if (ownerRow && !npcRootId) {
+      archiveCharName = baseNames.charName
+    }
+
+    return expandLinkedMemoryPlaceholders(raw, {
+      charName: baseNames.charName,
+      userName: baseNames.userName,
+      archiveCharName,
+      idToDisplayName: { ...globalIdMap, ...ownerIdMap, ...npcNetworkIdMap },
+    })
+  }
+
+  /**
    * 手动编辑记忆草稿：按与入库后相同的规则展开 `{{user}}` / `{{char}}` 等，供前端预览核对姓名。
    * 群聊 bucket 的 characterId 非真人设时，会用 involvedCharIds 中首位真实成员 id 作为展开视角（与列表展示一致）。
    */
@@ -6478,30 +7262,37 @@ export class PersonaDb {
       .sort((a, b) => b.updatedAt - a.updatedAt)
       .slice(0, MEMORY_ALWAYS_INJECT_CAP)
 
-    const pickKeywordHits = (list: CharacterMemory[]) =>
+    const pickKeywordCandidates = (list: CharacterMemory[]) =>
       hay.length >= 2 ? list.filter((m) => !isMemoryAlwaysTrigger(m) && memoryTriggerMatchesHaystack(m, hay)) : []
 
-    const taggedPrivateHits = pickKeywordHits(privateList)
-    const taggedGroupHits = pickKeywordHits(groupList)
+    const keywordCandPrivate = pickKeywordCandidates(privateList)
+    const keywordCandGroup = pickKeywordCandidates(groupList)
 
+    let taggedPrivateHits = keywordCandPrivate
+    let taggedGroupHits = keywordCandGroup
     let vecExtraPrivate: CharacterMemory[] = []
     let vecExtraGroup: CharacterMemory[] = []
     let vectorUsed = false
-    const embedCred = resolveEmbeddingApiCredentials(memorySettings, opts?.apiConfig ?? null)
-    if (opts && isMemoryVectorRecallEnabled(memorySettings, opts) && embedCred) {
+    if (opts && isMemoryVectorRecallEnabled(memorySettings, opts)) {
       const rawHay = String(relevanceText || '').trim()
       if (rawHay.length >= 10) {
         try {
-          const modelId = resolveMemoryEmbeddingModelId(memorySettings, opts)
-          const queryVec = await fetchEmbeddingVector(embedCred, rawHay, modelId)
-          if (queryVec.length) {
+          const queryHit = await fetchEmbeddingVectorUnified(
+            memorySettings,
+            opts.apiConfig ?? null,
+            rawHay,
+            resolveMemoryEmbeddingModelId(memorySettings, opts),
+          )
+          if (queryHit?.vec.length) {
             const union = [...privateList, ...groupList]
             await backfillMemoryEmbeddingsBestEffort({
               memories: union,
               upsert: (m) => this.upsertCharacterMemory(m),
-              apiConfig: embedCred,
-              modelId,
-              queryDim: queryVec.length,
+              settings: memorySettings,
+              chatApiConfig: opts.apiConfig ?? null,
+              queryDim: queryHit.vec.length,
+              embeddingProvider: queryHit.provider,
+              embeddingModelId: queryHit.modelId,
             })
             const privFresh = await this.listCharacterMemoriesForCharacter(cid)
             const groupFresh = await this.listGroupMemoriesInvolvingCharacter(cid)
@@ -6509,11 +7300,23 @@ export class PersonaDb {
               bucket === 'linked'
                 ? privFresh.filter(isCharacterLinkedMemory)
                 : privFresh.filter(isCharacterOwnPrivateMemory)
+            const refreshKeywordHits = (candidates: CharacterMemory[], fresh: CharacterMemory[]) => {
+              const byId = new Map(fresh.map((m) => [m.id, m]))
+              return candidates.map((m) => byId.get(m.id) ?? m)
+            }
+            taggedPrivateHits = filterKeywordHitsByVectorConfirm({
+              hits: refreshKeywordHits(keywordCandPrivate, privCandidates),
+              queryVec: queryHit.vec,
+            })
+            taggedGroupHits = filterKeywordHitsByVectorConfirm({
+              hits: refreshKeywordHits(keywordCandGroup, groupFresh),
+              queryVec: queryHit.vec,
+            })
 
             const exclP = new Set<string>([...alwaysPrivate, ...taggedPrivateHits].map((m) => m.id))
             vecExtraPrivate = pickMemoriesByVectorSimilarity({
               candidates: privCandidates,
-              queryVec,
+              queryVec: queryHit.vec,
               topK: MEMORY_VECTOR_TOP_PRIVATE,
               minSim: MEMORY_VECTOR_MIN_SIM,
               excludeIds: exclP,
@@ -6523,7 +7326,7 @@ export class PersonaDb {
             const exclG = new Set<string>([...alwaysGroup, ...taggedGroupHits].map((m) => m.id))
             vecExtraGroup = pickMemoriesByVectorSimilarity({
               candidates: groupFresh,
-              queryVec,
+              queryVec: queryHit.vec,
               topK: MEMORY_VECTOR_TOP_GROUP,
               minSim: MEMORY_VECTOR_MIN_SIM,
               excludeIds: exclG,
@@ -6611,8 +7414,27 @@ export class PersonaDb {
           .join('\n')}`,
       )
     }
+    const appendContextRecall = async (baseText: string): Promise<string> => {
+      if (bucket !== 'own' || !opts) return baseText
+      const recalled = await appendContextVectorRecallToMemoryText({
+        characterId: cid,
+        conversationKey: opts.conversationKey,
+        relevanceText,
+        settings: memorySettings,
+        chatApiConfig: opts.apiConfig ?? null,
+        opts,
+        existingText: baseText,
+      })
+      if (recalled.recalledCount > 0) vectorUsed = true
+      return recalled.text
+    }
+
     if (!chunks.length) {
       const pickedMemories = [...privatePick, ...groupPick]
+      const ctxOnly = await appendContextRecall('')
+      if (ctxOnly.trim()) {
+        return { text: ctxOnly, pickedMemories }
+      }
       return { text: '', pickedMemories }
     }
     const pickedMemories = [...privatePick, ...groupPick]
@@ -6621,9 +7443,9 @@ export class PersonaDb {
       return { text: `${body}\n\n（${vectorTail}）`, pickedMemories }
     }
     if (lineScope?.wechatAccountId?.trim() && privatePick.length) {
-      return { text: body, pickedMemories }
+      return { text: await appendContextRecall(body), pickedMemories }
     }
-    return { text: `${body}\n\n（${vectorTail}）`, pickedMemories }
+    return { text: await appendContextRecall(`${body}\n\n（${vectorTail}）`), pickedMemories }
   }
 
   /**
@@ -6637,6 +7459,7 @@ export class PersonaDb {
     keywordHits: Array<{
       keyword: string
       content: string
+      relevanceScore?: number
       sourceLineLabel: string
       lineRelation: MemoryLineRelation
     }>
@@ -6673,11 +7496,15 @@ export class PersonaDb {
       .sort((a, b) => b.updatedAt - a.updatedAt)
       .slice(0, MEMORY_ALWAYS_INJECT_CAP)
 
-    const pickKeywordHits = (list: CharacterMemory[]) =>
+    const pickKeywordCandidates = (list: CharacterMemory[]) =>
       hay.length >= 2 ? list.filter((m) => !isMemoryAlwaysTrigger(m) && memoryTriggerMatchesHaystack(m, hay)) : []
 
-    const taggedPrivateHits = pickKeywordHits(privateList)
-    const taggedGroupHits = pickKeywordHits(groupList)
+    const keywordCandPrivate = pickKeywordCandidates(privateList)
+    const keywordCandGroup = pickKeywordCandidates(groupList)
+
+    let taggedPrivateHits = keywordCandPrivate
+    let taggedGroupHits = keywordCandGroup
+    let keywordQueryVec: number[] | null = null
 
     const labelForMemory = (m: CharacterMemory): string => {
       if (isMemoryAlwaysTrigger(m)) return '始终触发'
@@ -6694,15 +7521,6 @@ export class PersonaDb {
       return u.length ? u.slice(0, 6).join(' · ') : '关键词命中'
     }
 
-    const kwMemoriesOrdered: CharacterMemory[] = []
-    const seenKw = new Set<string>()
-    for (const m of [...alwaysPrivate, ...alwaysGroup, ...taggedPrivateHits, ...taggedGroupHits]) {
-      const k = `${labelForMemory(m)}::${m.id}`
-      if (seenKw.has(k)) continue
-      seenKw.add(k)
-      kwMemoriesOrdered.push(m)
-    }
-    const kwExpanded = await this.expandMemoryListContentForPrompt(kwMemoriesOrdered, cid)
     const lineScope = opts?.lineScope ?? null
     const enrichTraceMeta = async (m: CharacterMemory) => {
       let sourceLineLabel = await formatMemorySourceLineLabelFromMemory(m)
@@ -6715,13 +7533,6 @@ export class PersonaDb {
         lineRelation: resolveMemoryLineRelation(m, lineScope),
       }
     }
-    const keywordHits = await Promise.all(
-      kwMemoriesOrdered.map(async (m, i) => ({
-        keyword: labelForMemory(m),
-        content: kwExpanded[i] ?? m.content.trim(),
-        ...(await enrichTraceMeta(m)),
-      })),
-    )
 
     const vectorRetrievals: Array<{
       relevanceScore: number
@@ -6729,21 +7540,27 @@ export class PersonaDb {
       sourceLineLabel: string
       lineRelation: MemoryLineRelation
     }> = []
-    const embedCred = resolveEmbeddingApiCredentials(memorySettings, opts?.apiConfig ?? null)
-    if (opts && isMemoryVectorRecallEnabled(memorySettings, opts) && embedCred) {
+    if (opts && isMemoryVectorRecallEnabled(memorySettings, opts)) {
       const rawHay = String(relevanceText || '').trim()
       if (rawHay.length >= 10) {
         try {
-          const modelId = resolveMemoryEmbeddingModelId(memorySettings, opts)
-          const queryVec = await fetchEmbeddingVector(embedCred, rawHay, modelId)
-          if (queryVec.length) {
+          const queryHit = await fetchEmbeddingVectorUnified(
+            memorySettings,
+            opts.apiConfig ?? null,
+            rawHay,
+            resolveMemoryEmbeddingModelId(memorySettings, opts),
+          )
+          if (queryHit?.vec.length) {
+            keywordQueryVec = queryHit.vec
             const union = [...privateList, ...groupList]
             await backfillMemoryEmbeddingsBestEffort({
               memories: union,
               upsert: (m) => this.upsertCharacterMemory(m),
-              apiConfig: embedCred,
-              modelId,
-              queryDim: queryVec.length,
+              settings: memorySettings,
+              chatApiConfig: opts.apiConfig ?? null,
+              queryDim: queryHit.vec.length,
+              embeddingProvider: queryHit.provider,
+              embeddingModelId: queryHit.modelId,
             })
             const privFresh = await this.listCharacterMemoriesForCharacter(cid)
             const groupFresh = await this.listGroupMemoriesInvolvingCharacter(cid)
@@ -6751,11 +7568,23 @@ export class PersonaDb {
               bucket === 'linked'
                 ? privFresh.filter(isCharacterLinkedMemory)
                 : privFresh.filter(isCharacterOwnPrivateMemory)
+            const refreshKeywordHits = (candidates: CharacterMemory[], fresh: CharacterMemory[]) => {
+              const byId = new Map(fresh.map((m) => [m.id, m]))
+              return candidates.map((m) => byId.get(m.id) ?? m)
+            }
+            taggedPrivateHits = filterKeywordHitsByVectorConfirm({
+              hits: refreshKeywordHits(keywordCandPrivate, privCandidates),
+              queryVec: queryHit.vec,
+            })
+            taggedGroupHits = filterKeywordHitsByVectorConfirm({
+              hits: refreshKeywordHits(keywordCandGroup, groupFresh),
+              queryVec: queryHit.vec,
+            })
 
             const exclP = new Set<string>([...alwaysPrivate, ...taggedPrivateHits].map((m) => m.id))
             const scoredP = pickMemoriesByVectorSimilarityScored({
               candidates: privCandidates,
-              queryVec,
+              queryVec: queryHit.vec,
               topK: MEMORY_VECTOR_TOP_PRIVATE,
               minSim: MEMORY_VECTOR_MIN_SIM,
               excludeIds: exclP,
@@ -6764,7 +7593,7 @@ export class PersonaDb {
             const exclG = new Set<string>([...alwaysGroup, ...taggedGroupHits].map((m) => m.id))
             const scoredG = pickMemoriesByVectorSimilarityScored({
               candidates: groupFresh,
-              queryVec,
+              queryVec: queryHit.vec,
               topK: MEMORY_VECTOR_TOP_GROUP,
               minSim: MEMORY_VECTOR_MIN_SIM,
               excludeIds: exclG,
@@ -6800,6 +7629,27 @@ export class PersonaDb {
         }
       }
     }
+
+    const kwMemoriesOrdered: CharacterMemory[] = []
+    const seenKw = new Set<string>()
+    for (const m of [...alwaysPrivate, ...alwaysGroup, ...taggedPrivateHits, ...taggedGroupHits]) {
+      const k = `${labelForMemory(m)}::${m.id}`
+      if (seenKw.has(k)) continue
+      seenKw.add(k)
+      kwMemoriesOrdered.push(m)
+    }
+    const kwExpanded = await this.expandMemoryListContentForPrompt(kwMemoriesOrdered, cid)
+    const keywordHits = await Promise.all(
+      kwMemoriesOrdered.map(async (m, i) => {
+        const sim = isMemoryAlwaysTrigger(m) ? null : memoryKeywordHitVectorSim(m, keywordQueryVec)
+        return {
+          keyword: labelForMemory(m),
+          content: kwExpanded[i] ?? m.content.trim(),
+          ...(sim != null ? { relevanceScore: sim } : {}),
+          ...(await enrichTraceMeta(m)),
+        }
+      }),
+    )
 
     vectorRetrievals.sort((a, b) => b.relevanceScore - a.relevanceScore)
     return { keywordHits, vectorRetrievals }
@@ -8338,6 +9188,9 @@ export class PersonaDb {
         GROUP_PSYCHE_STORE,
         INDEXED_TRASH_STORE,
         WORLD_BG_STORE,
+        STORY_TIMELINE_STORE,
+        STORY_TIMELINE_ROWS_STORE,
+        MEMORY_CONTEXT_VECTOR_STORE,
       ] as const
 
       const phoneKeysToDelete: string[] = []

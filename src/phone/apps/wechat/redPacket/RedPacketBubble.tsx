@@ -1,5 +1,12 @@
 import { Check, Hourglass } from 'lucide-react'
 
+import {
+  ImessageApplePayCashCard,
+  TelegramInvoiceCard,
+  type MessengerBubbleStyle,
+} from '../wechatMessengerSpecialBubbles'
+import { WechatRedPacketBubbleFace } from '../wechatBubbleWechatUi'
+
 const PLATINUM = '#D4AF37'
 
 export type RedPacketBubbleData = {
@@ -60,9 +67,50 @@ function IconExpired() {
 /**
  * 柔和浅色铂金风红包气泡：高定邀请函式卡片，摒弃高饱和金红。
  */
-export function RedPacketBubble({ data }: { data: RedPacketBubbleData; isSelf: boolean }) {
+export function RedPacketBubble({
+  data,
+  isSelf,
+  messengerStyle = 'lumi',
+  onAction,
+  replyPreview,
+  replyIsSelf = false,
+}: {
+  data: RedPacketBubbleData
+  isSelf: boolean
+  messengerStyle?: MessengerBubbleStyle
+  onAction?: () => void
+  replyPreview?: { senderName: string; content: string; onClick?: () => void }
+  replyIsSelf?: boolean
+}) {
   const kind = resolveVisual(data)
-  const remark = (data.remark || 'Best Wishes').trim() || 'Best Wishes'
+  if (messengerStyle === 'imessage') {
+    return <ImessageApplePayCashCard amountYuan={data.amountYuan} remark={data.remark} />
+  }
+  if (messengerStyle === 'telegram') {
+    const title = kind === 'unclaimed' ? 'Gift' : kind === 'claimed' ? 'Gift Opened' : 'Gift Expired'
+    const btn =
+      kind === 'unclaimed' ? `Open ¥${Number(data.amountYuan || 0).toFixed(2)}` : kind === 'claimed' ? 'View Gift' : 'Expired'
+    return (
+      <TelegramInvoiceCard
+        title={title}
+        description={data.remark?.trim() || '恭喜发财，大吉大利'}
+        amountYuan={data.amountYuan}
+        buttonLabel={btn}
+        emoji="🎁"
+        onAction={onAction}
+        replyPreview={replyPreview}
+        replyIsSelf={replyIsSelf}
+      />
+    )
+  }
+
+  const remark = (data.remark || '恭喜发财，大吉大利').trim() || '恭喜发财，大吉大利'
+
+  if (messengerStyle === 'wechat') {
+    return <WechatRedPacketBubbleFace remark={remark} kind={kind} isSelf={isSelf} />
+  }
+
+  const remarkLegacy = (data.remark || 'Best Wishes').trim() || 'Best Wishes'
   const tag = kind === 'unclaimed' ? 'RED PACKET' : kind === 'claimed' ? 'OPENED' : 'EXPIRED'
 
   const isClaimed = kind === 'claimed'
@@ -75,15 +123,25 @@ export function RedPacketBubble({ data }: { data: RedPacketBubbleData; isSelf: b
 
   return (
     <div
+      data-wx-msg-kind="red-packet"
       className={`select-none text-left transition-opacity duration-150 ease-out ${
         kind === 'unclaimed' ? 'w-[min(220px,72vw)] max-w-full shrink-0' : 'max-w-[min(280px,72vw)]'
       } ${isClaimed ? 'opacity-60' : 'opacity-100'}`}
       style={{ borderRadius: 14 }}
     >
       <div
-        className={`overflow-hidden rounded-[14px] px-3.5 py-3 transition-[box-shadow,background-color,border-color] duration-150 ease-out ${shadowCls} ${
-          isExpired ? 'bg-gray-50' : 'bg-white'
-        } ${isClaimed ? 'border border-gray-200/90' : isExpired ? 'border border-gray-200/70' : 'border border-[#D4AF37]/30'}`}
+        data-wx-special-card
+        className={`overflow-hidden rounded-[14px] px-3.5 py-3 transition-[box-shadow,background-color,border-color] duration-150 ease-out ${shadowCls}`}
+        style={{
+          backgroundColor: isExpired ? '#f9fafb' : 'var(--wx-special-rp-bg, #ffffff)',
+          borderWidth: 1,
+          borderStyle: 'solid',
+          borderColor: isClaimed
+            ? 'rgba(229, 231, 235, 0.9)'
+            : isExpired
+              ? 'rgba(229, 231, 235, 0.7)'
+              : 'var(--wx-special-rp-border, rgba(212, 175, 55, 0.3))',
+        }}
       >
         <div className="flex min-w-0 items-center gap-3">
           {kind === 'unclaimed' ? <IconClosedEnvelope /> : null}
@@ -92,15 +150,19 @@ export function RedPacketBubble({ data }: { data: RedPacketBubbleData; isSelf: b
           <div className="min-w-0 flex-1">
             <p
               className={`truncate text-[14px] font-medium leading-snug tracking-wide ${
-                isExpired ? 'text-gray-400 line-through decoration-gray-300' : 'text-[#1f2937]'
+                isExpired ? 'text-gray-400 line-through decoration-gray-300' : ''
               }`}
+              style={isExpired ? undefined : { color: 'var(--wx-special-rp-text, #1f2937)' }}
             >
-              {remark}
+              {remarkLegacy}
             </p>
             <p
               className={`mt-1 text-[9px] font-semibold tracking-[0.28em] transition-colors duration-300 ${
-                isExpired ? 'text-gray-400' : isClaimed ? 'text-gray-400' : 'text-[#D4AF37]/55'
+                isExpired ? 'text-gray-400' : isClaimed ? 'text-gray-400' : ''
               }`}
+              style={
+                isExpired || isClaimed ? undefined : { color: 'var(--wx-special-rp-tag, rgba(212, 175, 55, 0.55))' }
+              }
             >
               {tag}
             </p>

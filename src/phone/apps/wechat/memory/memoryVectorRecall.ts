@@ -1,11 +1,11 @@
 import type { CharacterMemory, MemorySettingsRow } from '../newFriendsPersona/types'
 import type { ApiConfig } from '../../api/types'
+import { DEFAULT_MEMORY_EMBEDDING_MODEL } from './memoryEmbeddingApi'
 import {
-  DEFAULT_MEMORY_EMBEDDING_MODEL,
-  fetchEmbeddingVector,
-  fetchEmbeddingVectorsBatch,
-  resolveEmbeddingApiCredentials,
-} from './memoryEmbeddingApi'
+  fetchEmbeddingVectorUnified,
+  fetchEmbeddingVectorsUnified,
+  isMemoryEmbeddingAvailable,
+} from './memoryEmbeddingProvider'
 import { flattenMemoryTriggerKeywords, isMemoryAlwaysTrigger } from './memoryTriggerUtils'
 
 const MAX_EMBED_CHARS = 8000
@@ -64,11 +64,13 @@ function needsReembed(m: CharacterMemory, queryDim: number): boolean {
 export async function backfillMemoryEmbeddingsBestEffort(params: {
   memories: CharacterMemory[]
   upsert: (m: CharacterMemory) => Promise<void>
-  apiConfig: Pick<ApiConfig, 'apiUrl' | 'apiKey'>
-  modelId: string
+  settings: MemorySettingsRow
+  chatApiConfig: Pick<ApiConfig, 'apiUrl' | 'apiKey'> | null
   queryDim: number
+  embeddingProvider: 'local' | 'api'
+  embeddingModelId: string
 }): Promise<void> {
-  const { memories, upsert, apiConfig, modelId, queryDim } = params
+  const { memories, upsert, settings, chatApiConfig, queryDim, embeddingProvider, embeddingModelId } = params
   const stale = memories.filter((m) => needsReembed(m, queryDim)).slice(0, STALE_EMBED_CAP_PER_CALL)
   if (!stale.length) return
 
@@ -76,16 +78,19 @@ export async function backfillMemoryEmbeddingsBestEffort(params: {
     const chunk = stale.slice(i, i + EMBEDDING_BATCH)
     const texts = chunk.map((m) => buildMemoryEmbedText(m))
     try {
-      const vecs = await fetchEmbeddingVectorsBatch(apiConfig, texts, modelId)
+      const embedded = await fetchEmbeddingVectorsUnified(settings, chatApiConfig, texts)
       const now = Date.now()
       for (let j = 0; j < chunk.length; j++) {
         const m = chunk[j]
-        const vec = vecs[j]
-        if (!vec?.length || vec.length !== queryDim) continue
+        const hit = embedded[j]
+        if (!hit?.vec?.length || hit.vec.length !== queryDim) continue
+        if (hit.provider !== embeddingProvider && hit.modelId !== embeddingModelId) {
+          /* 维度一致即可写入 */
+        }
         const hash = computeMemoryEmbeddingHash(m)
         await upsert({
           ...m,
-          memoryEmbedding: vec,
+          memoryEmbedding: hit.vec,
           memoryEmbeddingHash: hash,
           updatedAt: now,
         })
@@ -93,11 +98,11 @@ export async function backfillMemoryEmbeddingsBestEffort(params: {
     } catch {
       for (const m of chunk) {
         try {
-          const vec = await fetchEmbeddingVector(apiConfig, buildMemoryEmbedText(m), modelId)
-          if (vec.length !== queryDim) continue
+          const hit = await fetchEmbeddingVectorUnified(settings, chatApiConfig, buildMemoryEmbedText(m))
+          if (!hit?.vec.length || hit.vec.length !== queryDim) continue
           await upsert({
             ...m,
-            memoryEmbedding: vec,
+            memoryEmbedding: hit.vec,
             memoryEmbeddingHash: computeMemoryEmbeddingHash(m),
             updatedAt: Date.now(),
           })
@@ -162,6 +167,8 @@ export type MemoryVectorRecallOpts = {
   apiConfig: Pick<ApiConfig, 'apiUrl' | 'apiKey'> | null
   embeddingModelId?: string
   disableVector?: boolean
+  /** 私聊 storage 键（保留兼容；已总结片段召回不再索引游标后原文） */
+  conversationKey?: string | null
   /** 多号分线：长期记忆按来源微信线分组注入 */
   lineScope?: MemoryPromptLineScope | null
   /**
@@ -174,8 +181,7 @@ export type MemoryVectorRecallOpts = {
 export function isMemoryVectorRecallEnabled(settings: MemorySettingsRow, opts?: MemoryVectorRecallOpts | null): boolean {
   if (opts?.disableVector) return false
   if (settings.memoryVectorRecallEnabled === false) return false
-  const c = resolveEmbeddingApiCredentials(settings, opts?.apiConfig ?? null)
-  return Boolean(c?.apiUrl?.trim() && c?.apiKey?.trim())
+  return isMemoryEmbeddingAvailable(settings, opts?.apiConfig ?? null)
 }
 
 export function resolveMemoryEmbeddingModelId(settings: MemorySettingsRow, opts?: MemoryVectorRecallOpts | null): string {
@@ -188,4 +194,29 @@ export function resolveMemoryEmbeddingModelId(settings: MemorySettingsRow, opts?
 
 export const MEMORY_VECTOR_TOP_PRIVATE = 5
 export const MEMORY_VECTOR_TOP_GROUP = 4
-export const MEMORY_VECTOR_MIN_SIM = 0.22
+export const MEMORY_VECTOR_MIN_SIM = 0.70
+
+/** 关键词子串命中后的语义确认门槛（query↔记忆向量余弦；向量未就绪时不校验） */
+export const MEMORY_KEYWORD_HIT_MIN_SIM = 0.75
+
+export function memoryKeywordHitVectorSim(m: CharacterMemory, queryVec: number[] | null | undefined): number | null {
+  if (!queryVec?.length) return null
+  const emb = m.memoryEmbedding
+  if (!Array.isArray(emb) || emb.length !== queryVec.length) return null
+  return cosineSimilarity(queryVec, emb)
+}
+
+/** 子串命中候选在向量可用时须达 {@link MEMORY_KEYWORD_HIT_MIN_SIM}，否则剔除 */
+export function filterKeywordHitsByVectorConfirm(params: {
+  hits: CharacterMemory[]
+  queryVec: number[] | null | undefined
+  minSim?: number
+}): CharacterMemory[] {
+  const { hits, queryVec, minSim = MEMORY_KEYWORD_HIT_MIN_SIM } = params
+  if (!queryVec?.length) return hits
+  return hits.filter((m) => {
+    const sim = memoryKeywordHitVectorSim(m, queryVec)
+    if (sim == null) return false
+    return sim >= minSim
+  })
+}

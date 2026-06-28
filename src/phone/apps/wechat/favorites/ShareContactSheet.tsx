@@ -13,7 +13,10 @@ type Props = {
 
 /** 收藏记忆切片 · 单选联系人转发抽屉 */
 export function ShareContactSheet({ open, onClose, onConfirm, sending = false }: Props) {
-  const { contacts, loading } = useInviteableWeChatContacts(open)
+  const { contacts, loading } = useInviteableWeChatContacts(open, {
+    includeLumiAssistant: true,
+    includeSelfChat: true,
+  })
   const [selectedId, setSelectedId] = useState<string | null>(null)
 
   useEffect(() => {

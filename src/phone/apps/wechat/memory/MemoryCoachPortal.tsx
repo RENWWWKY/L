@@ -62,16 +62,53 @@ function scheduleCoachRemeasure(run: () => void) {
   })
 }
 
-function layoutTooltipCard(hole: HoleRect, overlayW: number, overlayH: number): { top: number; left: number; width: number } {
+function layoutTooltipCard(
+  hole: HoleRect,
+  overlayW: number,
+  overlayH: number,
+  cardH: number,
+  prefer: 'auto' | 'above' | 'below' = 'auto',
+): { top: number; left: number; width: number } {
   const margin = 14
+  const gap = 16
   const width = Math.min(CARD_MAX_W, overlayW - margin * 2)
   let left = hole.left + hole.width / 2 - width / 2
   left = Math.max(margin, Math.min(left, overlayW - width - margin))
-  let top = hole.top + hole.height + 12
-  if (top + CARD_EST_H > overlayH - margin) {
-    top = Math.max(margin, hole.top - 12 - CARD_EST_H)
+
+  const order: Array<'below' | 'above'> =
+    prefer === 'above' ? ['above', 'below'] : prefer === 'below' ? ['below', 'above'] : ['below', 'above']
+
+  const cardRect = (top: number) => ({ top, left, width, height: cardH })
+  const holePad = 6
+  const holeBox = {
+    top: hole.top - holePad,
+    left: hole.left - holePad,
+    width: hole.width + holePad * 2,
+    height: hole.height + holePad * 2,
   }
-  return { top, left, width }
+  const overlaps = (a: { top: number; left: number; width: number; height: number }) =>
+    !(
+      a.left + a.width <= holeBox.left ||
+      holeBox.left + holeBox.width <= a.left ||
+      a.top + a.height <= holeBox.top ||
+      holeBox.top + holeBox.height <= a.top
+    )
+
+  for (const side of order) {
+    const top =
+      side === 'below' ? hole.top + hole.height + gap : hole.top - gap - cardH
+    if (top < margin || top + cardH > overlayH - margin) continue
+    if (!overlaps(cardRect(top))) return { top, left, width }
+  }
+
+  const holeMidY = hole.top + hole.height / 2
+  const bottomTop = overlayH - cardH - margin
+  const topTop = margin
+  const pickTop =
+    Math.abs(bottomTop + cardH / 2 - holeMidY) >= Math.abs(topTop + cardH / 2 - holeMidY)
+      ? bottomTop
+      : topTop
+  return { top: pickTop, left, width }
 }
 
 function CoachCardBody({
@@ -190,6 +227,7 @@ export function MemoryCoachPortal({
   coachRootAttr?: string
 }) {
   const overlayRef = useRef<HTMLDivElement>(null)
+  const floatingCardRef = useRef<HTMLDivElement>(null)
   const step = steps[stepIndex]
   const total = steps.length
   const [hole, setHole] = useState<HoleRect | null>(null)
@@ -209,7 +247,7 @@ export function MemoryCoachPortal({
     }
     if (step.target) {
       findCoachTargetNode(scopeRoot, step.target, coachTargetAttr, coachRootAttr)?.scrollIntoView({
-        block: 'nearest',
+        block: 'center',
         inline: 'nearest',
         behavior: 'instant',
       })
@@ -223,8 +261,13 @@ export function MemoryCoachPortal({
       }
       const nextHole = measureTargetInOverlay(step.target, o, scopeRoot, coachTargetAttr, coachRootAttr)
       const or = o.getBoundingClientRect()
+      const cardH = Math.max(CARD_EST_H, floatingCardRef.current?.offsetHeight ?? CARD_EST_H)
       setHole(nextHole)
-      setTooltipPos(nextHole ? layoutTooltipCard(nextHole, or.width, or.height) : null)
+      setTooltipPos(
+        nextHole
+          ? layoutTooltipCard(nextHole, or.width, or.height, cardH, step.cardPlacement ?? 'auto')
+          : null,
+      )
     }
     scheduleCoachRemeasure(measure)
   }, [coachRootAttr, coachTargetAttr, open, scopeRoot, step])
@@ -237,6 +280,14 @@ export function MemoryCoachPortal({
     if (!open || !step) return
     remeasure()
   }, [open, step, stepIndex, layoutEpoch, remeasure])
+
+  useLayoutEffect(() => {
+    if (!open || !step || step.centered || !floatingCardRef.current) return
+    const el = floatingCardRef.current
+    const ro = new ResizeObserver(() => remeasure())
+    ro.observe(el)
+    return () => ro.disconnect()
+  }, [open, remeasure, step, stepIndex, tooltipPos])
 
   useEffect(() => {
     if (!open) return
@@ -323,6 +374,7 @@ export function MemoryCoachPortal({
             </div>
           ) : tooltipPos ? (
             <motion.div
+              ref={floatingCardRef}
               className="pointer-events-auto absolute z-10 rounded-[24px] bg-white p-5 shadow-[0_20px_60px_rgba(0,0,0,0.12)]"
               style={{
                 top: tooltipPos.top,
@@ -341,6 +393,7 @@ export function MemoryCoachPortal({
           ) : !step.centered && step.target ? (
             <div className="pointer-events-none absolute inset-0 z-10 flex items-center justify-center p-5">
               <motion.div
+                ref={floatingCardRef}
                 className="pointer-events-auto w-full max-w-[min(340px,calc(100%-24px))]"
                 initial={{ opacity: 0, scale: 0.98 }}
                 animate={{ opacity: 1, scale: 1 }}

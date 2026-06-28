@@ -2,6 +2,8 @@
  * 遇见临时会话 · 自动总结指称规则（与微信 linked 记忆一致：第三人称 + {{user}}/{{char}}）
  */
 
+import { STORY_TIMELINE_SUMMARY_JSON_FIELDS } from '../wechat/memory/storyTimelineTypes'
+
 export const MEET_MEMORY_BODY_PLACEHOLDER_RULE = `
 【记忆正文·指称铁律】（遇见临时会话专用）
 - 全文**第三人称**旁白叙述，**禁止**第一人称「我」「我们」作主语。
@@ -17,6 +19,7 @@ export const MEET_MEMORY_JSON_OUTPUT_RULE = `
 - "emotion_need": string[]，情绪/需求侧触发词，**3～5 个**短词。
 - "extra_keywords": string[]，**尽量 2 个**补充触发短语。
 触发词须从材料提炼；无把握宁可少写；禁止编造材料未出现的专名。
+${STORY_TIMELINE_SUMMARY_JSON_FIELDS}
 ${MEET_MEMORY_BODY_PLACEHOLDER_RULE}`.trim()
 
 export const MEET_ENCOUNTER_MEMORY_SUMMARY_SYSTEM = `

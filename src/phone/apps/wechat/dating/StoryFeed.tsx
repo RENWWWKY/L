@@ -22,7 +22,17 @@ type Props = {
   onUpdatePlot: (
     plotId: string,
     patch: Partial<
-      Pick<PlotItem, 'content' | 'logicPass' | 'planSummary' | 'versions' | 'versionLogicPasses' | 'currentVersionIndex'>
+      Pick<
+        PlotItem,
+        | 'content'
+        | 'logicPass'
+        | 'planSummary'
+        | 'versions'
+        | 'versionLogicPasses'
+        | 'versionTimelineSnapshots'
+        | 'timelineSnapshot'
+        | 'currentVersionIndex'
+      >
     >,
   ) => void
   onRegeneratePlot?: (plotId: string) => void
@@ -111,6 +121,8 @@ export function StoryFeed({
                 logicPass: next.logicPass,
                 versions: next.versions,
                 versionLogicPasses: next.versionLogicPasses,
+                versionTimelineSnapshots: next.versionTimelineSnapshots,
+                timelineSnapshot: next.timelineSnapshot,
                 currentVersionIndex: next.currentVersionIndex,
               })
             }}

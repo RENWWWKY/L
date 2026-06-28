@@ -1,7 +1,11 @@
 import { countWeChatPersonaCoreStoreRecords } from '../dataArchive/scanWeChatPersonaIndexedDb'
 import { syncWeChatDataInventoryBaseline } from './wechatDataInventory'
 import { emitWeChatStorageChanged } from './newFriendsPersona/idb'
-import { loadAccountsBundle, saveAccountsBundle } from './wechatAccountPersistence'
+import {
+  loadAccountsBundle,
+  reconcileWeChatCharacterOwnershipAfterArchiveImport,
+  saveAccountsBundle,
+} from './wechatAccountPersistence'
 import { repairWeChatSessionPersistence } from './wechatPersonaContactsSync'
 
 export const WECHAT_SESSION_REPAIR_APPLIED_EVENT = 'wechat:session-repair-applied'
@@ -34,6 +38,28 @@ export async function tryAutoRepairWeChatFromLocalDb(): Promise<WeChatSessionRep
         '本机 IndexedDB 中已无人设与聊天记录，代码无法凭空生成数据。若曾导出 .lumi，请使用上方「恢复导入」。',
       contactCount: 0,
     }
+  }
+
+  try {
+    const ownership = await reconcileWeChatCharacterOwnershipAfterArchiveImport()
+    if (ownership.charactersRepaired > 0) {
+      await syncWeChatDataInventoryBaseline()
+      emitWeChatStorageChanged()
+      if (typeof window !== 'undefined') {
+        window.dispatchEvent(
+          new CustomEvent(WECHAT_SESSION_REPAIR_APPLIED_EVENT, {
+            detail: { contacts: [], activeAccountId: activeId, charactersRepaired: ownership.charactersRepaired },
+          }),
+        )
+      }
+      return {
+        ok: true,
+        message: `已修复 ${ownership.charactersRepaired} 条人设的微信账号归属，并重新对齐聊天索引。请完全刷新页面后打开「世界线人物名册」与微信。`,
+        contactCount: bundleContacts,
+      }
+    }
+  } catch {
+    /* 归属修复失败仍尝试通讯录对齐 */
   }
 
   const { bundle: nextBundle, contacts, repaired } = await repairWeChatSessionPersistence({

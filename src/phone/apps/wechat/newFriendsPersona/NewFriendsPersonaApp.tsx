@@ -1649,6 +1649,8 @@ export function NewFriendsPersonaApp({
       <PersonaAiGeneratePage
         draft={page.draft}
         playerIdentity={playerIdentity}
+        playerIdentityId={page.playerIdentityId}
+        wechatAccountId={currentAccountId}
         apiConfig={apiConfigList}
         onBack={() => setPage({ name: 'list' })}
         onGenerated={(generated) => {

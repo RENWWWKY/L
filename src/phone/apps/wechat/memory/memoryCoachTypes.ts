@@ -4,6 +4,8 @@ export type MemoryCoachStep = {
   body: string
   centered?: boolean
   isOutro?: boolean
+  /** 说明卡片优先放在高亮区域上方或下方，避免挡住目标 */
+  cardPlacement?: 'auto' | 'above' | 'below'
 }
 
 export const MEMORY_COACH_TARGET_ATTR = 'data-memory-coach'
@@ -38,9 +40,13 @@ export function writePersonaCoachSeen(key: string): void {
   writeMemoryCoachSeen(key)
 }
 
-export const MEMORY_ARCHIVE_COACH_SEEN_KEY = 'memory-archive-coach-completed-v1'
+export const MEMORY_HUB_COACH_SEEN_KEY = 'memory-hub-coach-completed-v1'
+export const MEMORY_ARCHIVE_COACH_SEEN_KEY = 'memory-archive-coach-completed-v3'
+export const MEMORY_PROGRESS_COACH_SEEN_KEY = 'memory-progress-coach-completed-v1'
+export const MEMORY_RETRY_COACH_SEEN_KEY = 'memory-retry-coach-completed-v1'
+export const MEMORY_EPILOGUE_COACH_SEEN_KEY = 'memory-epilogue-coach-completed-v1'
 export const MEMORY_EDITOR_COACH_SEEN_KEY = 'memory-editor-coach-completed-v1'
-export const MEMORY_ENGINE_COACH_SEEN_KEY = 'memory-engine-coach-completed-v1'
+export const MEMORY_ENGINE_COACH_SEEN_KEY = 'memory-engine-coach-completed-v2'
 
 export function readMemoryCoachSeen(key: string): boolean {
   try {

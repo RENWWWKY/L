@@ -11,6 +11,7 @@ import type { MeetChatMessage } from './meetTypes'
 import { findMeetWechatAccount, listMeetSelectableWechatAccounts } from './meetWechatAccountPool'
 import { resolveMeetAutoSummaryEnabled } from './meetMemorySummarySettings'
 import { notifyMemorySummaryAttempt } from '../wechat/memory/memorySummaryRetry'
+import { finalizeWorldBookAfterPerAiRound } from '../wechat/newFriendsPersona/worldBookAfterSync'
 
 /** 将遇见线程全部标为已纳入自动总结游标（加好友导入微信时调用，避免与私聊游标重复总结） */
 export async function advanceMeetSummaryCursorFromThread(
@@ -86,9 +87,28 @@ export async function finalizeMeetCharacterMemoryRoundAfterAiReply(params: {
   meetBoundWechatAccountId?: string | null
   /** 未传 accountId 时按联络绑定微信号解析 */
   meetContactWechatId?: string | null
+  /** 本轮 NPC 回复正文，供每轮尾声判断 */
+  latestRoundBody?: string
+  inlineWorldBookPatchApplied?: boolean
 }): Promise<void> {
   const cid = params.characterId.trim()
   if (!cid) return
+
+  const latestRoundBody = params.latestRoundBody?.trim() ?? ''
+  if (latestRoundBody.length >= 8) {
+    try {
+      const ch = await personaDb.getCharacter(cid)
+      await finalizeWorldBookAfterPerAiRound({
+        apiConfig: params.apiConfig,
+        character: ch,
+        latestRoundBody,
+        displayName: params.characterRealName.trim() || '对方',
+        inlinePatchApplied: params.inlineWorldBookPatchApplied,
+      })
+    } catch (epilogueErr) {
+      console.warn('[meet-memory] per-round epilogue sync failed', epilogueErr)
+    }
+  }
 
   const memSettings = await personaDb.getMemorySettings()
   if (!resolveMeetAutoSummaryEnabled(memSettings)) return

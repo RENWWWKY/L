@@ -1,6 +1,11 @@
 import { useCallback, useMemo, useState } from 'react'
 import { useWechatStore } from '../../useWechatStore'
-import { findAccountById, loadAccountsBundle } from '../../wechatAccountPersistence'
+import {
+  findAccountById,
+  loadAccountsBundle,
+  reconcileWeChatCharacterOwnershipAfterArchiveImport,
+} from '../../wechatAccountPersistence'
+import { countWeChatPersonaCoreStoreRecords } from '../../../dataArchive/scanWeChatPersonaIndexedDb'
 import { personaDb } from '../idb'
 import type { Character, PlayerIdentity } from '../types'
 import {
@@ -58,6 +63,17 @@ export function usePersonaRoster(linkedCharacterIds: readonly string[]) {
       }
 
       let roots = await personaDb.listRootCharactersAccessibleToWechatAccount(acc, [...linkedCharacterIds])
+      if (!roots.length) {
+        const core = await countWeChatPersonaCoreStoreRecords()
+        if (core.characters > 0) {
+          try {
+            await reconcileWeChatCharacterOwnershipAfterArchiveImport()
+            roots = await personaDb.listRootCharactersAccessibleToWechatAccount(acc, [...linkedCharacterIds])
+          } catch (e) {
+            console.warn('[persona-roster] ownership reconcile failed', e)
+          }
+        }
+      }
       let repaired = false
       for (const c of roots) {
         if (await repairCharacterSlotPrimaryBindingFromLinked(c.id)) repaired = true

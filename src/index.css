@@ -220,6 +220,14 @@ html[data-phone-layout='locked'] #root {
   font-family: var(--phone-font);
 }
 
+/** 记忆馆 · 剧情摘要/云卡正文：强制衬线，覆盖微信 sans 继承与 pre 默认字体 */
+.memory-archive-serif-text {
+  font-family: 'Noto Serif SC', 'Songti SC', 'STSong', 'SimSun', var(--phone-font), Georgia, serif;
+}
+.memory-archive-serif-text pre {
+  font-family: inherit;
+}
+
 /** 全局数字衬线：与 tabular-nums 搭配，覆盖 Tailwind 默认仅等宽数字的行为 */
 .tabular-nums,
 .font-num {

@@ -291,3 +291,17 @@ export function isSameWeChatStorageConversationMigration(oldKey: string, newKey:
   }
   return false
 }
+
+export type WeChatResolvedPrivateChatTarget =
+  | { kind: 'lumi' }
+  | { kind: 'self' }
+  | { kind: 'persona'; characterId: string }
+
+/** 将私聊 characterId 解析为 Lumi / 发给自己 / 角色私聊 */
+export function resolveWeChatPrivateChatTarget(characterId: string): WeChatResolvedPrivateChatTarget | null {
+  const id = characterId.trim()
+  if (!id) return null
+  if (id === WECHAT_LUMI_PEER_CHARACTER_ID) return { kind: 'lumi' }
+  if (id === WECHAT_SELF_PEER_CHARACTER_ID) return { kind: 'self' }
+  return { kind: 'persona', characterId: id }
+}

@@ -165,6 +165,16 @@ export type WxFillStyle = {
   blurPx: number
 }
 
+/** 聊天室背景：纯色或图片（仅作用于聊天页消息区，不含 Tab 底图） */
+export type WeChatChatRoomBg =
+  | { mode: 'solid'; color: string }
+  | { mode: 'image'; imageUrl: string; fallbackColor: string }
+
+export const DEFAULT_WECHAT_CHAT_ROOM_BG: WeChatChatRoomBg = {
+  mode: 'solid',
+  color: '#EDEDED',
+}
+
 export type WeChatBubbleTheme = {
   /** 仅这两项先做：后续可扩展文字色/边框等 */
   selfBubbleBg: string
@@ -175,6 +185,8 @@ export type WeChatBubbleTheme = {
   avatarRadiusPx: number
   /** 在头像一侧显示指向三角，三角竖直方向与头像水平中线对齐（需开启头像） */
   showBubbleTail: boolean
+  /** 尾巴样式：wechat 三角；imessage 切角；telegram 鸟喙三角 */
+  bubbleTailStyle?: 'wechat' | 'imessage' | 'telegram' | 'talkmaker'
   /**
    * 连续同侧消息仅首条显示头像列（与常见 IM 一致）；关闭则每条都占头像位。
    * 需 `showAvatar` 为 true 时才有视觉效果。
@@ -191,6 +203,7 @@ export function wechatBubbleThemesEqual(a: WeChatBubbleTheme, b: WeChatBubbleThe
     a.showAvatar === b.showAvatar &&
     a.avatarRadiusPx === b.avatarRadiusPx &&
     a.showBubbleTail === b.showBubbleTail &&
+    a.bubbleTailStyle === b.bubbleTailStyle &&
     a.mergeConsecutiveAvatarGroup === b.mergeConsecutiveAvatarGroup
   )
 }
@@ -250,6 +263,8 @@ export type WeChatTheme = {
   /** 聊天页 */
   chatInputBg: string
   chatInputBorder: string
+  /** 聊天室默认背景（无单会话自定义壁纸时使用；不影响 Tab 页与底部导航底图） */
+  chatRoomDefaultBg: WeChatChatRoomBg
   /** 聊天气泡：全局 + 按角色覆盖（角色先做示例，后续可扩展真实会话） */
   bubbleGlobal: WeChatBubbleTheme
   bubbleByRole: Record<string, WeChatBubbleTheme>
@@ -592,6 +607,7 @@ export const DEFAULT_CUSTOMIZATION: CustomizationState = {
 
     chatInputBg: 'rgba(255, 255, 255, 0.92)',
     chatInputBorder: 'rgba(0, 0, 0, 0.06)',
+    chatRoomDefaultBg: { ...DEFAULT_WECHAT_CHAT_ROOM_BG },
     selfBubbleText: '#1B1B1F',
     otherBubbleText: '#1B1B1F',
     bubbleGlobal: {

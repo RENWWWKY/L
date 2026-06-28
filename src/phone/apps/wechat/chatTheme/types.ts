@@ -8,6 +8,10 @@ export interface ChatTheme {
     buttonSize: number
     buttonColor: string
     backgroundColor: string
+    /** 输入栏布局：lumi 为项目默认；wechat 为微信 App 模版；其余为 Messenger 高仿 */
+    layout?: 'lumi' | 'wechat' | 'imessage' | 'telegram' | 'talkmaker'
+    /** iMessage 发送钮背景色 */
+    sendButtonColor?: string
   }
   bubble: {
     borderRadius: number
@@ -59,6 +63,17 @@ export function normalizeChatTheme(raw: unknown): ChatTheme {
       buttonSize: num(ib.buttonSize, base.inputBar.buttonSize, 14, 28),
       buttonColor: str(ib.buttonColor, base.inputBar.buttonColor),
       backgroundColor: str(ib.backgroundColor, base.inputBar.backgroundColor),
+      layout:
+        ib.layout === 'wechat' ||
+        ib.layout === 'imessage' ||
+        ib.layout === 'telegram' ||
+        ib.layout === 'talkmaker'
+          ? ib.layout
+          : 'lumi',
+      sendButtonColor:
+        typeof ib.sendButtonColor === 'string' && ib.sendButtonColor.trim()
+          ? ib.sendButtonColor
+          : base.inputBar.sendButtonColor,
     },
     bubble: {
       borderRadius: num(bb.borderRadius, base.bubble.borderRadius, 4, 28),

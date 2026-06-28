@@ -41,6 +41,62 @@ export function formatTargetDistanceLabel(meters: number | null | undefined): st
   return `${Math.round(km).toLocaleString('en-US')} KM`
 }
 
+export function resolveLocationDistanceMeters(payload: WeChatLocationPayload): number | null {
+  if (
+    typeof payload.distanceMeters === 'number' &&
+    Number.isFinite(payload.distanceMeters) &&
+    payload.distanceMeters >= 0
+  ) {
+    return payload.distanceMeters
+  }
+  const parsed = parseDistanceInput(payload.distance.trim())
+  return parsed != null ? parsed : null
+}
+
+export type LocationDistanceSubtitleStyle = 'imessage' | 'telegram'
+
+/** iMessage / Telegram 位置卡片副标题（自然语言距离，非特工设备风） */
+export function formatLocationDistanceSubtitle(
+  payload: WeChatLocationPayload,
+  style: LocationDistanceSubtitleStyle = 'imessage',
+): string {
+  if (/unknown/i.test(payload.distance.trim())) {
+    return style === 'imessage' ? 'Unknown distance' : '—'
+  }
+  const meters = resolveLocationDistanceMeters(payload)
+  if (meters == null) {
+    return style === 'imessage' ? 'Unknown distance' : '—'
+  }
+  if (meters < 1000) {
+    const label = `${Math.round(meters).toLocaleString('en-US')} m`
+    return style === 'imessage' ? `${label} away` : label
+  }
+  const km = meters / 1000
+  const kmStr = km < 10 ? km.toFixed(1) : Math.round(km).toLocaleString('en-US')
+  const label = `${kmStr} km`
+  return style === 'imessage' ? `${label} away` : label
+}
+
+/** Talkmaker 位置卡片距离文案 */
+export function formatLocationDistanceTalkmaker(payload: WeChatLocationPayload): {
+  showNearBadge: boolean
+  label: string
+} {
+  if (/unknown/i.test(payload.distance.trim())) {
+    return { showNearBadge: false, label: '距离未知' }
+  }
+  const meters = resolveLocationDistanceMeters(payload)
+  if (meters == null) {
+    return { showNearBadge: false, label: '距离未知' }
+  }
+  if (meters < 1000) {
+    return { showNearBadge: true, label: `距离你 ${Math.round(meters).toLocaleString('en-US')} m` }
+  }
+  const km = meters / 1000
+  const kmStr = km < 10 ? km.toFixed(1) : Math.round(km).toLocaleString('en-US')
+  return { showNearBadge: meters < 2000, label: `距离你 ${kmStr} km` }
+}
+
 /** 解析手填距离字符串（支持 km / m / 纯数字视为 km） */
 export function parseDistanceInput(raw: string): number | null {
   const t = raw.trim().replace(/,/g, '')

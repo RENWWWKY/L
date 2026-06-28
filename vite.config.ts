@@ -8,6 +8,7 @@ import basicSsl from '@vitejs/plugin-basic-ssl'
 import { defineConfig, loadEnv, type Plugin, type ResolvedConfig } from 'vite'
 
 import { buildNeteaseDevProxyTable } from './viteNeteaseDevProxy'
+import { hfMirrorDevProxyPlugin } from './viteHfMirrorDevProxy'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 
@@ -232,6 +233,7 @@ export default defineConfig(({ command, mode }) => {
   return {
   base,
   plugins: [
+    hfMirrorDevProxyPlugin(),
     react(),
     tailwindcss(),
     ...(devHttps ? [basicSsl()] : []),

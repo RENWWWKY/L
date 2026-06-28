@@ -38,6 +38,8 @@ export type MemoryTraceWorldBookAfterChat = {
   appliedToDb: boolean
   /** 已要求输出补丁协议，但解析结果为空（模型未输出或 JSON 无效） */
   modelOmittedPatchBlock: boolean
+  /** 自动总结阶段（非本轮聊天 inline）写入的补丁 */
+  autoSummaryPatches?: MemoryTraceWorldBookAfterPatchRow[]
 }
 
 /** 相对当前私聊会话：记忆/摘录来自哪条微信线+扮演马甲 */
@@ -95,10 +97,70 @@ export type MemoryTraceNetworkRelationships = {
   promptExcerpt: string
 }
 
+/** 本轮 system 记忆注入摘要（顶部 chips） */
+export type MemoryTraceInjectionSummary = {
+  /** 长期记忆关键词命中条数 */
+  keywordHitCount: number
+  /** 长期记忆向量召回条数 */
+  longTermVectorCount: number
+  /** 已总结片段语义召回条数 */
+  contextVectorRecallCount: number
+  /** 是否注入剧情时间轴块 */
+  storyTimelineInjected: boolean
+  /** 未总结私聊是否注入 */
+  unsummarizedPrivateInjected: boolean
+  /** 未总结群聊是否注入 */
+  unsummarizedGroupInjected: boolean
+  /** 未总结线下 plot 是否注入 */
+  unsummarizedOfflineInjected: boolean
+  /** 语义召回是否启用（设置项） */
+  contextVectorRecallEnabled: boolean
+  /** 向量 provider：api / local / auto */
+  embeddingProviderMode: 'api' | 'local' | 'auto'
+  /** 最近 N 轮参考：因未总结块已足够而省略 */
+  privateRecentRoundsOmitted: boolean
+  offlineRecentRoundsOmitted: boolean
+  meetRecentRoundsOmitted: boolean
+}
+
+/** 剧情时间轴注入块 */
+export type MemoryTraceStoryTimelineInjectRow = {
+  injectKind: 'state' | 'recent' | 'vector'
+  label: string
+  content: string
+  relevanceScore?: number
+}
+
+/** 剧情时间轴注入块 */
+export type MemoryTraceStoryTimeline = {
+  injected: boolean
+  /** 与 prompt 注入一致的格式化正文 */
+  promptExcerpt: string
+  /** 逐条摘要带来源标签（与 prompt 注入对齐） */
+  rows?: MemoryTraceStoryTimelineInjectRow[]
+}
+
+export type MemoryTraceContextVectorRecall = {
+  relevanceScore: number
+  content: string
+  sourceKind: 'private_chat' | 'offline_plot' | 'meet_chat'
+}
+
+/** 「最近 N 轮参考」注入状态（与 dedupe 逻辑对齐） */
+export type MemoryTraceRecentRoundRef = {
+  channel: 'private' | 'offline' | 'meet'
+  label: string
+  injected: boolean
+  omittedBecauseUnsummarized: boolean
+  snippet: string
+}
+
 /** 思维溯源：一轮模型回复所加载的上下文矩阵（与注入逻辑对齐） */
 export type MemoryTraceData = {
   lastReply: string
   charName: string
+  /** 可选：旧持久化记录无此字段 */
+  injectionSummary?: MemoryTraceInjectionSummary | null
   /** 可选：旧持久化记录无此字段 */
   worldBookAfterChat?: MemoryTraceWorldBookAfterChat | null
   /** 可选：旧持久化记录无此字段 */
@@ -117,6 +179,8 @@ export type MemoryTraceData = {
       /** @deprecated 旧版仅标题胶囊；无 globalWorldbook 时可回退展示 */
       worldbooks: Array<{ type: 'global' | 'personal'; title: string }>
     }
+    /** 可选：剧情时间轴（Phase 1） */
+    storyTimeline?: MemoryTraceStoryTimeline | null
     recentContext: {
       activeSessionMessages: number
       unsummarizedOfflinePlots: Array<{ date: string; snippet: string }>
@@ -127,11 +191,15 @@ export type MemoryTraceData = {
         sourceLineLabel?: string
         lineRelation?: MemoryTraceLineRelation
       }>
+      /** 可选：最近 N 轮参考注入 / 省略状态 */
+      recentRoundRefs?: MemoryTraceRecentRoundRef[]
     }
     deepMemory: {
       keywordHits: Array<{
         keyword: string
         content: string
+        /** 关键词语义确认分数（向量可用且非「始终触发」时） */
+        relevanceScore?: number
         sourceLineLabel?: string
         lineRelation?: MemoryTraceLineRelation
         /** 可选：旧持久化无此字段时视为自有记忆 */
@@ -144,6 +212,8 @@ export type MemoryTraceData = {
         lineRelation?: MemoryTraceLineRelation
         memoryBucket?: MemoryTraceMemoryBucket
       }>
+      /** 可选：已总结片段语义召回 */
+      contextVectorRecalls?: MemoryTraceContextVectorRecall[]
     }
   }
 }
@@ -157,6 +227,26 @@ function asStr(v: unknown, fallback = ''): string {
 
 function asNum(v: unknown, fallback = 0): number {
   return typeof v === 'number' && Number.isFinite(v) ? v : fallback
+}
+
+function parseMemoryTracePatchRows(raw: unknown): MemoryTraceWorldBookAfterPatchRow[] {
+  const out: MemoryTraceWorldBookAfterPatchRow[] = []
+  if (!Array.isArray(raw)) return out
+  for (const x of raw) {
+    if (!x || typeof x !== 'object') continue
+    const p = x as Record<string, unknown>
+    const cid = p.characterId != null ? asStr(p.characterId).trim() : ''
+    out.push({
+      characterId: cid || undefined,
+      worldBookId: asStr(p.worldBookId),
+      itemId: asStr(p.itemId),
+      bookName: asStr(p.bookName) || undefined,
+      itemName: asStr(p.itemName) || undefined,
+      previousContent: asStr(p.previousContent),
+      newContentFull: asStr(p.newContentFull) || asStr(p.newContentPreview),
+    })
+  }
+  return out
 }
 
 /** 从持久化 JSON 恢复；结构不符时返回 null */
@@ -237,6 +327,7 @@ export function parseMemoryTraceData(raw: unknown): MemoryTraceData | null {
       keywordHits.push({
         keyword: asStr(k.keyword),
         content: asStr(k.content),
+        relevanceScore: typeof k.relevanceScore === 'number' && Number.isFinite(k.relevanceScore) ? k.relevanceScore : undefined,
         sourceLineLabel: asStr(k.sourceLineLabel) || undefined,
         lineRelation: kLineRel,
         memoryBucket: kMemBucket,
@@ -269,24 +360,7 @@ export function parseMemoryTraceData(raw: unknown): MemoryTraceData | null {
   const wba = o.worldBookAfterChat
   if (wba && typeof wba === 'object') {
     const w = wba as Record<string, unknown>
-    const parsedPatches: MemoryTraceWorldBookAfterChat['parsedPatches'] = []
-    const pp = w.parsedPatches
-    if (Array.isArray(pp)) {
-      for (const x of pp) {
-        if (!x || typeof x !== 'object') continue
-        const p = x as Record<string, unknown>
-        const cid = p.characterId != null ? asStr(p.characterId).trim() : ''
-        parsedPatches.push({
-          characterId: cid || undefined,
-          worldBookId: asStr(p.worldBookId),
-          itemId: asStr(p.itemId),
-          bookName: asStr(p.bookName) || undefined,
-          itemName: asStr(p.itemName) || undefined,
-          previousContent: asStr(p.previousContent),
-          newContentFull: asStr(p.newContentFull) || asStr(p.newContentPreview),
-        })
-      }
-    }
+    const parsedPatches = parseMemoryTracePatchRows(w.parsedPatches)
     const injectedSnapshotEntries: MemoryTraceWorldBookAfterInjectedEntry[] = []
     const inj = w.injectedSnapshotEntries
     if (Array.isArray(inj)) {
@@ -315,6 +389,7 @@ export function parseMemoryTraceData(raw: unknown): MemoryTraceData | null {
       parsedPatches,
       appliedToDb: Boolean(w.appliedToDb),
       modelOmittedPatchBlock: Boolean(w.modelOmittedPatchBlock),
+      autoSummaryPatches: parseMemoryTracePatchRows(w.autoSummaryPatches),
     }
   }
 
@@ -393,9 +468,99 @@ export function parseMemoryTraceData(raw: unknown): MemoryTraceData | null {
     }
   }
 
+  let injectionSummary: MemoryTraceInjectionSummary | null | undefined
+  const isRaw = o.injectionSummary
+  if (isRaw && typeof isRaw === 'object') {
+    const s = isRaw as Record<string, unknown>
+    const modeRaw = s.embeddingProviderMode
+    const mode: MemoryTraceInjectionSummary['embeddingProviderMode'] =
+      modeRaw === 'api' || modeRaw === 'local' || modeRaw === 'auto' ? modeRaw : 'auto'
+    injectionSummary = {
+      keywordHitCount: asNum(s.keywordHitCount, 0),
+      longTermVectorCount: asNum(s.longTermVectorCount, 0),
+      contextVectorRecallCount: asNum(s.contextVectorRecallCount, 0),
+      storyTimelineInjected: Boolean(s.storyTimelineInjected),
+      unsummarizedPrivateInjected: Boolean(s.unsummarizedPrivateInjected),
+      unsummarizedGroupInjected: Boolean(s.unsummarizedGroupInjected),
+      unsummarizedOfflineInjected: Boolean(s.unsummarizedOfflineInjected),
+      contextVectorRecallEnabled: Boolean(s.contextVectorRecallEnabled),
+      embeddingProviderMode: mode,
+      privateRecentRoundsOmitted: Boolean(s.privateRecentRoundsOmitted),
+      offlineRecentRoundsOmitted: Boolean(s.offlineRecentRoundsOmitted),
+      meetRecentRoundsOmitted: Boolean(s.meetRecentRoundsOmitted),
+    }
+  }
+
+  let storyTimeline: MemoryTraceStoryTimeline | null | undefined
+  const st = cmo.storyTimeline
+  if (st && typeof st === 'object') {
+    const sto = st as Record<string, unknown>
+    const rowsRaw = sto.rows
+    const rows: MemoryTraceStoryTimelineInjectRow[] = []
+    if (Array.isArray(rowsRaw)) {
+      for (const x of rowsRaw) {
+        if (!x || typeof x !== 'object') continue
+        const r = x as Record<string, unknown>
+        const kindRaw = r.injectKind
+        const injectKind: MemoryTraceStoryTimelineInjectRow['injectKind'] =
+          kindRaw === 'vector' || kindRaw === 'state' ? kindRaw : 'recent'
+        rows.push({
+          injectKind,
+          label: asStr(r.label),
+          content: asStr(r.content),
+          ...(typeof r.relevanceScore === 'number' && Number.isFinite(r.relevanceScore)
+            ? { relevanceScore: r.relevanceScore }
+            : {}),
+        })
+      }
+    }
+    storyTimeline = {
+      injected: Boolean(sto.injected),
+      promptExcerpt: asStr(sto.promptExcerpt),
+      ...(rows.length ? { rows } : {}),
+    }
+  }
+
+  const recentRoundRefs: MemoryTraceRecentRoundRef[] = []
+  const rrr = rco.recentRoundRefs
+  if (Array.isArray(rrr)) {
+    for (const x of rrr) {
+      if (!x || typeof x !== 'object') continue
+      const r = x as Record<string, unknown>
+      const chRaw = r.channel
+      const channel: MemoryTraceRecentRoundRef['channel'] =
+        chRaw === 'offline' || chRaw === 'meet' ? chRaw : 'private'
+      recentRoundRefs.push({
+        channel,
+        label: asStr(r.label),
+        injected: Boolean(r.injected),
+        omittedBecauseUnsummarized: Boolean(r.omittedBecauseUnsummarized),
+        snippet: asStr(r.snippet),
+      })
+    }
+  }
+
+  const contextVectorRecalls: MemoryTraceContextVectorRecall[] = []
+  const cvr = dmo.contextVectorRecalls
+  if (Array.isArray(cvr)) {
+    for (const x of cvr) {
+      if (!x || typeof x !== 'object') continue
+      const v = x as Record<string, unknown>
+      const skRaw = v.sourceKind
+      const sourceKind: MemoryTraceContextVectorRecall['sourceKind'] =
+        skRaw === 'offline_plot' || skRaw === 'meet_chat' ? skRaw : 'private_chat'
+      contextVectorRecalls.push({
+        relevanceScore: asNum(v.relevanceScore, 0),
+        content: asStr(v.content),
+        sourceKind,
+      })
+    }
+  }
+
   return {
     lastReply,
     charName: charName || '角色',
+    injectionSummary,
     worldBookAfterChat,
     networkRelationships,
     contextMatrix: {
@@ -407,12 +572,18 @@ export function parseMemoryTraceData(raw: unknown): MemoryTraceData | null {
         globalWorldbook,
         worldbooks,
       },
+      storyTimeline,
       recentContext: {
         activeSessionMessages,
         unsummarizedOfflinePlots,
         unsummarizedChats,
+        recentRoundRefs: recentRoundRefs.length ? recentRoundRefs : undefined,
       },
-      deepMemory: { keywordHits, vectorRetrievals },
+      deepMemory: {
+        keywordHits,
+        vectorRetrievals,
+        contextVectorRecalls: contextVectorRecalls.length ? contextVectorRecalls : undefined,
+      },
     },
   }
 }
