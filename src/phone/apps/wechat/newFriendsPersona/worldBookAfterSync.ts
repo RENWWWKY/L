@@ -15,6 +15,10 @@ import { isWorldBookAfterPerRoundSyncEnabled } from '../memory/worldBookAfterPer
 import { dispatchWorldBookAfterPerRoundSyncResult } from '../memory/worldBookAfterPerRoundResultEvents'
 import { gatherLatestRoundBodyForEpilogue } from '../memory/memoryEpilogueArchive'
 import {
+  buildDatingEpiloguePerRoundSyncExtraRules,
+  filterDatingWorldBookAfterPatches,
+} from '../dating/datingEpilogueRelationshipRules'
+import {
   buildWorldBookAfterPatchRowsFromSingleCharacter,
   syncAutoSummaryEpilogueToLastMemoryTrace,
 } from '../memoryTracePublisher'
@@ -109,6 +113,13 @@ export async function requestWorldBookAfterPerRoundPatches(params: {
   apiConfig: ApiConfig | null
   character: Character
   latestRoundBody: string
+  /** 线下剧情落库后的尾声判断：启用更严的关系基准规则 */
+  datingContext?: {
+    isEarlyRound?: boolean
+    hasOnlineWechatFacts?: boolean
+    historyPlotCount?: number
+    userText?: string
+  }
 }): Promise<WorldBookAfterPatch[]> {
   const ch = params.character
   if (!ch?.id?.trim() || !hasChatAfterWorldBookItems(ch)) return []
@@ -135,8 +146,17 @@ export async function requestWorldBookAfterPerRoundPatches(params: {
     '【本轮最新剧情 / 回复正文（仅此一轮，勿臆造未出现事实）】',
     latest,
     '',
+    params.datingContext
+      ? buildDatingEpiloguePerRoundSyncExtraRules({
+          isEarlyRound: params.datingContext.isEarlyRound,
+          hasOnlineWechatFacts: params.datingContext.hasOnlineWechatFacts,
+        })
+      : '',
+    '',
     '请仅根据本轮正文判断尾声延展是否需要更新；无变化则 patches=[]。',
-  ].join('\n')
+  ]
+    .filter(Boolean)
+    .join('\n')
 
   const raw = await openAiCompatibleChat(cfg, [
     { role: 'system', content: buildWorldBookAfterPerRoundSystemPrompt() },
@@ -151,7 +171,15 @@ export async function requestWorldBookAfterPerRoundPatches(params: {
   const end = jsonBody.lastIndexOf('}')
   if (start >= 0 && end > start) jsonBody = jsonBody.slice(start, end + 1)
 
-  return parseWorldBookAfterPatchJson(jsonBody)
+  let patches = parseWorldBookAfterPatchJson(jsonBody)
+  if (params.datingContext && patches.length) {
+    patches = filterDatingWorldBookAfterPatches(patches, ch, {
+      historyPlotCount: params.datingContext.historyPlotCount ?? 0,
+      plotBody: latest,
+      userText: params.datingContext.userText,
+    })
+  }
+  return patches
 }
 
 export type WorldBookAfterPerRoundSyncOutcome =
@@ -185,6 +213,13 @@ export async function finalizeWorldBookAfterPerAiRound(params: {
   force?: boolean
   /** 失败时是否派发全局 toast */
   notifyOnFailure?: boolean
+  /** 线下剧情：更严的关系基准与补丁过滤 */
+  datingContext?: {
+    isEarlyRound?: boolean
+    hasOnlineWechatFacts?: boolean
+    historyPlotCount?: number
+    userText?: string
+  }
 }): Promise<WorldBookAfterPerRoundSyncOutcome> {
   const ch = params.character
   const label =
@@ -216,6 +251,7 @@ export async function finalizeWorldBookAfterPerAiRound(params: {
       apiConfig: params.apiConfig,
       character: ch,
       latestRoundBody: body,
+      datingContext: params.datingContext,
     })
     if (!patches.length) return { status: 'no_change' }
     const count = await persistWorldBookAfterSyncPatches(

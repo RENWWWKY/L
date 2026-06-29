@@ -1215,6 +1215,23 @@ type MessagesThreadRow =
 
 const PIN_ROW_EST_PX = 76
 
+type ActiveChatUnreadExclude = {
+  conversationKey: string | null
+  characterId: string | null
+  groupId: string | null
+}
+
+/** 聊天室顶栏返回键旁未读：排除当前正在看的会话（含分裂 conversationKey 的 persona 桶） */
+function isMessageThreadForActiveChat(t: MessagesThreadRow, active: ActiveChatUnreadExclude): boolean {
+  if (active.conversationKey && t.conversationKey === active.conversationKey) return true
+  if (active.groupId && t.kind === 'group' && t.groupId === active.groupId) return true
+  if (active.characterId) {
+    if (t.kind === 'persona' && t.characterId === active.characterId) return true
+    if (t.peerCharacterId === active.characterId) return true
+  }
+  return false
+}
+
 /** 信息页会话卡片左滑露出的操作区宽度（4 个横向操作） */
 const MSG_THREAD_SWIPE_ACTION_W = 232
 const MSG_THREAD_SWIPE_SPRING = { type: 'spring' as const, stiffness: 520, damping: 38, mass: 0.85 }
@@ -4922,50 +4939,71 @@ function WeChatAppInner({ onBack }: Props) {
   }, [activeConversationKey])
 
   /**
-   * 未读由「最后阅读游标 + 消息」计算；进入某会话且 key 已就绪时标记已读，避免在拉历史时反复 advance。
+   * 未读由「最后阅读游标 + 消息」计算。在聊天室内须持续标已读（含对方新消息落库），
+   * 不能只进房标一次——否则返回键旁会误显示当前会话未读。
    */
-  const chatMarkOnceForConvKeyRef = useRef<string | null>(null)
-  useEffect(() => {
-    if (route.name !== 'chat') {
-      chatMarkOnceForConvKeyRef.current = null
-      return
-    }
-    if (!activeConversationKey || !activeConversationCharacterId) return
+  const markActiveChatRead = useCallback(async () => {
+    if (route.name !== 'chat') return
+    if (!activeConversationKey) return
     const layer = wxDockChat
     if (layer?.kind === 'persona' && chatRouteIdentityId === null) return
-    if (!layer || layer.kind === 'group') {
-      if (chatMarkOnceForConvKeyRef.current === activeConversationKey) return
-      chatMarkOnceForConvKeyRef.current = activeConversationKey
-      void personaDb.markWeChatConversationReadToLatest(activeConversationKey).then(() => refreshMessageThreadsMeta())
-      return
-    }
+
     const acc = currentAccountId?.trim()
     const sessionPid = (chatRouteIdentityId ?? playerIdentityId ?? '__none__').trim()
-    const markKey = `${activeConversationKey}::${sessionPid}`
-    if (chatMarkOnceForConvKeyRef.current === markKey) return
-    chatMarkOnceForConvKeyRef.current = markKey
-    void (async () => {
-      if (acc && layer.kind === 'persona') {
-        await markPrivateChatConversationReadForAccountCharacter({
-          wechatAccountId: acc,
-          characterId: activeConversationCharacterId,
-          appSessionPlayerIdentityId: sessionPid,
-        })
-      } else {
-        await personaDb.markWeChatConversationReadToLatest(activeConversationKey)
-      }
-      await refreshMessageThreadsMeta()
-    })()
+
+    if (layer?.kind === 'persona' && acc && activeConversationCharacterId) {
+      await markPrivateChatConversationReadForAccountCharacter({
+        wechatAccountId: acc,
+        characterId: activeConversationCharacterId,
+        appSessionPlayerIdentityId: sessionPid,
+      })
+    } else {
+      await personaDb.markWeChatConversationReadToLatest(activeConversationKey)
+    }
+    await refreshMessageThreadsMeta()
   }, [
     route.name,
     activeConversationKey,
     activeConversationCharacterId,
-    currentAccountId,
-    wxDockChat,
     chatRouteIdentityId,
+    currentAccountId,
     playerIdentityId,
     refreshMessageThreadsMeta,
+    wxDockChat,
   ])
+
+  useEffect(() => {
+    if (route.name !== 'chat') return
+    if (!activeConversationKey) return
+    const layer = wxDockChat
+    if (layer?.kind === 'persona' && chatRouteIdentityId === null) return
+
+    let debounceTimer: number | null = null
+    const scheduleMark = () => {
+      if (debounceTimer != null) window.clearTimeout(debounceTimer)
+      debounceTimer = window.setTimeout(() => {
+        debounceTimer = null
+        void markActiveChatRead()
+      }, 80)
+    }
+
+    void markActiveChatRead()
+    window.addEventListener('wechat-storage-changed', scheduleMark)
+    return () => {
+      if (debounceTimer != null) window.clearTimeout(debounceTimer)
+      window.removeEventListener('wechat-storage-changed', scheduleMark)
+    }
+  }, [route.name, activeConversationKey, chatRouteIdentityId, wxDockChat, markActiveChatRead])
+
+  const activeChatUnreadExclude = useMemo((): ActiveChatUnreadExclude | null => {
+    if (route.name !== 'chat') return null
+    return {
+      conversationKey: activeConversationKey,
+      characterId:
+        route.chat.kind === 'group' ? null : activeConversationCharacterId,
+      groupId: route.chat.kind === 'group' ? route.chat.groupId : null,
+    }
+  }, [route, activeConversationKey, activeConversationCharacterId])
 
   const messagesTabUnreadTotal = useMemo(
     () =>
@@ -4976,6 +5014,15 @@ function WeChatAppInner({ onBack }: Props) {
     [messageThreads, isConversationMuted],
   )
 
+  const chatBackBadgeUnreadTotal = useMemo(() => {
+    if (!activeChatUnreadExclude) return messagesTabUnreadTotal
+    return messageThreads.reduce((s, t) => {
+      if (isConversationMuted(t.conversationKey)) return s
+      if (isMessageThreadForActiveChat(t, activeChatUnreadExclude)) return s
+      return s + t.unread
+    }, 0)
+  }, [messageThreads, isConversationMuted, activeChatUnreadExclude, messagesTabUnreadTotal])
+
   const exitChatToMessages = useCallback(() => {
     const convKey = activeConversationKey
     const layer = wxDockChat
@@ -4983,7 +5030,6 @@ function WeChatAppInner({ onBack }: Props) {
     const sessionPid = (chatRouteIdentityId ?? playerIdentityId ?? '__none__').trim()
     const personaCid =
       layer?.kind === 'persona' ? layer.characterId.trim() : activeConversationCharacterId?.trim() || ''
-    chatMarkOnceForConvKeyRef.current = null
     setRoute({ name: 'tabs', tab: 'messages' })
     void (async () => {
       try {
@@ -5950,7 +5996,7 @@ function WeChatAppInner({ onBack }: Props) {
           onOpenSettings={() => setChatSettingsOpen(true)}
           onOpenPsycheRadar={() => setPsycheRadarOpen(true)}
           showPsycheRadar={chatHeaderShowPsycheRadar}
-          backBadgeCount={messagesTabUnreadTotal}
+          backBadgeCount={chatBackBadgeUnreadTotal}
           showTyping={chatOtherTyping || (chatOpponentRevealPending && !chatOtherTyping)}
           typingText={route.name === 'chat' && route.chat.kind === 'group' ? '成员正在输入…' : '对方正在输入…'}
           onCenterClick={() => setChatSettingsOpen(true)}
