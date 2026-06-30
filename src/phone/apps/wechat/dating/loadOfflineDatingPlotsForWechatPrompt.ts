@@ -11,16 +11,11 @@ import {
   resolveOfflineDatingArchiveContext,
 } from './offlineDatingArchiveResolve'
 import { offlinePlotBodyRelevantToNpcForLinkedExcerpt } from './offlineDatingNpcSpeakerDetect'
-import { splitDatingAssistantOutput } from './plotCoT'
-import { extractVnVoiceParamsBlock } from './vnVoiceParamsStrip'
+import { datingPlotBodyForPromptInjection } from './plotCoT'
 import { formatSystemRecordTime, resolvePlotSystemRecordedAtMs } from '../wechatCrossChannelTimeline'
 
 function plotBodyForPrompt(p: DatingPlotSnapshotItem): string {
-  const raw = String(p.content || '').trim()
-  if (!raw) return ''
-  if (p.type === 'player') return raw
-  const prose = splitDatingAssistantOutput(raw).content.trim()
-  return extractVnVoiceParamsBlock(prose).cleanedText.trim()
+  return datingPlotBodyForPromptInjection(String(p.content || ''), p.type)
 }
 
 function formatPlotTraceDate(ts: number): string {
@@ -135,14 +130,14 @@ export async function listSummarizedOfflinePlotContextLines(
 
     const out: Array<{ line: string; timestamp: number; plotId: string }> = []
     for (const p of summarized) {
+      if (p.type === 'player') continue
       const body = plotBodyForPrompt(p)
       if (!body || body.length < 16) continue
       const ts = resolvePlotSystemRecordedAtMs(p)
       const timePrefix = formatPlotTraceDate(ts)
-      let line: string
-      if (p.type === 'player') line = `- [${timePrefix}] [线下·原文·我] ${body}`
-      else if (borrowed) line = `- [${timePrefix}] [线下·原文·「${rootName}」] ${body}`
-      else line = `- [${timePrefix}] [线下·原文·${peerLabel}] ${body}`
+      const line = borrowed
+        ? `- [${timePrefix}] [线下·原文·「${rootName}」] ${body}`
+        : `- [${timePrefix}] [线下·原文·${peerLabel}] ${body}`
       const plotId = p.id?.trim() || `plot-${ts}`
       out.push({ line, timestamp: ts, plotId })
     }

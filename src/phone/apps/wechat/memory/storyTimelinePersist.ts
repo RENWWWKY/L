@@ -1,3 +1,4 @@
+import { resolveOfflineDatingArchiveContext } from '../dating/offlineDatingArchiveResolve'
 import { personaDb } from '../newFriendsPersona/idb'
 import type { ApiConfigCore } from '../../api/types'
 import type { PlotItem } from '../dating/types'
@@ -6,6 +7,11 @@ import {
   buildParallelEventTimelineRowsForPlot,
   parallelEventMainPlotSummaryFootnote,
 } from './storyTimelineParallelFanOut'
+import {
+  advanceDatingPlotSummaryCursorIfNeeded,
+  ensureDatingPlotSummaryCursorSyncedFromPlotRows,
+  syncDatingPlotSummaryCursorFromPlotRows,
+} from './storyTimelineDatingCursorSync'
 import { recallStoryTimelineRowsByVector } from './storyTimelineRowRecall'
 import { MEMORY_UNSUMMARIZED_OFFLINE_INJECT_AI_ROUNDS } from './memorySummaryRetention'
 import {
@@ -70,6 +76,9 @@ export async function persistStoryTimelineFromSummaryDelta(
     })()
   if (plotRow) {
     await personaDb.appendStoryTimelinePlotRow(plotRow)
+    if (scope === 'offline' || scope === 'linked') {
+      await advanceDatingPlotSummaryCursorIfNeeded(cid, plotRow.recordedAt)
+    }
   }
 }
 
@@ -127,6 +136,8 @@ export async function rebuildStoryTimelineFromDatingPlots(
   for (const row of plotRows) {
     await personaDb.upsertStoryTimelinePlotRow(row)
   }
+  const allRows = await personaDb.listStoryTimelinePlotRowsByCharacterId(cid)
+  await syncDatingPlotSummaryCursorFromPlotRows(cid, allRows)
   return { parallelSummaryPlotIds }
 }
 
@@ -152,6 +163,8 @@ export async function migrateStoryTimelineRecentEventsToRows(characterId: string
     })
     if (row) await personaDb.appendStoryTimelinePlotRow(row)
   }
+  const migrated = await personaDb.listStoryTimelinePlotRowsByCharacterId(cid)
+  await syncDatingPlotSummaryCursorFromPlotRows(cid, migrated)
 }
 
 export async function loadStoryTimelinePromptBlock(
@@ -163,12 +176,20 @@ export async function loadStoryTimelinePromptBlock(
 
   await migrateStoryTimelineRecentEventsToRows(cid)
 
-  const [state, allRows, memSettings, datingPlotCursor] = await Promise.all([
+  const allRows = await personaDb.listStoryTimelinePlotRowsByCharacterId(cid)
+  await ensureDatingPlotSummaryCursorSyncedFromPlotRows(cid, allRows)
+
+  const [state, memSettings, archCtx] = await Promise.all([
     personaDb.getStoryTimelineState(cid),
-    personaDb.listStoryTimelinePlotRowsByCharacterId(cid),
     personaDb.getMemorySettings(),
-    personaDb.getDatingPlotSummaryCursor(cid),
+    resolveOfflineDatingArchiveContext(cid),
   ])
+  const archiveId = archCtx?.archiveCharacterId?.trim() || cid
+  const [datingPlotCursorMain, datingPlotCursorArchive] = await Promise.all([
+    personaDb.getDatingPlotSummaryCursor(cid),
+    archiveId !== cid ? personaDb.getDatingPlotSummaryCursor(archiveId) : Promise.resolve(null),
+  ])
+  const datingPlotCursor = Math.max(datingPlotCursorMain ?? 0, datingPlotCursorArchive ?? 0) || null
 
   const recentRows = selectStoryTimelineRecentInjectRows(allRows, {
     datingPlotCursor,
@@ -183,6 +204,8 @@ export async function loadStoryTimelinePromptBlock(
     vectorRows = await recallStoryTimelineRowsByVector({
       characterId: cid,
       relevanceText,
+      recallQueryFocus: String(opts?.recallQueryFocus ?? '').trim() || undefined,
+      recallQueryUserText: String(opts?.recallQueryUserText ?? '').trim() || undefined,
       excludeRowIds: excludeIds,
       settings: memSettings,
       chatApiConfig: apiConfig,

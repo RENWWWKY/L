@@ -166,6 +166,37 @@ export function splitDatingAssistantOutput(raw: string): {
   return { logicPass, planSummary, content: finalContent }
 }
 
+/** 注入 prompt / 游标前原文向量索引：剥离全部思维链块（含正文中间的 `<thinking>`） */
+export function stripAllCoTBlocksFromDatingText(text: string): string {
+  let s = normalizeCoTAngleBrackets(String(text || '').trim())
+  if (!s) return ''
+  for (let i = 0; i < 16; i++) {
+    const first = stripFirstCoTBlock(s)
+    if (first) {
+      s = first.rest.trim()
+      continue
+    }
+    const unclosed = stripUnclosedThinkingBlock(s)
+    if (unclosed) {
+      s = unclosed.rest.trim()
+      continue
+    }
+    break
+  }
+  return stripEllipsisOnlyOsSpans(stripHtmlComments(s)).trim()
+}
+
+/** 约会 plot 写入 prompt / 语义召回索引的正文（玩家原文保留；AI 去思维链与 VN 语音参数） */
+export function datingPlotBodyForPromptInjection(raw: string, plotType: 'player' | 'ai'): string {
+  const rawStr = String(raw || '').trim()
+  if (!rawStr) return ''
+  if (plotType === 'player') return rawStr
+  const prose = splitDatingAssistantOutput(rawStr).content.trim()
+  const sansVn = stripVnVoiceParamsPayload(prose).trim()
+  const stripped = stripAllCoTBlocksFromDatingText(sansVn)
+  return stripped || sansVn
+}
+
 /** 思维溯源 / 主界面展示：与 split 规则一致，并剥离 VN 语音参数块 */
 export function resolveDatingAssistantDisplayText(raw: string): {
   thinkingText: string

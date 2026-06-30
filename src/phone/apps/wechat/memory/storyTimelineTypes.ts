@@ -85,6 +85,10 @@ export type StoryTimelinePlotRow = {
 
 export type StoryTimelinePromptLoadOpts = {
   relevanceText?: string
+  /** 向量 query 焦点（用户输入 + 近期剧情尾段）；避免被 hay 中段 bulk 挤掉当前聊题 */
+  recallQueryFocus?: string
+  /** 向量 query：仅用户当轮输入（独立切片，避免被 plotTail 稀释） */
+  recallQueryUserText?: string
   apiConfig?: Pick<import('../../api/types').ApiConfig, 'apiUrl' | 'apiKey'> | null
   /** 私聊/群聊总结游标键；用于排除游标后行进入「已总结片段」向量召回 */
   conversationKey?: string | null
@@ -144,8 +148,165 @@ export function selectStoryTimelineRecentInjectRows(
 }
 /** 向量召回：除近端外额外注入的历史行数 */
 export const STORY_TIMELINE_VECTOR_RECALL_TOP_K = 3
-/** 剧情行向量最低相似度 */
-export const STORY_TIMELINE_ROW_VECTOR_MIN_SIM = 0.70
+/** 向量召回注入上限 */
+export const STORY_TIMELINE_VECTOR_RECALL_MAX = 5
+/** 焦点 query 切片保底名额 */
+export const STORY_TIMELINE_FOCUS_RECALL_SLOTS = 2
+/** 聊题命中摘要自带关键词/标题时的保底名额 */
+export const STORY_TIMELINE_LEXICAL_RECALL_SLOTS = 2
+/** 剧情行向量最低相似度（索引含标题+关键词+本轮事件，阈值略低于长期记忆） */
+export const STORY_TIMELINE_ROW_VECTOR_MIN_SIM = 0.58
+/** 向量召回兜底：主阈值未命中时仍可入选的最低向量分 */
+export const STORY_TIMELINE_ROW_VECTOR_FALLBACK_MIN_SIM = 0.52
+
+/** 从 haystack 抽取向量 query 文本（头部 + 尾部；hay 很长时作辅切片） */
+export function buildStoryTimelineRecallQueryText(hay: string, maxChars = 1800): string {
+  const h = String(hay ?? '').trim()
+  if (!h) return ''
+  if (h.length <= maxChars) return h
+
+  const headBudget = Math.min(640, Math.floor(maxChars * 0.38))
+  const tailBudget = maxChars - headBudget
+  return `${h.slice(0, headBudget)}\n${h.slice(-tailBudget)}`.trim()
+}
+
+/**
+ * 向量 query 切片：仅「用户当轮输入 + 当前剧情焦点」，不再混入全 hay 辅助切片（避免 idol 长线霸榜）。
+ */
+export function buildStoryTimelineRecallQuerySlices(
+  hay: string,
+  opts?: { focus?: string; userText?: string; maxChars?: number },
+): string[] {
+  const maxChars = Math.max(240, Math.floor(opts?.maxChars ?? 1800))
+  const slices: string[] = []
+  const user = String(opts?.userText ?? '').trim()
+  if (user.length >= 4) {
+    slices.push(user.length <= maxChars ? user : user.slice(-maxChars))
+  }
+  const focus = String(opts?.focus ?? '').trim()
+  if (focus.length >= 10) {
+    const f = focus.length <= maxChars ? focus : focus.slice(-maxChars)
+    if (!slices.includes(f)) slices.push(f)
+  }
+  if (!slices.length) {
+    const h = String(hay ?? '').trim()
+    if (h.length >= 10) slices.push(h.length <= maxChars ? h : h.slice(-maxChars))
+  }
+  return slices
+}
+
+/**
+ * 当前聊题与**该行摘要自带**标题/关键词的字面重合度（0～0.72）。
+ * 不依赖项目硬编码词表；各行 row_keywords 由总结模型写入。
+ */
+export function scoreStoryTimelineRowQueryLexicalOverlap(
+  row: StoryTimelinePlotRow,
+  queryText: string,
+): number {
+  const q = String(queryText ?? '').trim().toLowerCase()
+  if (q.length < 2) return 0
+
+  let score = 0
+  const title = resolveStoryTimelineRowTitle(row).trim().toLowerCase()
+  if (title && title !== '（无标题）' && title.length >= 2 && q.includes(title)) {
+    score += title.length >= 4 ? 0.36 : 0.26
+  }
+
+  let kwHits = 0
+  for (const kw of resolveStoryTimelineRowKeywords(row)) {
+    const k = kw.trim().toLowerCase()
+    if (!k || k.length < 2) continue
+    if (!q.includes(k)) continue
+    kwHits++
+    if (k.length >= 4) score += 0.22
+    else if (k.length === 3) score += 0.18
+    else score += 0.12
+  }
+
+  const event = resolveStoryTimelineRowEventSummary(row).toLowerCase()
+  if (event.length >= 4) {
+    for (const kw of resolveStoryTimelineRowKeywords(row)) {
+      const k = kw.trim().toLowerCase()
+      if (k.length >= 3 && event.includes(k) && q.includes(k)) score += 0.06
+    }
+  }
+
+  if (kwHits === 0 && score < 0.2) return 0
+  return Math.min(0.72, score)
+}
+
+export function resolveStoryTimelineRowRecallScore(params: {
+  focusSim: number
+  lexicalSim: number
+}): { sim: number; vectorSim: number; focusSim: number; lexicalSim: number } {
+  const rawFocus =
+    Number.isFinite(params.focusSim) && params.focusSim >= 0 ? params.focusSim : -1
+  const lexicalSim =
+    Number.isFinite(params.lexicalSim) && params.lexicalSim > 0 ? params.lexicalSim : 0
+
+  let effective = rawFocus
+  if (lexicalSim >= 0.24) {
+    effective =
+      effective >= 0
+        ? Math.min(0.95, effective + lexicalSim * 0.22)
+        : Math.min(0.88, 0.48 + lexicalSim)
+  } else if (effective < 0) {
+    effective = -1
+  }
+
+  return { sim: effective, vectorSim: effective, focusSim: effective, lexicalSim }
+}
+
+export type StoryTimelineRowRecallScore = {
+  row: StoryTimelinePlotRow
+  sim: number
+  vectorSim: number
+  focusSim: number
+  lexicalSim: number
+}
+
+/** 摘要自带关键词 + 焦点向量分合并（去重，上限 STORY_TIMELINE_VECTOR_RECALL_MAX） */
+export function mergeStoryTimelineVectorRecallHits(
+  scored: StoryTimelineRowRecallScore[],
+): StoryTimelineVectorRecallHit[] {
+  if (!scored.length) return []
+
+  const minFocus = STORY_TIMELINE_ROW_VECTOR_FALLBACK_MIN_SIM
+  const minLexical = 0.28
+
+  const byLexical = [...scored]
+    .filter((x) => x.lexicalSim >= minLexical)
+    .sort((a, b) => b.lexicalSim - a.lexicalSim || b.focusSim - a.focusSim)
+  const byFocus = [...scored]
+    .filter((x) => x.focusSim >= minFocus)
+    .sort((a, b) => b.focusSim - a.focusSim || b.lexicalSim - a.lexicalSim)
+
+  if (!byLexical.length && !byFocus.length) {
+    const fallback = [...scored]
+      .filter((x) => x.focusSim >= 0)
+      .sort((a, b) => b.focusSim - a.focusSim || b.lexicalSim - a.lexicalSim)
+      .slice(0, STORY_TIMELINE_VECTOR_RECALL_TOP_K)
+    return fallback.map((x) => ({ row: x.row, sim: x.focusSim }))
+  }
+
+  const out: StoryTimelineRowRecallScore[] = []
+  const seen = new Set<string>()
+  const push = (x: StoryTimelineRowRecallScore) => {
+    if (seen.has(x.row.id)) return
+    seen.add(x.row.id)
+    out.push(x)
+  }
+
+  for (const x of byLexical.slice(0, STORY_TIMELINE_LEXICAL_RECALL_SLOTS)) push(x)
+  for (const x of byFocus.slice(0, STORY_TIMELINE_FOCUS_RECALL_SLOTS)) push(x)
+  for (const x of byFocus) push(x)
+  for (const x of byLexical) push(x)
+
+  return out.slice(0, STORY_TIMELINE_VECTOR_RECALL_MAX).map((x) => ({
+    row: x.row,
+    sim: x.focusSim >= 0 ? x.focusSim : x.lexicalSim,
+  }))
+}
 
 /** 注入 prompt / 思维溯源：摘要行来源标签 */
 export const STORY_TIMELINE_INJECT_LABEL_RECENT = '近端固定'
@@ -1161,12 +1322,25 @@ export function inferStoryTimelineSidePerspective(
   return true
 }
 
-/** 向量语义召回索引文本：摘要标题 + 关键词（非全文 rowText） */
+/** 从摘要行提取【本轮事件】全文（供向量索引） */
+export function resolveStoryTimelineRowEventSummary(row: StoryTimelinePlotRow): string {
+  return (
+    String(row.rowText ?? '')
+      .match(/【本轮事件】([^\n]+)/)?.[1]
+      ?.trim()
+      .slice(0, STORY_TIMELINE_EVENT_SUMMARY_MAX) ?? ''
+  )
+}
+
+/** 向量语义召回索引文本：标题 + 关键词 + 本轮事件（非全文 rowText） */
 export function resolveStoryTimelineRowVectorEmbedText(row: StoryTimelinePlotRow): string {
   const title = resolveStoryTimelineRowTitle(row)
   const keywords = resolveStoryTimelineRowKeywords(row)
-  if (!keywords.length) return title
-  return `${title}\n关键词：${keywords.join('、')}`
+  const eventSummary = resolveStoryTimelineRowEventSummary(row)
+  const parts: string[] = [title]
+  if (keywords.length) parts.push(`关键词：${keywords.join('、')}`)
+  if (eventSummary) parts.push(`【本轮事件】${eventSummary}`)
+  return parts.join('\n')
 }
 
 export function resolveStoryTimelineRowCharactersPresent(row: StoryTimelinePlotRow): string[] {
@@ -1279,6 +1453,41 @@ export function formatStoryTimelineCurrentStateForPrompt(
 }
 
 /** 供 prompt 注入：当前快照 + 近端摘要行 + 向量召回行 */
+export const STORY_TIMELINE_VECTOR_RECALL_CANON_RULES =
+  `【历史回忆·事实铁律】下列「语义召回」条目为**摘要表已记载事实**（高于写作灵感与自行发挥）。` +
+  `玩家提起相关往事时：**仅可**引用各行【摘要标题】【摘要关键词】【本轮事件】等摘要字段中**已写明**的内容；` +
+  `**禁止**编造摘要未出现的对白、物品、交易或情节；**禁止**把摘要当作灵感扩写成未记载细节。`
+
+/** 约会 prompt 裁剪：保留语义召回段，避免 head 截断丢掉向量命中 */
+export function clipStoryTimelinePromptBlock(raw: string, cap: number): string {
+  const t = String(raw ?? '').trim()
+  if (!t || t.length <= cap) return t
+
+  const marker = '【语义召回·历史剧情摘要'
+  const vectorIdx = t.indexOf(marker)
+  if (vectorIdx < 0) {
+    return `${t.slice(0, cap)}\n…【剧情时间轴：过长已截断】`
+  }
+
+  const vectorPart = t.slice(vectorIdx)
+  const headPart = t.slice(0, vectorIdx).trimEnd()
+  const joiner = '\n…【剧情时间轴：中段已压缩】\n'
+
+  if (vectorPart.length + joiner.length >= cap) {
+    const headBudget = Math.max(0, Math.min(headPart.length, Math.floor(cap * 0.12)))
+    const vecBudget = Math.max(0, cap - headBudget - joiner.length)
+    const head = headBudget > 0 ? `${headPart.slice(0, headBudget)}${joiner}` : ''
+    return `${head}${vectorPart.slice(0, vecBudget)}\n…【剧情时间轴：过长已截断】`
+  }
+
+  const headBudget = Math.max(0, cap - vectorPart.length - joiner.length)
+  return `${headPart.slice(0, headBudget)}${joiner}${vectorPart}`
+}
+
+export function hasStoryTimelineVectorRecallInBlock(block: string): boolean {
+  return String(block ?? '').includes('【语义召回·历史剧情摘要')
+}
+
 export function formatStoryTimelineInjectBody(params: {
   state: StoryTimelineState | null | undefined
   recentRows: StoryTimelinePlotRow[]
@@ -1294,6 +1503,25 @@ export function formatStoryTimelineInjectBody(params: {
 
   let hasSidePerspectiveRedact = false
   const recent = params.recentRows
+  const recentIds = new Set(recent.map((r) => r.id))
+  const vector = (params.vectorRows ?? []).filter((hit) => !recentIds.has(hit.row.id))
+
+  if (vector.length) {
+    parts.push(
+      `${STORY_TIMELINE_VECTOR_RECALL_CANON_RULES}\n` +
+        `【语义召回·历史剧情摘要（按向量语义匹配）】\n` +
+        vector
+          .map((hit, i) => {
+            const simPct = Math.round(hit.sim * 1000) / 10
+            const title = resolveStoryTimelineRowTitle(hit.row)
+            const body = formatStoryTimelineRowForPromptInject(hit.row, rowOpts)
+            if (body.includes(STORY_TIMELINE_SIDE_PERSPECTIVE_REDACT_TAG)) hasSidePerspectiveRedact = true
+            return `--- 召回 ${i + 1} · ${title} · 相似 ${simPct}% ---\n${body}`
+          })
+          .join('\n\n'),
+    )
+  }
+
   if (recent.length) {
     parts.push(
       `【近端剧情摘要（最近 ${recent.length} 轮，由旧到新；须与末尾情绪方向一致）】\n` +
@@ -1308,26 +1536,9 @@ export function formatStoryTimelineInjectBody(params: {
     )
   }
 
-  const recentIds = new Set(recent.map((r) => r.id))
-  const vector = (params.vectorRows ?? []).filter((hit) => !recentIds.has(hit.row.id))
-  if (vector.length) {
-    parts.push(
-      `【语义召回·历史剧情摘要（按摘要标题匹配）】\n` +
-        vector
-          .map((hit, i) => {
-            const simPct = Math.round(hit.sim * 1000) / 10
-            const title = resolveStoryTimelineRowTitle(hit.row)
-            const body = formatStoryTimelineRowForPromptInject(hit.row, rowOpts)
-            if (body.includes(STORY_TIMELINE_SIDE_PERSPECTIVE_REDACT_TAG)) hasSidePerspectiveRedact = true
-            return `--- 召回 ${i + 1} · ${title} · 相似 ${simPct}% ---\n${body}`
-          })
-          .join('\n\n'),
-    )
-  }
-
   if (!parts.length) return ''
   const footer =
-    `（剧情时间轴：当前状态 + 按轮追加摘要；回复须与锚点、服装、物品一致；**未收动机伏笔与未完结待办**才须承接，已完结者勿再引用；历史摘要仅补事实勿翻转情绪主客体；**描述故事内时空，与每条前缀「系统落库时刻」及【当前时间】独立，勿混用**。` +
+    `（剧情时间轴：当前状态 + 语义召回历史摘要 + 近端摘要；回复须与锚点、服装、物品一致；**语义召回条目须服从【历史回忆·事实铁律】**；**未收动机伏笔与未完结待办**才须承接，已完结者勿再引用；历史摘要仅补事实勿翻转情绪主客体；**描述故事内时空，与每条前缀「系统落库时刻」及【当前时间】独立，勿混用**。` +
     (hasSidePerspectiveRedact ? ` ${STORY_TIMELINE_SIDE_PERSPECTIVE_KNOWLEDGE_RULES}` : '') +
     `）`
   return `${parts.join('\n\n')}\n\n${footer}`

@@ -1,28 +1,41 @@
 import type { ApiConfig } from '../../api/types'
 import type { MemorySettingsRow } from '../newFriendsPersona/types'
 import { personaDb } from '../newFriendsPersona/idb'
-import { fetchEmbeddingVectorUnified } from './memoryEmbeddingProvider'
+import { fetchEmbeddingVectorUnified, fetchEmbeddingVectorsUnified } from './memoryEmbeddingProvider'
 import {
-  STORY_TIMELINE_ROW_VECTOR_MIN_SIM,
-  STORY_TIMELINE_VECTOR_RECALL_TOP_K,
+  mergeStoryTimelineVectorRecallHits,
+  resolveStoryTimelineRowRecallScore,
+  buildStoryTimelineRecallQuerySlices,
   computeStoryTimelineRowTextHash,
   resolveStoryTimelineRowVectorEmbedText,
+  scoreStoryTimelineRowQueryLexicalOverlap,
   type StoryTimelinePlotRow,
+  type StoryTimelineRowRecallScore,
   type StoryTimelineVectorRecallHit,
 } from './storyTimelineTypes'
 import { cosineSimilarity, isMemoryVectorRecallEnabled } from './memoryVectorRecall'
 import { filterSummarizedStoryTimelineRows } from './summarizedStoryTimelineRowFilter'
 
 const ROW_EMBED_BATCH = 8
-const ROW_EMBED_CAP_PER_CALL = 16
+const ROW_EMBED_CAP_PER_CALL = 48
+const ROW_EMBED_MAX_ROUNDS = 8
 
-function rowNeedsReembed(row: StoryTimelinePlotRow, queryDim: number): boolean {
+function rowEmbeddingMissing(row: StoryTimelinePlotRow): boolean {
+  return !Array.isArray(row.embedding) || !row.embedding.length
+}
+
+function rowNeedsReembed(
+  row: StoryTimelinePlotRow,
+  queryDim: number,
+  provider?: string,
+): boolean {
   const embedText = resolveStoryTimelineRowVectorEmbedText(row)
   if (!embedText.trim()) return false
   const h = computeStoryTimelineRowTextHash(embedText)
   if (row.embeddingHash !== h) return true
   const emb = row.embedding
   if (!Array.isArray(emb) || emb.length !== queryDim) return true
+  if (provider && row.embeddingProvider && row.embeddingProvider !== provider) return true
   return false
 }
 
@@ -37,7 +50,14 @@ export async function backfillStoryTimelineRowEmbeddingsBestEffort(params: {
   modelId: string
 }): Promise<void> {
   const stale = params.rows
-    .filter((r) => rowNeedsReembed(r, params.queryDim))
+    .filter(
+      (r) => rowNeedsReembed(r, params.queryDim, params.provider) || rowEmbeddingMissing(r),
+    )
+    .sort(
+      (a, b) =>
+        (rowEmbeddingMissing(b) ? 1 : 0) - (rowEmbeddingMissing(a) ? 1 : 0) ||
+        a.recordedAt - b.recordedAt,
+    )
     .slice(0, ROW_EMBED_CAP_PER_CALL)
   if (!stale.length) return
 
@@ -67,6 +87,10 @@ export async function backfillStoryTimelineRowEmbeddingsBestEffort(params: {
 export async function recallStoryTimelineRowsByVector(params: {
   characterId: string
   relevanceText: string
+  /** 用户输入 + 近期剧情焦点 */
+  recallQueryFocus?: string
+  /** 仅用户当轮输入 */
+  recallQueryUserText?: string
   excludeRowIds: Set<string>
   settings: MemorySettingsRow
   chatApiConfig: Pick<ApiConfig, 'apiUrl' | 'apiKey'> | null
@@ -74,42 +98,80 @@ export async function recallStoryTimelineRowsByVector(params: {
 }): Promise<StoryTimelineVectorRecallHit[]> {
   const cid = params.characterId.trim()
   if (!cid) return []
-  if (params.settings.memoryContextVectorRecallEnabled === false) return []
   if (!isMemoryVectorRecallEnabled(params.settings, { apiConfig: params.chatApiConfig })) return []
 
   const hay = String(params.relevanceText ?? '').trim()
-  if (hay.length < 10) return []
+  const focus = String(params.recallQueryFocus ?? '').trim()
+  const userText = String(params.recallQueryUserText ?? '').trim()
+  if (hay.length < 10 && focus.length < 10 && userText.length < 4) return []
+
+  const querySlices = buildStoryTimelineRecallQuerySlices(hay, {
+    focus: focus || undefined,
+    userText: userText || undefined,
+  })
+  const lexicalHay = [userText, focus, hay].filter(Boolean).join('\n')
+
+  let queryVecs: Awaited<ReturnType<typeof fetchEmbeddingVectorsUnified>> = []
+  try {
+    queryVecs = await fetchEmbeddingVectorsUnified(params.settings, params.chatApiConfig, querySlices)
+  } catch {
+    queryVecs = []
+  }
+  const refQuery = queryVecs[0] ?? null
 
   try {
-    const query = await fetchEmbeddingVectorUnified(params.settings, params.chatApiConfig, hay)
-    if (!query?.vec.length) return []
-
     let rows = await personaDb.listStoryTimelinePlotRowsByCharacterId(cid)
     rows = await filterSummarizedStoryTimelineRows(cid, rows, {
       conversationKey: params.conversationKey,
     })
-    await backfillStoryTimelineRowEmbeddingsBestEffort({
-      characterId: cid,
-      rows,
-      settings: params.settings,
-      chatApiConfig: params.chatApiConfig,
-      queryDim: query.vec.length,
-      provider: query.provider,
-      modelId: query.modelId,
-    })
+    const candidateIds = new Set(rows.map((r) => r.id))
+    if (!candidateIds.size) return []
 
-    rows = await personaDb.listStoryTimelinePlotRowsByCharacterId(cid)
-    const scored: { row: StoryTimelinePlotRow; sim: number }[] = []
-    for (const row of rows) {
-      if (params.excludeRowIds.has(row.id)) continue
-      if (row.embeddingProvider && row.embeddingProvider !== query.provider) continue
-      const emb = row.embedding
-      if (!Array.isArray(emb) || emb.length !== query.vec.length) continue
-      const sim = cosineSimilarity(query.vec, emb)
-      if (sim >= STORY_TIMELINE_ROW_VECTOR_MIN_SIM) scored.push({ row, sim })
+    if (refQuery?.vec.length) {
+      for (let round = 0; round < ROW_EMBED_MAX_ROUNDS; round++) {
+        const batchRows = (await personaDb.listStoryTimelinePlotRowsByCharacterId(cid)).filter((r) =>
+          candidateIds.has(r.id),
+        )
+        const staleCount = batchRows.filter(
+          (r) =>
+            rowEmbeddingMissing(r) ||
+            rowNeedsReembed(r, refQuery.vec.length, refQuery.provider),
+        ).length
+        if (!staleCount) break
+        await backfillStoryTimelineRowEmbeddingsBestEffort({
+          characterId: cid,
+          rows: batchRows,
+          settings: params.settings,
+          chatApiConfig: params.chatApiConfig,
+          queryDim: refQuery.vec.length,
+          provider: refQuery.provider,
+          modelId: refQuery.modelId,
+        })
+      }
     }
-    scored.sort((a, b) => b.sim - a.sim)
-    return scored.slice(0, STORY_TIMELINE_VECTOR_RECALL_TOP_K).map((x) => ({ row: x.row, sim: x.sim }))
+
+    const fresh = await personaDb.listStoryTimelinePlotRowsByCharacterId(cid)
+    const scored: StoryTimelineRowRecallScore[] = []
+    for (const row of fresh) {
+      if (!candidateIds.has(row.id)) continue
+      if (params.excludeRowIds.has(row.id)) continue
+
+      let focusSim = -1
+      const emb = row.embedding
+      if (emb?.length && queryVecs.length) {
+        const sims = queryVecs
+          .filter((q) => q.vec.length === emb.length)
+          .map((q) => cosineSimilarity(q.vec, emb))
+        if (sims.length) focusSim = Math.max(...sims)
+      }
+
+      const lexicalSim = scoreStoryTimelineRowQueryLexicalOverlap(row, lexicalHay)
+      scored.push({
+        row,
+        ...resolveStoryTimelineRowRecallScore({ focusSim, lexicalSim }),
+      })
+    }
+    return mergeStoryTimelineVectorRecallHits(scored)
   } catch {
     return []
   }

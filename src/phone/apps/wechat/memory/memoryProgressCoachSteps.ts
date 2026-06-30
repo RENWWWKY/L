@@ -41,7 +41,7 @@ export const MEMORY_PROGRESS_TUTORIAL_SECTIONS: { title: string; body: string }[
   },
   {
     title: '手动总结',
-    body: '卡片上显示「有待总结」时，可以立刻收成一条记忆，不会额外消耗计轮。适合想马上写入、不等满 N 轮的情况。',
+    body: '卡片上显示「有待总结」时，可以立刻把未总结的微信私聊收成一条「线上总结」记忆，不会额外消耗计轮；不含线下约会剧情（线下走每轮摘要表与向量召回）。',
   },
   {
     title: '和线下无关',

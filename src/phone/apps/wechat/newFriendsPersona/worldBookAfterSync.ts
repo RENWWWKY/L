@@ -191,14 +191,31 @@ export type WorldBookAfterPerRoundSyncOutcome =
 function notifyPerRoundEpilogueFailure(displayName: string, reason: string) {
   dispatchWorldBookAfterPerRoundSyncResult({
     ok: false,
+    kind: 'failed',
     displayName,
     failureReason: reason,
   })
 }
 
+function notifyPerRoundEpilogueNoChange(displayName: string) {
+  dispatchWorldBookAfterPerRoundSyncResult({
+    ok: true,
+    kind: 'no_change',
+    displayName,
+  })
+}
+
+function maybeNotifyOfflineEpilogueNoChange(
+  params: { datingContext?: unknown; notifyOnNoChange?: boolean },
+  displayName: string,
+) {
+  if (!params.datingContext || params.notifyOnNoChange === false) return
+  notifyPerRoundEpilogueNoChange(displayName)
+}
+
 /**
  * 每轮 AI 落库后：若主回复未 inline 补丁、尾段 JSON 未带 epilogue_patches，则额外请求一次尾声判断。
- * 模型返回 patches=[] 时为 no_change（正常，不 toast）。
+ * 模型返回 patches=[] 时为 no_change（线下约会会 toast 提示「无需更新」）。
  */
 export async function finalizeWorldBookAfterPerAiRound(params: {
   apiConfig: ApiConfig | null
@@ -213,6 +230,8 @@ export async function finalizeWorldBookAfterPerAiRound(params: {
   force?: boolean
   /** 失败时是否派发全局 toast */
   notifyOnFailure?: boolean
+  /** 线下：尾声判断已执行但无变化时是否 toast（默认 true） */
+  notifyOnNoChange?: boolean
   /** 线下剧情：更严的关系基准与补丁过滤 */
   datingContext?: {
     isEarlyRound?: boolean
@@ -253,12 +272,16 @@ export async function finalizeWorldBookAfterPerAiRound(params: {
       latestRoundBody: body,
       datingContext: params.datingContext,
     })
-    if (!patches.length) return { status: 'no_change' }
+    if (!patches.length) {
+      maybeNotifyOfflineEpilogueNoChange(params, label)
+      return { status: 'no_change' }
+    }
     const count = await persistWorldBookAfterSyncPatches(
       patches.map((p) => ({ ...p, characterId: p.characterId?.trim() || ch.id })),
       { source: 'per_round' },
     )
     if (count > 0) return { status: 'applied', count }
+    maybeNotifyOfflineEpilogueNoChange(params, label)
     return { status: 'no_change' }
   } catch (e) {
     const reason = e instanceof Error && e.message.trim() ? e.message.trim() : '尾声判断请求失败'

@@ -105,7 +105,7 @@ async function gatherSummarizedOnlineChatCandidates(
   })
 }
 
-/** 游标已覆盖的线下剧情正文（非线下摘要表 rowText） */
+/** 游标已覆盖的线下 AI 剧情正文（非玩家输入 / 非摘要表 rowText） */
 async function gatherSummarizedOfflinePlotBodyCandidates(characterId: string): Promise<ContextCandidate[]> {
   const cid = characterId.trim()
   if (!cid) return []
@@ -207,7 +207,7 @@ export async function appendContextVectorRecallToMemoryText(params: {
 }): Promise<{ text: string; recalledCount: number }> {
   const cid = params.characterId.trim()
   if (!cid) return { text: params.existingText, recalledCount: 0 }
-  if (params.settings.memoryContextVectorRecallEnabled === false) {
+  if (params.settings.memoryContextVectorRecallEnabled !== true) {
     return { text: params.existingText, recalledCount: 0 }
   }
   if (!isMemoryVectorRecallEnabled(params.settings, params.opts ?? null)) {
@@ -283,7 +283,7 @@ export async function getContextVectorRecallTraceForPromptInjection(params: {
 }): Promise<ContextVectorRecallTraceItem[]> {
   const cid = params.characterId.trim()
   if (!cid) return []
-  if (params.settings.memoryContextVectorRecallEnabled === false) return []
+  if (params.settings.memoryContextVectorRecallEnabled !== true) return []
   if (!isMemoryVectorRecallEnabled(params.settings, params.opts ?? null)) return []
 
   const rawHay = String(params.relevanceText || '').trim()

@@ -61,7 +61,7 @@ import {
   resolveParallelEventSummaryDelta,
 } from '../memory/storyTimelineParallelFanOut'
 import { deleteStoryTimelineLinkedRowsForDatingRound } from '../memory/storyTimelineLinkedFanOut'
-import { hasTimelineDeltaContent } from '../memory/storyTimelineTypes'
+import { hasTimelineDeltaContent, clipStoryTimelinePromptBlock, hasStoryTimelineVectorRecallInBlock } from '../memory/storyTimelineTypes'
 import { peekWillSummarizeOnNextAiRound } from '../memory/memoryAutoSummaryInterval'
 import { isOfflineDatingRowPerRoundMode, isLinkedMemoryAutoSummaryEnabled } from '../memory/memoryRowPerRoundMode'
 import {
@@ -99,8 +99,7 @@ import {
 import { extractTimelineDeltaFromMemoryJsonText, extractTimelineSnapshotTextFromAiTextRaw } from './datingPlotTimelineSnapshot'
 import { formatOfflineUnsummarizedBlockFromPlotSnapshots } from './loadOfflineDatingPlotsForWechatPrompt'
 import { loadDatingNpcNetworkPromptBlock } from './datingNpcNetworkPrompt'
-import { splitDatingAssistantOutput, resolveDatingPlotDisplayFromItem } from './plotCoT'
-import { extractVnVoiceParamsBlock } from './vnVoiceParamsStrip'
+import { datingPlotBodyForPromptInjection, splitDatingAssistantOutput, resolveDatingPlotDisplayFromItem } from './plotCoT'
 import { PROSE_FORBIDDEN_LEXICON_PROMPT } from '../proseForbiddenLexiconPrompt'
 import { buildDatingStyleSystemPrompt } from './lumiThinkingChainRules'
 import { getLoreArchiveBuiltinPresetTogglesSnapshot } from '../../../worldbook/worldbookLoreStore'
@@ -298,11 +297,7 @@ async function buildDatingTurnModelExtras(params: {
 
 
 function stripPlotBodyForPrompt(plot: PlotItem): string {
-  const raw = String(plot.content || '').trim()
-  if (plot.type === 'player') return raw
-  const prose = splitDatingAssistantOutput(raw).content.trim()
-  /** VN 轮次存盘的正文后常带语音参数 JSON；拼进「最近剧情」会巨幅膨胀 prompt（尤其 VN→普通 续写时） */
-  return extractVnVoiceParamsBlock(prose).cleanedText.trim()
+  return datingPlotBodyForPromptInjection(String(plot.content || ''), plot.type)
 }
 
 function formatRecentPlotsForPrompt(history: PlotItem[], characterRealName: string, maxTotalChars: number): string {
@@ -1645,7 +1640,8 @@ ${vnVoiceParamsRule ? `${vnVoiceParamsRule}\n` : ''}${vnBackgroundRule ? `${vnBa
   const storyTimelineBlock = onlineCtx?.storyTimelineBlock?.trim()
   const refCap = DATING_AI_REFERENCE_SECTION_CHAR_CAP
   const longMemClipped = clipDatingReferenceHead(longMem ?? '', refCap, '长期记忆')
-  const storyTimelineClipped = clipDatingReferenceHead(storyTimelineBlock ?? '', refCap, '剧情时间轴')
+  const storyTimelineClipped = clipStoryTimelinePromptBlock(storyTimelineBlock ?? '', refCap)
+  const hasVectorStoryRecall = hasStoryTimelineVectorRecallInBlock(storyTimelineClipped)
   const unsPrivClipped = clipDatingReferenceTail(unsPrivBlock ?? '', refCap, '尚未总结·私聊')
   const unsGrpClipped = clipDatingReferenceTail(unsGrpBlock ?? '', refCap, '尚未总结·群聊')
   let unsOffClipped = ''
@@ -1686,6 +1682,9 @@ ${vnVoiceParamsRule ? `${vnVoiceParamsRule}\n` : ''}${vnBackgroundRule ? `${vnBa
       (godPerspective
         ? `（上帝视角仍适用：角色屏外言行、独处自语、对他人转述须与线上一致；**禁止**借「屏外自由发挥」捏造与聊天矛盾的行程或态度反转。）\n`
         : `允许在不违背事实的前提下**新增**当面细节、动作与环境；**禁止**把线上已聊内容当「新发现」对用户重复宣布。\n`)
+    : ''
+  const storyTimelineVectorRecallRule = hasVectorStoryRecall
+    ? `【历史回忆事实铁律（高于自行发挥）】「剧情时间轴」里标「召回 · 相似 xx%」的条目为向量命中的**往日摘要行**；玩家提起相关话题时，**仅可**使用各行摘要字段（含【本轮事件】）中**已写明**的事实，**禁止**编造或扩写摘要未记载的细节。\n`
     : ''
   const onlinePrivBoundaryReminder =
     wechatUnsummarizedRefLen > 8
@@ -1885,6 +1884,7 @@ ${vnVoiceParamsRule ? `${vnVoiceParamsRule}\n` : ''}${vnBackgroundRule ? `${vnBa
         (initialBias ? `本次生成偏向（最高优先级）：${initialBias}\n` : '') +
         `${onlineTemporalScopeRule}` +
         `${onlineWechatFactCanonRule}` +
+        `${storyTimelineVectorRecallRule}` +
         `${onlinePrivBoundaryReminder}` +
         `${wechatDialogueParityReminder}` +
         `${playerInputNoRecapReminder}` +
@@ -1914,7 +1914,7 @@ ${vnVoiceParamsRule ? `${vnVoiceParamsRule}\n` : ''}${vnBackgroundRule ? `${vnBa
               : '玩家输入'
         }原文（锚点优先来源；**正文禁止复读或分条重述本块**）】\n${userText?.trim() || '（本轮无玩家输入）'}\n\n` +
         `长期记忆（关键词触发 + 向量语义筛选；**已进自动总结的微信内容以本块为准**——属**线上已定事实**，须服从，勿与下方「尚未总结」矛盾）：\n${longMemClipped || '（暂无）'}\n\n` +
-        `【剧情时间轴】（故事内时空状态；由自动总结维护；承接地点/时段/服装时优先对照本块；**未收动机伏笔与未完结待办**才须承接，已完结者勿再引用；**与下方「系统落库时刻」前缀独立**；**不得**违背上方线上聊天事实）：\n${storyTimelineClipped || '（暂无）'}\n\n` +
+        `【剧情时间轴】（故事内时空状态；由自动总结维护；承接地点/时段/服装时优先对照本块；**语义召回往日摘要须服从【历史回忆事实铁律】**；**未收动机伏笔与未完结待办**才须承接，已完结者勿再引用；**与下方「系统落库时刻」前缀独立**；**不得**违背上方线上聊天事实）：\n${storyTimelineClipped || '（暂无）'}\n\n` +
         `尚未总结·私聊（**线上已发生事实**｜见块尾时间窗说明；每条方括号内为**系统落库时刻**（真实发送钟点，非故事内剧情时间）；须服从，**不是**写作指导）：\n${unsPrivClipped || '（暂无）'}\n\n` +
         `尚未总结·群聊（**线上已发生事实**｜同一时间窗；每条前缀为**系统落库时刻**；须服从，**不是**写作指导）：\n${unsGrpClipped || '（暂无）'}\n\n` +
         `尚未总结·线下剧情（**系统落库时刻见每条条目前缀**——真实生成钟点，非故事内剧情时间；按落库先后理解）：\n${unsOffClipped || '（暂无）'}\n\n` +
@@ -2391,6 +2391,11 @@ export function DatingProvider({ children }: { children: ReactNode }) {
       }
 
       let storyTimelineBlock = ''
+      const plotTailRaw = String(relevance?.plotTail ?? '').trim()
+      const plotTailScene =
+        plotTailRaw.length > 480 ? plotTailRaw.slice(-Math.min(960, plotTailRaw.length)) : plotTailRaw
+      const recallQueryUserText = buildMemoryRelevanceHaystack([relevance?.userText])
+      const recallQueryFocus = buildMemoryRelevanceHaystack([relevance?.userText, plotTailScene])
       const hay = buildMemoryRelevanceHaystack([
         relevance?.userText,
         relevance?.plotTail,
@@ -2403,6 +2408,8 @@ export function DatingProvider({ children }: { children: ReactNode }) {
         storyTimelineBlock = (
           await loadStoryTimelinePromptBlock(cid, {
             relevanceText: hay,
+            recallQueryFocus: recallQueryFocus || undefined,
+            recallQueryUserText: recallQueryUserText || undefined,
             apiConfig: apiConfig?.apiUrl?.trim() && apiConfig?.apiKey?.trim() ? apiConfig : null,
             conversationKey: convKey || undefined,
           })

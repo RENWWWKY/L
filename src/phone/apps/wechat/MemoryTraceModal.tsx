@@ -432,11 +432,11 @@ export function MemoryTraceModal({ open, onClose, data }: MemoryTraceModalProps)
                       </div>
                       <div>
                         <p className="text-[11px] font-medium uppercase tracking-[0.2em] text-neutral-400">Context Vector · 游标前原文语义召回</p>
-                        <p className="mt-1 text-[11px] text-neutral-500">【语义召回·游标前原文】：对游标已覆盖的私聊消息与线下剧情正文建索引后按本轮语境召回；不含线下摘要表；游标后未总结原文见下方「尚未总结」块。</p>
+                        <p className="mt-1 text-[11px] text-neutral-500">【语义召回·游标前原文】：默认关闭；开启后对游标已覆盖的私聊与线下 AI 正文建索引召回（不含玩家输入、不含线下摘要表）。游标后未总结原文见下方「尚未总结」块。</p>
                         {!matrix.deepMemory.contextVectorRecalls?.length ? (
                           <p className="mt-2 text-[12px] text-neutral-400">
-                            {data.injectionSummary?.contextVectorRecallEnabled === false
-                              ? '已在设置中关闭游标前原文语义召回'
+                            {data.injectionSummary?.contextVectorRecallEnabled !== true
+                              ? '游标前原文语义召回默认关闭（记忆引擎·向量召回子开关）'
                               : '本轮未召回游标前原文（或无索引 / 相似度不足）'}
                           </p>
                         ) : (

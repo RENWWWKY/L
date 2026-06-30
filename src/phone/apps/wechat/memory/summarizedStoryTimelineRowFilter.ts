@@ -1,4 +1,9 @@
+import { resolveOfflineDatingArchiveContext } from '../dating/offlineDatingArchiveResolve'
 import { personaDb } from '../newFriendsPersona/idb'
+import {
+  ensureDatingPlotSummaryCursorSyncedFromPlotRows,
+  maxOfflineOrLinkedPlotRowRecordedAtMs,
+} from './storyTimelineDatingCursorSync'
 import type { StoryTimelineEventScope, StoryTimelinePlotRow } from './storyTimelineTypes'
 
 function rowRecordedAtMs(row: StoryTimelinePlotRow): number {
@@ -19,7 +24,8 @@ function isRowSummarizedForRecall(
   const scope: StoryTimelineEventScope = row.sourceScope ?? 'private'
 
   if (scope === 'offline' || scope === 'linked') {
-    if (cursors.datingPlot == null) return false
+    // 每轮写摘要模式：行表有 recordedAt 即视为已总结；游标 null 时不应整池清空
+    if (cursors.datingPlot == null) return ts > 0
     return ts <= cursors.datingPlot
   }
   if (scope === 'meet') {
@@ -40,12 +46,20 @@ export async function filterSummarizedStoryTimelineRows(
   const cid = characterId.trim()
   if (!cid) return []
 
+  await ensureDatingPlotSummaryCursorSyncedFromPlotRows(cid, rows)
+
   const ck = opts?.conversationKey?.trim()
-  const [datingPlot, meet, memoryConversation] = await Promise.all([
+  const archCtx = await resolveOfflineDatingArchiveContext(cid)
+  const archiveId = archCtx?.archiveCharacterId?.trim() || cid
+  const [datingPlotMain, datingPlotArchive, meet, memoryConversation] = await Promise.all([
     personaDb.getDatingPlotSummaryCursor(cid),
+    archiveId !== cid ? personaDb.getDatingPlotSummaryCursor(archiveId) : Promise.resolve(null),
     personaDb.getMeetSummaryCursorTimestamp(cid),
     ck ? personaDb.getMemorySummaryCursorTimestamp(ck) : null,
   ])
+  let datingPlot =
+    Math.max(datingPlotMain ?? 0, datingPlotArchive ?? 0, maxOfflineOrLinkedPlotRowRecordedAtMs(rows) ?? 0) ||
+    null
 
   const cursors = { datingPlot, meet, memoryConversation }
   return rows.filter((row) => isRowSummarizedForRecall(row, cursors))

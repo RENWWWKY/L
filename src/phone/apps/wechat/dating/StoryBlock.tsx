@@ -2,6 +2,7 @@ import { AnimatePresence, motion } from 'framer-motion'
 import { ChevronLeft, ChevronRight } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type MouseEvent } from 'react'
 import { createPortal } from 'react-dom'
+import { copyTextToClipboard } from '../../../utils/copyToClipboard'
 import { useExpandedStoryTimelineSnapshot } from '../memory/useExpandedStoryTimelineSnapshot'
 import { useDating } from './DatingContext'
 import { PlotDimensionPanel } from './PlotDimensionPanel'
@@ -152,12 +153,38 @@ export function StoryBlock({
   const [dimensionPanel, setDimensionPanel] = useState<PlotDimensionKind | null>(null)
   const [dimensionLoading, setDimensionLoading] = useState(false)
   const [dimensionError, setDimensionError] = useState<string | null>(null)
+  const [copyToast, setCopyToast] = useState<string | null>(null)
   const pressTimer = useRef<number | null>(null)
   const startRef = useRef<{ x: number; y: number } | null>(null)
   const textareaRef = useRef<HTMLTextAreaElement | null>(null)
   const cardRef = useRef<HTMLDivElement | null>(null)
+  const copyToastTimerRef = useRef<number | null>(null)
 
   const displayBodyForCopy = plot.type === 'ai' ? aiSplit.displayBody : plot.content
+
+  const showCopyToast = useCallback((msg: string) => {
+    setCopyToast(msg)
+    if (copyToastTimerRef.current != null) window.clearTimeout(copyToastTimerRef.current)
+    copyToastTimerRef.current = window.setTimeout(() => setCopyToast(null), 1800)
+  }, [])
+
+  useEffect(
+    () => () => {
+      if (copyToastTimerRef.current != null) window.clearTimeout(copyToastTimerRef.current)
+    },
+    [],
+  )
+
+  const handleCopyPlot = useCallback(async () => {
+    const text = String(displayBodyForCopy ?? '').trim()
+    setCtxOpen(false)
+    if (!text) {
+      showCopyToast('暂无内容可复制')
+      return
+    }
+    const ok = await copyTextToClipboard(text)
+    showCopyToast(ok ? '已复制' : '复制失败，请检查浏览器剪贴板权限')
+  }, [displayBodyForCopy, showCopyToast])
 
   useEffect(() => {
     if (!editing) {
@@ -332,8 +359,7 @@ export function StoryBlock({
                     type="button"
                     className="flex w-full px-3.5 py-2.5 text-left text-[13px] text-stone-700 transition-colors hover:bg-white/60"
                     onClick={() => {
-                      void navigator.clipboard?.writeText(displayBodyForCopy)
-                      setCtxOpen(false)
+                      void handleCopyPlot()
                     }}
                   >
                     复制
@@ -377,6 +403,16 @@ export function StoryBlock({
               </>
             ) : null}
           </AnimatePresence>,
+          document.body,
+        )
+      : null
+
+  const copyToastLayer =
+    typeof document !== 'undefined' && copyToast
+      ? createPortal(
+          <div className="pointer-events-none fixed left-1/2 top-16 z-[90] -translate-x-1/2 rounded-xl bg-black/88 px-4 py-2 text-[13px] font-medium text-white shadow-[0_10px_28px_rgba(0,0,0,0.22)] backdrop-blur-sm">
+            {copyToast}
+          </div>,
           document.body,
         )
       : null
@@ -453,6 +489,7 @@ export function StoryBlock({
         ) : null}
       </motion.div>
         {menuLayer}
+        {copyToastLayer}
       </>
     )
   }
@@ -661,6 +698,7 @@ export function StoryBlock({
       ) : null}
     </motion.div>
     {menuLayer}
+    {copyToastLayer}
     </>
   )
 }

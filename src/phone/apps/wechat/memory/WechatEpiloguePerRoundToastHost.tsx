@@ -8,7 +8,7 @@ import {
 
 const AUTO_DISMISS_MS = 5200
 
-/** 每轮尾声判断失败时提示：可到记忆档案馆 · 尾声延展 手动对齐 */
+/** 每轮尾声判断：失败或未变化（线下）时全局 toast */
 export function WechatEpiloguePerRoundToastHost() {
   const [detail, setDetail] = useState<WorldBookAfterPerRoundSyncResultDetail | null>(null)
   const timerRef = useRef<number | null>(null)
@@ -16,9 +16,12 @@ export function WechatEpiloguePerRoundToastHost() {
   useEffect(() => {
     const onResult = (e: Event) => {
       const ce = e as CustomEvent<WorldBookAfterPerRoundSyncResultDetail>
-      if (!ce.detail || ce.detail.ok) return
+      const d = ce.detail
+      if (!d) return
+      const isNoChange = d.kind === 'no_change'
+      if (!isNoChange && d.ok) return
       if (timerRef.current != null) window.clearTimeout(timerRef.current)
-      setDetail(ce.detail)
+      setDetail(d)
       timerRef.current = window.setTimeout(() => {
         timerRef.current = null
         setDetail(null)
@@ -34,12 +37,13 @@ export function WechatEpiloguePerRoundToastHost() {
   if (typeof document === 'undefined') return null
 
   const name = detail?.displayName?.trim() || '角色'
+  const isNoChange = detail?.kind === 'no_change'
 
   return createPortal(
     <AnimatePresence>
       {detail ? (
         <motion.div
-          key="epilogue-per-round-fail"
+          key={isNoChange ? 'epilogue-per-round-no-change' : 'epilogue-per-round-fail'}
           role="status"
           aria-live="polite"
           className="pointer-events-none fixed inset-0 z-[10056] flex items-center justify-center px-6"
@@ -52,17 +56,31 @@ export function WechatEpiloguePerRoundToastHost() {
             animate={{ opacity: 1, scale: 1, y: 0 }}
             exit={{ opacity: 0, scale: 0.96, y: 8 }}
             transition={{ type: 'spring', stiffness: 420, damping: 34 }}
-            className="max-w-[min(100vw-3rem,380px)] rounded-[14px] bg-white px-5 py-4 text-center shadow-lg ring-1 ring-amber-200/90"
+            className={
+              isNoChange
+                ? 'max-w-[min(100vw-3rem,380px)] rounded-[14px] bg-white px-5 py-4 text-center shadow-lg ring-1 ring-neutral-200/90'
+                : 'max-w-[min(100vw-3rem,380px)] rounded-[14px] bg-white px-5 py-4 text-center shadow-lg ring-1 ring-amber-200/90'
+            }
           >
-            <p className="text-[11px] font-medium uppercase tracking-[0.18em] text-amber-600/90">
-              尾声延展 · 本轮未对齐
+            <p
+              className={
+                isNoChange
+                  ? 'text-[11px] font-medium uppercase tracking-[0.18em] text-neutral-500'
+                  : 'text-[11px] font-medium uppercase tracking-[0.18em] text-amber-600/90'
+              }
+            >
+              {isNoChange ? '尾声延展 · 判断完成' : '尾声延展 · 本轮未对齐'}
             </p>
             <p className="mt-2 text-[14px] font-medium leading-relaxed text-gray-900">
-              「{name}」的尾声条目未能自动判断更新
+              {isNoChange
+                ? `「${name}」本轮剧情与当前尾声条目一致`
+                : `「${name}」的尾声条目未能自动判断更新`}
             </p>
             <p className="mt-2 text-[12px] leading-relaxed text-gray-500">
-              {detail.failureReason?.trim() ||
-                '模型未返回有效结果或接口未配置。请到记忆档案馆 · 尾声延展，粘贴本轮剧情后手动判断对齐。'}
+              {isNoChange
+                ? '尾声判断已执行，无需更新条目。'
+                : detail.failureReason?.trim() ||
+                  '模型未返回有效结果或接口未配置。请到记忆档案馆 · 尾声延展，粘贴本轮剧情后手动判断对齐。'}
             </p>
           </motion.div>
         </motion.div>

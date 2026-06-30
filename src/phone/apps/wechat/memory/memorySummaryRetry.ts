@@ -145,6 +145,7 @@ export async function runManualMemorySummaryFromProgress(params: {
     wechatAccountId: params.wechatAccountId?.trim() || null,
     skipConversationRoundBump: true,
     isManualRetry: true,
+    onlineOnly: true,
     summaryNotifyKind: 'private',
   })
 }

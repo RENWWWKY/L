@@ -537,7 +537,7 @@ export async function publishWeChatPrivatePersonaMemoryTrace(params: {
     memSettings.memoryEmbeddingProviderMode === 'auto'
       ? memSettings.memoryEmbeddingProviderMode
       : 'auto'
-  const contextVectorEnabled = memSettings.memoryContextVectorRecallEnabled !== false
+  const contextVectorEnabled = memSettings.memoryContextVectorRecallEnabled === true
 
   const personaDetail = buildFullPersonaDetailForMemoryTrace(params.character)
   const characterWorldBookRaw = (
@@ -889,7 +889,7 @@ export async function publishDatingOfflineMemoryTrace(params: {
     memSettings.memoryEmbeddingProviderMode === 'auto'
       ? memSettings.memoryEmbeddingProviderMode
       : 'auto'
-  const contextVectorEnabled = memSettings.memoryContextVectorRecallEnabled !== false
+  const contextVectorEnabled = memSettings.memoryContextVectorRecallEnabled === true
 
   const plate = params.isVnMode ? ('vn' as const) : ('offline_plot' as const)
   const chRow = await personaDb.getCharacter(cid)

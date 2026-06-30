@@ -270,7 +270,7 @@ export function MemoryVectorRecallConfig({
 
             <ConfigBlock
               title="游标前原文召回"
-              description="对游标已覆盖的私聊消息与线下剧情正文建索引并语义检索（不含线下摘要表与游标后未总结原文）"
+              description="默认关闭。开启后对游标已覆盖的私聊消息与线下 AI 剧情正文做语义检索（不含玩家输入、不含线下摘要表）。剧情摘要向量召回不受此项影响。"
               action={
                 <MemoryEngineSoftSwitch
                   on={contextVectorRecallEnabled}
