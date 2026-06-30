@@ -92,6 +92,8 @@ export async function recallStoryTimelineRowsByVector(params: {
   /** 仅用户当轮输入 */
   recallQueryUserText?: string
   excludeRowIds: Set<string>
+  /** 当前剧情日；用于剔除远早于现在的过期日程摘要行 */
+  currentStoryCalendarMs?: number | null
   settings: MemorySettingsRow
   chatApiConfig: Pick<ApiConfig, 'apiUrl' | 'apiKey'> | null
   conversationKey?: string | null

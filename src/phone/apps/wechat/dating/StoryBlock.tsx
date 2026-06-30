@@ -3,6 +3,7 @@ import { ChevronLeft, ChevronRight } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type MouseEvent } from 'react'
 import { createPortal } from 'react-dom'
 import { copyTextToClipboard } from '../../../utils/copyToClipboard'
+import { WeChatCenterToast } from '../WeChatCenterToast'
 import { useExpandedStoryTimelineSnapshot } from '../memory/useExpandedStoryTimelineSnapshot'
 import { useDating } from './DatingContext'
 import { PlotDimensionPanel } from './PlotDimensionPanel'
@@ -407,15 +408,7 @@ export function StoryBlock({
         )
       : null
 
-  const copyToastLayer =
-    typeof document !== 'undefined' && copyToast
-      ? createPortal(
-          <div className="pointer-events-none fixed left-1/2 top-16 z-[90] -translate-x-1/2 rounded-xl bg-black/88 px-4 py-2 text-[13px] font-medium text-white shadow-[0_10px_28px_rgba(0,0,0,0.22)] backdrop-blur-sm">
-            {copyToast}
-          </div>,
-          document.body,
-        )
-      : null
+  const copyToastNode = <WeChatCenterToast message={copyToast} />
 
   if (plot.type === 'player') {
     return (
@@ -489,7 +482,7 @@ export function StoryBlock({
         ) : null}
       </motion.div>
         {menuLayer}
-        {copyToastLayer}
+        {copyToastNode}
       </>
     )
   }
@@ -698,7 +691,7 @@ export function StoryBlock({
       ) : null}
     </motion.div>
     {menuLayer}
-    {copyToastLayer}
+    {copyToastNode}
     </>
   )
 }

@@ -22,6 +22,7 @@ import {
   formatStoryTimelineOpenAnchorsForSummaryPrompt,
   hasTimelineDeltaContent,
   mergeStoryTimelineState,
+  resolveStoryTimelineCurrentCalendarMs,
   selectStoryTimelineRecentInjectRows,
   type StoryTimelineEventScope,
   type StoryTimelineMainCharPresenceOpts,
@@ -197,6 +198,12 @@ export async function loadStoryTimelinePromptBlock(
   })
   const excludeIds = new Set(recentRows.map((r) => r.id))
 
+  const currentStoryCalendarMs = resolveStoryTimelineCurrentCalendarMs({
+    state,
+    rows: allRows,
+    storyCalendarAnchor: opts?.storyCalendarAnchor,
+  })
+
   let vectorRows: Awaited<ReturnType<typeof recallStoryTimelineRowsByVector>> = []
   const apiConfig = opts?.apiConfig ?? null
   const relevanceText = String(opts?.relevanceText ?? '').trim()
@@ -207,6 +214,7 @@ export async function loadStoryTimelinePromptBlock(
       recallQueryFocus: String(opts?.recallQueryFocus ?? '').trim() || undefined,
       recallQueryUserText: String(opts?.recallQueryUserText ?? '').trim() || undefined,
       excludeRowIds: excludeIds,
+      currentStoryCalendarMs,
       settings: memSettings,
       chatApiConfig: apiConfig,
       conversationKey: opts?.conversationKey,
@@ -217,6 +225,7 @@ export async function loadStoryTimelinePromptBlock(
     state,
     recentRows,
     vectorRows,
+    currentStoryCalendarMs,
     rowInjectOpts: {
       redactSidePerspectiveForMainChar: true,
       mainCharPresence: await loadStoryTimelineMainCharPresence(cid),

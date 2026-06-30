@@ -1,5 +1,6 @@
 import type { PlotItem, WorldBookAfterRevertEntry } from '../dating/types'
 import type { Character, WorldBook, WorldBookItem } from './types'
+import { buildEpilogueExtensionArchiveToneRules } from './epilogueExtensionToneRules'
 
 /** 与 wechatChatAi 中约会合并记忆分隔符一致，用于从混合输出中切出 JSON 段 */
 export const DATING_MEMORY_JSON_DELIMITER = '<<<DATING_UNIFIED_MEMORY_JSON>>>'
@@ -165,6 +166,8 @@ export function buildWorldBookAfterPatchOutputAppendix(): string {
 - **不要**为了凑数而改写；无变化则**不要**输出 ---WB_AFTER_PATCH--- 整段。
 - **不要**在此 JSON 中修改**序言介入**条目（数据字段 priority 为 before）。
 - newContent 长度建议不超过 ${MAX_ITEM_CONTENT_CHARS} 字；精简表述即可。
+
+${buildEpilogueExtensionArchiveToneRules()}
 ---------------------
 `.trim()
 }

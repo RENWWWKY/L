@@ -5,6 +5,7 @@ import {
   listChatAfterWorldBookItems,
   type WorldBookAfterPatch,
 } from '../newFriendsPersona/worldBookAfterPatch'
+import { buildEpilogueExtensionArchiveToneRules } from '../newFriendsPersona/epilogueExtensionToneRules'
 
 const COLD_RELATIONSHIP_MARKERS: RegExp[] = [
   /冷漠/,
@@ -144,6 +145,8 @@ export function buildDatingWorldBookAfterPatchOutputAppendix(opts?: { isEarlyRou
 - 单轮最多**小幅**更新（称呼略松、多一条公事外的观察等）；**禁止**一轮内从冷淡跳到暧昧/恋人向。
 ${early}- 无实质、可持续、与条目矛盾的变化 → **不要**输出 ---WB_AFTER_PATCH---。
 - 仅可改 priority=after 且已列出的 worldBookId/itemId；禁止编造 id。
+
+${buildEpilogueExtensionArchiveToneRules()}
 ---------------------
 `.trim()
 }

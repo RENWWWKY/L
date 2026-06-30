@@ -92,6 +92,8 @@ export type StoryTimelinePromptLoadOpts = {
   apiConfig?: Pick<import('../../api/types').ApiConfig, 'apiUrl' | 'apiKey'> | null
   /** 私聊/群聊总结游标键；用于排除游标后行进入「已总结片段」向量召回 */
   conversationKey?: string | null
+  /** 上一回合故事内公历锚点（约会 plot 末尾）；优先于 state.currentStoryDay 作「当前剧情日」 */
+  storyCalendarAnchor?: string | null
 }
 
 /** 每角色持久化的行表上限 */
@@ -512,6 +514,159 @@ function parseGregorianStoryDayDate(storyDay: string): Date | null {
   if (!m) return null
   const d = new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]))
   return Number.isNaN(d.getTime()) ? null : d
+}
+
+function storyCalendarDayStartMs(storyDay: string): number | null {
+  const d = parseGregorianStoryDayDate(storyDay)
+  if (!d) return null
+  return new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime()
+}
+
+/** 从摘要行【本轮锚点】解析故事内公历起点（毫秒，当日 0 点） */
+export function extractStoryTimelineRowAnchorStartMs(rowText: string): number | null {
+  const anchorMatch = String(rowText ?? '').match(/【本轮锚点】([^\n]+)/)
+  if (!anchorMatch?.[1]) return null
+  const anchorText = anchorMatch[1].trim()
+  const rangeMatch = anchorText.match(STORY_TIMELINE_GREGORIAN_ANCHOR_RE)
+  const head = rangeMatch?.[0]?.split(/\s*-\s*/)[0]?.trim() ?? anchorText
+  const dayPart = head.match(/^(\d{4}年\d{1,2}月\d{1,2}日)/)?.[1]
+  if (!dayPart) return null
+  return storyCalendarDayStartMs(dayPart)
+}
+
+/** 解析「当前剧情日」：优先约会末尾锚点，其次 state，再回退最近摘要行 */
+export function resolveStoryTimelineCurrentCalendarMs(params: {
+  state?: StoryTimelineState | null
+  rows?: StoryTimelinePlotRow[]
+  storyCalendarAnchor?: string | null
+}): number | null {
+  const anchorRaw = String(params.storyCalendarAnchor ?? '').trim()
+  if (anchorRaw) {
+    const dayPart = anchorRaw.match(/^(\d{4}年\d{1,2}月\d{1,2}日)/)?.[1]
+    if (dayPart) {
+      const ms = storyCalendarDayStartMs(dayPart)
+      if (ms != null) return ms
+    }
+  }
+  const stateDay = params.state?.currentStoryDay?.trim()
+  if (stateDay) {
+    const ms = storyCalendarDayStartMs(stateDay)
+    if (ms != null) return ms
+  }
+  const rows = params.rows ?? []
+  for (let i = rows.length - 1; i >= 0; i--) {
+    const ms = extractStoryTimelineRowAnchorStartMs(rows[i]!.rowText)
+    if (ms != null) return ms
+  }
+  return null
+}
+
+/** 摘要/event 是否像「当时对未来的提醒/考核/赴约」（非已发生事实） */
+const STORY_TIMELINE_FORWARD_SCHEDULE_HINT_RE =
+  /(?:下(?:周|个)?[一二三四五六日天])|明[天日]|后[天日]|(?:即将|快要).{0,8}(?:考核|比赛|演出|见面|赴约|截止)|提醒.{0,12}(?:用户|对方|{{user}}|玩家)|(?:歌曲|声乐|舞台)?考核/
+
+export function storyTimelineTextLooksLikeForwardScheduleSnapshot(text: string): boolean {
+  const t = String(text ?? '').trim()
+  if (!t) return false
+  return STORY_TIMELINE_FORWARD_SCHEDULE_HINT_RE.test(t)
+}
+
+/** 摘要行锚点是否明显早于当前剧情日（用于注入时效标注，非排除召回） */
+export function isStoryTimelineRowPastRelativeToCurrent(
+  row: StoryTimelinePlotRow,
+  currentStoryMs: number | null,
+  minGapDays = 7,
+): boolean {
+  if (currentStoryMs == null) return false
+  const rowMs = extractStoryTimelineRowAnchorStartMs(row.rowText)
+  if (rowMs == null) return false
+  return (currentStoryMs - rowMs) / 86_400_000 >= minGapDays
+}
+
+/** @deprecated 仅用于内部；不再用于剔除向量召回 */
+export function isStoryTimelineRowExpiredScheduleSnapshot(
+  row: StoryTimelinePlotRow,
+  currentStoryMs: number | null,
+  minGapDays = 7,
+): boolean {
+  if (!isStoryTimelineRowPastRelativeToCurrent(row, currentStoryMs, minGapDays)) return false
+  const event = resolveStoryTimelineRowEventSummary(row)
+  const title = resolveStoryTimelineRowTitle(row)
+  return (
+    storyTimelineTextLooksLikeForwardScheduleSnapshot(event) ||
+    storyTimelineTextLooksLikeForwardScheduleSnapshot(title)
+  )
+}
+
+function formatStoryCalendarDayLabelFromMs(ms: number): string {
+  const d = new Date(ms)
+  return `${d.getFullYear()}年${d.getMonth() + 1}月${d.getDate()}日`
+}
+
+function formatStoryTimelineGapLabelZh(gapDays: number): string {
+  if (gapDays < 7) return '数日前'
+  if (gapDays < 14) return '约1周前'
+  if (gapDays < 45) return `约${Math.max(1, Math.round(gapDays / 7))}周前`
+  if (gapDays < 365) return `约${Math.max(1, Math.round(gapDays / 30))}个月前`
+  return `约${Math.max(1, Math.round(gapDays / 365))}年前`
+}
+
+/**
+ * 历史摘要注入：保留全文，按当前剧情日标注「已发生 / 约 N 个月前」，
+ * 避免模型把旧摘要里的「下周五考核」当作尚未到来的提醒。
+ */
+export function formatStoryTimelineHistoricalRowTemporalBanner(
+  rowText: string,
+  currentStoryMs: number | null,
+  minGapDays = 7,
+): string {
+  if (currentStoryMs == null) return ''
+  const rowMs = extractStoryTimelineRowAnchorStartMs(rowText)
+  if (rowMs == null) return ''
+  const gapDays = (currentStoryMs - rowMs) / 86_400_000
+  if (gapDays < minGapDays) return ''
+
+  const rowAnchor = formatStoryTimelineListTimeLabel(rowText)
+  const currentAnchor = formatStoryCalendarDayLabelFromMs(currentStoryMs)
+  const gapLabel = formatStoryTimelineGapLabelZh(gapDays)
+  const event = String(rowText ?? '').match(/【本轮事件】([^\n]+)/)?.[1]?.trim() ?? ''
+  const title = extractStoryTimelineRowTitleFromRowText(rowText)
+  const scheduleLike =
+    storyTimelineTextLooksLikeForwardScheduleSnapshot(event) ||
+    storyTimelineTextLooksLikeForwardScheduleSnapshot(title)
+
+  const anchorPart = rowAnchor
+    ? `本行故事内锚点：${rowAnchor}；相对当前剧情日 ${currentAnchor} 为**${gapLabel}**`
+    : `相对当前剧情日 ${currentAnchor} 为**${gapLabel}**`
+
+  if (scheduleLike) {
+    return (
+      `【时效·已发生】${anchorPart}。行内「下周五 / 即将 / 提醒…」等为**该锚点当时的计划或预告**，到当前剧情日默认**已属往事**（除非近端摘要或最近剧情明确尚未发生）。` +
+      `正文若提起须用回溯语气（如「${gapLabel}…」「那时说好的考核…」），**禁止**当作尚未到来的日程或当场提醒用户。`
+    )
+  }
+  return (
+    `【时效·已发生】${anchorPart}。本摘要为**过去已发生**的事实背景；正文若提起须用过去时或回溯语气（如「${gapLabel}…」），**禁止**写成正在发生或即将发生。`
+  )
+}
+
+/** 注入用正文：剥离当轮待办/伏笔 + 必要时加时效横幅（不删【本轮事件】） */
+export function formatStoryTimelineRowBodyForTemporalInject(
+  rowText: string,
+  currentStoryMs: number | null,
+): string {
+  const body = stripStoryTimelineRowObligationSections(String(rowText ?? ''))
+  const banner = formatStoryTimelineHistoricalRowTemporalBanner(body, currentStoryMs)
+  if (!banner.trim()) return body
+  return `${banner}\n\n${body}`.trim()
+}
+
+function isStaleOpenTodoRelativeSchedule(text: string, currentStoryMs: number | null): boolean {
+  if (currentStoryMs == null) return false
+  const t = String(text ?? '').trim()
+  if (!t) return false
+  if (!storyTimelineTextLooksLikeForwardScheduleSnapshot(t)) return false
+  return /提醒|通知|考核|赴约|截止|提交|比赛|演出/.test(t)
 }
 
 /** 锚点行内去掉公历日历段，保留剧情相对日/时段/相对/地点等（兼容旧数据迁移） */
@@ -1385,6 +1540,8 @@ export type StoryTimelineRowPromptInjectOpts = {
   /** 对侧幕且 {{char}} 未在场的行 redact（默认 true） */
   redactSidePerspectiveForMainChar?: boolean
   mainCharPresence?: StoryTimelineMainCharPresenceOpts
+  /** 当前剧情日（毫秒）；用于剔除过期日程类【本轮事件】与 stale 待办 */
+  currentStoryCalendarMs?: number | null
 }
 
 export function formatStoryTimelineRowForPromptInject(
@@ -1397,17 +1554,45 @@ export function formatStoryTimelineRowForPromptInject(
     mainCharAliases: opts?.mainCharPresence?.mainCharAliases,
   }
   if (redact && row.sidePerspective === true && !isMainCharPresentInStoryTimelineRow(row, presence)) {
-    return formatStoryTimelineSidePerspectiveRedactedRow(row)
+    return formatStoryTimelineRowBodyForTemporalInject(
+      formatStoryTimelineSidePerspectiveRedactedRow(row),
+      opts?.currentStoryCalendarMs ?? null,
+    )
   }
-  return row.rowText
+  return formatStoryTimelineRowBodyForTemporalInject(row.rowText, opts?.currentStoryCalendarMs ?? null)
 }
 
 export const STORY_TIMELINE_SIDE_PERSPECTIVE_KNOWLEDGE_RULES =
   `【侧幕摘要·信息边界】标有「${STORY_TIMELINE_SIDE_PERSPECTIVE_REDACT_TAG}」的条目：{{char}} **未亲历**该段；不得写成全知旁观或复述用户与他人私下的具体对白/协议；仅可写寻踪、时段错位感或「你去哪了」类合理追问。`.trim()
 
+const STORY_TIMELINE_ROW_OBLIGATION_SECTION_HEADERS = new Set([
+  '【伏笔·人物动机】',
+  '【待办】',
+])
+
+/** 历史摘要行注入时剥离当轮快照里的待办/伏笔（当前义务仅以【当前状态】为准） */
+export function stripStoryTimelineRowObligationSections(rowText: string): string {
+  const lines = String(rowText ?? '').split('\n')
+  const out: string[] = []
+  let skipSection = false
+  for (const line of lines) {
+    const t = line.trim()
+    if (t.startsWith('【') && t.endsWith('】')) {
+      if (STORY_TIMELINE_ROW_OBLIGATION_SECTION_HEADERS.has(t)) {
+        skipSection = true
+        continue
+      }
+      skipSection = false
+    }
+    if (!skipSection) out.push(line)
+  }
+  return out.join('\n').replace(/\n{3,}/g, '\n\n').trim()
+}
+
 /** 当前世界状态快照（地点/服装/物品/动机伏笔/待办；不含历史事件列表） */
 export function formatStoryTimelineCurrentStateForPrompt(
   state: StoryTimelineState | null | undefined,
+  opts?: { currentStoryCalendarMs?: number | null },
 ): string {
   if (!state) return ''
   const manual = state.manualAnchorBlock?.trim()
@@ -1415,12 +1600,18 @@ export function formatStoryTimelineCurrentStateForPrompt(
   const lines: string[] = []
 
   const anchor: string[] = []
-  if (typeof state.updatedAt === 'number' && Number.isFinite(state.updatedAt)) {
-    anchor.push(formatZhDateWithWeekday(state.updatedAt, { includeTime: true }))
-  } else if (state.currentStoryDay) {
-    anchor.push(`剧情日 ${state.currentStoryDay}`)
+  const storyCal = composeStoryTimelineCalendarAnchorLabel({
+    story_day: state.currentStoryDay,
+    story_time: state.currentStoryTime,
+  })
+  if (storyCal) {
+    anchor.push(storyCal)
+  } else if (state.currentStoryDay?.trim()) {
+    anchor.push(`剧情日 ${state.currentStoryDay.trim()}`)
+    if (state.currentStoryTime?.trim()) anchor.push(`时段 ${state.currentStoryTime.trim()}`)
+  } else if (state.currentStoryTime?.trim()) {
+    anchor.push(`时段 ${state.currentStoryTime.trim()}`)
   }
-  if (state.currentStoryTime) anchor.push(`时段 ${state.currentStoryTime}`)
   if (state.currentLocation) anchor.push(`地点 ${state.currentLocation}`)
   if (state.charactersPresent?.length) {
     anchor.push(`在场 ${state.charactersPresent.join('、')}`)
@@ -1435,17 +1626,25 @@ export function formatStoryTimelineCurrentStateForPrompt(
     lines.push('【物品追踪】\n' + state.items.map(formatItemLine).join('\n'))
   }
 
-  if (state.foreshadows.length) {
+  const openFore = state.foreshadows.filter((f) => f.status !== 'resolved')
+  if (openFore.length) {
     lines.push(
       '【伏笔·人物动机】\n' +
-        state.foreshadows.map((f) => `- ${f.text}`).join('\n'),
+        openFore.map((f) => `- ${f.text}`).join('\n'),
     )
   }
 
-  if (state.todos?.length) {
+  const openTodos = (state.todos ?? []).filter((t) => t.status !== 'resolved')
+  const currentStoryMs =
+    opts?.currentStoryCalendarMs ??
+    (state.currentStoryDay?.trim() ? storyCalendarDayStartMs(state.currentStoryDay.trim()) : null)
+  const openTodosFiltered = openTodos.filter(
+    (t) => !isStaleOpenTodoRelativeSchedule(t.text, currentStoryMs),
+  )
+  if (openTodosFiltered.length) {
     lines.push(
       '【待办】\n' +
-        state.todos.map((t) => `- ${t.text}`).join('\n'),
+        openTodosFiltered.map((t) => `- ${t.text}`).join('\n'),
     )
   }
 
@@ -1457,6 +1656,9 @@ export const STORY_TIMELINE_VECTOR_RECALL_CANON_RULES =
   `【历史回忆·事实铁律】下列「语义召回」条目为**摘要表已记载事实**（高于写作灵感与自行发挥）。` +
   `玩家提起相关往事时：**仅可**引用各行【摘要标题】【摘要关键词】【本轮事件】等摘要字段中**已写明**的内容；` +
   `**禁止**编造摘要未出现的对白、物品、交易或情节；**禁止**把摘要当作灵感扩写成未记载细节。`
+
+export const STORY_TIMELINE_HISTORICAL_ROW_TEMPORAL_RULES =
+  `【历史摘要·时效铁律】「语义召回」「近端摘要」各行均保留注入；须对照各行【时效·已发生】横幅与【本轮锚点】理解：**当前剧情「现在」以【当前状态】锚点为准**。若某行锚点**早于**当前剧情日，该行内容为**已发生往事**——提及须用过去时/回溯语气（如「五个月前…」「暑假那阵…」），**禁止**把其中的「下周五 / 即将 / 提醒考核」等**当时面向未来的措辞**当作本轮尚未到来的安排。**未完结待办与动机伏笔仅以【当前状态】为准**（各行【待办】【伏笔】已剥离）。`.trim()
 
 /** 约会 prompt 裁剪：保留语义召回段，避免 head 截断丢掉向量命中 */
 export function clipStoryTimelinePromptBlock(raw: string, cap: number): string {
@@ -1493,10 +1695,18 @@ export function formatStoryTimelineInjectBody(params: {
   recentRows: StoryTimelinePlotRow[]
   vectorRows?: StoryTimelineVectorRecallHit[]
   rowInjectOpts?: StoryTimelineRowPromptInjectOpts
+  currentStoryCalendarMs?: number | null
 }): string {
-  const rowOpts = params.rowInjectOpts
+  const rowOpts: StoryTimelineRowPromptInjectOpts = {
+    ...params.rowInjectOpts,
+    currentStoryCalendarMs:
+      params.currentStoryCalendarMs ?? params.rowInjectOpts?.currentStoryCalendarMs ?? null,
+  }
+  const currentStoryMs = rowOpts.currentStoryCalendarMs ?? null
   const parts: string[] = []
-  const stateBlock = formatStoryTimelineCurrentStateForPrompt(params.state)
+  const stateBlock = formatStoryTimelineCurrentStateForPrompt(params.state, {
+    currentStoryCalendarMs: currentStoryMs,
+  })
   if (stateBlock) {
     parts.push(`【当前状态·${STORY_TIMELINE_INJECT_LABEL_STATE}】\n${stateBlock}`)
   }
@@ -1506,39 +1716,54 @@ export function formatStoryTimelineInjectBody(params: {
   const recentIds = new Set(recent.map((r) => r.id))
   const vector = (params.vectorRows ?? []).filter((hit) => !recentIds.has(hit.row.id))
 
+  const formatInjectRow = (row: StoryTimelinePlotRow) => {
+    const body = formatStoryTimelineRowForPromptInject(row, rowOpts)
+    return body.trim() ? body : null
+  }
+
   if (vector.length) {
-    parts.push(
-      `${STORY_TIMELINE_VECTOR_RECALL_CANON_RULES}\n` +
-        `【语义召回·历史剧情摘要（按向量语义匹配）】\n` +
-        vector
-          .map((hit, i) => {
-            const simPct = Math.round(hit.sim * 1000) / 10
-            const title = resolveStoryTimelineRowTitle(hit.row)
-            const body = formatStoryTimelineRowForPromptInject(hit.row, rowOpts)
-            if (body.includes(STORY_TIMELINE_SIDE_PERSPECTIVE_REDACT_TAG)) hasSidePerspectiveRedact = true
-            return `--- 召回 ${i + 1} · ${title} · 相似 ${simPct}% ---\n${body}`
-          })
-          .join('\n\n'),
-    )
+    const vectorBlocks = vector
+      .map((hit, i) => {
+        const body = formatInjectRow(hit.row)
+        if (!body) return null
+        const simPct = Math.round(hit.sim * 1000) / 10
+        const title = resolveStoryTimelineRowTitle(hit.row)
+        if (body.includes(STORY_TIMELINE_SIDE_PERSPECTIVE_REDACT_TAG)) hasSidePerspectiveRedact = true
+        return `--- 召回 ${i + 1} · ${title} · 相似 ${simPct}% ---\n${body}`
+      })
+      .filter(Boolean)
+    if (vectorBlocks.length) {
+      parts.push(
+        `${STORY_TIMELINE_VECTOR_RECALL_CANON_RULES}\n` +
+          `【语义召回·历史剧情摘要（按向量语义匹配）】\n` +
+          vectorBlocks.join('\n\n'),
+      )
+    }
   }
 
   if (recent.length) {
-    parts.push(
-      `【近端剧情摘要（最近 ${recent.length} 轮，由旧到新；须与末尾情绪方向一致）】\n` +
-        recent
-          .map((r, i) => {
-            const title = resolveStoryTimelineRowTitle(r)
-            const body = formatStoryTimelineRowForPromptInject(r, rowOpts)
-            if (body.includes(STORY_TIMELINE_SIDE_PERSPECTIVE_REDACT_TAG)) hasSidePerspectiveRedact = true
-            return `--- 摘要 ${i + 1} · ${title} · ${STORY_TIMELINE_INJECT_LABEL_RECENT} ---\n${body}`
-          })
-          .join('\n\n'),
-    )
+    const recentBlocks = recent
+      .map((r, i) => {
+        const title = resolveStoryTimelineRowTitle(r)
+        const body = formatInjectRow(r)
+        if (!body) return null
+        if (body.includes(STORY_TIMELINE_SIDE_PERSPECTIVE_REDACT_TAG)) hasSidePerspectiveRedact = true
+        return `--- 摘要 ${i + 1} · ${title} · ${STORY_TIMELINE_INJECT_LABEL_RECENT} ---\n${body}`
+      })
+      .filter(Boolean)
+      .join('\n\n')
+    if (recentBlocks) {
+      parts.push(
+        `【近端剧情摘要（最近 ${recent.length} 轮，由旧到新；须与末尾情绪方向一致）】\n` +
+          recentBlocks,
+      )
+    }
   }
 
   if (!parts.length) return ''
   const footer =
     `（剧情时间轴：当前状态 + 语义召回历史摘要 + 近端摘要；回复须与锚点、服装、物品一致；**语义召回条目须服从【历史回忆·事实铁律】**；**未收动机伏笔与未完结待办**才须承接，已完结者勿再引用；历史摘要仅补事实勿翻转情绪主客体；**描述故事内时空，与每条前缀「系统落库时刻」及【当前时间】独立，勿混用**。` +
+    ` ${STORY_TIMELINE_HISTORICAL_ROW_TEMPORAL_RULES}` +
     (hasSidePerspectiveRedact ? ` ${STORY_TIMELINE_SIDE_PERSPECTIVE_KNOWLEDGE_RULES}` : '') +
     `）`
   return `${parts.join('\n\n')}\n\n${footer}`

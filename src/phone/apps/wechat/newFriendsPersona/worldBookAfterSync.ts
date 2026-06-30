@@ -22,6 +22,7 @@ import {
   buildWorldBookAfterPatchRowsFromSingleCharacter,
   syncAutoSummaryEpilogueToLastMemoryTrace,
 } from '../memoryTracePublisher'
+import { buildEpilogueExtensionArchiveToneRules } from './epilogueExtensionToneRules'
 
 export type WorldBookAfterSyncSource = 'auto_summary' | 'per_round'
 
@@ -67,6 +68,8 @@ function buildWorldBookAfterSyncSystemPrompt(): string {
 - newContent 须仍为第三人称档案体「尾声延展」语义；指角色本人用 {{char}}，指玩家用 {{user}}；禁止第一人称台词。
 - 仅可修改上文已列出的 worldBookId/itemId；禁止编造 id。
 
+${buildEpilogueExtensionArchiveToneRules()}
+
 【输出】只输出一个 JSON 对象，禁止 markdown 围栏与解释：
 {
   "patches": [
@@ -93,6 +96,8 @@ function buildWorldBookAfterPerRoundSystemPrompt(): string {
 - 勿根据「以往可能发生过」臆造；仅依据用户给出的本轮正文。
 - newContent 须仍为第三人称档案体「尾声延展」语义；指角色本人用 {{char}}，指玩家用 {{user}}；禁止第一人称台词。
 - 仅可修改上文已列出的 worldBookId/itemId；禁止编造 id。
+
+${buildEpilogueExtensionArchiveToneRules()}
 
 【输出】只输出一个 JSON 对象，禁止 markdown 围栏与解释：
 {
@@ -503,7 +508,8 @@ export function buildEpiloguePatchesSummaryJsonRule(): string {
   return `
 - epilogue_patches（可选数组）：根据上述材料，若某角色「尾声延展」条目与剧情/对话已出现**可持续**的关系态变化，输出替换条目；无变化则 [] 或省略。每项：
   { "character_id": string（除当前私聊对象外必填；当前对象可省略）, "world_book_id": string, "item_id": string, "new_content": string }
-  world_book_id/item_id **只能**来自用户消息「尾声延展条目快照」；new_content 须 {{char}}/{{user}} 占位符，第三人称档案体；优先更新「对 {{user}} 的当前态度」。`.trim()
+  world_book_id/item_id **只能**来自用户消息「尾声延展条目快照」；new_content 须 {{char}}/{{user}} 占位符，第三人称档案体；优先更新「对 {{user}} 的当前态度」。
+${buildEpilogueExtensionArchiveToneRules()}`.trim()
 }
 
 export function buildEpilogueSnapshotBlockForSummary(characters: Character[]): string {
