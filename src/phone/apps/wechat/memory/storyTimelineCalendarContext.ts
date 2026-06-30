@@ -4,6 +4,7 @@ import { personaDb } from '../newFriendsPersona/idb'
 import {
   composeStoryTimelineCalendarAnchorLabel,
   hasTimelineDeltaContent,
+  parseStoryCalendarDayStartMs,
   STORY_TIMELINE_GREGORIAN_ANCHOR_RE,
   type StoryTimelineSummaryDelta,
 } from './storyTimelineTypes'
@@ -50,6 +51,22 @@ export function resolveStoryCalendarAnchorFromPlotItems(plots: PlotItem[] | null
   )
 }
 
+/** 从锚点标签解析「上一回合故事内末尾」公历日 0 点（区间取 end 段） */
+export function resolveStoryCalendarAnchorFloorMs(anchor: string | null | undefined): number | null {
+  const raw = String(anchor ?? '').trim()
+  if (!raw) return null
+  const segments = raw.split(/\s*-\s*/)
+  for (let i = segments.length - 1; i >= 0; i--) {
+    const seg = segments[i]!.trim()
+    const dayPart = seg.match(/^(\d{4}年\d{1,2}月\d{1,2}日)/)?.[1]
+    if (dayPart) {
+      const ms = parseStoryCalendarDayStartMs(dayPart)
+      if (ms != null) return ms
+    }
+  }
+  return null
+}
+
 /**
  * @deprecated 仅保留排序/游标用途；**禁止**作为剧情公历锚点展示或写入 prompt。
  * plot.timestamp 为落库时刻，不是故事内时间。
@@ -75,6 +92,14 @@ export const STORY_TIMELINE_CALENDAR_AWARENESS_RULES = `
 - 写 event_summary / row_title 时须感知**季节与节日氛围**，并与 story_day（及 end）一致。
 - **生日节点**：若下方提供了 {{user}} / {{char}} 的生日 MM-DD，须对照 story_day 判断是否临近或当日。
 - **重要节日**：元旦、春节、清明、劳动节、端午、中秋、国庆、情人节、520、七夕、跨年夜等；命中或临近（±1～2 天）时在摘要中点明节日语境。
+- **禁止无闪回的时间倒流**：若提供了【剧情时间锚点（上一回合故事内末尾）】，接续剧情的 story_day / story_day_end 须为锚点**同日或更晚**；**禁止**无回忆/闪回/插叙铺垫却写成更早年份。闪回须在 relative_time 或正文摘要中明示。
+`.trim()
+
+/** 约会正文生成用：接续上一回合锚点，禁止公历倒流 */
+export const STORY_TIMELINE_CALENDAR_CHRONOLOGY_RULES = `
+【剧情时间·接续铁律（高于自行编造年份）】
+- 接续剧情时正文与 timeline JSON 的 story_day 须为【剧情时间锚点】**同日或更晚**；**禁止**无回忆/闪回/插叙铺垫却把公历写成更早年份（例：锚点已是 2026 年却写 2024）。
+- 闪回/回忆须在正文与 relative_time 中明确标识（如「三年前」「闪回」），方可填写早于锚点的 story_day。
 `.trim()
 
 export async function buildStoryTimelineCalendarContextBlock(params: {

@@ -522,6 +522,67 @@ function storyCalendarDayStartMs(storyDay: string): number | null {
   return new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime()
 }
 
+/** 公历 story_day → 当日 0 点毫秒（供日历锚点校验复用） */
+export function parseStoryCalendarDayStartMs(storyDay: string): number | null {
+  return storyCalendarDayStartMs(storyDay)
+}
+
+export function formatGregorianStoryDayFromMs(ms: number): string {
+  const d = new Date(ms)
+  return `${d.getFullYear()}年${d.getMonth() + 1}月${d.getDate()}日`
+}
+
+/** 取 delta 中代表「本回合故事末尾」的公历日（优先 story_day_end） */
+export function resolveStoryTimelineDeltaAnchorEndMs(
+  delta: Pick<StoryTimelineSummaryDelta, 'story_day' | 'story_day_end'>,
+): number | null {
+  const endDay = delta.story_day_end?.trim() || delta.story_day?.trim()
+  if (!endDay) return null
+  return storyCalendarDayStartMs(endDay)
+}
+
+const STORY_TIMELINE_FLASHBACK_HINT_RE =
+  /回忆|闪回|插叙|回溯|当年|那时|过去|多年前|几年前|幼时|童年|中学|大学|两年前|三年前|四年前|五年前|十年前/
+
+/** 摘要增量是否明示为回忆/闪回（允许 story_day 早于接续锚点） */
+export function isStoryTimelineFlashbackDelta(delta: StoryTimelineSummaryDelta): boolean {
+  const rel = String(delta.relative_time ?? '').trim()
+  if (rel && STORY_TIMELINE_FLASHBACK_HINT_RE.test(rel)) return true
+  const title = String(delta.row_title ?? '').trim()
+  if (/回忆|闪回|插叙|回溯/.test(title)) return true
+  const event = String(delta.event_summary ?? '').trim()
+  if (/^(?:他|她|我)?(?:忽然)?(?:想起|回忆起|闪回|回想)|【闪回】|（回忆）/.test(event)) return true
+  return false
+}
+
+/**
+ * 禁止无闪回语义的公历倒流：将 story_day 钳制到 floorMs 当日及之后。
+ * floorMs 通常为上一回合故事内末尾锚点。
+ */
+export function enforceStoryTimelineDeltaChronology(
+  delta: StoryTimelineSummaryDelta,
+  floorMs: number | null | undefined,
+): StoryTimelineSummaryDelta {
+  if (floorMs == null || !Number.isFinite(floorMs)) return delta
+  if (isStoryTimelineFlashbackDelta(delta)) return delta
+
+  const startMs = delta.story_day?.trim() ? storyCalendarDayStartMs(delta.story_day) : null
+  const endMs = delta.story_day_end?.trim() ? storyCalendarDayStartMs(delta.story_day_end) : null
+  const anchorMs = endMs ?? startMs
+  if (anchorMs == null || anchorMs >= floorMs) return delta
+
+  const floorDay = formatGregorianStoryDayFromMs(floorMs)
+  const patch: StoryTimelineSummaryDelta = { ...delta }
+  if (startMs != null && startMs < floorMs) {
+    patch.story_day = floorDay
+  }
+  if (endMs != null && endMs < floorMs) {
+    patch.story_day_end = undefined
+    if (!patch.story_day?.trim()) patch.story_day = floorDay
+  }
+  return patch
+}
+
 /** 从摘要行【本轮锚点】解析故事内公历起点（毫秒，当日 0 点） */
 export function extractStoryTimelineRowAnchorStartMs(rowText: string): number | null {
   const anchorMatch = String(rowText ?? '').match(/【本轮锚点】([^\n]+)/)
@@ -954,6 +1015,10 @@ export function mergeStoryTimelineState(
   if (!cid) return prev ?? null
 
   const base = prev?.characterId === cid ? prev : createEmptyStoryTimelineState(cid)
+  const floorMs = base.currentStoryDay?.trim()
+    ? storyCalendarDayStartMs(base.currentStoryDay.trim())
+    : null
+  const deltaApplied = enforceStoryTimelineDeltaChronology(delta, floorMs)
   const now = Date.now()
   const next: StoryTimelineState = {
     ...base,
@@ -965,16 +1030,18 @@ export function mergeStoryTimelineState(
     recentEvents: [...base.recentEvents],
   }
 
-  if (delta.story_day_end) next.currentStoryDay = delta.story_day_end
-  else if (delta.story_day) next.currentStoryDay = delta.story_day
-  if (delta.story_time_end) next.currentStoryTime = delta.story_time_end
-  else if (delta.story_time) next.currentStoryTime = delta.story_time
-  if (delta.location) next.currentLocation = delta.location
-  if (delta.characters_present?.length) next.charactersPresent = [...delta.characters_present]
+  if (deltaApplied.story_day_end) next.currentStoryDay = deltaApplied.story_day_end
+  else if (deltaApplied.story_day) next.currentStoryDay = deltaApplied.story_day
+  if (deltaApplied.story_time_end) next.currentStoryTime = deltaApplied.story_time_end
+  else if (deltaApplied.story_time) next.currentStoryTime = deltaApplied.story_time
+  if (deltaApplied.location) next.currentLocation = deltaApplied.location
+  if (deltaApplied.characters_present?.length) {
+    next.charactersPresent = [...deltaApplied.characters_present]
+  }
 
-  if (delta.costumes) {
+  if (deltaApplied.costumes) {
     const map = new Map(next.costumes.map((c) => [costumeKey(c), c]))
-    for (const [character, outfit] of Object.entries(delta.costumes)) {
+    for (const [character, outfit] of Object.entries(deltaApplied.costumes)) {
       const ch = trimCell(character, 64)
       const out = trimCell(outfit, STORY_TIMELINE_COSTUME_DESC_MAX)
       if (!ch || !out) continue
@@ -983,9 +1050,9 @@ export function mergeStoryTimelineState(
     next.costumes = [...map.values()].slice(-STORY_TIMELINE_COSTUMES_CAP)
   }
 
-  if (delta.items?.length) {
+  if (deltaApplied.items?.length) {
     const map = new Map(next.items.map((it) => [itemKey(it.name), it]))
-    for (const it of delta.items) {
+    for (const it of deltaApplied.items) {
       const name = trimCell(it.name, 80)
       if (!name) continue
       const note = trimCell(it.note, 120)
@@ -1003,31 +1070,31 @@ export function mergeStoryTimelineState(
     next.items = [...map.values()].slice(-STORY_TIMELINE_ITEMS_CAP)
   }
 
-  if (delta.foreshadows?.length) {
+  if (deltaApplied.foreshadows?.length) {
     next.foreshadows = mergeOpenResolvedAnchorEntries(
       next.foreshadows,
-      delta.foreshadows,
+      deltaApplied.foreshadows,
       STORY_TIMELINE_OPEN_FORESHADOW_CAP,
     )
   }
 
-  if (delta.todos?.length) {
+  if (deltaApplied.todos?.length) {
     next.todos = mergeOpenResolvedAnchorEntries(
       next.todos ?? [],
-      delta.todos,
+      deltaApplied.todos,
       STORY_TIMELINE_OPEN_TODO_CAP,
     )
   }
 
-  if (delta.event_summary) {
+  if (deltaApplied.event_summary) {
     const evt: StoryTimelineEventEntry = {
       id: `evt-${now}-${Math.random().toString(36).slice(2, 7)}`,
-      storyDay: delta.story_day ?? next.currentStoryDay,
-      storyTime: delta.story_time ?? next.currentStoryTime,
-      relativeTime: delta.relative_time,
-      location: delta.location ?? next.currentLocation,
-      charactersPresent: delta.characters_present ?? next.charactersPresent,
-      eventSummary: delta.event_summary,
+      storyDay: deltaApplied.story_day ?? next.currentStoryDay,
+      storyTime: deltaApplied.story_time ?? next.currentStoryTime,
+      relativeTime: deltaApplied.relative_time,
+      location: deltaApplied.location ?? next.currentLocation,
+      charactersPresent: deltaApplied.characters_present ?? next.charactersPresent,
+      eventSummary: deltaApplied.event_summary,
       sourceScope: scope,
       recordedAt: now,
     }

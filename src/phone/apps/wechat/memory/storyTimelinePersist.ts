@@ -17,11 +17,13 @@ import { MEMORY_UNSUMMARIZED_OFFLINE_INJECT_AI_ROUNDS } from './memorySummaryRet
 import {
   buildStoryTimelinePlotRowFromDelta,
   buildStoryTimelineMainCharPresenceOpts,
+  enforceStoryTimelineDeltaChronology,
   formatStoryTimelineDeltaForDisplay,
   formatStoryTimelineInjectBody,
   formatStoryTimelineOpenAnchorsForSummaryPrompt,
   hasTimelineDeltaContent,
   mergeStoryTimelineState,
+  parseStoryCalendarDayStartMs,
   resolveStoryTimelineCurrentCalendarMs,
   selectStoryTimelineRecentInjectRows,
   type StoryTimelineEventScope,
@@ -50,7 +52,12 @@ export async function persistStoryTimelineFromSummaryDelta(
   const cid = characterId.trim()
   if (!cid || !delta) return
   const prev = await personaDb.getStoryTimelineState(cid)
-  const merged = mergeStoryTimelineState(prev, cid, delta, scope)
+  const floorMs =
+    prev?.currentStoryDay?.trim()
+      ? parseStoryCalendarDayStartMs(prev.currentStoryDay.trim())
+      : null
+  const enforcedDelta = enforceStoryTimelineDeltaChronology(delta, floorMs)
+  const merged = mergeStoryTimelineState(prev, cid, enforcedDelta, scope)
   if (!merged) return
   await personaDb.putStoryTimelineState(merged)
 
@@ -60,17 +67,17 @@ export async function persistStoryTimelineFromSummaryDelta(
       : merged.updatedAt
   const mainCharPresence = await loadStoryTimelineMainCharPresence(cid)
   const plotRow =
-    buildStoryTimelinePlotRowFromDelta(cid, delta, scope, {
+    buildStoryTimelinePlotRowFromDelta(cid, enforcedDelta, scope, {
       plotId: opts?.plotId,
       recordedAtMs: recordedAt,
       mainCharPresence,
     }) ??
     (() => {
-      const rowText = formatStoryTimelineDeltaForDisplay(delta, { recordedAtMs: recordedAt })
+      const rowText = formatStoryTimelineDeltaForDisplay(enforcedDelta, { recordedAtMs: recordedAt })
       if (!rowText.trim()) return null
       return buildStoryTimelinePlotRowFromDelta(
         cid,
-        { ...delta, event_summary: delta.event_summary ?? '（本轮状态更新）' },
+        { ...enforcedDelta, event_summary: enforcedDelta.event_summary ?? '（本轮状态更新）' },
         scope,
         { plotId: opts?.plotId, recordedAtMs: recordedAt, mainCharPresence },
       )

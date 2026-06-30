@@ -50,7 +50,7 @@ import {
 } from './datingOnlineInjectScope'
 import { formatSystemRecordTime, resolveOnlineMessageTimeBoundsForConversation } from '../wechatCrossChannelTimeline'
 import { loadStoryTimelinePromptBlock, loadStoryTimelineOpenAnchorsBlockForSummary, rebuildStoryTimelineFromDatingPlots } from '../memory/storyTimelinePersist'
-import { buildStoryTimelineCalendarContextBlock, resolveStoryCalendarAnchorFromPlotItems, resolveStoryCalendarAnchorFromPlots } from '../memory/storyTimelineCalendarContext'
+import { buildStoryTimelineCalendarContextBlock, resolveStoryCalendarAnchorFloorMs, resolveStoryCalendarAnchorFromPlotItems, resolveStoryCalendarAnchorFromPlots, STORY_TIMELINE_CALENDAR_CHRONOLOGY_RULES } from '../memory/storyTimelineCalendarContext'
 import {
   buildDatingStoryTimelineFallbackMaterial,
 } from '../memory/storyTimelineSummaryFallback'
@@ -61,7 +61,7 @@ import {
   resolveParallelEventSummaryDelta,
 } from '../memory/storyTimelineParallelFanOut'
 import { deleteStoryTimelineLinkedRowsForDatingRound } from '../memory/storyTimelineLinkedFanOut'
-import { hasTimelineDeltaContent, clipStoryTimelinePromptBlock, hasStoryTimelineVectorRecallInBlock } from '../memory/storyTimelineTypes'
+import { hasTimelineDeltaContent, clipStoryTimelinePromptBlock, hasStoryTimelineVectorRecallInBlock, enforceStoryTimelineDeltaChronology } from '../memory/storyTimelineTypes'
 import { peekWillSummarizeOnNextAiRound } from '../memory/memoryAutoSummaryInterval'
 import { isOfflineDatingRowPerRoundMode, isLinkedMemoryAutoSummaryEnabled } from '../memory/memoryRowPerRoundMode'
 import {
@@ -830,6 +830,8 @@ async function timelinePersistFieldsFromAiTextRaw(
     characterRealName?: string
     /** 侧幕叙写：主角色未在场 */
     mainCharacterOffstage?: boolean
+    /** 上一回合故事内末尾公历锚点（用于禁止时间倒流） */
+    storyCalendarAnchor?: string | null
   },
 ) {
   const { memoryJsonText } = splitDatingAiResponseAndUnifiedMemoryJson(aiTextRaw)
@@ -849,10 +851,15 @@ async function timelinePersistFieldsFromAiTextRaw(
         }),
         peerCharacterId: opts?.characterId,
         latestRoundBody: plotBody,
+        storyCalendarAnchor: opts?.storyCalendarAnchor,
       },
       displayName: opts?.characterRealName?.trim() || '角色',
       notifyOnFailure: true,
     })
+  }
+  const floorMs = resolveStoryCalendarAnchorFloorMs(opts?.storyCalendarAnchor)
+  if (timelineDelta && floorMs != null) {
+    timelineDelta = enforceStoryTimelineDeltaChronology(timelineDelta, floorMs)
   }
   if (timelineDelta && opts?.mainCharacterOffstage) {
     timelineDelta = { ...timelineDelta, side_perspective: true }
@@ -1645,6 +1652,9 @@ ${vnVoiceParamsRule ? `${vnVoiceParamsRule}\n` : ''}${vnBackgroundRule ? `${vnBa
   const storyCalendarHint = storyCalendarAnchor
     ? `\n【剧情时间锚点（上一回合故事内末尾·本轮须承接；勿用手机日期）】${storyCalendarAnchor}\n`
     : ''
+  const storyCalendarChronologyRule = storyCalendarAnchor
+    ? `\n${STORY_TIMELINE_CALENDAR_CHRONOLOGY_RULES}\n`
+    : ''
   const hasVectorStoryRecall = hasStoryTimelineVectorRecallInBlock(storyTimelineClipped)
   const unsPrivClipped = clipDatingReferenceTail(unsPrivBlock ?? '', refCap, '尚未总结·私聊')
   const unsGrpClipped = clipDatingReferenceTail(unsGrpBlock ?? '', refCap, '尚未总结·群聊')
@@ -1893,6 +1903,7 @@ ${vnVoiceParamsRule ? `${vnVoiceParamsRule}\n` : ''}${vnBackgroundRule ? `${vnBa
         `${onlineWechatFactCanonRule}` +
         `${storyTimelineVectorRecallRule}` +
         `${storyTimelineTemporalRule}` +
+        `${storyCalendarChronologyRule}` +
         `${onlinePrivBoundaryReminder}` +
         `${wechatDialogueParityReminder}` +
         `${playerInputNoRecapReminder}` +
@@ -2730,6 +2741,7 @@ export function DatingProvider({ children }: { children: ReactNode }) {
             characterId: char.id,
             characterRealName: char.realName,
             mainCharacterOffstage: !!archiveSnap.mainCharacterOffstage,
+            storyCalendarAnchor: resolveStoryCalendarAnchorFromPlotItems(plotsForModel),
           })
           const wbRevertNew = sanitizeWorldBookAfterRevertEntries(aiGen.worldBookAfterRevertEntries)
           let aiPlot: PlotItem = {
@@ -3138,6 +3150,7 @@ export function DatingProvider({ children }: { children: ReactNode }) {
             characterId: char.id,
             characterRealName: char.realName,
             mainCharacterOffstage: !!archive.mainCharacterOffstage,
+            storyCalendarAnchor: resolveStoryCalendarAnchorFromPlotItems(before),
           })
         const nextRevert = sanitizeWorldBookAfterRevertEntries(aiGenRegen.worldBookAfterRevertEntries)
         const nextPlot: PlotItem = {
