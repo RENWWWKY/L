@@ -18,20 +18,16 @@ export type DanmakuOverlayBullet = {
 function laneStyleFor(mode: DanmakuOverlayBullet['style']): CSSProperties {
   if (mode === 'gray') {
     return {
-      background: 'rgba(255,255,255,0.38)',
-      border: '1px solid rgba(255,255,255,0.6)',
-      backdropFilter: 'blur(8px)',
-      WebkitBackdropFilter: 'blur(8px)',
+      background: 'rgba(255,255,255,0.55)',
+      border: '1px solid rgba(255,255,255,0.72)',
       borderRadius: 999,
       padding: '2px 10px',
     }
   }
   if (mode === 'white') {
     return {
-      background: 'rgba(255,255,255,0.72)',
-      border: '1px solid rgba(255,255,255,0.88)',
-      backdropFilter: 'blur(12px)',
-      WebkitBackdropFilter: 'blur(12px)',
+      background: 'rgba(255,255,255,0.82)',
+      border: '1px solid rgba(255,255,255,0.92)',
       borderRadius: 999,
       padding: '2px 10px',
     }
@@ -84,8 +80,8 @@ export function DanmakuOverlay({
           to { transform: translate3d(-120%, 0, 0); }
         }
       `}</style>
-      <div className="pointer-events-none absolute inset-0 z-[50] overflow-hidden" aria-hidden>
-        <div className="pointer-events-none absolute inset-x-0 overflow-hidden" style={zoneStyle}>
+      <div className="pointer-events-none absolute inset-0 z-[50] transform-gpu overflow-hidden will-change-transform" aria-hidden>
+        <div className="pointer-events-none absolute inset-x-0 transform-gpu overflow-hidden" style={zoneStyle}>
           {prepared.map((it) => {
             const lineHeight = it.fontPx + 8
             const tokenStyle = laneStyleFor(it.style)
@@ -95,16 +91,14 @@ export function DanmakuOverlay({
             return (
               <span
                 key={it.id}
-                className="absolute left-0 inline-block max-w-[92vw] truncate whitespace-nowrap font-medium"
+                className="absolute left-0 inline-block max-w-[92vw] truncate whitespace-nowrap font-medium transform-gpu"
                 style={{
                   top,
                   fontSize: it.fontPx,
                   color: it.colorRgba,
                   lineHeight: `${lineHeight}px`,
                   textShadow: it.style === 'none' ? '0 1px 2px rgba(0,0,0,0.18)' : undefined,
-                  /* backwards：delay 期间停留在 keyframes 的 from（右侧屏外），避免出现左侧「贴一页 PPT」再飞走的闪屏 */
-                  animation: `wxDmFlyRightToLeft ${dur}s linear ${delay}s infinite backwards`,
-                  willChange: 'transform',
+                  animation: `wxDmFlyRightToLeft ${dur}s linear ${delay}s 1 both`,
                   ...tokenStyle,
                 }}
               >

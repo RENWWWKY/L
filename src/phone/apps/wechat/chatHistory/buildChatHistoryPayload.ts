@@ -22,6 +22,7 @@ export function messageContentSummary(m: WeChatChatMessage): string {
     const prefix = m.listenTrackShare.targetType === 'song' ? '[分享单曲]' : '[分享歌单]'
     return `${prefix} ${m.listenTrackShare.targetTitle}`
   }
+  if (m.pulseShare) return `[微博] ${m.pulseShare.authorName}`
   const text = (m.content ?? '').trim()
   if (text.startsWith(LEGACY_MERGE_FORWARD_PREFIX)) return '[聊天记录]'
   return text || '...'

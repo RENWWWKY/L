@@ -69,6 +69,7 @@ import {
 } from '../musicSync/listenShareAiContext'
 import { parseWeChatLocationPayloadFromDb } from '../location/wechatLocationUtils'
 import { parseWeChatTakeoutOrderPayloadFromDb } from '../takeout/takeoutOrderShareAiDirective'
+import { parseWeChatPulseSharePayloadFromDb } from '../pulse/pulseShareAiDirective'
 import { buildCharacterFullTrashArchive, type PersonaDbTrashSource } from '../../recycleBin/archiveCharacterDeletion'
 import { suppressMomentMemoryArchiveFromMemory } from '../memory/momentMemoryArchiveSuppression'
 import { INDEXED_TRASH_RETENTION_MS, emitIndexedTrashChanged } from '../../recycleBin/recycleBinEvents'
@@ -1264,6 +1265,8 @@ function normalizeWeChatChatMessage(input: unknown): WeChatChatMessage | null {
   const locationShare = parseWeChatLocationPayloadFromDb(rawLocationShare)
   const rawTakeoutOrder = (m as { takeoutOrder?: unknown }).takeoutOrder
   const takeoutOrder = parseWeChatTakeoutOrderPayloadFromDb(rawTakeoutOrder)
+  const rawPulseShare = (m as { pulseShare?: unknown }).pulseShare
+  const pulseShare = parseWeChatPulseSharePayloadFromDb(rawPulseShare)
   const rawSharedRecord = (m as { sharedRecord?: unknown }).sharedRecord
   const sharedRecord: WeChatSharedRecordPayload | undefined = (() => {
     if (!rawSharedRecord || typeof rawSharedRecord !== 'object') return undefined
@@ -1421,6 +1424,7 @@ function normalizeWeChatChatMessage(input: unknown): WeChatChatMessage | null {
     listenTrackShare,
     locationShare,
     takeoutOrder,
+    pulseShare,
     sharedRecord,
     chatHistory,
     images: images.length ? images : undefined,
@@ -5675,6 +5679,15 @@ export class PersonaDb {
       row?.wechatReadCursors && typeof row.wechatReadCursors === 'object'
         ? { ...(row.wechatReadCursors as Record<string, unknown>) }
         : {}
+    const prevTs =
+      typeof prevCursors[conversationKey] === 'number' && Number.isFinite(prevCursors[conversationKey] as number)
+        ? (prevCursors[conversationKey] as number)
+        : 0
+    if (prevTs === ts) {
+      await txDone(tx)
+      db.close()
+      return
+    }
     prevCursors[conversationKey] = ts
     store.put({ ...(row ?? {}), id: 'global', wechatReadCursors: prevCursors })
     await txDone(tx)
@@ -5730,6 +5743,7 @@ export class PersonaDb {
     const prev = await this.getWechatReadCursor(conversationKey)
     // 勿用 Date.now()：微信内消息时间戳可能来自自定义时间轴或 AI 落库时刻，用真实时钟会把游标推到未来，导致之后的新消息永远不计未读。
     const next = Math.max(prev, maxTs)
+    if (next === prev) return
     await this.setWechatReadCursor(conversationKey, next)
   }
 
@@ -8982,7 +8996,15 @@ export class PersonaDb {
       })
     }
     const existing = convBefore
-    const cut = Date.now()
+    /** 与消息落库同一套时间轴；取当前会话最大 timestamp，新消息 ts 更大即可露出 */
+    let cut: number
+    if (msgs.length > 0) {
+      cut = Math.max(
+        ...msgs.map((m) => (typeof m.timestamp === 'number' && Number.isFinite(m.timestamp) ? m.timestamp : 0)),
+      )
+    } else {
+      cut = Date.now()
+    }
     if (existing) {
       await this.upsertChatConversationSettings({
         conversationKey: k,

@@ -5,6 +5,7 @@ import {
   useMemo,
   useRef,
   useState,
+  memo,
   type ComponentProps,
   type CSSProperties,
   type KeyboardEvent as ReactKeyboardEvent,
@@ -16,6 +17,7 @@ import { AnimatePresence, motion } from 'framer-motion'
 import { AtSign, ChevronDown, PhoneCall, Share2, Trash2, X } from 'lucide-react'
 
 import { useCustomization } from '../../CustomizationContext'
+import { computeWeChatStyleKeyboardInset, measureComposerOverlapPx } from '../../hooks/keyboardInset'
 import { Pressable } from '../../components/Pressable'
 import { setBackgroundNotifyPendingWork } from '../backgroundNotify/backgroundNotifyPendingWork'
 import { registerProactiveMessageRevealHandler } from './proactiveMessageRevealBridge'
@@ -36,8 +38,7 @@ import {
   drawProactiveVariableIntervalSeconds,
   isProactiveVariableIntervalEnabled,
 } from './proactiveVariableInterval'
-import { ProactiveMessageCountdownBar } from './ProactiveMessageCountdownBar'
-import { useProactiveMessageCountdown } from './useProactiveMessageCountdown'
+import { ProactiveMessageCountdownHost } from './chatRoom/ProactiveMessageCountdownHost'
 import { resolveCharacterAvatarUrl } from '../../utils/characterAvatarUrl'
 import { PHONE_DISMISS_OVERLAYS_EVENT } from '../../phoneDismissOverlays'
 import type { WeChatBubbleTheme, WeChatChatRoomBg, WeChatTheme } from '../../types'
@@ -302,6 +303,7 @@ import {
   type WeChatPlusActionId,
 } from './WeChatChatPlusMenu'
 import { CheckPhoneFlow } from './checkPhone/CheckPhoneFlow'
+import { MiniGameUnderDevOverlay } from './miniGame/MiniGameUnderDevOverlay'
 import { WeChatChatCameraScreen } from './WeChatChatCameraScreen'
 import {
   WeChatChatPhotoPickerSheet,
@@ -383,7 +385,7 @@ import { useMusicStore } from '../../../stores/useMusicStore'
 import { RedPacketModal } from './redPacket/RedPacketModal'
 import type { TransferBubblePerspective } from './transfer/TransferBubble'
 import { TransferChatRow } from './transfer/TransferChatRow'
-import type { WeChatTakeoutOrderPayload } from './newFriendsPersona/types'
+import type { WeChatTakeoutOrderPayload, WeChatPulseSharePayload } from './newFriendsPersona/types'
 import { LocationChatRow } from './location/LocationChatRow'
 import { LocationSpoofModal } from './location/LocationSpoofModal'
 import { sendLocationToContact } from './location/sendLocationToContact'
@@ -399,12 +401,16 @@ import { locationShareContentFallback } from './location/wechatLocationUtils'
 import { emitTasteOrderPlaced } from '../takeout/tasteOrderBridge'
 import { openTasteAppTracking } from '../takeout/tasteNavigation'
 import { TakeoutOrderChatRow } from './takeout/TakeoutOrderChatRow'
+import { PulseShareChatRow } from './pulse/PulseShareChatRow'
 import {
   buildCharacterTakeoutOrderBundle,
   isTakeoutOrderDirectiveArtifactLine,
   parseTakeoutOrderDirective,
   takeoutOrderContentFallback,
 } from './takeout/takeoutOrderShareAiDirective'
+import {
+  formatPulseShareAiTranscriptLine,
+} from './pulse/pulseShareAiDirective'
 import {
   acceptLumiTransfer,
   emitLumiTransferChanged,
@@ -454,6 +460,12 @@ import { RecallNotice } from './RecallNotice'
 import { RecallHistoryModal, type RecallHistoryRecord } from './RecallHistoryModal'
 import { ShieldedMessageModal } from './ShieldedMessageModal'
 import './chatRoomMotion.css'
+import { TypingIndicatorBubble } from './chatRoom/TypingIndicatorBubble'
+import { MemoizedMessageItem, chatMsgRenderFingerprint } from './chatRoom/MessageItem'
+import { ChatMessageList } from './chatRoom/ChatMessageList'
+import { probeChatRender, probeMemoDeps } from './chatRoom/chatRenderProbe'
+import { useChatQueue } from './chatRoom/useChatQueue'
+import { computeRevealDelayMs } from './chatRoom/computeRevealDelayMs'
 import { useConsoleLogger } from './useConsoleLogger'
 
 const VoiceCallPanelCompat = VoiceCallPanel as unknown as (
@@ -630,6 +642,15 @@ function itemsToTranscript(items: ChatItem[], opts?: { groupSpeakerLabel?: (m: C
           speakerLabel,
         }
       }
+      if (m.pulseShare) {
+        return {
+          id: m.id,
+          from: m.from,
+          text: formatPulseShareAiTranscriptLine(m.pulseShare, m.from === 'self' ? 'self' : 'other'),
+          replyTo: m.replyTo,
+          speakerLabel,
+        }
+      }
       if (m.sharedRecord) {
         const sr = m.sharedRecord
         const typeLabel =
@@ -748,6 +769,7 @@ function mapWeChatMessagesToChatItems(msgs: WeChatChatMessage[]): ChatMsg[] {
         listenTrackShare: m.listenTrackShare,
         locationShare: m.locationShare,
         takeoutOrder: m.takeoutOrder,
+        pulseShare: m.pulseShare,
         sharedRecord: m.sharedRecord,
         originalText: m.originalContent,
         isRecalled: m.isRecalled,
@@ -816,6 +838,7 @@ function mapWeChatMessagesToChatItems(msgs: WeChatChatMessage[]): ChatMsg[] {
       listenTrackShare: m.listenTrackShare,
       locationShare: m.locationShare,
       takeoutOrder: m.takeoutOrder,
+      pulseShare: m.pulseShare,
       sharedRecord: m.sharedRecord,
       chatHistory: resolvedChatHistory,
       stickerRef: m.stickerRef,
@@ -877,7 +900,7 @@ function rebuildChatItemsWithTimestamps(msgs: ChatMsg[], formatWxTimeLabel: (ts:
 function messagePlainPreview(
   msg: Pick<
     ChatMsg,
-    'text' | 'images' | 'redPacket' | 'transfer' | 'callStatus' | 'voice' | 'musicSync' | 'listenCommentShare' | 'listenProfileShare' | 'listenTrackShare' | 'locationShare' | 'takeoutOrder' | 'sharedRecord' | 'chatHistory' | 'isRecalled' | 'isGroupEventStrip'
+    'text' | 'images' | 'redPacket' | 'transfer' | 'callStatus' | 'voice' | 'musicSync' | 'listenCommentShare' | 'listenProfileShare' | 'listenTrackShare' | 'locationShare' | 'takeoutOrder' | 'pulseShare' | 'sharedRecord' | 'chatHistory' | 'isRecalled' | 'isGroupEventStrip'
   >,
 ): string {
   if (msg.isGroupEventStrip && msg.text?.trim()) return msg.text.trim()
@@ -897,6 +920,7 @@ function messagePlainPreview(
   }
   if (msg.locationShare) return '[位置]'
   if (msg.takeoutOrder) return `[外卖] ${msg.takeoutOrder.storeName}`
+  if (msg.pulseShare) return `[微博] ${msg.pulseShare.authorName}`
   if (msg.sharedRecord) return '[收藏]'
   if (msg.chatHistory) return '[聊天记录]'
   const rp = msg.redPacket
@@ -1406,6 +1430,18 @@ function isScrollNearBottom(el: HTMLElement, thresholdPx = 28): boolean {
   return remain <= thresholdPx
 }
 
+/** 消息未铺满列表（最后一条离底部仍有空白），键盘弹起时不应强行滚到底 */
+function isChatContentFloatingHigh(scroll: HTMLElement): boolean {
+  const overflow = scroll.scrollHeight - scroll.clientHeight
+  if (overflow <= 64) return true
+  const msgs = scroll.querySelectorAll('[data-wx-msg-id]')
+  const last = msgs[msgs.length - 1] as HTMLElement | undefined
+  if (!last) return true
+  const scrollRect = scroll.getBoundingClientRect()
+  const lastRect = last.getBoundingClientRect()
+  return lastRect.bottom < scrollRect.bottom - 100
+}
+
 function randomBetween(min: number, max: number) {
   return Math.floor(min + Math.random() * (max - min + 1))
 }
@@ -1451,6 +1487,7 @@ type ChatMsg = {
   listenTrackShare?: WeChatListenTrackSharePayload
   locationShare?: WeChatLocationPayload
   takeoutOrder?: WeChatTakeoutOrderPayload
+  pulseShare?: WeChatPulseSharePayload
   sharedRecord?: WeChatSharedRecordPayload
   chatHistory?: WeChatChatHistoryPayload
   /** 表情包引用名（落库后供 AI 历史与防重复） */
@@ -1520,15 +1557,7 @@ type OpponentRevealJob = {
 
 /** AI 对方消息逐条露出前的动态间隔（毫秒）：短句偏快，长句偏慢；语音按时长。 */
 function computeOpponentStaggerDelayMs(msg: ChatMsg): number {
-  if (msg.chatHistory) return 120
-  const dur = msg.voice?.durationSec
-  if (typeof dur === 'number' && dur > 0) {
-    return Math.max(200, Math.min(30_000, Math.round(dur * 1000)))
-  }
-  const text = messagePlainPreview(msg)
-  const n = [...text].length
-  if (n < 200) return Math.max(280, Math.round((n / 5) * 1000))
-  return Math.max(400, Math.round((n / 15) * 1000))
+  return computeRevealDelayMs(msg)
 }
 
 function injectFriendRequestAcceptedDivider(items: ChatItem[], acceptedAtMs: number): ChatItem[] {
@@ -1717,7 +1746,7 @@ function effectiveGroupOtherSenderCharacterId(items: ChatItem[], index: number):
   return undefined
 }
 
-/** 极简入场：轻微上移 + 微缩放 + 渐显，避免弹跳感。 */
+/** 极简入场：轻微上移 + 微缩放 + 渐显，避免弹跳感。入场完成后移除 will-change。 */
 function ChatMessageEnter({ children, isSelf = false }: { children: ReactNode; isSelf?: boolean }) {
   const [entered, setEntered] = useState(false)
   useLayoutEffect(() => {
@@ -1732,7 +1761,7 @@ function ChatMessageEnter({ children, isSelf = false }: { children: ReactNode; i
         transform: entered ? 'translateY(0) scale(1)' : 'translateY(8px) scale(0.98)',
         transformOrigin: isSelf ? 'right bottom' : 'left bottom',
         transition: 'opacity 320ms cubic-bezier(0.2, 0.8, 0.2, 1), transform 320ms cubic-bezier(0.2, 0.8, 0.2, 1)',
-        willChange: 'transform, opacity',
+        willChange: entered ? undefined : 'transform, opacity',
       }}
     >
       {children}
@@ -1841,9 +1870,19 @@ function staggerDmBulletsAfterRestore(bullets: DmBullet[], trackCount: number): 
   })
 }
 
-export function ChatRoom({
+function chatItemsMessageSnapshotEqual(prev: ChatItem[], next: ChatItem[]): boolean {
+  const pick = (list: ChatItem[]) =>
+    list
+      .filter((it): it is ChatMsg => it.kind === 'msg')
+      .map((m) => `${m.id}\0${m.from}\0${m.timestamp}\0${m.text ?? ''}`)
+      .join('\n')
+  return pick(prev) === pick(next)
+}
+
+export function ChatRoomInner({
   onBack: _onBack,
   onOtherTypingChange,
+  onPendingQueueCountChange,
   onOpponentRevealQueueActive,
   skipBusySignal = 0,
   personaCharacterId = null,
@@ -1897,6 +1936,8 @@ export function ChatRoom({
   onBack: () => void
   /** 同步「对方正在输入」到顶栏（替代底部提示） */
   onOtherTypingChange?: (visible: boolean) => void
+  /** 等待露出队列长度，供顶栏 ChatHeader 内聚动画使用 */
+  onPendingQueueCountChange?: (count: number) => void
   /** 对方消息异步队列非空（逐条露出阶段），用于顶栏「备注 / 正在输入」呼吸切换 */
   onOpponentRevealQueueActive?: (active: boolean) => void
   /** 上层点击“跳过忙碌”后递增，用于立即触发一轮忙后回复 */
@@ -1972,6 +2013,12 @@ export function ChatRoom({
   onEmbedSendReady?: (api: { sendText: (text: string) => void }) => void
 }) {
   const logger = useConsoleLogger()
+  const loggerRef = useRef(logger)
+  loggerRef.current = logger
+  const onNavigateRedPacketDetailRef = useRef(onNavigateRedPacketDetail)
+  onNavigateRedPacketDetailRef.current = onNavigateRedPacketDetail
+  const onNavigateTransferDetailRef = useRef(onNavigateTransferDetail)
+  onNavigateTransferDetailRef.current = onNavigateTransferDetail
   const groupDocRef = useRef<GroupChatRow | null>(null)
 
   // `ChatRoom` 顶栏由上层承载，这里仅保留引用以避免未使用告警
@@ -2043,18 +2090,48 @@ export function ChatRoom({
   const conversationKeyLiveRef = useRef(conversationKey)
   conversationKeyLiveRef.current = conversationKey
   /** 追踪 storage 键变更：区分「切会话」与「马甲键升级」 */
-  const prevConversationKeyRef = useRef(conversationKey)
+  /** 须为 ''：若用 conversationKey 初始化，首进聊天室时 prev===next 会跳过 hydrate（刷新后历史空白） */
+  const prevConversationKeyRef = useRef('')
   const conversationKeyMigrationRef = useRef(false)
   /** 并发 hydrate 时仅应用「最后一次启动」的结果，避免先入的空列表覆盖后入的 storage 拉取 */
   const hydrateRunIdRef = useRef(0)
 
-  const { currentTimeMs, getCurrentTimeMs, timePerceptionEnabled } = useWeChatCurrentTime({
+  const { getCurrentTimeMs, timePerceptionEnabled } = useWeChatCurrentTime({
     characterId: personaCharacterId?.trim() || conversationCharacterId,
+    liveTick: false,
   })
   const [globalDm, setGlobalDm] = useState<WeChatGlobalSettingsRow | null>(null)
   const [peerDmRow, setPeerDmRow] = useState<CharacterDanmakuSettingsRow | null>(null)
   const [peerBusyRow, setPeerBusyRow] = useState<CharacterBusySettingsRow | null>(null)
   const [globalModeBusyEnabled, setGlobalModeBusyEnabled] = useState(true)
+
+  const proactiveBusyActiveRef = useRef(false)
+  const [proactiveBusyActive, setProactiveBusyActive] = useState(false)
+
+  useEffect(() => {
+    const compute = () => {
+      if (!globalDm?.busyEnabled) return false
+      const switchOn =
+        globalDm.busyMode === 'character' ? (peerBusyRow?.enabled ?? true) : globalModeBusyEnabled
+      if (!switchOn) return false
+      return !!(peerBusyRow?.isBusy && (peerBusyRow.busyEndTime ?? 0) > getCurrentTimeMs())
+    }
+    const next = compute()
+    if (proactiveBusyActiveRef.current !== next) {
+      proactiveBusyActiveRef.current = next
+      setProactiveBusyActive(next)
+    }
+    if (!peerBusyRow?.isBusy || (peerBusyRow.busyEndTime ?? 0) <= 0) return
+    const ms = Math.max(0, peerBusyRow.busyEndTime - getCurrentTimeMs())
+    const tid = window.setTimeout(() => {
+      const ended = compute()
+      if (proactiveBusyActiveRef.current !== ended) {
+        proactiveBusyActiveRef.current = ended
+        setProactiveBusyActive(ended)
+      }
+    }, ms + 40)
+    return () => window.clearTimeout(tid)
+  }, [globalDm, peerBusyRow, globalModeBusyEnabled, getCurrentTimeMs])
 
   const proactiveCountdownEnabled = useMemo(
     () =>
@@ -2064,20 +2141,6 @@ export function ChatRoom({
       !isSelfMemoChat,
     [roomType, personaCharacterId, useLumiProjectAssistantPrompt, isSelfMemoChat],
   )
-
-  const proactiveBusyActive = useMemo(() => {
-    if (!globalDm?.busyEnabled) return false
-    const switchOn =
-      globalDm.busyMode === 'character' ? (peerBusyRow?.enabled ?? true) : globalModeBusyEnabled
-    if (!switchOn) return false
-    return !!(peerBusyRow?.isBusy && (peerBusyRow.busyEndTime ?? 0) > currentTimeMs)
-  }, [globalDm, peerBusyRow, globalModeBusyEnabled, currentTimeMs])
-
-  const proactiveCountdown = useProactiveMessageCountdown({
-    conversationKey,
-    enabled: proactiveCountdownEnabled,
-    isBusyActive: proactiveBusyActive,
-  })
 
   const [dmBullets, setDmBullets] = useState<DmBullet[]>([])
   const dmBulletsRef = useRef<DmBullet[]>([])
@@ -2473,15 +2536,18 @@ export function ChatRoom({
     ],
   )
 
-  const formatWxTimeLabel = useCallback((ts: number) => {
-    return formatWeChatChatTimestamp(ts, currentTimeMs)
-  }, [currentTimeMs])
+  const formatWxTimeLabel = useCallback(
+    (ts: number) => formatWeChatChatTimestamp(ts, getCurrentTimeMs()),
+    [getCurrentTimeMs],
+  )
 
   /** 聊天列表（含时间行）；对方 AI 气泡经 `pendingQueue` 逐条并入此 state，避免大批量 setState 卡死 */
   const [items, setItems] = useState<ChatItem[]>([])
   const [musicInviteRespondBusy, setMusicInviteRespondBusy] = useState(false)
   const itemsRef = useRef(items)
   itemsRef.current = items
+  /** 仅在虚拟/真实日历日切换时重建时间分隔行，避免 currentTimeMs 每秒 tick 全量 setItems */
+  const timeRebuildDayKeyRef = useRef('')
   /** 当前会话从 DB 拉取窗口内的完整消息（含「仅 UI 隐藏」），供 AI 转写；与气泡列表展示可不同步 */
   const aiContextDbMessagesRef = useRef<WeChatChatMessage[]>([])
   /** 会话设置里的「仅 UI 隐藏」截止时间；≤ 此时间的消息不展示在列表中 */
@@ -2500,9 +2566,27 @@ export function ChatRoom({
   const [friendRequestAcceptedDividerAtMs, setFriendRequestAcceptedDividerAtMs] = useState<number | null>(null)
   /** 从搜索/日期跳转进聊天时暂时展示全部已加载消息，避免锚点落在被隐藏区间 */
   const ignoreUiOnlyHiddenInListRef = useRef(false)
+  const clearUiOnlyHiddenCutLocal = useCallback(() => {
+    if (uiOnlyHiddenCutTsRef.current == null) return
+    uiOnlyHiddenCutTsRef.current = null
+    setUiOnlyHiddenCutForView(null)
+    const ck = conversationKey.trim()
+    if (!ck) return
+    const peerId = (personaCharacterId?.trim() || conversationCharacterId.trim()) || ''
+    const pid = playerIdentityId.trim()
+    if (!peerId || !pid) return
+    void personaDb
+      .upsertChatConversationSettings({
+        conversationKey: ck,
+        peerCharacterId: peerId,
+        playerIdentityId: pid,
+        clearUiOnlyHiddenBeforeTimestamp: true,
+      })
+      .catch(() => {})
+  }, [conversationKey, conversationCharacterId, personaCharacterId, playerIdentityId])
   const rebuildWithCurrentTime = useCallback(
-    (msgs: ChatMsg[]) => rebuildChatItemsWithTimestamps(msgs, formatWxTimeLabel, currentTimeMs),
-    [currentTimeMs, formatWxTimeLabel],
+    (msgs: ChatMsg[]) => rebuildChatItemsWithTimestamps(msgs, formatWxTimeLabel, getCurrentTimeMs()),
+    [formatWxTimeLabel, getCurrentTimeMs],
   )
   const extractMessages = useCallback((list: ChatItem[]) => list.filter((it): it is ChatMsg => it.kind === 'msg'), [])
   const buildChatItemsForAiTranscript = useCallback((): ChatItem[] => {
@@ -3159,12 +3243,22 @@ export function ChatRoom({
   )
 
   useEffect(() => {
-    setItems((prev) => {
-      const rebuilt = rebuildWithCurrentTime(extractMessages(prev))
-      itemsRef.current = rebuilt
-      return rebuilt
-    })
-  }, [currentTimeMs, extractMessages, rebuildWithCurrentTime])
+    const rebuildIfDayChanged = () => {
+      const now = getCurrentTimeMs()
+      const d = new Date(now)
+      const dayKey = `${d.getFullYear()}-${d.getMonth()}-${d.getDate()}`
+      if (timeRebuildDayKeyRef.current === dayKey) return
+      timeRebuildDayKeyRef.current = dayKey
+      setItems((prev) => {
+        const rebuilt = rebuildWithCurrentTime(extractMessages(prev))
+        itemsRef.current = rebuilt
+        return rebuilt
+      })
+    }
+    rebuildIfDayChanged()
+    const id = window.setInterval(rebuildIfDayChanged, 60_000)
+    return () => window.clearInterval(id)
+  }, [extractMessages, rebuildWithCurrentTime, getCurrentTimeMs])
 
   // 让角色/Lumi“知道”转账退还、红包 24h 未领取：用系统提示消息写入对话历史（供模型读取）。
   useEffect(() => {
@@ -3232,12 +3326,17 @@ export function ChatRoom({
   const historyExhaustedRef = useRef(false)
   const userScrolledRef = useRef(false)
   const scrollRef = useRef<HTMLDivElement>(null)
+  const inputBarRef = useRef<HTMLDivElement>(null)
+  const keyboardInsetFillRef = useRef<HTMLDivElement>(null)
+  const newMsgFabWrapRef = useRef<HTMLDivElement>(null)
+  const keyboardInsetRef = useRef(0)
+  const keyboardBaselineRef = useRef({ current: 0 })
+  const syncChatScrollForKeyboardRef = useRef<(insetPx: number) => void>(() => {})
   const chatScrollThemeFallback = useMemo(
     () => wechatChatRoomBgFallbackColor(chatRoomDefaultBg),
     [chatRoomDefaultBg],
   )
   const chatTailMaskColor = chatScrollThemeFallback
-  const [, setIsAtBottom] = useState(true)
   const isAtBottomRef = useRef(true)
   const [pendingNewCount, setPendingNewCount] = useState(0)
   /** hydrate 在落库中断恢复后需清掉底部三点等 UI，定义早于 hydrateMessages */
@@ -3385,15 +3484,38 @@ export function ChatRoom({
       }
       const peerCid = (personaCharacterId?.trim() || conversationCharacterId.trim()) || undefined
       const msgsForWeChat = stripLegacyMeetImportedWeChatMessages(msgs, peerCid)
-      const applyUiHide = uiCut != null && !ignoreUiOnlyHiddenInListRef.current
-      const displayMsgs = applyUiHide
-        ? msgsForWeChat.filter((m) => m.timestamp > uiCut)
-        : msgsForWeChat
+      let effectiveUiCut = uiCut
+      if (
+        effectiveUiCut != null &&
+        !ignoreUiOnlyHiddenInListRef.current &&
+        msgsForWeChat.length > 0 &&
+        !msgsForWeChat.some((m) => m.timestamp > effectiveUiCut!)
+      ) {
+        /** 旧版用 Date.now() 写 cut、消息用 getCurrentTimeMs()：会导致列表有预览、聊天室全空 */
+        effectiveUiCut = null
+        uiOnlyHiddenCutTsRef.current = null
+        setUiOnlyHiddenCutForView(null)
+        const peerId = convSt?.peerCharacterId?.trim() || conversationCharacterId.trim()
+        const pid = convSt?.playerIdentityId?.trim() || playerIdentityId.trim()
+        if (peerId && pid) {
+          void personaDb
+            .upsertChatConversationSettings({
+              conversationKey: hydrateForKey,
+              peerCharacterId: peerId,
+              playerIdentityId: pid,
+              clearUiOnlyHiddenBeforeTimestamp: true,
+            })
+            .catch(() => {})
+        }
+      } else if (effectiveUiCut !== uiCut) {
+        uiOnlyHiddenCutTsRef.current = effectiveUiCut
+        setUiOnlyHiddenCutForView(effectiveUiCut)
+      }
       aiContextDbMessagesRef.current = msgsForWeChat
 
       await ensureStickerStoreHydrated()
       const repairedDisplayMsgs: WeChatChatMessage[] = []
-      for (const m of displayMsgs) {
+      for (const m of msgsForWeChat) {
         const repaired = await repairStoredMediaMessageRow(m)
         repairedDisplayMsgs.push(repaired)
         if (
@@ -3487,7 +3609,7 @@ export function ChatRoom({
         persistChatAwaitingAiTyping(hydrateForKey, false)
         typingInterruptPendingUiClearRef.current = hydrateForKey
       }
-      setItems(mapped)
+      setItems((prev) => (chatItemsMessageSnapshotEqual(prev, mapped) ? prev : mapped))
       itemsRef.current = mapped
       if (scrollToBottom) {
         requestAnimationFrame(() => {
@@ -3496,7 +3618,6 @@ export function ChatRoom({
             if (!el) return
             el.scrollTop = el.scrollHeight
             isAtBottomRef.current = true
-            setIsAtBottom(true)
             setPendingNewCount(0)
           })
         })
@@ -3506,7 +3627,6 @@ export function ChatRoom({
         const browsingHistory = !!el && userScrolledRef.current && !atBottomNow
         const shouldStickToBottom = atBottomNow && !browsingHistory
         isAtBottomRef.current = shouldStickToBottom
-        setIsAtBottom(shouldStickToBottom)
         if (shouldStickToBottom) {
           requestAnimationFrame(() => {
             requestAnimationFrame(() => {
@@ -3514,7 +3634,6 @@ export function ChatRoom({
               if (!root) return
               root.scrollTop = root.scrollHeight
               isAtBottomRef.current = true
-              setIsAtBottom(true)
               setPendingNewCount(0)
             })
           })
@@ -3560,7 +3679,7 @@ export function ChatRoom({
   const setTypingVisible = useCallback(
     (v: boolean) => {
       persistChatAwaitingAiTyping(conversationKey, v)
-      setTypingVisibleState(v)
+      setTypingVisibleState((prev) => (prev === v ? prev : v))
     },
     [conversationKey],
   )
@@ -3570,6 +3689,11 @@ export function ChatRoom({
     const nextKey = conversationKey.trim()
     if (prevKey === nextKey) {
       conversationKeyMigrationRef.current = false
+      /** 兜底：同 key 但内存仍空（hydrate 被跳过或竞态失败）时再拉一次 */
+      if (nextKey) {
+        const loadedMsgCount = itemsRef.current.reduce((n, it) => (it.kind === 'msg' ? n + 1 : n), 0)
+        if (loadedMsgCount === 0) void hydrateMessagesRef.current(true)
+      }
       return
     }
     const isStorageKeyMigration = isSameWeChatStorageConversationMigration(prevKey, nextKey)
@@ -3609,6 +3733,7 @@ export function ChatRoom({
     setPendingQueue([])
     setItems([])
     itemsRef.current = []
+    timeRebuildDayKeyRef.current = ''
     void hydrateMessagesRef.current(true)
   }, [conversationKey, cancelOpponentRevealTimer, setTypingVisible])
 
@@ -3661,7 +3786,7 @@ export function ChatRoom({
       if (cancelled) return
       ignoreUiOnlyHiddenInListRef.current = true
       aiContextDbMessagesRef.current = merged
-      setItems(mapped)
+      setItems((prev) => (chatItemsMessageSnapshotEqual(prev, mapped) ? prev : mapped))
       itemsRef.current = mapped
       // 来自「按日期/搜索定位」的跳转必须能直接看到目标消息：
       // 若仍按默认 30 条裁剪，目标锚点可能被截断导致看起来“没跳转”。
@@ -3755,7 +3880,16 @@ export function ChatRoom({
           if (resolved) map[mem.charId] = resolved
         }
       }
-      setGroupAvatarByCharId(map)
+      setGroupAvatarByCharId((prev) => {
+        const keys = Object.keys(map)
+        if (
+          keys.length === Object.keys(prev).length &&
+          keys.every((k) => prev[k] === map[k])
+        ) {
+          return prev
+        }
+        return map
+      })
     }
     void sync()
     const debounceMs = 160
@@ -3885,13 +4019,8 @@ export function ChatRoom({
   const { openConsole } = useWeChatConsole()
   const [composerToast, setComposerToast] = useState<string | null>(null)
   const [centerToast, setCenterToast] = useState<string | null>(null)
-  const [keyboardInsetPx, setKeyboardInsetPx] = useState(0)
   const keyboardDebugEnabled = !!state.ui.keyboardDebugEnabled
   const keyboardDebugInsetPx = Math.max(-220, Math.min(220, Math.round(state.ui.keyboardDebugInsetPx || 0)))
-  const composerInsetPx =
-    keyboardInsetPx > 0
-      ? Math.max(0, keyboardInsetPx + keyboardDebugInsetPx)
-      : 0
   const toastTimerRef = useRef<number | null>(null)
   const centerToastTimerRef = useRef<number | null>(null)
   /** 已读不回 / 忙碌：阻止新的 AI 回复，直至用户发送消息或点「继续回复」 */
@@ -4055,6 +4184,63 @@ export function ChatRoom({
 
   const MAX_MULTI_SELECT = 100
   const [isMultiSelectMode, setIsMultiSelectMode] = useState(false)
+  const isMultiSelectModeRef = useRef(isMultiSelectMode)
+  isMultiSelectModeRef.current = isMultiSelectMode
+
+  const applyComposerInsetDom = useCallback((insetPx: number) => {
+    const scroll = scrollRef.current
+    const multi = isMultiSelectModeRef.current
+    if (scroll) {
+      scroll.style.paddingBottom = `${12 + (multi ? 86 : insetPx)}px`
+    }
+    const bar = inputBarRef.current
+    const fill = keyboardInsetFillRef.current
+    if (bar) {
+      if (insetPx > 0) {
+        bar.style.transform = `translate3d(0, -${insetPx}px, 0)`
+        bar.style.willChange = 'transform'
+        /** 键盘已盖住 Home 条区域，不必再留 safe-area，否则会与键盘之间露出聊天背景 */
+        bar.style.paddingBottom = '12px'
+      } else {
+        bar.style.transform = ''
+        bar.style.willChange = ''
+        /** 勿写 ''：会清掉 JSX 的 safe-area，导致未弹键盘时输入栏贴底 */
+        bar.style.paddingBottom = 'max(12px, env(safe-area-inset-bottom, 0px))'
+      }
+    }
+    if (fill) {
+      if (insetPx > 0 && bar) {
+        const bg = window.getComputedStyle(bar).backgroundColor
+        fill.style.display = 'block'
+        fill.style.height = `${insetPx}px`
+        fill.style.backgroundColor = bg || 'var(--wx-chat-input-bar-bg, #ffffff)'
+      } else {
+        fill.style.display = 'none'
+        fill.style.height = '0px'
+        fill.style.backgroundColor = ''
+      }
+    }
+    const fab = newMsgFabWrapRef.current
+    if (fab) {
+      fab.style.bottom = `calc(${70 + insetPx}px + env(safe-area-inset-bottom, 0px))`
+    }
+  }, [])
+
+  const syncComposerInsetFromRefs = useCallback(() => {
+    const base = keyboardInsetRef.current
+    const insetPx = base > 0 ? Math.max(0, base + keyboardDebugInsetPx) : 0
+    applyComposerInsetDom(insetPx)
+  }, [applyComposerInsetDom, keyboardDebugInsetPx])
+
+  useLayoutEffect(() => {
+    syncComposerInsetFromRefs()
+  }, [isMultiSelectMode, syncComposerInsetFromRefs])
+
+  /** React 重绘会覆盖 scroll/inputBar 的内联 style，每帧末把键盘抬升量写回 DOM */
+  useLayoutEffect(() => {
+    syncComposerInsetFromRefs()
+  })
+
   const [selectedMessageIds, setSelectedMessageIds] = useState<string[]>([])
   const selectedSet = useMemo(() => new Set(selectedMessageIds), [selectedMessageIds])
   const [multiDeleteConfirmOpen, setMultiDeleteConfirmOpen] = useState(false)
@@ -4077,6 +4263,7 @@ export function ChatRoom({
   const [shareHistorySending, setShareHistorySending] = useState(false)
   const [shareForwardMode, setShareForwardMode] = useState<'multi-item' | 'multi-merge'>('multi-merge')
   const [checkPhoneOpen, setCheckPhoneOpen] = useState(false)
+  const [miniGameUnderDevOpen, setMiniGameUnderDevOpen] = useState(false)
 
   useEffect(() => {
     onCheckPhoneOpenChange?.(checkPhoneOpen)
@@ -4298,7 +4485,6 @@ export function ChatRoom({
         if (!now) return
         now.scrollTo({ top: now.scrollHeight, behavior: 'smooth' })
         isAtBottomRef.current = true
-        setIsAtBottom(true)
         setPendingNewCount(0)
         window.setTimeout(() => {
           const latest = scrollRef.current
@@ -4308,6 +4494,42 @@ export function ChatRoom({
       })
     })
   }, [])
+
+  const syncChatScrollForKeyboard = useCallback((insetPx: number) => {
+    if (insetPx <= 0 || isMultiSelectModeRef.current) return
+    const scroll = scrollRef.current
+    const bar = inputBarRef.current
+    if (!scroll || !bar) return
+    const active = document.activeElement
+    const ta = textareaRef.current
+    const composerFocused =
+      !!ta &&
+      inputMode === 'text' &&
+      (active === ta || bar.contains(active))
+    if (!composerFocused) return
+
+    const floatingHigh = isChatContentFloatingHigh(scroll)
+    if (floatingHigh) {
+      /** 短会话：保持消息在原位，避免 iOS focus scroll-into-view 把气泡顶出屏 */
+      if (scroll.scrollTop > 0) scroll.scrollTop = 0
+      return
+    }
+
+    if (userScrolledRef.current && !isScrollNearBottom(scroll, 72)) return
+
+    const stickBottom = () => {
+      const el = scrollRef.current
+      if (!el) return
+      el.scrollTop = el.scrollHeight
+      isAtBottomRef.current = true
+      setPendingNewCount(0)
+    }
+    requestAnimationFrame(() => {
+      requestAnimationFrame(stickBottom)
+    })
+  }, [inputMode])
+
+  syncChatScrollForKeyboardRef.current = syncChatScrollForKeyboard
 
   /** 主动消息生成中：顶栏「对方正在输入」与普通 AI 回复同一套 persist + onOtherTypingChange */
   useEffect(() => {
@@ -4408,12 +4630,14 @@ export function ChatRoom({
   }, [])
 
   const syncPendingQueueFromRef = useCallback(() => {
-    setPendingQueue(
-      opponentRevealJobsRef.current
-        .filter(isOpponentRevealJobForLiveConversation)
-        .filter((j) => !j.revealCallbackOnly)
-        .map((j) => j.msg),
-    )
+    const next = opponentRevealJobsRef.current
+      .filter(isOpponentRevealJobForLiveConversation)
+      .filter((j) => !j.revealCallbackOnly)
+      .map((j) => j.msg)
+    setPendingQueue((prev) => {
+      if (prev.length === next.length && prev.every((m, i) => m.id === next[i]?.id)) return prev
+      return next
+    })
   }, [isOpponentRevealJobForLiveConversation])
 
   /**
@@ -4498,120 +4722,132 @@ export function ChatRoom({
     setTypingVisible,
   ])
 
-  const kickOpponentRevealProcessor = useCallback(() => {
-    const run = () => {
-      const q = opponentRevealJobsRef.current
-      if (q.length === 0) {
-        setPendingQueue([])
-        onOpponentRevealQueueActive?.(false)
-        setBackgroundNotifyPendingWork({ wechatRevealPending: false })
-        syncAiReplyPipelineActiveRef.current(conversationKeyLiveRef.current.trim())
-        if (
-          !flushAiRepliesBusyRef.current &&
-          !aiCallingRef.current &&
-          pendingAiRepliesRef.current <= 0 &&
-          !isProactiveMessageInFlight(conversationKeyLiveRef.current.trim())
-        ) {
-          setTypingVisible(false)
-        }
-        return
+  const clearOpponentRevealIdle = useCallback(() => {
+    setPendingQueue((prev) => (prev.length === 0 ? prev : []))
+    onOpponentRevealQueueActive?.(false)
+    setBackgroundNotifyPendingWork({ wechatRevealPending: false })
+    syncAiReplyPipelineActiveRef.current(conversationKeyLiveRef.current.trim())
+    if (
+      !flushAiRepliesBusyRef.current &&
+      !aiCallingRef.current &&
+      pendingAiRepliesRef.current <= 0 &&
+      !isProactiveMessageInFlight(conversationKeyLiveRef.current.trim())
+    ) {
+      setTypingVisible(false)
+    }
+  }, [onOpponentRevealQueueActive, setTypingVisible])
+
+  const processOpponentCallbackOnly = useCallback(
+    (job: OpponentRevealJob) => {
+      try {
+        job.beforeReveal?.()
+      } catch {
+        /* ignore */
       }
-      const head = q[0]!
-      const delay = head.revealCallbackOnly
-        ? Math.max(0, head.revealCallbackDelayMs ?? 0)
-        : computeOpponentStaggerDelayMs(head.msg)
-      opponentRevealTimerRef.current = window.setTimeout(() => {
-        opponentRevealTimerRef.current = null
-        const job = opponentRevealJobsRef.current.shift()
-        if (!job) {
-          run()
-          return
-        }
-        if (!isOpponentRevealJobForLiveConversation(job)) {
-          persistOpponentRevealJobOnly(job)
-          run()
-          return
-        }
-        if (job.revealCallbackOnly) {
-          try {
-            job.beforeReveal?.()
-          } catch {
-            /* ignore */
-          }
-          try {
-            job.afterReveal?.()
-          } catch {
-            /* ignore */
-          }
-          syncPendingQueueFromRef()
-          syncAiReplyPipelineActiveRef.current(conversationKeyLiveRef.current.trim())
-          run()
-          return
-        }
-        setPendingQueue(
-          opponentRevealJobsRef.current
-            .filter(isOpponentRevealJobForLiveConversation)
-            .filter((j) => !j.revealCallbackOnly)
-            .map((j) => j.msg),
+      try {
+        job.afterReveal?.()
+      } catch {
+        /* ignore */
+      }
+      syncAiReplyPipelineActiveRef.current(conversationKeyLiveRef.current.trim())
+    },
+    [],
+  )
+
+  const processOpponentRevealJob = useCallback(
+    (job: OpponentRevealJob) => {
+      const incoming = { ...job.msg, otherAnimated: true }
+      if (job.msg.musicSync?.kind === 'music_invite') {
+        logConsole(
+          'ai',
+          `[music_sync] 露出共听邀约卡：${job.msg.id} 《${job.msg.musicSync.trackTitle}》`,
         )
-        const incoming = { ...job.msg, otherAnimated: true }
-        if (job.msg.musicSync?.kind === 'music_invite') {
-          logConsole(
-            'ai',
-            `[music_sync] 露出共听邀约卡：${job.msg.id} 《${job.msg.musicSync.trackTitle}》`,
-          )
-        }
-        const el = scrollRef.current
-        const atBottomNow = el ? isScrollNearBottom(el) : isAtBottomRef.current
-        const browsingHistory = !!el && userScrolledRef.current && !atBottomNow
-        const shouldStickToBottom = atBottomNow && !browsingHistory
-        isAtBottomRef.current = shouldStickToBottom
-        setIsAtBottom(shouldStickToBottom)
-        try {
-          job.beforeReveal?.()
-        } catch {
-          /* ignore */
-        }
-        if (job.opponentRevealFlushSync) {
-          flushSync(() => {
-            setItems((prev) => {
-              const next = mergeOtherIncomingForRoom(prev, incoming)
-              itemsRef.current = next
-              return next
-            })
-          })
-          emitLumiTransferChanged()
-        } else {
+      }
+      const el = scrollRef.current
+      const atBottomNow = el ? isScrollNearBottom(el) : isAtBottomRef.current
+      const browsingHistory = !!el && userScrolledRef.current && !atBottomNow
+      const shouldStickToBottom = atBottomNow && !browsingHistory
+      isAtBottomRef.current = shouldStickToBottom
+      try {
+        job.beforeReveal?.()
+      } catch {
+        /* ignore */
+      }
+      if (job.opponentRevealFlushSync) {
+        flushSync(() => {
           setItems((prev) => {
             const next = mergeOtherIncomingForRoom(prev, incoming)
             itemsRef.current = next
             return next
           })
-        }
-        try {
-          job.persist()
-        } catch {
-          /* ignore */
-        }
-        job.afterReveal?.()
-        if (shouldStickToBottom) scrollToBottomSmooth()
-        else setPendingNewCount((c) => c + 1)
-        run()
-      }, delay)
+        })
+        emitLumiTransferChanged()
+      } else {
+        setItems((prev) => {
+          const next = mergeOtherIncomingForRoom(prev, incoming)
+          itemsRef.current = next
+          return next
+        })
+      }
+      try {
+        job.persist()
+      } catch {
+        /* ignore */
+      }
+      job.afterReveal?.()
+      if (shouldStickToBottom) scrollToBottomSmooth()
+      else setPendingNewCount((c) => c + 1)
+    },
+    [mergeOtherIncomingForRoom, scrollToBottomSmooth],
+  )
+
+  const handleOpponentQueueActive = useCallback(
+    (active: boolean) => {
+      if (active) {
+        onOpponentRevealQueueActive?.(true)
+        setBackgroundNotifyPendingWork({ wechatRevealPending: true })
+        return
+      }
+      clearOpponentRevealIdle()
+    },
+    [clearOpponentRevealIdle, onOpponentRevealQueueActive],
+  )
+
+  const resolveOpponentRevealDelayMs = useCallback((job: OpponentRevealJob) => {
+    return job.revealCallbackOnly
+      ? Math.max(0, job.revealCallbackDelayMs ?? 0)
+      : computeOpponentStaggerDelayMs(job.msg)
+  }, [])
+
+  useChatQueue({
+    pendingQueue,
+    jobsRef: opponentRevealJobsRef,
+    timerRef: opponentRevealTimerRef,
+    isJobLive: isOpponentRevealJobForLiveConversation,
+    getDelayMs: resolveOpponentRevealDelayMs,
+    processCallbackOnly: processOpponentCallbackOnly,
+    processReveal: processOpponentRevealJob,
+    persistOnly: persistOpponentRevealJobOnly,
+    syncPendingQueue: syncPendingQueueFromRef,
+    onQueueActive: handleOpponentQueueActive,
+  })
+
+  const kickOpponentRevealProcessor = useCallback(() => {
+    const q = opponentRevealJobsRef.current
+    if (q.length === 0) {
+      clearOpponentRevealIdle()
+      return
     }
-    if (opponentRevealJobsRef.current.some(isOpponentRevealJobForLiveConversation)) {
+    if (q.some(isOpponentRevealJobForLiveConversation)) {
       onOpponentRevealQueueActive?.(true)
+      setBackgroundNotifyPendingWork({ wechatRevealPending: true })
     }
-    if (opponentRevealTimerRef.current != null) return
-    run()
+    syncPendingQueueFromRef()
   }, [
+    clearOpponentRevealIdle,
     isOpponentRevealJobForLiveConversation,
-    mergeOtherIncomingForRoom,
-    persistOpponentRevealJobOnly,
-    scrollToBottomSmooth,
     onOpponentRevealQueueActive,
     syncPendingQueueFromRef,
-    setTypingVisible,
   ])
 
   const kickOpponentRevealProcessorRef = useRef(kickOpponentRevealProcessor)
@@ -5202,63 +5438,83 @@ export function ChatRoom({
     }
   }, [])
 
-  // iOS/移动端键盘：用 visualViewport 计算“键盘遮挡高度”，把输入栏整体上移
+  // iOS/移动端键盘：visualViewport + DOM 直写（无 setState）；监听 scroll/geometrychange 与旧版一致
   useEffect(() => {
     const vv = window.visualViewport
     if (!vv) return
     const nav = navigator as Navigator & {
       virtualKeyboard?: {
-        boundingRect?: { height?: number }
         addEventListener?: (type: 'geometrychange', listener: () => void) => void
         removeEventListener?: (type: 'geometrychange', listener: () => void) => void
       }
     }
     const virtualKeyboard = nav.virtualKeyboard
-    // iOS 上地址栏/工具栏会让 innerHeight 与 offsetTop 抖动。
-    // 记录“键盘未弹出时”的最大可视高度作为 baseline，再用 baseline - 当前可视高度估算键盘遮挡。
-    const baselineRef = { current: 0 }
 
-    const update = () => {
-      const visible = vv.height + vv.offsetTop
-      const cssVhRaw = window.getComputedStyle(document.documentElement).getPropertyValue('--app-vh')
-      const cssVh = Number.parseFloat(cssVhRaw)
-      const vkInset = Math.max(0, Math.round(virtualKeyboard?.boundingRect?.height ?? 0))
-      // baseline 取“见过的最大 visible”，通常是键盘收起时
-      const baselineCandidate = Math.max(
-        visible,
-        Math.round(window.innerHeight || 0),
-        Number.isFinite(cssVh) ? Math.round(cssVh) : 0,
-      )
-      if (baselineCandidate > baselineRef.current) baselineRef.current = baselineCandidate
-      let inset = Math.max(
-        0,
-        Math.round(baselineRef.current - visible),
-        Math.round((window.innerHeight || 0) - visible),
-        Number.isFinite(cssVh) ? Math.round(cssVh - visible) : 0,
-        vkInset,
-      )
-      // 防止异常值把输入栏顶飞（比如旋转/系统动画瞬间）
-      inset = Math.min(inset, Math.round((baselineRef.current * 0.6) || 0))
+    let rafId: number | null = null
 
-      setKeyboardInsetPx((prev) => {
-        // 抖动阈值：小于 4px 的变化忽略，减少 iOS26 上的“多一截”跳动感
-        if (Math.abs(prev - inset) < 4) return prev
-        return inset
-      })
+    const measureAndCommit = () => {
+      rafId = null
+      const fromVv = computeWeChatStyleKeyboardInset(keyboardBaselineRef.current)
+      const overlap = measureComposerOverlapPx(inputBarRef.current)
+      const inset = Math.max(0, Math.round(Math.max(fromVv, overlap)))
+      if (Math.abs(keyboardInsetRef.current - inset) < 4) return
+      const prevInset = keyboardInsetRef.current
+      keyboardInsetRef.current = inset
+      syncComposerInsetFromRefs()
+      if (inset > 0 && inset > prevInset) {
+        syncChatScrollForKeyboardRef.current(inset)
+      }
     }
 
-    update()
-    vv.addEventListener('resize', update)
-    vv.addEventListener('scroll', update)
-    virtualKeyboard?.addEventListener?.('geometrychange', update)
-    window.addEventListener('orientationchange', update)
+    const scheduleMeasure = () => {
+      if (rafId != null) return
+      rafId = window.requestAnimationFrame(measureAndCommit)
+    }
+
+    measureAndCommit()
+    vv.addEventListener('resize', scheduleMeasure)
+    vv.addEventListener('scroll', scheduleMeasure)
+    virtualKeyboard?.addEventListener?.('geometrychange', scheduleMeasure)
+    window.addEventListener('orientationchange', scheduleMeasure)
+
     return () => {
-      vv.removeEventListener('resize', update)
-      vv.removeEventListener('scroll', update)
-      virtualKeyboard?.removeEventListener?.('geometrychange', update)
-      window.removeEventListener('orientationchange', update)
+      if (rafId != null) window.cancelAnimationFrame(rafId)
+      vv.removeEventListener('resize', scheduleMeasure)
+      vv.removeEventListener('scroll', scheduleMeasure)
+      virtualKeyboard?.removeEventListener?.('geometrychange', scheduleMeasure)
+      window.removeEventListener('orientationchange', scheduleMeasure)
     }
-  }, [])
+  }, [syncComposerInsetFromRefs])
+
+  /** iOS 聚焦输入框时会 scroll-into-view，短会话下会把顶部消息顶出可视区 */
+  useEffect(() => {
+    const bar = inputBarRef.current
+    if (!bar || inputMode !== 'text') return
+
+    const onPointerDown = (e: PointerEvent) => {
+      const ta = textareaRef.current
+      if (!ta) return
+      const target = e.target
+      if (!(target instanceof Node) || (target !== ta && !ta.contains(target))) return
+      if (document.activeElement === ta) return
+      e.preventDefault()
+      ta.focus({ preventScroll: true })
+      window.setTimeout(() => syncChatScrollForKeyboardRef.current(keyboardInsetRef.current), 0)
+    }
+
+    const onFocus = () => {
+      window.setTimeout(() => syncChatScrollForKeyboardRef.current(keyboardInsetRef.current), 0)
+      window.setTimeout(() => syncChatScrollForKeyboardRef.current(keyboardInsetRef.current), 120)
+    }
+
+    bar.addEventListener('pointerdown', onPointerDown, { capture: true })
+    const ta = textareaRef.current
+    ta?.addEventListener('focus', onFocus)
+    return () => {
+      bar.removeEventListener('pointerdown', onPointerDown, { capture: true })
+      textareaRef.current?.removeEventListener('focus', onFocus)
+    }
+  }, [inputMode, conversationKey])
 
   const draftRef = useRef(draft)
   draftRef.current = draft
@@ -5325,7 +5581,10 @@ export function ChatRoom({
     const ck = conversationKey.trim()
     const sync = () => {
       if (ck !== conversationKeyLiveRef.current.trim()) return
-      setAiReplyPipelineActive(isWechatAiReplyPipelineActive(ck))
+      setAiReplyPipelineActive((prev) => {
+        const next = isWechatAiReplyPipelineActive(ck)
+        return prev === next ? prev : next
+      })
     }
     sync()
     const unsubPipeline = subscribeWechatAiReplyPipelineActive(sync)
@@ -5338,9 +5597,14 @@ export function ChatRoom({
 
   const peerTypingForHeader = aiReplyPipelineActive || typingVisible || pendingQueue.length > 0 || typingFooterInterrupt
 
+  const onOtherTypingChangeRef = useRef(onOtherTypingChange)
+  onOtherTypingChangeRef.current = onOtherTypingChange
+  const onPendingQueueCountChangeRef = useRef(onPendingQueueCountChange)
+  onPendingQueueCountChangeRef.current = onPendingQueueCountChange
+
   useEffect(() => {
-    onOtherTypingChange?.(peerTypingForHeader)
-  }, [peerTypingForHeader, onOtherTypingChange])
+    onOtherTypingChangeRef.current?.(peerTypingForHeader)
+  }, [peerTypingForHeader])
 
   useEffect(() => {
     const ck = conversationKey.trim()
@@ -9548,14 +9812,16 @@ export function ChatRoom({
       busyExpireHandledEndRef.current = 0
       return
     }
-    const ms = peerBusyRow.busyEndTime - currentTimeMs
-    if (ms <= 0) return
+    const end = peerBusyRow.busyEndTime
+    const ms = Math.max(0, end - getCurrentTimeMs())
     const t = window.setTimeout(() => {
+      if (busyExpireHandledEndRef.current === end) return
+      busyExpireHandledEndRef.current = end
       bumpPendingAiRepliesForReply()
       void flushAiReplies()
     }, ms + 30)
     return () => window.clearTimeout(t)
-  }, [globalDm?.busyEnabled, globalDm?.busyMode, peerBusyRow, globalModeBusyEnabled, flushAiReplies, currentTimeMs, bumpPendingAiRepliesForReply])
+  }, [globalDm?.busyEnabled, globalDm?.busyMode, peerBusyRow?.isBusy, peerBusyRow?.busyEndTime, peerBusyRow?.enabled, globalModeBusyEnabled, flushAiReplies, getCurrentTimeMs, bumpPendingAiRepliesForReply])
 
   useEffect(() => {
     if (!peerBusyRow?.isBusy || peerBusyRow.busyEndTime <= 0) {
@@ -9563,16 +9829,15 @@ export function ChatRoom({
       return
     }
     const end = peerBusyRow.busyEndTime
-    const tick = () => {
+    const ms = Math.max(0, end - getCurrentTimeMs())
+    const t = window.setTimeout(() => {
       if (getCurrentTimeMs() < end) return
       if (busyExpireHandledEndRef.current === end) return
       busyExpireHandledEndRef.current = end
       bumpPendingAiRepliesForReply()
       void flushAiReplies()
-    }
-    tick()
-    const timer = window.setInterval(tick, 1000)
-    return () => window.clearInterval(timer)
+    }, ms + 30)
+    return () => window.clearTimeout(t)
   }, [peerBusyRow?.isBusy, peerBusyRow?.busyEndTime, flushAiReplies, getCurrentTimeMs, bumpPendingAiRepliesForReply])
 
   useEffect(() => {
@@ -9629,6 +9894,7 @@ export function ChatRoom({
       setDraft('')
       setSendBusy(true)
       setReplyingTo(null)
+      clearUiOnlyHiddenCutLocal()
       const ts = getCurrentTimeMs()
       const id = `wxm-${ts}-s-${Math.random().toString(36).slice(2, 8)}`
       let groupViolationHandled = false
@@ -9906,6 +10172,7 @@ export function ChatRoom({
     [
       conversationCharacterId,
       conversationKey,
+      clearUiOnlyHiddenCutLocal,
       extractMessages,
       flushAiReplies,
       getCurrentTimeMs,
@@ -10914,6 +11181,12 @@ export function ChatRoom({
           showComposerToast('控制台已打开')
           logger.log('frontend', '点击加号菜单：控制台日志')
           break
+        case 'games':
+          setStubPanel(null)
+          setPlusMenuOpen(false)
+          setMiniGameUnderDevOpen(true)
+          logger.log('frontend', '点击加号菜单：小游戏（开发占位）')
+          break
         case 'check_phone':
           setStubPanel(null)
           setPlusMenuOpen(false)
@@ -11147,7 +11420,6 @@ export function ChatRoom({
     if (el.scrollTop > 40) userScrolledRef.current = true
     const atBottom = isScrollNearBottom(el)
     isAtBottomRef.current = atBottom
-    setIsAtBottom(atBottom)
     if (atBottom) {
       userScrolledRef.current = false
       setPendingNewCount(0)
@@ -11267,6 +11539,16 @@ export function ChatRoom({
     })
   }, [items, uiOnlyHiddenCutForView, scrollToMessageId])
 
+  /** hydrate 已修旧 cut；此处兜底：内存里仍有消息但 cut 把它们全藏了（只剩时间条）时立刻撤销隐藏 */
+  useEffect(() => {
+    const cut = uiOnlyHiddenCutForView
+    if (cut == null || scrollToMessageId?.trim() || ignoreUiOnlyHiddenInListRef.current) return
+    const msgs = extractMessages(items)
+    if (msgs.length === 0) return
+    if (msgs.some((m) => (m.timestamp ?? 0) > cut)) return
+    clearUiOnlyHiddenCutLocal()
+  }, [items, uiOnlyHiddenCutForView, scrollToMessageId, extractMessages, clearUiOnlyHiddenCutLocal])
+
   const totalMsgCount = useMemo(
     () => itemsAfterUiOnlyHide.reduce((n, it) => (it.kind === 'msg' ? n + 1 : n), 0),
     [itemsAfterUiOnlyHide],
@@ -11304,7 +11586,70 @@ export function ChatRoom({
   const hasHiddenLoadedMessages = totalMsgCount > visibleMsgLimit
   const canLoadMoreAtTop = hasHiddenLoadedMessages || hasOlderHistory
 
+  const retrySendRef = useRef(retrySend)
+  retrySendRef.current = retrySend
+  const toggleSelectRef = useRef(toggleSelect)
+  toggleSelectRef.current = toggleSelect
+  const openActionPanelForRef = useRef(openActionPanelFor)
+  openActionPanelForRef.current = openActionPanelFor
+  const jumpToMessageRef = useRef(jumpToMessage)
+  jumpToMessageRef.current = jumpToMessage
+  const showCenterToastRef = useRef(showCenterToast)
+  showCenterToastRef.current = showCenterToast
+  const requestVoiceMessageAudioRef = useRef(requestVoiceMessageAudio)
+  requestVoiceMessageAudioRef.current = requestVoiceMessageAudio
+  const resolveGroupQuoteSenderLabelRef = useRef(resolveGroupQuoteSenderLabel)
+  resolveGroupQuoteSenderLabelRef.current = resolveGroupQuoteSenderLabel
+  const scrollToBottomSmoothRef = useRef(scrollToBottomSmooth)
+  scrollToBottomSmoothRef.current = scrollToBottomSmooth
+  const getCurrentTimeMsRef = useRef(getCurrentTimeMs)
+  getCurrentTimeMsRef.current = getCurrentTimeMs
+  const sharedMsgPropsRef = useRef(sharedMsgProps)
+  sharedMsgPropsRef.current = sharedMsgProps
+  const toggleThinkingFoldRef = useRef(toggleThinkingFold)
+  toggleThinkingFoldRef.current = toggleThinkingFold
+
+  const messagesViewDeps = {
+    bubble,
+    messengerStyle,
+    chatTailMaskColor,
+    compactMessengerSpacing,
+    visibleItems,
+    mergeAvatarGroup,
+    showAvatar,
+    showBubbleTail,
+    showTimestamp,
+    isMultiSelectMode,
+    selectedSet,
+    actionPanelOpen,
+    actionMessageId,
+    highlightedMessageId,
+    msgById,
+    playerDisplayName,
+    peerNotifyTitle,
+    peerAvatarResolved,
+    expandedThinkingIds,
+    recallAnimatingIds,
+    roomType,
+    groupLive,
+    groupAvatarByCharId,
+    showGroupMemberNicknameInChat,
+    showGroupRankBadgesInChat,
+  }
+  probeMemoDeps('messagesView', messagesViewDeps)
+
   const messagesView = useMemo(() => {
+    const sharedMsgProps = sharedMsgPropsRef.current
+    const retrySend = retrySendRef.current
+    const toggleSelect = toggleSelectRef.current
+    const openActionPanelFor = openActionPanelForRef.current
+    const jumpToMessage = jumpToMessageRef.current
+    const showCenterToast = showCenterToastRef.current
+    const requestVoiceMessageAudio = requestVoiceMessageAudioRef.current
+    const resolveGroupQuoteSenderLabel = resolveGroupQuoteSenderLabelRef.current
+    const scrollToBottomSmooth = scrollToBottomSmoothRef.current
+    const getCurrentTimeMs = getCurrentTimeMsRef.current
+    const toggleThinkingFold = toggleThinkingFoldRef.current
     const groupOtherResolvedByIndex = new Map<number, string>()
     if (roomType === 'group') {
       let lastKnownSid: string | undefined
@@ -11724,32 +12069,31 @@ export function ChatRoom({
       const chatSelfAvatarRankBadge = selfSpeakerRankBadge
       const wrap = (node: ReactNode, replyNode?: ReactNode) => {
         const hi = highlightedMessageId === m.id
-        const hiCls = hi ? 'rounded-[8px] bg-black/5 transition-colors duration-300' : ''
-        const recallAnimCls = recallAnimatingIds.has(m.id) ? 'animate-[wxRecallShake_420ms_ease-in-out]' : ''
+        const recallAnim = recallAnimatingIds.has(m.id)
         const thinkingNode = m.kind === 'msg' ? renderThinkingFold(m, isSelf, i) : null
-        if (!isMultiSelectMode) {
-          return (
-            <div key={m.id} className={`${gap} ${hiCls} ${recallAnimCls}`} data-wx-msg-id={m.id}>
-              {thinkingNode}
-              {node}
-              {replyNode}
-            </div>
-          )
-        }
+        const msgStatus = m.kind === 'msg' ? (m.status ?? 'sent') : undefined
         return (
-          <div
+          <MemoizedMessageItem
             key={m.id}
-            className={`${gap} ${hiCls} ${recallAnimCls}`}
-            data-wx-msg-id={m.id}
-            onClickCapture={(e) => {
-              e.stopPropagation()
-              toggleSelect(m.id)
-            }}
+            messageId={m.id}
+            status={msgStatus}
+            gap={gap}
+            isHighlighted={hi}
+            isRecallAnimating={recallAnim}
+            isSelected={isSelected}
+            showAvatarColumnSelf={showAvatarColumnSelf}
+            showAvatarColumnOther={showAvatarColumnOther}
+            otherAnimated={m.kind === 'msg' ? m.otherAnimated : undefined}
+            selfAnimated={m.kind === 'msg' ? m.selfAnimated : undefined}
+            isRecalled={m.kind === 'msg' ? m.isRecalled : undefined}
+            textFingerprint={m.kind === 'msg' ? chatMsgRenderFingerprint(m) : undefined}
+            isMultiSelectMode={isMultiSelectMode}
+            onToggleSelect={() => toggleSelect(m.id)}
           >
             {thinkingNode}
             {node}
             {replyNode}
-          </div>
+          </MemoizedMessageItem>
         )
       }
 
@@ -12179,6 +12523,35 @@ export function ChatRoom({
         return wrap(rowWrapped, renderDetachedReply(m, isSelf))
       }
 
+      if (m.pulseShare) {
+        const pulseData = m.pulseShare
+        const rowInner = (
+          <PulseShareChatRow
+            id={m.id}
+            isSelf={isSelf}
+            data={pulseData}
+            bubble={bubble}
+            showAvatar={effectiveShowAvatar}
+            showAvatarColumn={isSelf ? showAvatarColumnSelf : showAvatarColumnOther}
+            chatSelfAvatarUrl={sharedMsgProps.chatSelfAvatarUrl}
+            chatOtherAvatarUrl={sharedRowProps.chatOtherAvatarUrl}
+            chatOtherSenderNickname={chatOtherSenderNickname}
+            chatOtherAvatarRankBadge={chatOtherAvatarRankBadge}
+            chatSelfAvatarRankBadge={chatSelfAvatarRankBadge}
+            groupRankShowBesideNickname={sharedMsgProps.groupRankShowBesideNickname}
+          />
+        )
+        const rowWrapped =
+          !isSelf && m.otherAnimated ? (
+            <ChatMessageEnter isSelf={false}>{rowInner}</ChatMessageEnter>
+          ) : isSelf && m.selfAnimated ? (
+            <ChatMessageEnter isSelf>{rowInner}</ChatMessageEnter>
+          ) : (
+            rowInner
+          )
+        return wrap(rowWrapped, renderDetachedReply(m, isSelf))
+      }
+
       if (m.redPacket) {
         const rp = m.redPacket
         const rowInner = (
@@ -12208,14 +12581,14 @@ export function ChatRoom({
                 return
               }
               if (rp.opened) {
-                if (onNavigateRedPacketDetail) {
+                if (onNavigateRedPacketDetailRef.current) {
                   const senderName = isSelf
                     ? playerDisplayName.trim() || '我'
                     : peerNotifyTitle.trim() || '对方'
                   const senderAvatarUrl = isSelf
                     ? playerAvatarResolved
                     : peerAvatarResolved
-                  onNavigateRedPacketDetail({
+                  onNavigateRedPacketDetailRef.current?.({
                     messageId: m.id,
                     amountYuan: rp.amountYuan,
                     remark: rp.remark,
@@ -12232,8 +12605,8 @@ export function ChatRoom({
                 return
               }
               if (isSelf) {
-                if (onNavigateRedPacketDetail) {
-                  onNavigateRedPacketDetail({
+                if (onNavigateRedPacketDetailRef.current) {
+                  onNavigateRedPacketDetailRef.current?.({
                     messageId: m.id,
                     amountYuan: rp.amountYuan,
                     remark: rp.remark,
@@ -12299,7 +12672,7 @@ export function ChatRoom({
             selected={actionPanelOpen && actionMessageId === m.id}
             replyPreview={buildInlineReplyPreview(m)}
             onOpen={() => {
-              if (onNavigateTransferDetail) onNavigateTransferDetail(tid)
+              if (onNavigateTransferDetailRef.current) onNavigateTransferDetailRef.current(tid)
             }}
             onLongPress={
               isMultiSelectMode
@@ -12368,7 +12741,7 @@ export function ChatRoom({
       if (img) {
         // 关键调试：若 base64 以 data: 开头，说明上游没剥离前缀，会导致 dataURL 拼接错误
         if (img.startsWith('data:')) {
-          logger.log('error', `渲染图片消息：base64 竟然包含 dataURL 前缀，len=${img.length}`)
+          loggerRef.current.log('error', `渲染图片消息：base64 竟然包含 dataURL 前缀，len=${img.length}`)
         }
         const src = `data:${image?.type ?? 'image/jpeg'};base64,${img}`
         const isSticker = typeof m.text === 'string' && m.text.trim().startsWith('[表情包]')
@@ -12476,41 +12849,25 @@ export function ChatRoom({
     compactMessengerSpacing,
     visibleItems,
     mergeAvatarGroup,
-    retrySend,
-    sharedMsgProps,
     showAvatar,
     showBubbleTail,
     showTimestamp,
-    logger,
     isMultiSelectMode,
     selectedSet,
-    toggleSelect,
     actionPanelOpen,
     actionMessageId,
     highlightedMessageId,
     msgById,
-    jumpToMessage,
-    openActionPanelFor,
-    showCenterToast,
-    onNavigateRedPacketDetail,
     playerDisplayName,
     peerNotifyTitle,
-    playerAvatarUrl,
     peerAvatarResolved,
-    setRedPacketModalMessageId,
-    onNavigateTransferDetail,
-    getCurrentTimeMs,
     expandedThinkingIds,
-    toggleThinkingFold,
     recallAnimatingIds,
-    requestVoiceMessageAudio,
-    scrollToBottomSmooth,
     roomType,
     groupLive,
     groupAvatarByCharId,
     showGroupMemberNicknameInChat,
     showGroupRankBadgesInChat,
-    resolveGroupQuoteSenderLabel,
   ])
 
   const pendingRevealAvatarUrl = useMemo(() => {
@@ -12523,6 +12880,10 @@ export function ChatRoom({
     }
     return peerAvatarResolved?.trim() || ''
   }, [pendingQueue, roomType, groupLive, groupAvatarByCharId, peerAvatarResolved])
+
+  useEffect(() => {
+    onPendingQueueCountChangeRef.current?.(pendingQueue.length)
+  }, [pendingQueue.length])
 
   useEffect(() => {
     if (pendingQueue.length === 0) return
@@ -12608,6 +12969,8 @@ export function ChatRoom({
     return <div className="h-0 w-0 overflow-hidden" aria-hidden data-wx-quick-reply-engine />
   }
 
+  probeChatRender('ChatRoom')
+
   return (
     <div
       className="relative flex h-full min-h-0 flex-1 flex-col"
@@ -12615,8 +12978,7 @@ export function ChatRoom({
       data-wx-chat-skin-scope
       style={chatSkinScopeStyle}
     >
-      <style>{`@keyframes wxRecallShake { 0% { transform: translateX(0); opacity: 1; } 25% { transform: translateX(-2px); } 50% { transform: translateX(2px); } 75% { transform: translateX(-1px); } 100% { transform: translateX(0); opacity: 0.75; } }
-@keyframes wxOpponentTypingDot { 0%, 80%, 100% { transform: translateY(0); opacity: 0.35; } 40% { transform: translateY(-4px); opacity: 1; } }`}</style>
+      <style>{`@keyframes wxRecallShake { 0% { transform: translateX(0); opacity: 1; } 25% { transform: translateX(-2px); } 50% { transform: translateX(2px); } 75% { transform: translateX(-1px); } 100% { transform: translateX(0); opacity: 0.75; } }`}</style>
       {showDmOverlay ? (
         <div className="pointer-events-none absolute inset-x-0 top-0 bottom-0 z-[60]">
           <DanmakuOverlay bullets={dmBullets} zoneStyle={dmZoneStyle} />
@@ -12628,8 +12990,8 @@ export function ChatRoom({
         className="relative min-h-0 w-full max-w-full flex-1 overflow-y-auto overflow-x-hidden overscroll-y-contain py-4 pl-0 pr-0 [-webkit-overflow-scrolling:touch]"
         style={{
           // 给消息列表留出“键盘上移后的输入栏”空间，避免最后几条被挡住
-          paddingBottom: 12 + (isMultiSelectMode ? 86 : composerInsetPx),
-          scrollBehavior: 'smooth',
+          paddingBottom: 12 + (isMultiSelectMode ? 86 : 0),
+          scrollBehavior: 'auto',
           ...(scrollPaneBgStyle),
         }}
       >
@@ -12655,73 +13017,30 @@ export function ChatRoom({
           </div>
         ) : null}
         <div className="relative z-[1] flex w-full max-w-full flex-col">
-          {messagesView ? (
+              {messagesView ? (
             <WeChatChatRenderErrorBoundary
               onRetry={() => {
                 setItems((prev) => [...prev])
               }}
             >
-              {messagesView}
+              <ChatMessageList>{messagesView}</ChatMessageList>
             </WeChatChatRenderErrorBoundary>
           ) : null}
           {pendingQueue.length > 0 || typingFooterInterrupt ? (
-            <div
-              className="mt-4 flex w-full max-w-full shrink-0 justify-start overflow-x-hidden pl-[24px] pr-[24px]"
-              aria-live="polite"
-              aria-label="对方正在输入"
-            >
-              <div className="flex max-w-full flex-row items-end gap-3">
-                {showAvatar ? (
-                  pendingRevealAvatarUrl ? (
-                    <img
-                      src={pendingRevealAvatarUrl}
-                      alt=""
-                      width={40}
-                      height={40}
-                      className="h-10 w-10 shrink-0 object-cover"
-                      style={{
-                        borderRadius: `${bubble.avatarRadiusPx}px`,
-                        border: '1px solid color-mix(in oklab, var(--wx-border) 70%, transparent)',
-                      }}
-                      aria-hidden
-                    />
-                  ) : (
-                    <div
-                      className="h-10 w-10 shrink-0"
-                      style={{
-                        borderRadius: `${bubble.avatarRadiusPx}px`,
-                        background: 'rgba(0,0,0,0.06)',
-                        border: '1px solid color-mix(in oklab, var(--wx-border) 70%, transparent)',
-                      }}
-                      aria-hidden
-                    />
-                  )
-                ) : null}
-                <div
-                  className="inline-flex items-center gap-[3px] rounded-lg bg-[#ededed] px-3 py-2"
-                  style={{ minHeight: 40 }}
-                  aria-hidden
-                >
-                  {[0, 1, 2].map((i) => (
-                    <span
-                      key={i}
-                      className="inline-block h-1.5 w-1.5 rounded-full bg-[#8e8e8e]"
-                      style={{
-                        animation: 'wxOpponentTypingDot 1.05s ease-in-out infinite',
-                        animationDelay: `${i * 0.18}s`,
-                      }}
-                    />
-                  ))}
-                </div>
-              </div>
-            </div>
+            <TypingIndicatorBubble
+              avatarUrl={pendingRevealAvatarUrl}
+              showAvatar={showAvatar}
+              avatarRadiusPx={bubble.avatarRadiusPx}
+            />
           ) : null}
         </div>
       </div>
 
+      <div ref={keyboardInsetFillRef} className="pointer-events-none absolute inset-x-0 bottom-0 z-[8]" aria-hidden />
+
       {isMultiSelectMode ? (
         <motion.div
-          className="relative z-10 w-full max-w-full shrink-0 border-t border-gray-200/60 bg-white/90 backdrop-blur-xl"
+          className="relative z-10 w-full max-w-full shrink-0 border-t border-gray-200/60 bg-white/95 transform-gpu will-change-transform"
           initial={{ y: 24, opacity: 0 }}
           animate={{ y: 0, opacity: 1 }}
           exit={{ y: 24, opacity: 0 }}
@@ -12760,8 +13079,9 @@ export function ChatRoom({
         <>
           {pendingNewCount > 0 ? (
             <div
+              ref={newMsgFabWrapRef}
               className="pointer-events-none absolute inset-x-0 z-20 flex justify-center"
-              style={{ bottom: `calc(${70 + composerInsetPx}px + env(safe-area-inset-bottom, 0px))` }}
+              style={{ bottom: 'calc(70px + env(safe-area-inset-bottom, 0px))' }}
             >
               <Pressable
                 type="button"
@@ -12775,6 +13095,7 @@ export function ChatRoom({
             </div>
           ) : null}
           <div
+            ref={inputBarRef}
             data-wx-chat-input-bar
             className="relative z-10 w-full max-w-full shrink-0 border-t"
             style={{
@@ -12797,12 +13118,16 @@ export function ChatRoom({
               paddingRight: talkmakerComposer ? 0 : 12,
               paddingTop: talkmakerComposer ? 0 : 12,
               paddingBottom: 'max(12px, env(safe-area-inset-bottom, 0px))',
-              transform: composerInsetPx > 0 ? `translate3d(0, -${composerInsetPx}px, 0)` : undefined,
               transition: 'transform 220ms ease-out',
-              willChange: composerInsetPx > 0 ? 'transform' : undefined,
             }}
           >
-        {!isMultiSelectMode ? <ProactiveMessageCountdownBar state={proactiveCountdown} /> : null}
+        {!isMultiSelectMode ? (
+          <ProactiveMessageCountdownHost
+            conversationKey={conversationKey}
+            enabled={proactiveCountdownEnabled}
+            isBusyActive={proactiveBusyActive}
+          />
+        ) : null}
         {composerToast ? (
           <div className="mb-2 rounded-[10px] bg-neutral-900 px-3 py-2 text-center text-[12px] leading-snug text-white">
             {composerToast}
@@ -13026,14 +13351,14 @@ export function ChatRoom({
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
-            className="fixed inset-0 z-[125] bg-black/20"
+            className="fixed inset-0 z-[125] transform-gpu bg-black/20 will-change-transform"
             onClick={() => setMockVoiceInputOpen(false)}
           >
             <motion.div
               initial={{ y: 30, opacity: 0.7 }}
               animate={{ y: 0, opacity: 1 }}
               exit={{ y: 16, opacity: 0 }}
-              className="absolute inset-x-3 bottom-3 rounded-[20px] border border-[#ece7da] bg-[#fffdfa] p-4 shadow-xl"
+              className="absolute inset-x-3 bottom-3 transform-gpu rounded-[20px] border border-[#ece7da] bg-[#fffdfa] p-4 shadow-xl will-change-transform"
               onClick={(e) => e.stopPropagation()}
             >
               <div className="text-[13px] leading-relaxed text-[#555]">
@@ -13487,9 +13812,9 @@ export function ChatRoom({
               ),
             )
             setRedPacketModalMessageId(null)
-            if (!rp || !onNavigateRedPacketDetail) return
+            if (!rp || !onNavigateRedPacketDetailRef.current) return
             const isSelfMsg = fromDb?.type === 'player'
-            onNavigateRedPacketDetail({
+            onNavigateRedPacketDetailRef.current?.({
               messageId: id,
               amountYuan: rp.amountYuan,
               remark: rp.remark,
@@ -13692,6 +14017,7 @@ export function ChatRoom({
           })()
         }}
       />
+      <MiniGameUnderDevOverlay open={miniGameUnderDevOpen} onClose={() => setMiniGameUnderDevOpen(false)} />
       <CheckPhoneFlow
         open={checkPhoneOpen}
         characterId={conversationCharacterId}
@@ -13825,3 +14151,6 @@ export function ChatRoom({
     </div>
   )
 }
+
+/** 父级 WeChatApp 重绘时 props 常变；memo 阻断无意义的全量重跑 */
+export const ChatRoom = memo(ChatRoomInner)

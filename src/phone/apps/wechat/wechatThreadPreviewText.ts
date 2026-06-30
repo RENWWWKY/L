@@ -40,6 +40,7 @@ type NotifyPreviewMessage = {
   listenTrackShare?: unknown | null
   locationShare?: unknown | null
   takeoutOrder?: unknown | null
+  pulseShare?: unknown | null
   sharedRecord?: unknown | null
   chatHistory?: unknown | null
 }
@@ -68,6 +69,7 @@ export function formatWeChatNotifyPreviewFromStoredMessage(msg: NotifyPreviewMes
   if (msg.listenTrackShare) return '[分享音乐]'
   if (msg.locationShare) return '[位置]'
   if (msg.takeoutOrder) return '[外卖]'
+  if (msg.pulseShare) return '[微博]'
   if (msg.sharedRecord) return '[收藏]'
   if (msg.chatHistory) return '[聊天记录]'
   if (msg.musicSync) return '[音乐]'

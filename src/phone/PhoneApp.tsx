@@ -44,6 +44,7 @@ import { WeChatApp } from './apps/wechat/WeChatApp'
 import { LumiMeetApp } from './apps/lumiMeet/LumiMeetApp'
 import { SandboxApp } from './apps/sandbox/SandboxApp'
 import { LumiTasteApp } from './apps/takeout/LumiTasteApp'
+import { LumiPulseApp } from './apps/lumiPulse/LumiPulseApp'
 import { TasteFeastCeremonyHost } from './apps/takeout/TasteFeastCeremonyHost'
 import { LumiMeetProvider } from './apps/lumiMeet/LumiMeetStore'
 import { WorldbookLoreProvider } from './worldbook/worldbookLoreStore'
@@ -509,6 +510,8 @@ export function PhoneApp() {
                   <SandboxApp onBack={goHome} />
                 ) : route.id === 'takeout' ? (
                   <LumiTasteApp onBack={goHome} />
+                ) : route.id === 'weibo' ? (
+                  <LumiPulseApp onBack={goHome} />
                 ) : (
                   <AppPlaceholderScreen appId={route.id} onBack={goHome} />
                 )}

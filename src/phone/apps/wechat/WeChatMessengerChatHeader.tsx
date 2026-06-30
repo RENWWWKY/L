@@ -1,9 +1,9 @@
 import type { ReactNode } from 'react'
 
 import { Pressable } from '../../components/Pressable'
+import { ChatHeader, ChatHeaderStatusLine, ChatHeaderStatusOnly } from './chatRoom/ChatHeader'
 
 const IOS_BLUE = '#0B93F6'
-const TG_BLUE = '#3390EC'
 const TG_MUTED = '#707579'
 
 function PsycheMonitorIcon({ className, color = 'currentColor' }: { className?: string; color?: string }) {
@@ -67,6 +67,8 @@ export type WeChatMessengerChatHeaderProps = {
   /** iMessage 返回键旁未读数 */
   backBadgeCount?: number
   showTyping?: boolean
+  /** 逐条露出队列长度；>0 且非 forceTyping 时在标题与 typing 间切换 */
+  pendingCount?: number
   typingText?: string
   customRight?: ReactNode
   onCenterClick?: () => void
@@ -124,13 +126,13 @@ export function WeChatMessengerChatHeader({
   showPsycheRadar = false,
   backBadgeCount,
   showTyping = false,
+  pendingCount = 0,
   typingText,
   customRight,
   onCenterClick,
   fontFamily,
 }: WeChatMessengerChatHeaderProps) {
   if (variant === 'wechat') {
-    const centerLabel = showTyping && typingText?.trim() ? typingText.trim() : title
     return (
       <header
         className="relative z-50 shrink-0 border-b border-gray-200 bg-[#EDEDED]"
@@ -161,7 +163,12 @@ export function WeChatMessengerChatHeader({
             onClick={onCenterClick ?? onOpenSettings}
             className="pointer-events-auto absolute inset-x-[88px] truncate px-2 text-center text-[17px] font-semibold text-[#191919] active:opacity-80"
           >
-            {centerLabel}
+            <ChatHeader
+              contactName={title}
+              pendingCount={pendingCount}
+              forceTyping={showTyping}
+              typingText={typingText}
+            />
           </Pressable>
 
           <div className="ml-auto flex w-[88px] shrink-0 items-center justify-end gap-5 text-[#191919]">
@@ -189,7 +196,6 @@ export function WeChatMessengerChatHeader({
   }
 
   if (variant === 'talkmaker') {
-    const statusLabel = showTyping && typingText?.trim() ? typingText.trim() : '在线'
     return (
       <header
         className="relative z-50 shrink-0 bg-[#BACEE0] shadow-[0_1px_3px_rgba(0,0,0,0.06)]"
@@ -217,8 +223,13 @@ export function WeChatMessengerChatHeader({
             onClick={onCenterClick ?? onOpenSettings}
             className="flex min-w-0 flex-1 flex-col items-center justify-center px-1 text-center active:opacity-80"
           >
-            <span className="block w-full truncate text-[16px] font-bold leading-tight text-black">{title}</span>
-            <span className="mt-[2px] block w-full truncate text-[12px] leading-tight text-[#555555]">{statusLabel}</span>
+            <ChatHeaderStatusLine
+              contactName={title}
+              pendingCount={pendingCount}
+              forceTyping={showTyping}
+              typingText={typingText}
+              idleText="在线"
+            />
           </Pressable>
 
           <div className="flex w-[88px] shrink-0 items-center justify-end gap-4 text-gray-700">
@@ -241,9 +252,6 @@ export function WeChatMessengerChatHeader({
   }
 
   if (variant === 'telegram') {
-    const statusLabel = showTyping && typingText?.trim() ? typingText.trim() : 'online'
-    const statusColor = showTyping ? TG_BLUE : TG_BLUE
-
     return (
       <header
         className="relative z-50 flex shrink-0 items-center justify-between bg-white px-2 py-1.5 shadow-[0_1px_2px_rgba(0,0,0,0.05)]"
@@ -273,9 +281,14 @@ export function WeChatMessengerChatHeader({
             <HeaderAvatar url={avatarUrl} name={title} sizePx={40} />
             <div className="min-w-0 flex-1">
               <span className="block truncate text-[17px] font-medium leading-tight text-black">{title}</span>
-              <span className="mt-[1px] block truncate text-[13px] leading-tight" style={{ color: statusColor }}>
-                {statusLabel}
-              </span>
+              <ChatHeaderStatusOnly
+                pendingCount={pendingCount}
+                forceTyping={showTyping}
+                typingText={typingText}
+                idleText="online"
+                className="text-[#707579]"
+                typingClassName="text-[#3390EC]"
+              />
             </div>
           </Pressable>
         </div>
@@ -310,7 +323,7 @@ export function WeChatMessengerChatHeader({
     )
   }
 
-  const centerLabel = showTyping && typingText?.trim() ? typingText.trim() : title
+  const showImessageChevron = !showTyping && pendingCount <= 0
 
   return (
     <header
@@ -351,8 +364,15 @@ export function WeChatMessengerChatHeader({
         >
           <HeaderAvatar url={avatarUrl} name={title} sizePx={42} />
           <span className="mt-[2px] flex max-w-[min(148px,calc(100vw-176px))] items-center justify-center gap-px truncate text-[10px] font-semibold leading-none tracking-tight text-black">
-            <span className="truncate">{centerLabel}</span>
-            {!showTyping ? (
+            <ChatHeaderStatusOnly
+              pendingCount={pendingCount}
+              forceTyping={showTyping}
+              typingText={typingText}
+              idleText={title}
+              className="truncate text-[10px] font-semibold leading-none tracking-tight text-black"
+              typingClassName="truncate text-[10px] font-semibold leading-none tracking-tight text-[#8e8e93]"
+            />
+            {showImessageChevron ? (
               <svg className="h-[7px] w-[7px] shrink-0 text-[#8e8e93]" fill="currentColor" viewBox="0 0 20 20" aria-hidden>
                 <path
                   fillRule="evenodd"

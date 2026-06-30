@@ -28,7 +28,11 @@ function contextSourceLabel(kind: 'private_chat' | 'offline_plot' | 'meet_chat')
   return '私聊·消息原文'
 }
 
-function storyTimelineInjectBadge(row: { injectKind: 'state' | 'recent' | 'vector'; label?: string }) {
+function storyTimelineInjectBadge(row: {
+  injectKind: 'state' | 'recent' | 'vector'
+  label?: string
+  isHistorical?: boolean
+}) {
   const kindLabel =
     row.injectKind === 'vector' ? '标题召回' : row.injectKind === 'recent' ? '近端固定' : '合并快照'
   const title = row.label?.trim()
@@ -46,6 +50,11 @@ function storyTimelineInjectBadge(row: { injectKind: 'state' | 'recent' | 'vecto
         <span className="text-[12px] font-semibold leading-snug text-neutral-800">{title}</span>
       ) : null}
       <span className={`rounded-md px-1.5 py-0.5 text-[10px] font-semibold ${kindClass}`}>{kindLabel}</span>
+      {row.isHistorical ? (
+        <span className="rounded-md bg-violet-100/80 px-1.5 py-0.5 text-[10px] font-semibold text-violet-900">
+          历史
+        </span>
+      ) : null}
     </div>
   )
 }
@@ -479,7 +488,7 @@ export function MemoryTraceModal({ open, onClose, data }: MemoryTraceModalProps)
                     <div className="px-1">
                       <p className="text-[12px] leading-relaxed text-neutral-600">
                         由自动总结维护的结构化时空 / 在场人物 / 未收伏笔；承接剧情时优先对照本块。
-                        每条摘要行头为「摘要标题 · 近端固定」或「摘要标题 · 相似 xx%」（向量按标题召回，非全文）。侧幕叙写且 {'{{char}}'} 未在场的摘要注入时会 redact，模型不得全知复述。
+                        每条摘要行头为「摘要标题 · 近端固定」或「摘要标题 · 相似 xx%」；锚点公历日早于当前剧情日的行会带「历史」标记与正文内【时效·已发生】横幅。
                       </p>
                       {storyTimelineInjected ? (
                         matrix.storyTimeline!.rows?.length ? (

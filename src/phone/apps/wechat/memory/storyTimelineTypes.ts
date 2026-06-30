@@ -325,6 +325,8 @@ export type StoryTimelineInjectTraceRow = {
   label: string
   content: string
   relevanceScore?: number
+  /** 注入正文含【时效·已发生】横幅：锚点公历日早于当前剧情日 */
+  isHistorical?: boolean
 }
 
 export type StoryTimelineVectorRecallHit = {
@@ -632,15 +634,31 @@ export function storyTimelineTextLooksLikeForwardScheduleSnapshot(text: string):
   return STORY_TIMELINE_FORWARD_SCHEDULE_HINT_RE.test(t)
 }
 
+/** 两锚点是否同一故事内公历日（0 点对齐） */
+export function isSameStoryCalendarDayMs(aMs: number, bMs: number): boolean {
+  return formatGregorianStoryDayFromMs(aMs) === formatGregorianStoryDayFromMs(bMs)
+}
+
+/** 摘要行锚点是否早于当前剧情日且非同一公历日（用于「历史」时效横幅） */
+export function isStoryTimelineRowHistoricalRelativeToCurrent(
+  rowMs: number,
+  currentStoryMs: number,
+): boolean {
+  if (!Number.isFinite(rowMs) || !Number.isFinite(currentStoryMs)) return false
+  if (isSameStoryCalendarDayMs(rowMs, currentStoryMs)) return false
+  return rowMs < currentStoryMs
+}
+
 /** 摘要行锚点是否明显早于当前剧情日（用于注入时效标注，非排除召回） */
 export function isStoryTimelineRowPastRelativeToCurrent(
   row: StoryTimelinePlotRow,
   currentStoryMs: number | null,
-  minGapDays = 7,
+  minGapDays = 1,
 ): boolean {
   if (currentStoryMs == null) return false
   const rowMs = extractStoryTimelineRowAnchorStartMs(row.rowText)
   if (rowMs == null) return false
+  if (isStoryTimelineRowHistoricalRelativeToCurrent(rowMs, currentStoryMs)) return true
   return (currentStoryMs - rowMs) / 86_400_000 >= minGapDays
 }
 
@@ -665,8 +683,8 @@ function formatStoryCalendarDayLabelFromMs(ms: number): string {
 }
 
 function formatStoryTimelineGapLabelZh(gapDays: number): string {
-  if (gapDays < 7) return '数日前'
-  if (gapDays < 14) return '约1周前'
+  if (gapDays < 1.5) return '昨日'
+  if (gapDays < 7) return `约${Math.max(1, Math.round(gapDays))}天前`
   if (gapDays < 45) return `约${Math.max(1, Math.round(gapDays / 7))}周前`
   if (gapDays < 365) return `约${Math.max(1, Math.round(gapDays / 30))}个月前`
   return `约${Math.max(1, Math.round(gapDays / 365))}年前`
@@ -679,16 +697,15 @@ function formatStoryTimelineGapLabelZh(gapDays: number): string {
 export function formatStoryTimelineHistoricalRowTemporalBanner(
   rowText: string,
   currentStoryMs: number | null,
-  minGapDays = 7,
 ): string {
   if (currentStoryMs == null) return ''
   const rowMs = extractStoryTimelineRowAnchorStartMs(rowText)
   if (rowMs == null) return ''
-  const gapDays = (currentStoryMs - rowMs) / 86_400_000
-  if (gapDays < minGapDays) return ''
+  if (!isStoryTimelineRowHistoricalRelativeToCurrent(rowMs, currentStoryMs)) return ''
 
-  const rowAnchor = formatStoryTimelineListTimeLabel(rowText)
+  const gapDays = (currentStoryMs - rowMs) / 86_400_000
   const currentAnchor = formatStoryCalendarDayLabelFromMs(currentStoryMs)
+  const rowAnchor = formatStoryCalendarDayLabelFromMs(rowMs)
   const gapLabel = formatStoryTimelineGapLabelZh(gapDays)
   const event = String(rowText ?? '').match(/【本轮事件】([^\n]+)/)?.[1]?.trim() ?? ''
   const title = extractStoryTimelineRowTitleFromRowText(rowText)
@@ -1725,7 +1742,7 @@ export const STORY_TIMELINE_VECTOR_RECALL_CANON_RULES =
   `**禁止**编造摘要未出现的对白、物品、交易或情节；**禁止**把摘要当作灵感扩写成未记载细节。`
 
 export const STORY_TIMELINE_HISTORICAL_ROW_TEMPORAL_RULES =
-  `【历史摘要·时效铁律】「语义召回」「近端摘要」各行均保留注入；须对照各行【时效·已发生】横幅与【本轮锚点】理解：**当前剧情「现在」以【当前状态】锚点为准**。若某行锚点**早于**当前剧情日，该行内容为**已发生往事**——提及须用过去时/回溯语气（如「五个月前…」「暑假那阵…」），**禁止**把其中的「下周五 / 即将 / 提醒考核」等**当时面向未来的措辞**当作本轮尚未到来的安排。**未完结待办与动机伏笔仅以【当前状态】为准**（各行【待办】【伏笔】已剥离）。`.trim()
+  `【历史摘要·时效铁律】「语义召回」「近端摘要」各行均保留注入；须对照各行【时效·已发生】横幅与【本轮锚点】理解：**当前剧情「现在」以【当前状态】锚点为准**。若某行【本轮锚点】公历日**早于**当前剧情日（非同一日），该行内容为**已发生往事**——提及须用过去时/回溯语气（如「昨日…」「五个月前…」），**禁止**把其中的「下周五 / 即将 / 提醒考核」等**当时面向未来的措辞**当作本轮尚未到来的安排。**未完结待办与动机伏笔仅以【当前状态】为准**（各行【待办】【伏笔】已剥离）。`.trim()
 
 /** 约会 prompt 裁剪：保留语义召回段，避免 head 截断丢掉向量命中 */
 export function clipStoryTimelinePromptBlock(raw: string, cap: number): string {
@@ -1865,10 +1882,12 @@ export function parseStoryTimelineInjectBodyForTrace(text: string): StoryTimelin
     const injectKind: StoryTimelineInjectKind =
       simRaw || kindLabel === STORY_TIMELINE_INJECT_LABEL_VECTOR ? 'vector' : 'recent'
     const sim = simRaw ? Number(simRaw) / 100 : undefined
+    const isHistorical = body.includes('【时效·已发生】')
     out.push({
       injectKind,
       label: titleLabel || kindLabel || (injectKind === 'vector' ? STORY_TIMELINE_INJECT_LABEL_VECTOR : STORY_TIMELINE_INJECT_LABEL_RECENT),
       content: body,
+      ...(isHistorical ? { isHistorical: true } : {}),
       ...(typeof sim === 'number' && Number.isFinite(sim) ? { relevanceScore: sim } : {}),
     })
   }

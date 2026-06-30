@@ -762,6 +762,17 @@ export type WeChatTakeoutOrderPayload = {
   placedAt: number
 }
 
+/** Lumi Pulse 微博动态分享卡片（持久化于 chatMessages.pulseShare） */
+export type WeChatPulseSharePayload = {
+  kind: 'pulse_share'
+  shareId: string
+  postId: string
+  authorName: string
+  content: string
+  excerpt?: string
+  trendingTitle?: string
+}
+
 /** @deprecated 旧版字段，加载时由 idb 迁移；新消息勿写 */
 export type WeChatLocationPayloadLegacy = WeChatLocationPayload & {
   label?: string
@@ -941,6 +952,8 @@ export type WeChatChatMessage = {
   locationShare?: WeChatLocationPayload
   /** 角色为用户点的外卖卡片 */
   takeoutOrder?: WeChatTakeoutOrderPayload
+  /** Lumi Pulse 微博分享卡片 */
+  pulseShare?: WeChatPulseSharePayload
   /** 表情包引用名（与 `[表情包]引用名` 一致，供 AI 历史与防重复） */
   stickerRef?: string
   /** 合并转发聊天记录卡片 */

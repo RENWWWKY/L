@@ -308,23 +308,42 @@ export function ApiSettingsProvider({ children }: { children: ReactNode }) {
     [currentPreset],
   )
 
-  const value: Ctx = {
-    presets,
-    currentPresetId: store.currentPresetId,
-    currentPreset,
-    linkPreview: normalizeLinkPreviewSettings(store.linkPreview),
-    apiHydrated,
-    reloadFromStorage,
-    flushPersist,
-    setCurrentPresetId,
-    setLinkPreviewSettings,
-    createPreset,
-    upsertPreset,
-    deletePreset,
-    duplicatePreset,
-    getResolvedConfig,
-    isSubApiEnabled,
-  }
+  const value = useMemo(
+    (): Ctx => ({
+      presets,
+      currentPresetId: store.currentPresetId,
+      currentPreset,
+      linkPreview: normalizeLinkPreviewSettings(store.linkPreview),
+      apiHydrated,
+      reloadFromStorage,
+      flushPersist,
+      setCurrentPresetId,
+      setLinkPreviewSettings,
+      createPreset,
+      upsertPreset,
+      deletePreset,
+      duplicatePreset,
+      getResolvedConfig,
+      isSubApiEnabled,
+    }),
+    [
+      presets,
+      store.currentPresetId,
+      currentPreset,
+      store.linkPreview,
+      apiHydrated,
+      reloadFromStorage,
+      flushPersist,
+      setCurrentPresetId,
+      setLinkPreviewSettings,
+      createPreset,
+      upsertPreset,
+      deletePreset,
+      duplicatePreset,
+      getResolvedConfig,
+      isSubApiEnabled,
+    ],
+  )
 
   return <ApiSettingsContext.Provider value={value}>{children}</ApiSettingsContext.Provider>
 }

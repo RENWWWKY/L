@@ -129,6 +129,7 @@ export type MemoryTraceStoryTimelineInjectRow = {
   label: string
   content: string
   relevanceScore?: number
+  isHistorical?: boolean
 }
 
 /** 剧情时间轴注入块 */
@@ -511,6 +512,7 @@ export function parseMemoryTraceData(raw: unknown): MemoryTraceData | null {
           ...(typeof r.relevanceScore === 'number' && Number.isFinite(r.relevanceScore)
             ? { relevanceScore: r.relevanceScore }
             : {}),
+          ...(r.isHistorical === true ? { isHistorical: true } : {}),
         })
       }
     }

@@ -26,7 +26,14 @@ export function hasBackgroundNotifyPendingWork(): boolean {
 export function setBackgroundNotifyPendingWork(
   patch: Partial<BackgroundNotifyPendingSnapshot>,
 ): void {
-  snapshot = { ...snapshot, ...patch }
+  const next = { ...snapshot, ...patch }
+  if (
+    next.wechatTyping === snapshot.wechatTyping &&
+    next.wechatRevealPending === snapshot.wechatRevealPending
+  ) {
+    return
+  }
+  snapshot = next
   emit()
 }
 

@@ -48,7 +48,9 @@ import {
   resolveLastOfflineAiPlotTimestampMs,
   type DatingOnlineInjectScopeMeta,
 } from './datingOnlineInjectScope'
-import { formatSystemRecordTime, resolveOnlineMessageTimeBoundsForConversation } from '../wechatCrossChannelTimeline'
+import { resolveOnlineMessageTimeBoundsForConversation } from '../wechatCrossChannelTimeline'
+import { getAiPlotActiveTimelineDelta } from './plotTimelineDelta'
+import { formatPlotPromptTimeBracket } from './plotStoryTimeLabel'
 import { loadStoryTimelinePromptBlock, loadStoryTimelineOpenAnchorsBlockForSummary, rebuildStoryTimelineFromDatingPlots } from '../memory/storyTimelinePersist'
 import { buildStoryTimelineCalendarContextBlock, resolveStoryCalendarAnchorFloorMs, resolveStoryCalendarAnchorFromPlotItems, resolveStoryCalendarAnchorFromPlots, STORY_TIMELINE_CALENDAR_CHRONOLOGY_RULES } from '../memory/storyTimelineCalendarContext'
 import {
@@ -303,15 +305,18 @@ function stripPlotBodyForPrompt(plot: PlotItem): string {
 function formatRecentPlotsForPrompt(history: PlotItem[], characterRealName: string, maxTotalChars: number): string {
   const tail = history.slice(-DATING_AI_PLOT_HISTORY_MAX)
   const parts: string[] = []
+  let lastStoryCalendar: string | null = null
   for (const x of tail) {
     let body = stripPlotBodyForPrompt(x)
     if (body.length > DATING_AI_HISTORY_PER_PLOT_CAP) {
       body = `${body.slice(0, DATING_AI_HISTORY_PER_PLOT_CAP)}…`
     }
     const label = x.type === 'player' ? '我' : characterRealName
-    const ts =
-      typeof x.timestamp === 'number' && Number.isFinite(x.timestamp) ? x.timestamp : null
-    const prefix = ts != null ? `[${formatSystemRecordTime(ts)}] ` : ''
+    if (x.type === 'ai') {
+      const bracket = formatPlotPromptTimeBracket(x, { markSystemFallback: true })
+      lastStoryCalendar = bracket.replace(/^\[|\]$/g, '').replace(/·落库$/, '') || null
+    }
+    const prefix = `${formatPlotPromptTimeBracket(x, { storyCalendarFallback: lastStoryCalendar, markSystemFallback: true })} `
     parts.push(`${prefix}${label}：${body}`)
   }
   const joined = parts.join('\n')
@@ -1090,15 +1095,18 @@ function stripUnsummarizedBlockFooter(block: string): string {
 }
 
 function plotItemsToSnapshots(plots: PlotItem[]): DatingPlotSnapshotItem[] {
-  return plots.map((p) => ({
-    id: p.id,
-    type: p.type,
-    content: p.content,
-    timestamp: p.timestamp,
-    ...(p.planSummary ? { planSummary: p.planSummary } : {}),
-    ...(p.type === 'ai' && p.timelineDelta ? { timelineDelta: p.timelineDelta } : {}),
-    ...(p.type === 'ai' && p.timelineSnapshot ? { timelineSnapshot: p.timelineSnapshot } : {}),
-  }))
+  return plots.map((p) => {
+    const activeDelta = p.type === 'ai' ? getAiPlotActiveTimelineDelta(p) : undefined
+    return {
+      id: p.id,
+      type: p.type,
+      content: p.content,
+      timestamp: p.timestamp,
+      ...(p.planSummary ? { planSummary: p.planSummary } : {}),
+      ...(activeDelta ? { timelineDelta: activeDelta } : {}),
+      ...(p.type === 'ai' && p.timelineSnapshot ? { timelineSnapshot: p.timelineSnapshot } : {}),
+    }
+  })
 }
 
 /**
@@ -1701,7 +1709,7 @@ ${vnVoiceParamsRule ? `${vnVoiceParamsRule}\n` : ''}${vnBackgroundRule ? `${vnBa
     ? `【历史回忆事实铁律（高于自行发挥）】「剧情时间轴」里标「召回 · 相似 xx%」的条目为向量命中的**往日摘要行**；玩家提起相关话题时，**仅可**使用各行摘要字段（含【本轮事件】）中**已写明**的事实，**禁止**编造或扩写摘要未记载的细节。\n`
     : ''
   const storyTimelineTemporalRule = storyTimelineClipped
-    ? `【剧情时间轴·时效铁律】当前故事内「现在」以【当前状态·合并快照】的【当前锚点】为准（勿用手机日期或系统落库时刻）。「语义召回」「近端摘要」**仍须保留并可用**；若某行带【时效·已发生】且锚点早于当前剧情日，该行内容为**往事**——正文提起须用回溯语气（如「五个月前…」），**禁止**把行内当时的「下周五 / 提醒考核」等当作尚未到来的安排；**未完结待办仅以【当前状态】为准**。\n`
+    ? `【剧情时间轴·时效铁律】当前故事内「现在」以【当前状态·合并快照】的【当前锚点】为准（勿用手机日期或系统落库时刻）。「语义召回」「近端摘要」**仍须保留并可用**；若某行带【时效·已发生】/「历史」且锚点公历日**早于**当前剧情日，该行内容为**往事**——正文提起须用回溯语气（如「五个月前…」），**禁止**把行内当时的「下周五 / 提醒考核」等当作尚未到来的安排；**未完结待办仅以【当前状态】为准**。\n`
     : ''
   const onlinePrivBoundaryReminder =
     wechatUnsummarizedRefLen > 8
@@ -2072,7 +2080,7 @@ ${vnVoiceParamsRule ? `${vnVoiceParamsRule}\n` : ''}${vnBackgroundRule ? `${vnBa
       unsPrivateBlock: unsPrivClipped,
       unsGroupBlock: unsGrpClipped,
       unsOfflineBlock: unsOffClipped,
-      storyTimelineNotes: storyTimelineClipped,
+      storyTimelineNotes: (storyTimelineBlock ?? '').trim() || storyTimelineClipped,
       conversationKey: onlineCtx?.conversationKey,
       apiConfig,
       rawAssistantOutput: traceBody,

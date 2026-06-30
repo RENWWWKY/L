@@ -8,11 +8,11 @@ import {
   Clock,
   CreditCard,
   EyeOff,
+  Gamepad2,
   Gift,
   Heart,
   Image,
   MapPin,
-  Music,
   PhoneCall,
   Play,
   RotateCcw,
@@ -44,6 +44,7 @@ export type WeChatPlusActionId =
   | 'continue_reply'
   | 'console_logs'
   | 'check_phone'
+  | 'games'
 
 const PAGE1: { id: WeChatPlusActionId; label: string; Icon: LucideIcon }[] = [
   { id: 'photo', label: '照片', Icon: Image },
@@ -57,7 +58,7 @@ const PAGE1: { id: WeChatPlusActionId; label: string; Icon: LucideIcon }[] = [
 ]
 
 const PAGE2: { id: WeChatPlusActionId; label: string; Icon: LucideIcon }[] = [
-  { id: 'music', label: '音乐', Icon: Music },
+  { id: 'games', label: '游戏', Icon: Gamepad2 },
   { id: 'heart_words', label: '心语', Icon: Heart },
   { id: 'read_ignore', label: '已读不回', Icon: EyeOff },
   { id: 'retry_reply', label: '重新回复', Icon: RotateCcw },

@@ -814,6 +814,9 @@ export function CustomizationProvider({ children }: { children: ReactNode }) {
     }
 
     const applyVh = (vh: number) => {
+      const prevRaw = document.documentElement.style.getPropertyValue('--app-vh')
+      const prev = Number.parseFloat(prevRaw)
+      if (Number.isFinite(prev) && Math.abs(prev - vh) < 2) return
       document.documentElement.style.setProperty('--app-vh', `${vh}px`)
     }
 

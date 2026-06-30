@@ -136,6 +136,7 @@ import { pruneCharacterVoiceMappings } from '../voiceprint/characterVoiceMapStor
 import { applyWechatContactRemovalDataClear } from './wechatContactRemoval'
 import { resolveCharacterAvatarUrl, resolveWeChatContactAvatarUrl } from '../../utils/characterAvatarUrl'
 import { WeChatMessengerChatHeader } from './WeChatMessengerChatHeader'
+import { ChatHeader } from './chatRoom/ChatHeader'
 import { WeChatBubblePresetCards } from './WeChatBubblePresetCards'
 import {
   WECHAT_BUBBLE_PRESETS,
@@ -695,6 +696,8 @@ function Header({
   onDismissAppearanceGuide,
   /** 为 true 时在主标题与 typingText 之间循环切换（模型已返回、消息逐条露出时） */
   titleTypingAlternate = false,
+  /** 逐条露出队列长度；优先于 titleTypingAlternate */
+  pendingQueueCount = 0,
   /** 为 true 时标题相对整条顶栏绝对居中（聊天页右侧多按钮时使用） */
   titleCenterAbsolute = false,
 }: {
@@ -705,6 +708,7 @@ function Header({
   showTyping?: boolean
   typingText?: string
   titleTypingAlternate?: boolean
+  pendingQueueCount?: number
   titleCenterAbsolute?: boolean
   onBack: () => void
   onOpenTheme: () => void
@@ -720,196 +724,29 @@ function Header({
   showAppearanceGuide?: boolean
   onDismissAppearanceGuide?: () => void
 }) {
-  const [altPhase, setAltPhase] = useState<'title' | 'typing'>('title')
-  const typingAlt = !!titleTypingAlternate && !!(typingText ?? '').trim() && !showTyping
+  const effectivePendingCount =
+    pendingQueueCount > 0 ? pendingQueueCount : titleTypingAlternate ? 1 : 0
 
-  useEffect(() => {
-    if (!typingAlt) {
-      setAltPhase('title')
-      return
-    }
-    let cancelled = false
-    let step = 0
-    /** 逐条露出：先短亮「正在输入」再切备注，循环模拟敲键盘间隙（ms） */
-    const delays = [1800, 2200, 1600, 2400]
-    let tid: number | null = null
-    const schedule = () => {
-      if (cancelled) return
-      setAltPhase(step % 2 === 0 ? 'typing' : 'title')
-      const ms = delays[step % delays.length] ?? 2000
-      step += 1
-      tid = window.setTimeout(schedule, ms)
-    }
-    schedule()
-    return () => {
-      cancelled = true
-      if (tid != null) window.clearTimeout(tid)
-    }
-  }, [typingAlt, typingText, title, titleSub])
-
-  const showTitleUnread =
-    typeof titleUnreadCount === 'number' &&
-    titleUnreadCount > 0 &&
-    !showTyping &&
-    !(typingAlt && altPhase === 'typing')
-
-  const trailing = showTyping ? undefined : typingAlt && altPhase === 'typing' ? undefined : titleTrailing
-
-  const center =
-    showTyping && typingText?.trim() ? (
-      <div className="relative flex min-h-[36px] min-w-0 flex-1 flex-col items-center justify-center px-1">
-        <AnimatePresence mode="wait" initial={false}>
-          <motion.div
-            key="wx-typing-line"
-            className="flex min-h-[36px] min-w-0 flex-1 flex-col items-center justify-center px-1"
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            exit={{ opacity: 0 }}
-            transition={{ duration: 0.2, ease: 'easeOut' }}
-          >
-            <p
-              className="truncate text-center text-[15px] font-normal leading-snug"
-              style={{ color: 'var(--wx-text-muted)' }}
-            >
-              {typingText}
-            </p>
-          </motion.div>
-        </AnimatePresence>
-      </div>
-    ) : typingAlt ? (
-      <div className="relative flex min-h-[36px] min-w-0 flex-1 flex-col items-center justify-center px-1">
-        <AnimatePresence mode="wait" initial={false}>
-          {altPhase === 'title' ? (
-            <motion.div
-              key="wx-alt-title"
-              className="flex min-h-[36px] min-w-0 flex-1 flex-col items-center justify-center px-1"
-              initial={{ opacity: 0, y: 3 }}
-              animate={{ opacity: 1, y: 0 }}
-              exit={{ opacity: 0, y: -3 }}
-              transition={{ duration: 0.14, ease: 'easeOut' }}
-            >
-              {titleSub ? (
-                <div className="relative inline-flex max-w-full min-w-0 items-center">
-                  <div className="flex min-h-[36px] flex-col items-center justify-center gap-0 leading-tight">
-                    <h1
-                      className="max-w-full truncate text-center text-[17px] font-semibold tracking-[0.2px]"
-                      style={{ color: 'var(--wx-text)' }}
-                    >
-                      {title}
-                    </h1>
-                    <p
-                      className="max-w-full truncate text-center text-[11px] font-normal"
-                      style={{ color: 'var(--wx-text-muted)' }}
-                    >
-                      {titleSub}
-                    </p>
-                  </div>
-                  {trailing ? (
-                    <span
-                      className={`${titleTrailingInteractive ? '' : 'pointer-events-none'} absolute left-full top-1/2 ml-2 flex shrink-0 -translate-y-1/2 items-center transition-opacity duration-200`}
-                      aria-hidden={titleTrailingInteractive ? undefined : true}
-                    >
-                      {trailing}
-                    </span>
-                  ) : null}
-                </div>
-              ) : (
-                <div className="relative inline-flex max-w-full min-w-0 items-center">
-                  <h1
-                    className="flex min-h-[36px] items-center justify-center gap-0.5 truncate text-center text-[17px] font-semibold leading-[36px] tracking-[0.2px]"
-                    style={{ color: 'var(--wx-text)' }}
-                  >
-                    <span className="truncate">{title}</span>
-                    {showTitleUnread ? (
-                      <WeChatTitleUnreadText
-                        count={titleUnreadCount}
-                        className="shrink-0 text-[15px] font-medium leading-[36px] tracking-normal"
-                      />
-                    ) : null}
-                  </h1>
-                  {trailing ? (
-                    <span
-                      className={`${titleTrailingInteractive ? '' : 'pointer-events-none'} absolute left-full top-1/2 ml-2 flex shrink-0 -translate-y-1/2 items-center transition-opacity duration-200`}
-                      aria-hidden={titleTrailingInteractive ? undefined : true}
-                    >
-                      {trailing}
-                    </span>
-                  ) : null}
-                </div>
-              )}
-            </motion.div>
-          ) : (
-            <motion.div
-              key="wx-alt-typing"
-              className="flex min-h-[36px] min-w-0 flex-1 flex-col items-center justify-center px-1"
-              initial={{ opacity: 0, y: 3 }}
-              animate={{ opacity: 1, y: 0 }}
-              exit={{ opacity: 0, y: -3 }}
-              transition={{ duration: 0.14, ease: 'easeOut' }}
-            >
-              <p
-                className="truncate text-center text-[15px] font-normal leading-snug"
-                style={{ color: 'var(--wx-text-muted)' }}
-              >
-                {typingText}
-              </p>
-            </motion.div>
-          )}
-        </AnimatePresence>
-      </div>
-    ) : titleSub ? (
-      <div className="flex min-h-[36px] min-w-0 flex-1 justify-center px-1">
-        <div className="relative inline-flex max-w-full min-w-0 items-center">
-          <div className="flex min-h-[36px] flex-col items-center justify-center gap-0 leading-tight">
-            <h1
-              className="max-w-full truncate text-center text-[17px] font-semibold tracking-[0.2px]"
-              style={{ color: 'var(--wx-text)' }}
-            >
-              {title}
-            </h1>
-            <p
-              className="max-w-full truncate text-center text-[11px] font-normal"
-              style={{ color: 'var(--wx-text-muted)' }}
-            >
-              {titleSub}
-            </p>
-          </div>
-          {trailing ? (
-            <span
-              className={`${titleTrailingInteractive ? '' : 'pointer-events-none'} absolute left-full top-1/2 ml-2 flex shrink-0 -translate-y-1/2 items-center transition-opacity duration-200`}
-              aria-hidden={titleTrailingInteractive ? undefined : true}
-            >
-              {trailing}
-            </span>
-          ) : null}
-        </div>
-      </div>
-    ) : (
-      <div className="flex min-h-[36px] min-w-0 flex-1 justify-center px-1">
-        <div className="relative inline-flex max-w-full min-w-0 items-center">
-          <h1
-            className="flex min-h-[36px] items-center justify-center gap-0.5 truncate text-center text-[17px] font-semibold leading-[36px] tracking-[0.2px]"
-            style={{ color: 'var(--wx-text)' }}
-          >
-            <span className="truncate">{title}</span>
-            {showTitleUnread ? (
-              <WeChatTitleUnreadText
-                count={titleUnreadCount}
-                className="shrink-0 text-[15px] font-medium leading-[36px] tracking-normal"
-              />
-            ) : null}
-          </h1>
-          {trailing ? (
-            <span
-              className={`${titleTrailingInteractive ? '' : 'pointer-events-none'} absolute left-full top-1/2 ml-2 flex shrink-0 -translate-y-1/2 items-center transition-opacity duration-200`}
-              aria-hidden={titleTrailingInteractive ? undefined : true}
-            >
-              {trailing}
-            </span>
-          ) : null}
-        </div>
-      </div>
-    )
+  const center = (
+    <div className="flex min-h-[36px] min-w-0 flex-1 justify-center px-1">
+      <ChatHeader
+        contactName={title}
+        contactSub={titleSub}
+        pendingCount={effectivePendingCount}
+        forceTyping={!!showTyping}
+        typingText={typingText}
+        titleTrailing={titleTrailing}
+        titleTrailingInteractive={titleTrailingInteractive}
+        titleUnreadCount={titleUnreadCount}
+        renderUnread={(count) => (
+          <WeChatTitleUnreadText
+            count={count}
+            className="shrink-0 text-[15px] font-medium leading-[36px] tracking-normal"
+          />
+        )}
+      />
+    </div>
+  )
 
   const balancedSideSlot = customRight ? 'min-w-[76px]' : 'w-10'
 
@@ -3915,6 +3752,16 @@ function WeChatAppInner({ onBack }: Props) {
 
   const [chatOtherTyping, setChatOtherTyping] = useState(false)
   const [chatOpponentRevealPending, setChatOpponentRevealPending] = useState(false)
+  const [chatPendingQueueCount, setChatPendingQueueCount] = useState(0)
+  const setChatOtherTypingDeduped = useCallback((v: boolean) => {
+    setChatOtherTyping((prev) => (prev === v ? prev : v))
+  }, [])
+  const setChatPendingQueueCountDeduped = useCallback((n: number) => {
+    setChatPendingQueueCount((prev) => (prev === n ? prev : n))
+  }, [])
+  const setChatOpponentRevealPendingDeduped = useCallback((v: boolean) => {
+    setChatOpponentRevealPending((prev) => (prev === v ? prev : v))
+  }, [])
   const [orphanPeerNames, setOrphanPeerNames] = useState<Record<string, string>>({})
   const newFriendsUnreadCount = useMemo(
     () => countNewFriendsBadge(pendingNewFriendRequests),
@@ -4713,6 +4560,11 @@ function WeChatAppInner({ onBack }: Props) {
           ? null
           : activeConversationCharacterId
         : routeTimeCharacterId,
+    /**
+     * 聊天页内 ChatRoom 自行读时间（liveTick:false）。
+     * 返回消息列表 / 红包转账子页时底层 ChatRoom 仍挂载续跑 AI 队列，此时 App 层 tick 会每秒重绘隐藏 ChatRoom。
+     */
+    liveTick: route.name !== 'chat' && !wxDockChat,
   })
 
   const resolveRedPacketPeer = useCallback(
@@ -4924,12 +4776,21 @@ function WeChatAppInner({ onBack }: Props) {
     }
     const load = () => {
       void personaDb.getChatConversationSettings(activeConversationKey).then((s) => {
-        setChatSessionPrefs({
+        const next = {
           danmaku: s?.isDanmakuMode ?? false,
           bg: (s?.chatBackground ?? '').trim(),
           showGroupMemberNicknameInChat: s?.showGroupMemberNicknameInChat !== false,
           showGroupRankBadgesInChat: !!s?.showGroupRankBadgesInChat,
-        })
+        }
+        setChatSessionPrefs((prev) =>
+          prev &&
+          prev.danmaku === next.danmaku &&
+          prev.bg === next.bg &&
+          prev.showGroupMemberNicknameInChat === next.showGroupMemberNicknameInChat &&
+          prev.showGroupRankBadgesInChat === next.showGroupRankBadgesInChat
+            ? prev
+            : next,
+        )
       })
     }
     load()
@@ -4942,25 +4803,32 @@ function WeChatAppInner({ onBack }: Props) {
    * 未读由「最后阅读游标 + 消息」计算。在聊天室内须持续标已读（含对方新消息落库），
    * 不能只进房标一次——否则返回键旁会误显示当前会话未读。
    */
+  const markActiveChatReadInFlightRef = useRef(false)
   const markActiveChatRead = useCallback(async () => {
     if (route.name !== 'chat') return
     if (!activeConversationKey) return
+    if (markActiveChatReadInFlightRef.current) return
     const layer = wxDockChat
     if (layer?.kind === 'persona' && chatRouteIdentityId === null) return
 
-    const acc = currentAccountId?.trim()
-    const sessionPid = (chatRouteIdentityId ?? playerIdentityId ?? '__none__').trim()
+    markActiveChatReadInFlightRef.current = true
+    try {
+      const acc = currentAccountId?.trim()
+      const sessionPid = (chatRouteIdentityId ?? playerIdentityId ?? '__none__').trim()
 
-    if (layer?.kind === 'persona' && acc && activeConversationCharacterId) {
-      await markPrivateChatConversationReadForAccountCharacter({
-        wechatAccountId: acc,
-        characterId: activeConversationCharacterId,
-        appSessionPlayerIdentityId: sessionPid,
-      })
-    } else {
-      await personaDb.markWeChatConversationReadToLatest(activeConversationKey)
+      if (layer?.kind === 'persona' && acc && activeConversationCharacterId) {
+        await markPrivateChatConversationReadForAccountCharacter({
+          wechatAccountId: acc,
+          characterId: activeConversationCharacterId,
+          appSessionPlayerIdentityId: sessionPid,
+        })
+      } else {
+        await personaDb.markWeChatConversationReadToLatest(activeConversationKey)
+      }
+      await refreshMessageThreadsMeta()
+    } finally {
+      markActiveChatReadInFlightRef.current = false
     }
-    await refreshMessageThreadsMeta()
   }, [
     route.name,
     activeConversationKey,
@@ -5997,7 +5865,8 @@ function WeChatAppInner({ onBack }: Props) {
           onOpenPsycheRadar={() => setPsycheRadarOpen(true)}
           showPsycheRadar={chatHeaderShowPsycheRadar}
           backBadgeCount={chatBackBadgeUnreadTotal}
-          showTyping={chatOtherTyping || (chatOpponentRevealPending && !chatOtherTyping)}
+          showTyping={chatOtherTyping}
+          pendingCount={chatPendingQueueCount}
           typingText={route.name === 'chat' && route.chat.kind === 'group' ? '成员正在输入…' : '对方正在输入…'}
           onCenterClick={() => setChatSettingsOpen(true)}
           customRight={
@@ -6023,8 +5892,9 @@ function WeChatAppInner({ onBack }: Props) {
           title={route.name === 'chat' && chatPeerContact ? chatPeerContact.remarkName : title}
           titleSub={route.name === 'chat' && chatPeerContact?.tag ? chatPeerContact.tag : undefined}
           showTyping={route.name === 'chat' && chatOtherTyping}
+          pendingQueueCount={route.name === 'chat' ? chatPendingQueueCount : 0}
           titleTypingAlternate={
-            route.name === 'chat' && chatOpponentRevealPending && !chatOtherTyping
+            route.name === 'chat' && chatOpponentRevealPending && !chatOtherTyping && chatPendingQueueCount === 0
           }
           titleCenterAbsolute={route.name === 'chat'}
           typingText={
@@ -6227,8 +6097,9 @@ function WeChatAppInner({ onBack }: Props) {
             ) : (
               <ChatRoom
                 onBack={exitChatToMessages}
-                onOtherTypingChange={setChatOtherTyping}
-                onOpponentRevealQueueActive={setChatOpponentRevealPending}
+                onOtherTypingChange={setChatOtherTypingDeduped}
+                onPendingQueueCountChange={setChatPendingQueueCountDeduped}
+                onOpponentRevealQueueActive={setChatOpponentRevealPendingDeduped}
                 skipBusySignal={chatSkipBusySignal}
                 personaCharacterId={chatRoomPersonaCharacterId ?? undefined}
                 playerDisplayName={state.profile.displayName}

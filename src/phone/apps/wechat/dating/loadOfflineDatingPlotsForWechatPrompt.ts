@@ -12,14 +12,19 @@ import {
 } from './offlineDatingArchiveResolve'
 import { offlinePlotBodyRelevantToNpcForLinkedExcerpt } from './offlineDatingNpcSpeakerDetect'
 import { datingPlotBodyForPromptInjection } from './plotCoT'
-import { formatSystemRecordTime, resolvePlotSystemRecordedAtMs } from '../wechatCrossChannelTimeline'
+import { formatPlotPromptTimeBracket } from './plotStoryTimeLabel'
+import { resolvePlotSystemRecordedAtMs } from '../wechatCrossChannelTimeline'
 
 function plotBodyForPrompt(p: DatingPlotSnapshotItem): string {
   return datingPlotBodyForPromptInjection(String(p.content || ''), p.type)
 }
 
-function formatPlotTraceDate(ts: number): string {
-  return formatSystemRecordTime(ts)
+function formatPlotTraceDate(
+  plot: DatingPlotSnapshotItem,
+  storyCalendarFallback?: string | null,
+): string {
+  return formatPlotPromptTimeBracket(plot, { storyCalendarFallback, markSystemFallback: true })
+    .replace(/^\[|\]$/g, '')
 }
 
 function clipSnippet(s: string, max: number) {
@@ -84,11 +89,15 @@ export function buildOfflinePlotsFullText(opts: OfflinePlotBuildOpts): string {
   const borrowed = opts.borrowed === true
   const tail = filterPlotTail(opts)
   const lines: string[] = []
+  let lastStoryCalendar: string | null = null
   for (const p of tail) {
     const t = plotBodyForPrompt(p)
     if (!t) continue
-    const ts = resolvePlotSystemRecordedAtMs(p)
-    const timePrefix = formatPlotTraceDate(ts)
+    if (p.type === 'ai') {
+      const story = formatPlotPromptTimeBracket(p, { markSystemFallback: false })
+      lastStoryCalendar = story.replace(/^\[|\]$/g, '') || null
+    }
+    const timePrefix = formatPlotTraceDate(p, lastStoryCalendar)
     if (p.type === 'player') lines.push(`- [${timePrefix}] [线下・我] ${t}`)
     else if (borrowed) lines.push(`- [${timePrefix}] [线下・「${rootName}」] ${t}`)
     else lines.push(`- [${timePrefix}] [线下・${peerLabel}] ${t}`)
@@ -134,7 +143,7 @@ export async function listSummarizedOfflinePlotContextLines(
       const body = plotBodyForPrompt(p)
       if (!body || body.length < 16) continue
       const ts = resolvePlotSystemRecordedAtMs(p)
-      const timePrefix = formatPlotTraceDate(ts)
+      const timePrefix = formatPlotPromptTimeBracket(p, { markSystemFallback: true }).replace(/^\[|\]$/g, '')
       const line = borrowed
         ? `- [${timePrefix}] [线下·原文·「${rootName}」] ${body}`
         : `- [${timePrefix}] [线下·原文·${peerLabel}] ${body}`
@@ -217,10 +226,14 @@ export async function listUnsummarizedOfflinePlotTraceItems(
     const rootName = (ctx.archiveOwner?.name ?? '').trim() || '主角'
     const peerLabel = peerDisplayName?.trim() || (ctx.perspective?.name ?? '').trim() || '对方'
     const out: Array<{ date: string; snippet: string }> = []
+    let lastStoryCalendar: string | null = null
     for (const p of tail) {
       const body = plotBodyForPrompt(p)
       if (!body) continue
-      const ts = resolvePlotSystemRecordedAtMs(p)
+      if (p.type === 'ai') {
+        const story = formatPlotPromptTimeBracket(p, { markSystemFallback: false })
+        lastStoryCalendar = story.replace(/^\[|\]$/g, '') || null
+      }
       let role: string
       if (p.type === 'player') {
         role = '我'
@@ -231,7 +244,7 @@ export async function listUnsummarizedOfflinePlotTraceItems(
       }
       const line = `${role}：${body}`
       out.push({
-        date: formatPlotTraceDate(ts),
+        date: formatPlotTraceDate(p, lastStoryCalendar),
         snippet: opts?.fullSnippet ? line : clipSnippet(line, snippetChars),
       })
     }
@@ -309,11 +322,13 @@ export async function loadOfflineDatingPlotsPromptBlock(
   const borrowed = !!(ctx && ctx.perspectiveCharacterId !== ctx.archiveCharacterId)
 
   const rounds = MEMORY_UNSUMMARIZED_OFFLINE_INJECT_AI_ROUNDS
+  const timeHint =
+    '每条前缀优先为**故事内公历时刻**（来自该条 timeline 锚点）；无锚点时方显示 `[…·落库]` 系统落库时刻（真实生成钟点，**不是**故事内时间）'
   const header = borrowed
     ? `【尚未总结·关联主角线下剧情（节选）】` +
-      `你与「${(ctx?.archiveOwner?.name ?? '').trim() || '主角'}」同属一条时间线；下列为游标后**最近 ${rounds} 轮 AI 剧情**及其间玩家输入；**每条前缀 \`[YYYY年M月D日 星期X HH:mm]\` 为系统落库时刻**（真实生成钟点，**不是**故事内剧情时间；更早段由【剧情时间轴】/长期记忆/语义召回承接）。`
+      `你与「${(ctx?.archiveOwner?.name ?? '').trim() || '主角'}」同属一条时间线；下列为游标后**最近 ${rounds} 轮 AI 剧情**及其间玩家输入；${timeHint}；更早段由【剧情时间轴】/长期记忆/语义召回承接。`
     : `【尚未总结·线下剧情（约会页 plot 总结游标之后）】` +
-      `与当前会话为**同一角色、同一时间线**；下列为游标后**最近 ${rounds} 轮 AI 剧情**及其间玩家输入；**每条前缀 \`[YYYY年M月D日 星期X HH:mm]\` 为系统落库时刻**（真实生成钟点，**不是**故事内剧情时间；更早段由【剧情时间轴】/长期记忆/语义召回承接），须自然衔接、**禁止**明显矛盾。`
+      `与当前会话为**同一角色、同一时间线**；下列为游标后**最近 ${rounds} 轮 AI 剧情**及其间玩家输入；${timeHint}；须自然衔接、**禁止**明显矛盾。`
 
   return `${header}\n\n${body}`
 }

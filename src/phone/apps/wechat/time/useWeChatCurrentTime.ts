@@ -10,10 +10,13 @@ import {
 
 type UseWeChatCurrentTimeOptions = {
   characterId?: string | null
+  /** 为 false 时不启动全局 setInterval，避免聊天室等页面每秒重绘；getCurrentTimeMs 仍可用 */
+  liveTick?: boolean
 }
 
 export function useWeChatCurrentTime(options?: UseWeChatCurrentTimeOptions) {
   const characterId = options?.characterId?.trim() || ''
+  const liveTick = options?.liveTick !== false
   const [globalConfig, setGlobalConfig] = useState<WeChatTimeConfig>(() => normalizeWeChatTimeConfig())
   const [characterRow, setCharacterRow] = useState<CharacterTimeSettingsRow | null>(null)
   const [timePerceptionEnabled, setTimePerceptionEnabled] = useState(true)
@@ -54,6 +57,10 @@ export function useWeChatCurrentTime(options?: UseWeChatCurrentTimeOptions) {
   }, [reload])
 
   useEffect(() => {
+    if (!liveTick) {
+      setCurrentTimeMs(getCurrentTimeMs())
+      return
+    }
     setCurrentTimeMs(getCurrentTimeMs())
     const tickMs =
       effectiveConfig.mode === 'custom'
@@ -63,7 +70,7 @@ export function useWeChatCurrentTime(options?: UseWeChatCurrentTimeOptions) {
       setCurrentTimeMs(getCurrentTimeMs())
     }, tickMs)
     return () => window.clearInterval(id)
-  }, [effectiveConfig.mode, effectiveConfig.timeMultiplier, getCurrentTimeMs])
+  }, [effectiveConfig.mode, effectiveConfig.timeMultiplier, getCurrentTimeMs, liveTick])
 
   return {
     currentTimeMs,

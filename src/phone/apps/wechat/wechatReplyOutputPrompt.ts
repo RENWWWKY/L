@@ -15,6 +15,7 @@ import {
   WECHAT_STICKER_SEND_CONSERVATIVE_RULE,
 } from './stickers/stickerPromptRules'
 import { buildWeChatTakeoutOrderOutputBlock } from './takeout/takeoutOrderShareAiDirective'
+import { buildWeChatPulseShareOutputBlock } from './pulse/pulseShareAiDirective'
 
 /** 线上私聊与线下约会剧情共用的「高质量爱情观」总纲。 */
 export const LUMI_DOCTRINE_OF_LOVE_APPENDIX = `
@@ -500,6 +501,8 @@ ${CHARACTER_FREE_WILL_ILLUSION_APPENDIX}
 
 {{TAKEOUT_ORDER_SECTION}}
 
+{{PULSE_SHARE_SECTION}}
+
 ---------------------
 【一起听：角色侧播放控制（对用户不可见）】
 ---------------------
@@ -661,6 +664,7 @@ export function buildWechatReplyOutputAppendix(
     romance ? `\n${romance}\n` : '',
   )
     .replace('{{TAKEOUT_ORDER_SECTION}}', buildWeChatTakeoutOrderOutputBlock())
+    .replace('{{PULSE_SHARE_SECTION}}', buildWeChatPulseShareOutputBlock())
     .trim()}\n\n${WECHAT_STICKER_SEND_CONSERVATIVE_RULE}\n\n${WECHAT_STICKER_DESCRIPTION_SEMANTICS_RULE}`
 }
 
