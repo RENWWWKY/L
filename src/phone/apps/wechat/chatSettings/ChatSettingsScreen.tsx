@@ -43,6 +43,11 @@ import {
 import { personaDb } from '../newFriendsPersona/idb'
 import { ChatTimeSettingsScreen } from './ChatTimeSettingsScreen'
 import { ChatFindChatHistoryScreen } from './ChatFindChatHistoryScreen'
+import {
+  ChatEmojiProbabilitySettingsScreen,
+  summarizeEmojiProbabilitySettings,
+  type ChatEmojiProbabilityPatch,
+} from './ChatEmojiProbabilitySettingsScreen'
 import { CreateGroupPickContactsSheet, type CreateGroupContactPick } from '../group/CreateGroupPickContactsSheet'
 
 function WxSwitch({ on, onToggle }: { on: boolean; onToggle: () => void }) {
@@ -328,6 +333,7 @@ export function ChatSettingsScreen({
   const [characterBusy, setCharacterBusy] = useState<CharacterBusySettingsRow | null>(null)
   const [globalModeBusyEnabled, setGlobalModeBusyEnabled] = useState(true)
   const [findHistoryOpen, setFindHistoryOpen] = useState(false)
+  const [emojiProbOpen, setEmojiProbOpen] = useState(false)
   const [stub, setStub] = useState<StubKind | null>(null)
   const [chatBgDraft, setChatBgDraft] = useState('')
   const [chatBgCropSrc, setChatBgCropSrc] = useState<string | null>(null)
@@ -445,6 +451,12 @@ export function ChatSettingsScreen({
           | 'isDanmakuMode'
           | 'chatBackground'
           | 'stickerRoundTriggerPercent'
+          | 'stickerTargetedModeEnabled'
+          | 'stickerTargetedGroups'
+          | 'stickerTargetedEntries'
+          | 'stickerBannedRefs'
+          | 'classicEmojiRoundTriggerPercent'
+          | 'classicEmojiBannedNames'
           | 'voiceRoundTriggerPercent'
           | 'imageRoundTriggerPercent'
           | 'imageRoundCountMin'
@@ -459,6 +471,9 @@ export function ChatSettingsScreen({
         >
       > & {
         clearStickerRoundTriggerPercent?: boolean
+        clearClassicEmojiRoundTriggerPercent?: boolean
+        clearClassicEmojiBannedNames?: boolean
+        clearStickerTargetedConfig?: boolean
         clearVoiceRoundTriggerPercent?: boolean
         clearImageRoundTriggerPercent?: boolean
         clearImageRoundCountRange?: boolean
@@ -478,7 +493,7 @@ export function ChatSettingsScreen({
     [conversationKey, peerCharacterId, playerIdentityId, load],
   )
 
-  const stickerStored = effective.stickerRoundTriggerPercent
+  const emojiProbSummary = summarizeEmojiProbabilitySettings(effective)
   const voiceStored = effective.voiceRoundTriggerPercent
   const imageStored = effective.imageRoundTriggerPercent
   const imageCountMinStored = effective.imageRoundCountMin
@@ -920,20 +935,12 @@ export function ChatSettingsScreen({
             <span className="text-[16px] text-black">主动语音电话</span>
             <Phone className="size-4 shrink-0 text-[#c7c7cc]" aria-hidden />
           </ListRow>
-          <ListRow stacked borderBottom>
-            <div>
-              <span className="text-[16px] text-black">表情包每轮触发概率</span>
-              <p className="mt-1 text-[12px] leading-relaxed text-[#8e8e8e]">
-                拖动滑块设定角色每轮回复中至少发 1 条表情包的目标概率（
-                <span style={phoneNumStyle}>0%</span> 为完全不发）。
-              </p>
-              <RoundTriggerPercentControl
-                kind="sticker"
-                stored={stickerStored}
-                onChange={(percent) => void patch({ stickerRoundTriggerPercent: percent })}
-                onResetDefault={() => void patch({ clearStickerRoundTriggerPercent: true })}
-              />
+          <ListRow onClick={() => setEmojiProbOpen(true)} borderBottom>
+            <div className="min-w-0 flex-1">
+              <span className="text-[16px] text-black">表情包发送概率</span>
+              <p className="mt-1 text-[12px] text-[#8e8e8e]">{emojiProbSummary}</p>
             </div>
+            <ChevronRight className="size-4 shrink-0 text-[#c7c7cc]" aria-hidden />
           </ListRow>
           <ListRow stacked borderBottom>
             <div>
@@ -1084,6 +1091,25 @@ export function ChatSettingsScreen({
       ) : null}
 
       <AnimatePresence>
+        {emojiProbOpen ? (
+          <motion.div
+            key="wx-emoji-probability-settings"
+            initial={disableTransitions ? false : { x: '100%' }}
+            animate={{ x: 0 }}
+            exit={disableTransitions ? { x: 0 } : { x: '100%' }}
+            transition={disableTransitions ? { duration: 0 } : { duration: 0.28, ease: [0.22, 1, 0.36, 1] }}
+            className="absolute inset-0 z-[85] flex min-h-0 flex-col overflow-hidden bg-[#ededed]"
+          >
+            <ChatEmojiProbabilitySettingsScreen
+              peerDisplayName={peerDisplayName}
+              settings={effective}
+              onClose={() => setEmojiProbOpen(false)}
+              onPatch={async (partial: ChatEmojiProbabilityPatch) => {
+                await patch(partial)
+              }}
+            />
+          </motion.div>
+        ) : null}
         {findHistoryOpen ? (
           <motion.div
             key="wx-find-chat-history"

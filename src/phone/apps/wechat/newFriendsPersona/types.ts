@@ -199,6 +199,18 @@ export type ChatConversationSettingsRow = {
   chatBackground: string
   /** 角色每轮至少发 1 条表情包的目标概率 0–100；缺省 = 不覆写系统协议 */
   stickerRoundTriggerPercent?: number
+  /** 定向 GIF 表情包：为 true 时按分组/禁止列表过滤可发条目 */
+  stickerTargetedModeEnabled?: boolean
+  /** 已勾选可发的 GIF 分组 tag（groupTag） */
+  stickerTargetedGroups?: string[]
+  /** 定向 GIF：引用名 → 选用概率 0–100（可选；未设则用展示默认） */
+  stickerTargetedEntries?: Record<string, number>
+  /** 单独永久禁止发送的 GIF 引用名（即使分组已勾选也不发） */
+  stickerBannedRefs?: string[]
+  /** 角色每轮回复中出现微信经典黄脸 inline token 的目标概率 0–100；缺省 = 不覆写系统协议 */
+  classicEmojiRoundTriggerPercent?: number
+  /** 本会话永久禁止发送的经典黄脸名称（不含方括号） */
+  classicEmojiBannedNames?: string[]
   /** 角色每轮回复是否出现语音的目标概率 0–100（门槛，非条数上限；命中后仍可多条 [语音]）；缺省 = 不覆写系统协议（约 30%） */
   voiceRoundTriggerPercent?: number
   /** 角色每轮至少发 1 条 AI 配图（`[图片]`）的目标概率 0–100；缺省 = 0%（不发，用户直接要求除外） */

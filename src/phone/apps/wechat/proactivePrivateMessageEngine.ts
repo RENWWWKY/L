@@ -443,6 +443,14 @@ async function fireProactiveMessage(row: ChatConversationSettingsRow): Promise<v
         worldBookUserLineLabel: worldBookBinding?.lineLabel,
         stickerRoundTriggerPercent: activeRow.stickerRoundTriggerPercent,
         voiceRoundTriggerPercent: activeRow.voiceRoundTriggerPercent,
+        classicEmojiRoundTriggerPercent: activeRow.classicEmojiRoundTriggerPercent,
+        ...(activeRow.stickerTargetedModeEnabled ? { stickerTargetedModeEnabled: true } : {}),
+        ...(activeRow.stickerTargetedGroups?.length ? { stickerTargetedGroups: activeRow.stickerTargetedGroups } : {}),
+        ...(activeRow.stickerTargetedEntries ? { stickerTargetedEntries: activeRow.stickerTargetedEntries } : {}),
+        ...(activeRow.stickerBannedRefs?.length ? { stickerBannedRefs: activeRow.stickerBannedRefs } : {}),
+        ...(activeRow.classicEmojiBannedNames?.length
+          ? { classicEmojiBannedNames: activeRow.classicEmojiBannedNames }
+          : {}),
         ...(characterImageGenEnabled
           ? {
               characterImageGenEnabled: true,

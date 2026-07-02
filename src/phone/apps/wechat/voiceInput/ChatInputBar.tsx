@@ -3,7 +3,7 @@ import { Keyboard, Mic, Paperclip, Plus, Smile } from 'lucide-react'
 import { motion } from 'framer-motion'
 import { Pressable } from '../../../components/Pressable'
 import { wechatChatComposerFontStyle } from '../WeChatChatMixedText'
-import { WeChatComposerField } from '../WeChatComposerField'
+import { WeChatComposerField, WECHAT_COMPOSER_MAX_HEIGHT_PX } from '../WeChatComposerField'
 
 const COMPOSER_ROW_CLASS = 'flex min-h-[36px] min-w-0 flex-1 items-center'
 const COMPOSER_SIDE_BTN_CLASS = 'flex h-7 w-7 shrink-0 items-center justify-center text-[#8E8E93]'
@@ -43,7 +43,7 @@ function resolveSendButtonColor(
   return '#07C160'
 }
 
-function composerTextareaStyle(maxHeight: number): CSSProperties {
+function composerTextareaStyle(maxHeight = WECHAT_COMPOSER_MAX_HEIGHT_PX): CSSProperties {
   return {
     color: 'var(--wx-text)',
     maxHeight,
@@ -175,7 +175,7 @@ export function ChatInputBar({
                 <WeChatComposerField
                   ref={textareaRef}
                   className={COMPOSER_TEXT_CLASS}
-                  style={composerTextareaStyle(96)}
+                  style={composerTextareaStyle()}
                   placeholder="发送消息..."
                   aria-label="输入消息"
                   value={draft}
@@ -240,7 +240,7 @@ export function ChatInputBar({
             <WeChatComposerField
               ref={textareaRef}
               className={COMPOSER_TEXT_CLASS}
-              style={composerTextareaStyle(128)}
+              style={composerTextareaStyle()}
               placeholder="Message"
               aria-label="输入消息"
               value={draft}
@@ -343,7 +343,7 @@ export function ChatInputBar({
             <WeChatComposerField
               ref={textareaRef}
               className={COMPOSER_TEXT_CLASS}
-              style={composerTextareaStyle(96)}
+              style={composerTextareaStyle()}
               placeholder="iMessage"
               aria-label="输入消息"
               value={draft}
@@ -380,7 +380,7 @@ export function ChatInputBar({
     'flex h-7 w-7 shrink-0 items-center justify-center active:opacity-60'
   const wechatSideBtnStyle: CSSProperties = { color: 'var(--wx-chat-input-btn-color, #191919)' }
   const wechatComposerShellClass =
-    'flex min-h-[36px] min-w-0 flex-1 items-center rounded-md border px-3 py-1.5'
+    'flex min-h-[36px] min-w-0 flex-1 items-end overflow-hidden rounded-md border px-3 py-1.5'
   const wechatComposerShellStyle: CSSProperties = {
     backgroundColor: 'var(--wx-chat-input-shell-bg, #ffffff)',
     borderColor: 'var(--wx-chat-input-shell-border, #e5e5e5)',
@@ -388,7 +388,7 @@ export function ChatInputBar({
   }
 
   return (
-    <div className="flex w-full max-w-full items-center gap-3">
+    <div className="flex w-full max-w-full items-end gap-3">
       <Pressable
         type="button"
         aria-label={inputMode === 'text' ? '切换为语音输入' : '切换为文字输入'}
@@ -427,7 +427,7 @@ export function ChatInputBar({
             ref={textareaRef}
             className="min-h-[24px] min-w-0 flex-1 resize-none bg-transparent text-[15px] leading-6 outline-none"
             style={{
-              maxHeight: 96,
+              maxHeight: WECHAT_COMPOSER_MAX_HEIGHT_PX,
               color: 'var(--wx-chat-input-text-color, var(--wx-text))',
               ...wechatChatComposerFontStyle,
             }}
@@ -525,7 +525,7 @@ export function ChatInputBar({
             padding: '10px 16px',
             backgroundColor: lumiShellBg,
             color: 'var(--wx-chat-input-text-color, var(--wx-text))',
-            maxHeight: 120,
+            maxHeight: WECHAT_COMPOSER_MAX_HEIGHT_PX,
             ...wechatChatComposerFontStyle,
           }}
           placeholder="输入消息..."

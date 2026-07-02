@@ -143,6 +143,30 @@ function copyRootImageDirToDist(): Plugin {
   }
 }
 
+/** 构建/开发前同步 BGM 到 public/BGM（避免 Rolldown 打包中文路径 mp3） */
+function syncBgmToPublicPlugin(): Plugin {
+  const bgmSrc = path.resolve(__dirname, 'BGM')
+  const bgmPublic = path.resolve(__dirname, 'public/BGM')
+  const audioExt = /\.(mp3|wav|ogg|m4a|flac|aac)$/i
+
+  const copyBgm = () => {
+    if (!fs.existsSync(bgmSrc)) return
+    fs.mkdirSync(bgmPublic, { recursive: true })
+    for (const ent of fs.readdirSync(bgmSrc, { withFileTypes: true })) {
+      if (!ent.isFile() || !audioExt.test(ent.name)) continue
+      const srcFile = path.join(bgmSrc, ent.name)
+      const destFile = path.join(bgmPublic, ent.name)
+      fs.writeFileSync(destFile, fs.readFileSync(srcFile))
+    }
+  }
+
+  return {
+    name: 'sync-bgm-to-public',
+    buildStart: copyBgm,
+    configureServer: copyBgm,
+  }
+}
+
 /** dev：浏览器 PUT 头像 blob，供 iOS 通知栏直接拉取（绕过自签证书下 /assets 拉取失败） */
 function notifyIconDevServerPlugin(): Plugin {
   const marker = '/__lumi_notify_icon__/'
@@ -232,6 +256,15 @@ export default defineConfig(({ command, mode }) => {
 
   return {
   base,
+  /** Rolldown reporter 对中文路径截断会 panic；产物名只用 hash，并关闭 gzip 体积报告 */
+  build: {
+    reportCompressedSize: false,
+    rolldownOptions: {
+      output: {
+        assetFileNames: 'assets/[hash][extname]',
+      },
+    },
+  },
   plugins: [
     hfMirrorDevProxyPlugin(),
     react(),
@@ -240,6 +273,7 @@ export default defineConfig(({ command, mode }) => {
     injectEarlyServiceWorkerPlugin(),
     notifyIconDevServerPlugin(),
     copyRootImageDirToDist(),
+    syncBgmToPublicPlugin(),
     pwaManifestPlugin(),
     {
       name: 'dev-lan-hint',

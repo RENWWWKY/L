@@ -4,10 +4,10 @@
   "version": "0.0.0",
   "type": "module",
   "scripts": {
-    "dev": "vite",
-    "dev:mobile": "vite --mode mobile",
+    "dev": "node scripts/sync-vn-bgm-manifest.mjs && vite",
+    "dev:mobile": "node scripts/sync-vn-bgm-manifest.mjs && vite --mode mobile",
     "ncm:local": "npx NeteaseCloudMusicApi@4.28.0",
-    "build": "tsc -b && vite build",
+    "build": "node scripts/sync-vn-bgm-manifest.mjs && tsc -b && node scripts/vite-build.mjs",
     "lint": "eslint .",
     "preview": "vite preview"
   },

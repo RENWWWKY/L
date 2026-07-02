@@ -26,6 +26,54 @@ function categoryRank(globKey: string): number {
   return CATEGORY_ORDER.length
 }
 
+const CATEGORY_LABELS: Record<(typeof CATEGORY_ORDER)[number], string> = {
+  face: '表情',
+  gesture: '手势',
+  animal: '动物',
+  blessing: '祝福',
+  other: '其它',
+}
+
+export type WechatClassicStickerGroup = {
+  categoryId: (typeof CATEGORY_ORDER)[number]
+  label: string
+  items: StickerItem[]
+}
+
+function categoryIdFromPath(globKey: string): (typeof CATEGORY_ORDER)[number] {
+  const normalized = globKey.replace(/\\/g, '/').toLowerCase()
+  for (const cat of CATEGORY_ORDER) {
+    if (normalized.includes(`/assets/${cat}/`)) return cat
+  }
+  return 'other'
+}
+
+export function buildWechatClassicStickerGroups(): WechatClassicStickerGroup[] {
+  const keys = Object.keys(wechatClassicModules).sort((a, b) => {
+    const ca = categoryRank(a)
+    const cb = categoryRank(b)
+    if (ca !== cb) return ca - cb
+    return fileLabelFromPath(a).localeCompare(fileLabelFromPath(b), 'zh-CN')
+  })
+  const byCat = new Map<(typeof CATEGORY_ORDER)[number], StickerItem[]>()
+  keys.forEach((k, idx) => {
+    const cat = categoryIdFromPath(k)
+    const list = byCat.get(cat) ?? []
+    list.push({
+      id: `wxc-${idx + 1}`,
+      url: wechatClassicModules[k]!,
+      description: fileLabelFromPath(k),
+      createdAt: 0,
+    })
+    byCat.set(cat, list)
+  })
+  return CATEGORY_ORDER.filter((cat) => (byCat.get(cat)?.length ?? 0) > 0).map((cat) => ({
+    categoryId: cat,
+    label: CATEGORY_LABELS[cat],
+    items: byCat.get(cat) ?? [],
+  }))
+}
+
 export function buildWechatClassicStickerItems(): StickerItem[] {
   const keys = Object.keys(wechatClassicModules).sort((a, b) => {
     const ca = categoryRank(a)

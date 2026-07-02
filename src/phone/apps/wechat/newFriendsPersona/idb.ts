@@ -57,6 +57,12 @@ import {
   parseStoredImageRoundCountRange,
   isImageRoundCountRangeCustomized,
   clampImageRoundCount,
+  isStickerTargetedModeEnabled,
+  normalizeStringList,
+  parseStoredStringList,
+  parseStoredStickerTargetedEntries,
+  coerceStringListForStorage,
+  coerceStickerTargetedEntriesForStorage,
 } from '../wechatMediaSendFrequency'
 import {
   clampProactiveMessageIntervalSeconds,
@@ -1679,10 +1685,27 @@ function normalizeChatConversationSettingsRow(input: unknown): ChatConversationS
       const imageCountMinRaw = (r as { imageRoundCountMin?: unknown }).imageRoundCountMin
       const imageCountMaxRaw = (r as { imageRoundCountMax?: unknown }).imageRoundCountMax
       const imageCountRange = parseStoredImageRoundCountRange(imageCountMinRaw, imageCountMaxRaw)
+      const classicRaw = (r as { classicEmojiRoundTriggerPercent?: unknown }).classicEmojiRoundTriggerPercent
+      const classicEmoji = parseStoredRoundTriggerPercent(classicRaw)
+      const targetedMode = isStickerTargetedModeEnabled(
+        (r as { stickerTargetedModeEnabled?: unknown }).stickerTargetedModeEnabled,
+      )
+      const targetedEntries = parseStoredStickerTargetedEntries(
+        (r as { stickerTargetedEntries?: unknown }).stickerTargetedEntries,
+      )
+      const targetedGroups = parseStoredStringList((r as { stickerTargetedGroups?: unknown }).stickerTargetedGroups)
+      const bannedRefs = normalizeStringList((r as { stickerBannedRefs?: unknown }).stickerBannedRefs)
+      const classicBanned = normalizeStringList((r as { classicEmojiBannedNames?: unknown }).classicEmojiBannedNames)
       return {
         ...(sticker !== undefined ? { stickerRoundTriggerPercent: sticker } : {}),
         ...(voice !== undefined ? { voiceRoundTriggerPercent: voice } : {}),
         ...(image !== undefined ? { imageRoundTriggerPercent: image } : {}),
+        ...(classicEmoji !== undefined ? { classicEmojiRoundTriggerPercent: classicEmoji } : {}),
+        ...(targetedMode ? { stickerTargetedModeEnabled: true } : {}),
+        ...(targetedGroups !== undefined ? { stickerTargetedGroups: targetedGroups } : {}),
+        ...(targetedEntries !== undefined ? { stickerTargetedEntries: targetedEntries } : {}),
+        ...(bannedRefs ? { stickerBannedRefs: bannedRefs } : {}),
+        ...(classicBanned ? { classicEmojiBannedNames: classicBanned } : {}),
         ...(isImageRoundCountRangeCustomized(imageCountMinRaw, imageCountMaxRaw)
           ? {
               imageRoundCountMin: imageCountRange.min,
@@ -8768,6 +8791,9 @@ export class PersonaDb {
       clearVoiceRoundTriggerPercent?: boolean
       clearImageRoundTriggerPercent?: boolean
       clearImageRoundCountRange?: boolean
+      clearClassicEmojiRoundTriggerPercent?: boolean
+      clearClassicEmojiBannedNames?: boolean
+      clearStickerTargetedConfig?: boolean
       clearProactiveMessageIntervalSeconds?: boolean
       clearProactiveMessageVariableIntervalBounds?: boolean
       /** 为 true 时移除主动消息调度锚点（须重新保存间隔后才开始倒计时） */
@@ -8785,6 +8811,12 @@ export class PersonaDb {
         | 'showGroupRankBadgesInChat'
         | 'chatBackground'
         | 'stickerRoundTriggerPercent'
+        | 'stickerTargetedModeEnabled'
+        | 'stickerTargetedGroups'
+        | 'stickerTargetedEntries'
+        | 'stickerBannedRefs'
+        | 'classicEmojiRoundTriggerPercent'
+        | 'classicEmojiBannedNames'
         | 'voiceRoundTriggerPercent'
         | 'imageRoundTriggerPercent'
         | 'imageRoundCountMin'
@@ -8857,6 +8889,57 @@ export class PersonaDb {
           : existing?.voiceRoundTriggerPercent !== undefined
             ? { voiceRoundTriggerPercent: existing.voiceRoundTriggerPercent }
             : {}),
+      ...(params.clearClassicEmojiRoundTriggerPercent
+        ? {}
+        : typeof params.classicEmojiRoundTriggerPercent === 'number' &&
+            Number.isFinite(params.classicEmojiRoundTriggerPercent)
+          ? { classicEmojiRoundTriggerPercent: clampRoundTriggerPercent(params.classicEmojiRoundTriggerPercent) }
+          : existing?.classicEmojiRoundTriggerPercent !== undefined
+            ? { classicEmojiRoundTriggerPercent: existing.classicEmojiRoundTriggerPercent }
+            : {}),
+      ...(params.clearClassicEmojiBannedNames
+        ? {}
+        : params.classicEmojiBannedNames !== undefined
+          ? (() => {
+              const normalized = normalizeStringList(params.classicEmojiBannedNames)
+              return normalized ? { classicEmojiBannedNames: normalized } : {}
+            })()
+          : existing?.classicEmojiBannedNames
+            ? { classicEmojiBannedNames: existing.classicEmojiBannedNames }
+            : {}),
+      ...(params.clearStickerTargetedConfig
+        ? {}
+        : {
+            ...(typeof params.stickerTargetedModeEnabled === 'boolean'
+              ? { stickerTargetedModeEnabled: params.stickerTargetedModeEnabled }
+              : existing?.stickerTargetedModeEnabled
+                ? { stickerTargetedModeEnabled: existing.stickerTargetedModeEnabled }
+                : {}),
+            ...(params.stickerTargetedGroups !== undefined
+              ? (() => {
+                  const normalized = coerceStringListForStorage(params.stickerTargetedGroups)
+                  return normalized !== undefined ? { stickerTargetedGroups: normalized } : {}
+                })()
+              : existing?.stickerTargetedGroups !== undefined
+                ? { stickerTargetedGroups: existing.stickerTargetedGroups }
+                : {}),
+            ...(params.stickerTargetedEntries !== undefined
+              ? (() => {
+                  const normalized = coerceStickerTargetedEntriesForStorage(params.stickerTargetedEntries)
+                  return normalized !== undefined ? { stickerTargetedEntries: normalized } : {}
+                })()
+              : existing?.stickerTargetedEntries !== undefined
+                ? { stickerTargetedEntries: existing.stickerTargetedEntries }
+                : {}),
+            ...(params.stickerBannedRefs !== undefined
+              ? (() => {
+                  const normalized = normalizeStringList(params.stickerBannedRefs)
+                  return normalized ? { stickerBannedRefs: normalized } : {}
+                })()
+              : existing?.stickerBannedRefs
+                ? { stickerBannedRefs: existing.stickerBannedRefs }
+                : {}),
+          }),
       ...(params.clearImageRoundTriggerPercent
         ? {}
         : typeof params.imageRoundTriggerPercent === 'number' && Number.isFinite(params.imageRoundTriggerPercent)

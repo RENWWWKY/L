@@ -6,6 +6,45 @@ import {
   serializeWeChatComposerEl,
 } from './stickers/wechatClassicEmojiComposer'
 
+/** 与 Tailwind `leading-6` 一致：单行 24px */
+export const WECHAT_COMPOSER_LINE_HEIGHT_PX = 24
+export const WECHAT_COMPOSER_MAX_VISIBLE_LINES = 5
+export const WECHAT_COMPOSER_MAX_HEIGHT_PX =
+  WECHAT_COMPOSER_LINE_HEIGHT_PX * WECHAT_COMPOSER_MAX_VISIBLE_LINES
+export const WECHAT_COMPOSER_MIN_HEIGHT_PX = WECHAT_COMPOSER_LINE_HEIGHT_PX
+
+export const weChatComposerScrollStyle: CSSProperties = {
+  overflowX: 'hidden',
+  overflowY: 'auto',
+  overscrollBehavior: 'contain',
+  WebkitOverflowScrolling: 'touch',
+}
+
+function syncComposerCaretScroll(el: HTMLElement) {
+  if (el.scrollHeight <= el.clientHeight + 1) return
+  const sel = window.getSelection()
+  if (!sel || sel.rangeCount === 0 || !el.contains(sel.anchorNode)) return
+  const range = sel.getRangeAt(0)
+  const caret = range.getBoundingClientRect()
+  const box = el.getBoundingClientRect()
+  if (caret.bottom > box.bottom - 2) {
+    el.scrollTop += caret.bottom - box.bottom + 4
+  } else if (caret.top < box.top + 2) {
+    el.scrollTop -= box.top + 2 - caret.top
+  }
+}
+
+function syncComposerSize(el: HTMLElement) {
+  el.style.maxHeight = `${WECHAT_COMPOSER_MAX_HEIGHT_PX}px`
+  el.style.height = '0px'
+  const next = Math.min(
+    WECHAT_COMPOSER_MAX_HEIGHT_PX,
+    Math.max(WECHAT_COMPOSER_MIN_HEIGHT_PX, el.scrollHeight),
+  )
+  el.style.height = `${next}px`
+  syncComposerCaretScroll(el)
+}
+
 type Props = {
   value: string
   onChange: (next: string) => void
@@ -39,12 +78,11 @@ export function WeChatComposerField({
     const el = rootRef.current
     if (!el) return
     const current = serializeWeChatComposerEl(el)
-    if (current === value) {
-      lastEmittedRef.current = value
-      return
+    if (current !== value) {
+      applyWeChatComposerText(el, value)
     }
-    applyWeChatComposerText(el, value)
     lastEmittedRef.current = value
+    syncComposerSize(el)
   }, [value])
 
   const emitFromDom = () => {
@@ -52,6 +90,7 @@ export function WeChatComposerField({
     if (!el) return
     const next = serializeWeChatComposerEl(el)
     lastEmittedRef.current = next
+    syncComposerSize(el)
     onChange(next)
   }
 
@@ -65,7 +104,7 @@ export function WeChatComposerField({
       suppressContentEditableWarning
       data-placeholder={placeholder || undefined}
       className={`${className ?? ''} whitespace-pre-wrap break-words outline-none empty:before:pointer-events-none empty:before:text-[#8E8E93] empty:before:content-[attr(data-placeholder)]`}
-      style={style}
+      style={{ ...weChatComposerScrollStyle, ...style }}
       {...rest}
       onInput={() => {
         if (composingRef.current) return

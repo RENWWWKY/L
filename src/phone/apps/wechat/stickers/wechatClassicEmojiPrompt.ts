@@ -17,20 +17,34 @@ export const WECHAT_CLASSIC_EMOJI_SEND_RULE = `
 - **仍须贴脸**：严肃争吵、冷战、分手谈判、正式通知、对方明显需要被认真对待时，**优先纯文字**把事说清楚，勿用黄脸糊弄。
 `.trim()
 
-export function buildWechatClassicEmojiCatalogPromptBlock(maxChars = 4200): string {
-  const items = buildWechatClassicStickerItems()
-  if (!items.length) return ''
+export function buildWechatClassicEmojiCatalogPromptBlock(
+  maxChars = 4200,
+  bannedNames?: string[],
+): string {
+  const banned = new Set((bannedNames ?? []).map((x) => x.trim()).filter(Boolean))
+  const items = buildWechatClassicStickerItems().filter((it) => !banned.has(it.description.trim()))
+  if (!items.length) {
+    return `---------------------
+【微信经典表情（inline · 写进文字行；非 [表情包] GIF）】
+---------------------
+当前会话在聊天信息中已禁止全部经典黄脸；**不要**在文字行内写 \`[呲牙]\` 等 token。
+`
+  }
   const names = items.map((it) => it.description)
   let body = names.join('、')
   if (body.length > maxChars) {
     body = `${body.slice(0, maxChars)}…（目录过长已截断，请只用已列名称）`
   }
+  const banBlock =
+    banned.size > 0
+      ? `\n\n**永久禁止（勿使用）**：${[...banned].map((n) => `\`[${n}]\``).join('、')}`
+      : ''
   return `---------------------
 【微信经典表情（inline · 写进文字行；非 [表情包] GIF）】
 ---------------------
 ${WECHAT_CLASSIC_EMOJI_SEND_RULE}
 
 可用名称（正文里用方括号包裹，如 \`[微笑]\`）：
-${body}
+${body}${banBlock}
 `
 }

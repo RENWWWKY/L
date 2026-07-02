@@ -164,6 +164,7 @@ import {
   shouldSuppressCharacterStickerLine,
   shouldSuppressCharacterVoiceLine,
   shouldSuppressCharacterImageLine,
+  stripBannedClassicEmojiTokens,
 } from './wechatMediaSendFrequency'
 import {
   buildCharacterImageGenPromptBlock,
@@ -479,7 +480,7 @@ import {
   readWeChatComposerDraftText,
   serializeWeChatComposerEl,
 } from './stickers/wechatClassicEmojiComposer'
-import { ensureStickerStoreHydrated, parseCharacterStickerLine } from './stickers/stickerStore'
+import { ensureStickerStoreHydrated, getStickerCatalogEntries, parseCharacterStickerLine } from './stickers/stickerStore'
 import {
   collectRecentCharacterStickerRefsFromTranscript,
   collectRecentCharacterStickerRefsFromMessages,
@@ -2718,13 +2719,19 @@ export function ChatRoomInner({
   const aiContextDbMessagesRef = useRef<WeChatChatMessage[]>([])
   /** 会话设置里的「仅 UI 隐藏」截止时间；≤ 此时间的消息不展示在列表中 */
   const uiOnlyHiddenCutTsRef = useRef<number | null>(null)
-  /** 私聊「聊天信息」：角色发表情包 / 语音每轮是否出现的触发概率（undefined = 未定制；命中后仍可多条） */
+  /** 私聊「聊天信息」：角色发表情包 / 语音 / 黄脸每轮是否出现的触发概率（undefined = 未定制；命中后仍可多条） */
   const convMediaFreqRef = useRef<{
     sticker?: number
     voice?: number
     image?: number
     imageCountMin?: number
     imageCountMax?: number
+    classicEmoji?: number
+    stickerTargetedModeEnabled?: boolean
+    stickerTargetedGroups?: string[]
+    stickerTargetedEntries?: import('./wechatMediaSendFrequency').StickerTargetedEntryMap
+    stickerBannedRefs?: string[]
+    classicEmojiBannedNames?: string[]
   }>({})
   /** 与 ref 同步，供列表渲染兜底：即使 items 曾短暂含「仅 UI 清空」区间消息，也不在前端露出（回收站快照对应内容） */
   const [uiOnlyHiddenCutForView, setUiOnlyHiddenCutForView] = useState<number | null>(null)
@@ -3878,6 +3885,12 @@ export function ChatRoomInner({
         image: parseStoredRoundTriggerPercent(convSt?.imageRoundTriggerPercent),
         imageCountMin: convSt?.imageRoundCountMin,
         imageCountMax: convSt?.imageRoundCountMax,
+        classicEmoji: parseStoredRoundTriggerPercent(convSt?.classicEmojiRoundTriggerPercent),
+        stickerTargetedModeEnabled: convSt?.stickerTargetedModeEnabled === true,
+        stickerTargetedGroups: convSt?.stickerTargetedGroups,
+        stickerTargetedEntries: convSt?.stickerTargetedEntries,
+        stickerBannedRefs: convSt?.stickerBannedRefs,
+        classicEmojiBannedNames: convSt?.classicEmojiBannedNames,
       }
       const peerCid = (personaCharacterId?.trim() || conversationCharacterId.trim()) || undefined
       const msgsForWeChat = stripLegacyMeetImportedWeChatMessages(msgs, peerCid)
@@ -7521,6 +7534,12 @@ export function ChatRoomInner({
             let peerMediaFreqExtras: {
               stickerRoundTriggerPercent?: number
               voiceRoundTriggerPercent?: number
+              classicEmojiRoundTriggerPercent?: number
+              stickerTargetedModeEnabled?: boolean
+              stickerTargetedGroups?: string[]
+              stickerTargetedEntries?: import('./wechatMediaSendFrequency').StickerTargetedEntryMap
+              stickerBannedRefs?: string[]
+              classicEmojiBannedNames?: string[]
             } = {}
             if (roomType !== 'group') {
               let sticker = convMediaFreqRef.current.sticker
@@ -7528,6 +7547,12 @@ export function ChatRoomInner({
               let image = convMediaFreqRef.current.image
               let imageCountMin = convMediaFreqRef.current.imageCountMin
               let imageCountMax = convMediaFreqRef.current.imageCountMax
+              let classicEmoji = convMediaFreqRef.current.classicEmoji
+              let stickerTargetedModeEnabled = convMediaFreqRef.current.stickerTargetedModeEnabled
+              let stickerTargetedGroups = convMediaFreqRef.current.stickerTargetedGroups
+              let stickerTargetedEntries = convMediaFreqRef.current.stickerTargetedEntries
+              let stickerBannedRefs = convMediaFreqRef.current.stickerBannedRefs
+              let classicEmojiBannedNames = convMediaFreqRef.current.classicEmojiBannedNames
               try {
                 const freshConv = await personaDb.getChatConversationSettings(conversationKey)
                 sticker = parseStoredRoundTriggerPercent(freshConv?.stickerRoundTriggerPercent)
@@ -7535,7 +7560,25 @@ export function ChatRoomInner({
                 image = parseStoredRoundTriggerPercent(freshConv?.imageRoundTriggerPercent)
                 imageCountMin = freshConv?.imageRoundCountMin
                 imageCountMax = freshConv?.imageRoundCountMax
-                convMediaFreqRef.current = { sticker, voice, image, imageCountMin, imageCountMax }
+                classicEmoji = parseStoredRoundTriggerPercent(freshConv?.classicEmojiRoundTriggerPercent)
+                stickerTargetedModeEnabled = freshConv?.stickerTargetedModeEnabled === true
+                stickerTargetedGroups = freshConv?.stickerTargetedGroups
+                stickerTargetedEntries = freshConv?.stickerTargetedEntries
+                stickerBannedRefs = freshConv?.stickerBannedRefs
+                classicEmojiBannedNames = freshConv?.classicEmojiBannedNames
+                convMediaFreqRef.current = {
+                  sticker,
+                  voice,
+                  image,
+                  imageCountMin,
+                  imageCountMax,
+                  classicEmoji,
+                  stickerTargetedModeEnabled,
+                  stickerTargetedGroups,
+                  stickerTargetedEntries,
+                  stickerBannedRefs,
+                  classicEmojiBannedNames,
+                }
               } catch {
                 /* keep ref */
               }
@@ -7545,6 +7588,12 @@ export function ChatRoomInner({
               peerMediaFreqExtras = {
                 ...(sticker !== undefined ? { stickerRoundTriggerPercent: sticker } : {}),
                 ...(voice !== undefined ? { voiceRoundTriggerPercent: voice } : {}),
+                ...(classicEmoji !== undefined ? { classicEmojiRoundTriggerPercent: classicEmoji } : {}),
+                ...(stickerTargetedModeEnabled ? { stickerTargetedModeEnabled: true } : {}),
+                ...(stickerTargetedGroups?.length ? { stickerTargetedGroups } : {}),
+                ...(stickerTargetedEntries ? { stickerTargetedEntries } : {}),
+                ...(stickerBannedRefs?.length ? { stickerBannedRefs } : {}),
+                ...(classicEmojiBannedNames?.length ? { classicEmojiBannedNames } : {}),
               }
             }
             resolvedImageGenSettings = await loadResolvedImageGenSettings()
@@ -9382,8 +9431,12 @@ export function ChatRoomInner({
               i -= 1
               continue
             }
-            const currentLine = expandedLines[0] ?? normalizedRawLine
-            if (!currentLine) continue
+            const currentLineRaw = expandedLines[0] ?? normalizedRawLine
+            let currentLine =
+              roomType !== 'group'
+                ? stripBannedClassicEmojiTokens(currentLineRaw, convMediaFreqRef.current.classicEmojiBannedNames)
+                : currentLineRaw
+            if (!currentLine.trim()) continue
             if (currentLine === WECHAT_RECALL_ACTION_TOKEN) {
               const lastId = emittedMessageOrderThisRound.length ? emittedMessageOrderThisRound[emittedMessageOrderThisRound.length - 1] : ''
               if (!lastId) continue
@@ -10101,12 +10154,19 @@ export function ChatRoomInner({
 
             const charSticker = parseCharacterStickerLine(currentLine)
             if (charSticker) {
+              const stickerGroupTag = getStickerCatalogEntries().find((e) => e.ref === charSticker.ref)?.groupTag
               if (
                 shouldSuppressCharacterStickerLine(
                   roomType,
                   convMediaFreqRef.current.sticker,
                   roundStickerAllowed,
                   roundUserExplicitStickerRequest,
+                  convMediaFreqRef.current.stickerTargetedModeEnabled,
+                  convMediaFreqRef.current.stickerTargetedGroups,
+                  convMediaFreqRef.current.stickerTargetedEntries,
+                  convMediaFreqRef.current.stickerBannedRefs,
+                  charSticker.ref,
+                  stickerGroupTag,
                 )
               ) {
                 logConsole(
@@ -14169,18 +14229,6 @@ export function ChatRoomInner({
       }
     }
   }, [])
-
-  useLayoutEffect(() => {
-    const ta = textareaRef.current
-    if (!ta || inputMode !== 'text') return
-    ta.style.height = '0px'
-    const compactComposer = inputBarLayout === 'imessage' || inputBarLayout === 'telegram' || inputBarLayout === 'talkmaker'
-    const minH = compactComposer ? 24 : 44
-    const maxH =
-      inputBarLayout === 'telegram' ? 128 : inputBarLayout === 'imessage' ? 96 : inputBarLayout === 'talkmaker' ? 96 : 120
-    const next = Math.min(maxH, Math.max(minH, ta.scrollHeight))
-    ta.style.height = `${next}px`
-  }, [draft, inputMode, inputBarLayout])
 
   const bgUrl = chatBackgroundUrl?.trim()
   const defaultRoomBgStyle = useMemo(

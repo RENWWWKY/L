@@ -65,6 +65,7 @@ import { buildWechatClassicEmojiCatalogPromptBlock } from './stickers/wechatClas
 import { collectRecentCharacterStickerRefsFromTranscript } from './stickers/stickerAntiRepeat'
 import { buildStickerAntiRepeatPromptBlock } from './stickers/stickerPromptRules'
 import {
+  buildClassicEmojiBanPromptBlock,
   buildMediaSendFrequencyPromptBlock,
   resolveStickerCatalogPromptBlockForSession,
 } from './wechatMediaSendFrequency'
@@ -182,21 +183,49 @@ function loreArchiveForbidsStickerSending(loreInject: string): boolean {
 function resolveStickerCatalogPromptBlockForLore(
   loreInject: string,
   stickerRoundTriggerPercent?: number,
+  stickerTargetedModeEnabled?: boolean,
+  enabledGroups?: string[],
+  stickerTargetedEntries?: import('./wechatMediaSendFrequency').StickerTargetedEntryMap,
+  bannedRefs?: string[],
 ): string {
   return resolveStickerCatalogPromptBlockForSession(
     loreArchiveForbidsStickerSending(loreInject),
     stickerRoundTriggerPercent,
-    buildStickerCatalogPromptBlock,
+    () =>
+      buildStickerCatalogPromptBlock(96, 9500, {
+        targetedModeEnabled: stickerTargetedModeEnabled,
+        enabledGroups,
+        targetedEntries: stickerTargetedEntries,
+        bannedRefs,
+      }),
+    stickerTargetedModeEnabled,
+    enabledGroups,
+    stickerTargetedEntries,
+    bannedRefs,
   )
 }
 
 function buildWeChatStickerAndClassicEmojiPromptBlocks(
   loreInject: string,
   stickerRoundTriggerPercent?: number,
+  stickerTargetedModeEnabled?: boolean,
+  enabledGroups?: string[],
+  stickerTargetedEntries?: import('./wechatMediaSendFrequency').StickerTargetedEntryMap,
+  bannedRefs?: string[],
+  classicEmojiBannedNames?: string[],
 ): string {
-  const stickerCat = resolveStickerCatalogPromptBlockForLore(loreInject, stickerRoundTriggerPercent)
-  const classicCat = buildWechatClassicEmojiCatalogPromptBlock()
-  return classicCat ? `${stickerCat}\n\n${classicCat}` : stickerCat
+  const stickerCat = resolveStickerCatalogPromptBlockForLore(
+    loreInject,
+    stickerRoundTriggerPercent,
+    stickerTargetedModeEnabled,
+    enabledGroups,
+    stickerTargetedEntries,
+    bannedRefs,
+  )
+  const classicCat = buildWechatClassicEmojiCatalogPromptBlock(4200, classicEmojiBannedNames)
+  const classicBan = buildClassicEmojiBanPromptBlock(classicEmojiBannedNames)
+  const classicBlock = classicBan ? `${classicCat}\n\n${classicBan}` : classicCat
+  return classicBlock ? `${stickerCat}\n\n${classicBlock}` : stickerCat
 }
 
 /** 微信单聊主回复（含思维链解析路径）completion 上限；仍受模型/API 限制 */
@@ -1332,6 +1361,12 @@ export async function requestWeChatPeerReplyBubbles(params: {
   worldBookPlayerIdentity?: PlayerIdentity | null
   worldBookUserLineLabel?: string
   stickerRoundTriggerPercent?: number
+  stickerTargetedModeEnabled?: boolean
+  stickerTargetedGroups?: string[]
+  stickerTargetedEntries?: import('./wechatMediaSendFrequency').StickerTargetedEntryMap
+  stickerBannedRefs?: string[]
+  classicEmojiRoundTriggerPercent?: number
+  classicEmojiBannedNames?: string[]
   voiceRoundTriggerPercent?: number
   /** 角色 AI 配图每轮触发概率（缺省 0%） */
   imageRoundTriggerPercent?: number
@@ -1373,6 +1408,7 @@ export async function requestWeChatPeerReplyBubbles(params: {
   const mediaFreqBlock = buildMediaSendFrequencyPromptBlock({
     stickerRoundTriggerPercent: params.stickerRoundTriggerPercent,
     voiceRoundTriggerPercent: params.voiceRoundTriggerPercent,
+    classicEmojiRoundTriggerPercent: params.classicEmojiRoundTriggerPercent,
     ...(params.characterImageGenEnabled
       ? {
           imageRoundTriggerPercent: params.imageRoundTriggerPercent,
@@ -1422,6 +1458,11 @@ export async function requestWeChatPeerReplyBubbles(params: {
   const stickerCat = buildWeChatStickerAndClassicEmojiPromptBlocks(
     loreInjectForStickerPolicy,
     params.stickerRoundTriggerPercent,
+    params.stickerTargetedModeEnabled,
+    params.stickerTargetedGroups,
+    params.stickerTargetedEntries,
+    params.stickerBannedRefs,
+    params.classicEmojiBannedNames,
   )
   const stickerAntiRepeat = buildStickerAntiRepeatPromptBlock(
     collectRecentCharacterStickerRefsFromTranscript(params.transcript),
@@ -1755,6 +1796,12 @@ export async function requestWeChatPeerReplyBubblesWithImage(params: {
   worldBookPlayerIdentity?: PlayerIdentity | null
   worldBookUserLineLabel?: string
   stickerRoundTriggerPercent?: number
+  stickerTargetedModeEnabled?: boolean
+  stickerTargetedGroups?: string[]
+  stickerTargetedEntries?: import('./wechatMediaSendFrequency').StickerTargetedEntryMap
+  stickerBannedRefs?: string[]
+  classicEmojiRoundTriggerPercent?: number
+  classicEmojiBannedNames?: string[]
   voiceRoundTriggerPercent?: number
   imageRoundTriggerPercent?: number
   imageRoundCountMin?: number
@@ -1783,6 +1830,7 @@ export async function requestWeChatPeerReplyBubblesWithImage(params: {
   const mediaFreqBlock = buildMediaSendFrequencyPromptBlock({
     stickerRoundTriggerPercent: params.stickerRoundTriggerPercent,
     voiceRoundTriggerPercent: params.voiceRoundTriggerPercent,
+    classicEmojiRoundTriggerPercent: params.classicEmojiRoundTriggerPercent,
     ...(params.characterImageGenEnabled
       ? {
           imageRoundTriggerPercent: params.imageRoundTriggerPercent,
@@ -1838,6 +1886,11 @@ export async function requestWeChatPeerReplyBubblesWithImage(params: {
   const stickerCat = buildWeChatStickerAndClassicEmojiPromptBlocks(
     loreInjectForStickerPolicy,
     params.stickerRoundTriggerPercent,
+    params.stickerTargetedModeEnabled,
+    params.stickerTargetedGroups,
+    params.stickerTargetedEntries,
+    params.stickerBannedRefs,
+    params.classicEmojiBannedNames,
   )
   const stickerAntiRepeat = buildStickerAntiRepeatPromptBlock(
     collectRecentCharacterStickerRefsFromTranscript(params.transcript),

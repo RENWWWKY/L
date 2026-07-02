@@ -2,6 +2,8 @@
 export const VOICE_PROTOCOL_DEFAULT_ROUND_TRIGGER_PERCENT = 30
 /** 聊天信息页未定制时，表情包 slider 的展示默认值（协议本身无固定百分比） */
 export const STICKER_UI_DEFAULT_ROUND_TRIGGER_PERCENT = 40
+/** 聊天信息页未定制时，微信经典黄脸 slider 的展示默认值（协议本身无固定百分比） */
+export const CLASSIC_EMOJI_UI_DEFAULT_ROUND_TRIGGER_PERCENT = 60
 /** 聊天信息页未定制时，角色 AI 配图每轮触发概率的默认值 */
 export const IMAGE_DEFAULT_ROUND_TRIGGER_PERCENT = 0
 /** 每次发图张数下限 / 上限 */
@@ -30,14 +32,286 @@ export function parseStoredRoundTriggerPercent(raw: unknown): number | undefined
   return undefined
 }
 
-/** UI 展示用：未定制时语音 30%、表情包 40、AI 配图 0 */
+/** UI 展示用：未定制时语音 30%、表情包 40、黄脸 60、AI 配图 0 */
 export function displayRoundTriggerPercent(
   stored: number | undefined,
-  kind: 'voice' | 'sticker' | 'image',
+  kind: 'voice' | 'sticker' | 'image' | 'classicEmoji',
 ): number {
   if (stored !== undefined) return stored
   if (kind === 'image') return IMAGE_DEFAULT_ROUND_TRIGGER_PERCENT
-  return kind === 'voice' ? VOICE_PROTOCOL_DEFAULT_ROUND_TRIGGER_PERCENT : STICKER_UI_DEFAULT_ROUND_TRIGGER_PERCENT
+  if (kind === 'voice') return VOICE_PROTOCOL_DEFAULT_ROUND_TRIGGER_PERCENT
+  if (kind === 'classicEmoji') return CLASSIC_EMOJI_UI_DEFAULT_ROUND_TRIGGER_PERCENT
+  return STICKER_UI_DEFAULT_ROUND_TRIGGER_PERCENT
+}
+
+export type StickerTargetedEntryMap = Record<string, number>
+
+/** 规范化字符串列表（去重、去空）；空数组视为「未设置」 */
+export function normalizeStringList(raw: unknown): string[] | undefined {
+  if (!Array.isArray(raw)) return undefined
+  const out: string[] = []
+  const seen = new Set<string>()
+  for (const item of raw) {
+    const s = String(item ?? '').trim()
+    if (!s || seen.has(s)) continue
+    seen.add(s)
+    out.push(s)
+  }
+  return out.length ? out : undefined
+}
+
+/** 写入存储用：array 输入始终返回 string[]（可为 []，表示已清空） */
+export function coerceStringListForStorage(raw: unknown): string[] | undefined {
+  if (!Array.isArray(raw)) return undefined
+  const out: string[] = []
+  const seen = new Set<string>()
+  for (const item of raw) {
+    const s = String(item ?? '').trim()
+    if (!s || seen.has(s)) continue
+    seen.add(s)
+    out.push(s)
+  }
+  return out
+}
+
+/** 从 DB 读取：字段为 array 时返回 string[]（含 []）；否则 undefined = 从未设置 */
+export function parseStoredStringList(raw: unknown): string[] | undefined {
+  if (!Array.isArray(raw)) return undefined
+  return coerceStringListForStorage(raw) ?? []
+}
+
+/** 规范化定向 GIF 表情包条目：去空 key、概率 clamp 0–100；空对象视为「未设置」 */
+export function normalizeStickerTargetedEntries(raw: unknown): StickerTargetedEntryMap | undefined {
+  if (!raw || typeof raw !== 'object') return undefined
+  const out: StickerTargetedEntryMap = {}
+  for (const [key, value] of Object.entries(raw as Record<string, unknown>)) {
+    const ref = String(key ?? '').trim()
+    if (!ref) continue
+    if (typeof value !== 'number' || !Number.isFinite(value)) continue
+    out[ref] = clampRoundTriggerPercent(value)
+  }
+  return Object.keys(out).length ? out : undefined
+}
+
+/** 写入存储用：object 输入始终返回 map（可为 {}，表示已清空） */
+export function coerceStickerTargetedEntriesForStorage(raw: unknown): StickerTargetedEntryMap | undefined {
+  if (raw === null || raw === undefined) return undefined
+  if (typeof raw !== 'object' || Array.isArray(raw)) return undefined
+  const out: StickerTargetedEntryMap = {}
+  for (const [key, value] of Object.entries(raw as Record<string, unknown>)) {
+    const ref = String(key ?? '').trim()
+    if (!ref) continue
+    if (typeof value !== 'number' || !Number.isFinite(value)) continue
+    out[ref] = clampRoundTriggerPercent(value)
+  }
+  return out
+}
+
+/** 从 DB 读取：字段为 object 时返回 map（含 {}）；否则 undefined = 从未设置 */
+export function parseStoredStickerTargetedEntries(raw: unknown): StickerTargetedEntryMap | undefined {
+  if (raw === null || raw === undefined) return undefined
+  if (typeof raw !== 'object' || Array.isArray(raw)) return undefined
+  return coerceStickerTargetedEntriesForStorage(raw) ?? {}
+}
+
+export function isStickerTargetedModeEnabled(raw: unknown): boolean {
+  return raw === true
+}
+
+export function countStickerTargetedEntries(entries: StickerTargetedEntryMap | undefined): number {
+  return entries ? Object.keys(entries).length : 0
+}
+
+export function countStickerTargetedGroups(groups: string[] | undefined): number {
+  return groups?.length ?? 0
+}
+
+export function countStickerBannedRefs(refs: string[] | undefined): number {
+  return refs?.length ?? 0
+}
+
+export function countClassicEmojiBannedNames(names: string[] | undefined): number {
+  return names?.length ?? 0
+}
+
+/** 单条定向 GIF 的有效选用概率（未单独设置时用 UI 默认值） */
+export function effectiveStickerTargetedPercent(
+  ref: string,
+  targeted: StickerTargetedEntryMap | undefined,
+): number {
+  const stored = targeted?.[ref]
+  return stored !== undefined ? stored : STICKER_UI_DEFAULT_ROUND_TRIGGER_PERCENT
+}
+
+/** 分组内可发表情的统一/混合概率展示 */
+export function resolveStickerGroupTargetedPercent(
+  refs: string[],
+  bannedRefs: Set<string>,
+  targeted: StickerTargetedEntryMap | undefined,
+): { percent: number; mixed: boolean } {
+  const allowed = refs.filter((r) => !bannedRefs.has(r))
+  if (!allowed.length) {
+    return { percent: STICKER_UI_DEFAULT_ROUND_TRIGGER_PERCENT, mixed: false }
+  }
+  const percents = allowed.map((r) => effectiveStickerTargetedPercent(r, targeted))
+  const first = percents[0]!
+  const mixed = percents.some((p) => p !== first)
+  if (!mixed) return { percent: first, mixed: false }
+  const avg = Math.round(percents.reduce((sum, p) => sum + p, 0) / percents.length)
+  return { percent: avg, mixed: true }
+}
+
+/** 批量设置分组内未禁止表情的选用概率 */
+export function applyStickerGroupTargetedPercent(
+  refs: string[],
+  bannedRefs: Set<string>,
+  targeted: StickerTargetedEntryMap | undefined,
+  percent: number,
+): StickerTargetedEntryMap {
+  const next = { ...(targeted ?? {}) }
+  const clamped = clampRoundTriggerPercent(percent)
+  for (const ref of refs) {
+    if (bannedRefs.has(ref)) continue
+    next[ref] = clamped
+  }
+  return next
+}
+
+/** 旧版仅 ref 白名单时，从目录反推已勾选分组 */
+export function inferStickerTargetedGroupsFromEntries(
+  entries: StickerTargetedEntryMap | undefined,
+  catalog: Array<{ ref: string; groupTag: string }>,
+): string[] {
+  if (!entries || !Object.keys(entries).length) return []
+  const groups = new Set<string>()
+  for (const ref of Object.keys(entries)) {
+    const hit = catalog.find((e) => e.ref === ref)
+    if (hit?.groupTag) groups.add(hit.groupTag)
+  }
+  return [...groups]
+}
+
+export function isStickerRefAllowedInSession(
+  ref: string,
+  groupTag: string | undefined,
+  targetedModeEnabled: boolean | undefined,
+  enabledGroups: string[] | undefined,
+  targetedEntries: StickerTargetedEntryMap | undefined,
+  bannedRefs: string[] | undefined,
+): boolean {
+  const normalizedRef = String(ref ?? '').trim()
+  if (!normalizedRef) return false
+  const banned = new Set((bannedRefs ?? []).map((r) => r.trim()).filter(Boolean))
+  if (banned.has(normalizedRef)) return false
+
+  if (!targetedModeEnabled) return true
+
+  const groups = enabledGroups ?? []
+  const entries = targetedEntries ?? {}
+  const entryPct = entries[normalizedRef]
+  if (entryPct === 0) return false
+
+  if (groups.length > 0) {
+    const tag = String(groupTag ?? '').trim()
+    if (!tag || !groups.includes(tag)) return false
+    if (typeof entryPct === 'number') return entryPct > 0
+    return true
+  }
+
+  if (normalizedRef in entries) return entries[normalizedRef]! > 0
+  return false
+}
+
+export function isClassicEmojiNameAllowed(name: string, bannedNames: string[] | undefined): boolean {
+  const n = String(name ?? '').trim()
+  if (!n) return false
+  const banned = new Set((bannedNames ?? []).map((x) => x.trim()).filter(Boolean))
+  return !banned.has(n)
+}
+
+/** 从角色文字气泡中移除本会话禁止的经典黄脸 token */
+export function stripBannedClassicEmojiTokens(text: string, bannedNames: string[] | undefined): string {
+  if (!bannedNames?.length || !text) return text
+  const banned = new Set(bannedNames.map((x) => x.trim()).filter(Boolean))
+  if (!banned.size) return text
+  return text.replace(/\[([^\[\]\n]{1,24})\]/g, (full, name: string) => {
+    if (banned.has(String(name).trim())) return ''
+    return full
+  })
+}
+
+export function buildStickerTargetedRulesPromptBlock(
+  targetedModeEnabled: boolean | undefined,
+  enabledGroups: string[] | undefined,
+  targetedEntries: StickerTargetedEntryMap | undefined,
+  bannedRefs: string[] | undefined,
+): string {
+  if (!targetedModeEnabled) {
+    const banned = (bannedRefs ?? []).filter(Boolean)
+    if (!banned.length) return ''
+    return `---------------------
+【GIF 表情包 · 永久禁止（本会话）】
+---------------------
+下列引用名**永久禁止**输出（即使用户发表情包也不要回发这些）：
+${banned.map((ref) => `- \`[表情包]${ref}\``).join('\n')}
+`
+  }
+
+  const groups = enabledGroups ?? []
+  const entries = targetedEntries ?? {}
+  const banned = (bannedRefs ?? []).filter(Boolean)
+
+  if (!groups.length && !Object.keys(entries).length) {
+    return `---------------------
+【定向 GIF 表情包（本会话）】
+---------------------
+用户在「聊天信息 → 表情包发送概率 → 定向 GIF」中已开启限制，但**未勾选任何分组**。
+本轮 **禁止** 输出任何 \`[表情包]\` 行；仅可用文字与微信经典黄脸（若未另行禁止）。
+`
+  }
+
+  const lines: string[] = [
+    '---------------------',
+    '【定向 GIF 表情包（本会话）】',
+    '---------------------',
+    '用户在聊天信息中已勾选允许的分组；**禁止** 使用未勾选分组内的引用名。',
+  ]
+
+  if (groups.length) {
+    lines.push(`**已勾选分组**：${groups.join('、')}`)
+  }
+
+  const entryLines = Object.keys(entries)
+    .sort((a, b) => a.localeCompare(b, 'zh-CN'))
+    .map((ref) => {
+      const pct = entries[ref]!
+      if (pct <= 0) return `- \`[表情包]${ref}\` — **禁止**（概率 0%）`
+      if (pct >= 100) return `- \`[表情包]${ref}\` — 允许（概率 100%，贴脸时优先）`
+      return `- \`[表情包]${ref}\` — 允许（选用概率约 ${pct}%）`
+    })
+  if (entryLines.length) {
+    lines.push('**条目选用概率（在该轮已允许发 GIF 时生效）**：')
+    lines.push(...entryLines)
+  }
+
+  if (banned.length) {
+    lines.push('**下列引用名永久禁止（即使分组已勾选也不发）**：')
+    lines.push(...banned.map((ref) => `- \`[表情包]${ref}\``))
+  }
+
+  lines.push('贴脸优先；无合适条目则只发文字。')
+  return `${lines.join('\n')}\n`
+}
+
+export function buildClassicEmojiBanPromptBlock(bannedNames: string[] | undefined): string {
+  const banned = (bannedNames ?? []).map((x) => x.trim()).filter(Boolean)
+  if (!banned.length) return ''
+  return `---------------------
+【微信经典黄脸 · 永久禁止（本会话）】
+---------------------
+用户在聊天信息中已禁止下列经典黄脸；**不要**在文字行内写对应 token：
+${banned.map((name) => `- \`[${name}]\``).join('\n')}
+`
 }
 
 /** AI 配图：未存储时视为 0% */
@@ -123,6 +397,7 @@ const STICKER_CATALOG_SUPPRESSED_BY_USER = `---------------------
 export function buildMediaSendFrequencyPromptBlock(params: {
   stickerRoundTriggerPercent?: number
   voiceRoundTriggerPercent?: number
+  classicEmojiRoundTriggerPercent?: number
   /** 已启用角色 AI 配图时注入 */
   imageRoundTriggerPercent?: number
   imageRoundCountMin?: number
@@ -133,6 +408,7 @@ export function buildMediaSendFrequencyPromptBlock(params: {
 }): string {
   const sticker = params.stickerRoundTriggerPercent
   const voice = params.voiceRoundTriggerPercent
+  const classicEmoji = params.classicEmojiRoundTriggerPercent
   const imagePercent =
     params.imageRoundTriggerPercent !== undefined
       ? resolveEffectiveImageRoundTriggerPercent(params.imageRoundTriggerPercent)
@@ -141,7 +417,7 @@ export function buildMediaSendFrequencyPromptBlock(params: {
   const imageCountRange = hasImageSection
     ? parseStoredImageRoundCountRange(params.imageRoundCountMin, params.imageRoundCountMax)
     : null
-  if (sticker === undefined && voice === undefined && !hasImageSection) return ''
+  if (sticker === undefined && voice === undefined && classicEmoji === undefined && !hasImageSection) return ''
 
   const lines: string[] = [
     '---------------------',
@@ -182,6 +458,22 @@ export function buildMediaSendFrequencyPromptBlock(params: {
     }
   }
 
+  if (classicEmoji !== undefined) {
+    if (classicEmoji <= 0) {
+      lines.push(
+        '- **微信经典黄脸**：概率 **0%**，**禁止**在文字行内写 `[呲牙]` `[OK]` 等经典黄脸 token；本轮仅用纯文字（仍可发 GIF `[表情包]` 行，若上文允许）。',
+      )
+    } else if (classicEmoji >= 100) {
+      lines.push(
+        '- **微信经典黄脸**：概率 **100%**，每轮回复**宜**在至少一行文字内含 1 个经典黄脸 token（混排或单独一行均可）；仍须贴脸，严肃场景可纯文字。',
+      )
+    } else {
+      lines.push(
+        `- **微信经典黄脸**：每轮约 **${classicEmoji}%** 概率在回复中出现经典黄脸 inline token（约 **${100 - classicEmoji}%** 轮次不写）；一旦写则仍须贴脸，勿机械刷屏。`,
+      )
+    }
+  }
+
   if (imagePercent !== undefined && imageCountRange) {
     if (params.userExplicitCharacterImageRequest) {
       lines.push(
@@ -213,9 +505,25 @@ export function resolveStickerCatalogPromptBlockForSession(
   loreForbidsSticker: boolean,
   stickerRoundTriggerPercent: number | undefined,
   buildCatalog: () => string,
+  stickerTargetedModeEnabled?: boolean,
+  enabledGroups?: string[],
+  targetedEntries?: StickerTargetedEntryMap,
+  bannedRefs?: string[],
 ): string {
   if (stickerRoundTriggerPercent !== undefined && stickerRoundTriggerPercent <= 0) {
     return STICKER_CATALOG_SUPPRESSED_BY_USER
+  }
+  if (
+    stickerTargetedModeEnabled &&
+    !(enabledGroups?.length ?? 0) &&
+    !countStickerTargetedEntries(targetedEntries)
+  ) {
+    return `---------------------
+【表情包资源】
+---------------------
+当前会话在「聊天信息 → 表情包发送概率 → 定向 GIF」中已开启限制，但**未勾选任何分组**。
+请忽略其它位置的 GIF 表情包目录；本轮 **禁止** 输出 \`[表情包]\` 行。
+`
   }
   if (loreForbidsSticker) {
     return `---------------------
@@ -226,7 +534,14 @@ export function resolveStickerCatalogPromptBlockForSession(
 用户若发来表情包图片，可按情境接话，但你方**不要回发**表情包行。
 `
   }
-  return buildCatalog()
+  const catalog = buildCatalog()
+  const targetedBlock = buildStickerTargetedRulesPromptBlock(
+    stickerTargetedModeEnabled,
+    enabledGroups,
+    targetedEntries,
+    bannedRefs,
+  )
+  return targetedBlock ? `${catalog}\n\n${targetedBlock}` : catalog
 }
 
 /**
@@ -238,10 +553,26 @@ export function shouldSuppressCharacterStickerLine(
   stickerRoundTriggerPercent: number | undefined,
   _roundAllowed?: boolean,
   userExplicitStickerRequest = false,
+  stickerTargetedModeEnabled?: boolean,
+  enabledGroups?: string[],
+  targetedEntries?: StickerTargetedEntryMap,
+  bannedRefs?: string[],
+  stickerRef?: string,
+  stickerGroupTag?: string,
 ): boolean {
   if (userExplicitStickerRequest) return false
-  if (roomType !== 'private' || stickerRoundTriggerPercent === undefined) return false
-  return stickerRoundTriggerPercent <= 0
+  if (roomType !== 'private') return false
+  if (stickerRoundTriggerPercent !== undefined && stickerRoundTriggerPercent <= 0) return true
+  const ref = String(stickerRef ?? '').trim()
+  if (!ref) return true
+  return !isStickerRefAllowedInSession(
+    ref,
+    stickerGroupTag,
+    stickerTargetedModeEnabled,
+    enabledGroups,
+    targetedEntries,
+    bannedRefs,
+  )
 }
 
 export function shouldSuppressCharacterVoiceLine(

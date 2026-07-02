@@ -33,6 +33,8 @@ jobs:
       # 未配置时回落 hf-mirror.com（国内多数可用；若 CORS 失败请部署 Worker 并填变量）
       - run: npm run build
         env:
+          CI: true
+          COLUMNS: '9999'
           VITE_WEB_PUSH_API_BASE: https://lumi-push.lyx815934990.workers.dev
           VITE_USER_SYSTEM_API_BASE: https://user-system-api.lyx815934990.workers.dev
           VITE_DISCORD_CLIENT_ID: ${{ secrets.VITE_DISCORD_CLIENT_ID }}

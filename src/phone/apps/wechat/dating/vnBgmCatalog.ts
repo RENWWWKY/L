@@ -1,29 +1,9 @@
+import { VN_BGM_MANIFEST } from './vnBgmManifest.generated'
+
 export type VnBgmAsset = {
   name: string
   fileName: string
   url: string
-}
-
-type GlobModule = {
-  default?: string
-}
-
-const VN_BGM_MODULES_REL = import.meta.glob<GlobModule>(
-  '../../../../../BGM/**/*.{mp3,wav,ogg,m4a,flac,aac,MP3,WAV,OGG,M4A,FLAC,AAC}',
-  { eager: true },
-)
-const VN_BGM_MODULES_ABS = import.meta.glob<GlobModule>(
-  '/BGM/**/*.{mp3,wav,ogg,m4a,flac,aac,MP3,WAV,OGG,M4A,FLAC,AAC}',
-  { eager: true },
-)
-const VN_BGM_MODULES_PUBLIC = import.meta.glob<GlobModule>(
-  '/public/BGM/**/*.{mp3,wav,ogg,m4a,flac,aac,MP3,WAV,OGG,M4A,FLAC,AAC}',
-  { eager: true },
-)
-const VN_BGM_MODULES = {
-  ...VN_BGM_MODULES_REL,
-  ...VN_BGM_MODULES_ABS,
-  ...VN_BGM_MODULES_PUBLIC,
 }
 
 function cleanBgmName(raw: string): string {
@@ -43,22 +23,7 @@ function normalizeBgmKey(raw: string): string {
     .replace(/\s+/g, '')
 }
 
-function pathBaseName(path: string): string {
-  const norm = String(path || '').replace(/\\/g, '/')
-  const idx = norm.lastIndexOf('/')
-  return idx >= 0 ? norm.slice(idx + 1) : norm
-}
-
-export const VN_BGM_ASSETS: VnBgmAsset[] = Object.entries(VN_BGM_MODULES)
-  .map(([path, mod]) => {
-    const fileName = pathBaseName(path)
-    const name = cleanBgmName(fileName)
-    const url = String(mod?.default || '').trim()
-    if (!name || !url) return null
-    return { name, fileName, url }
-  })
-  .filter((x): x is VnBgmAsset => !!x)
-  .sort((a, b) => a.name.localeCompare(b.name, 'zh-CN'))
+export const VN_BGM_ASSETS: VnBgmAsset[] = VN_BGM_MANIFEST.filter((x) => x.name && x.url)
 
 /** 把「心动、氛围、emo」这类文件名拆成可匹配的关键词（已 normalize） */
 function bgmNameToTokens(raw: string): string[] {

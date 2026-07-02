@@ -469,8 +469,33 @@ export function parseCharacterStickerLine(line: string): { url: string; ref: str
  * 拼入微信单聊 system，供模型选用合法表情包（用「引用名」输出，避免长路径/URL 被截断或抄错）。
  * 行数与总长封顶，避免撑爆上下文。
  */
-export function buildStickerCatalogPromptBlock(maxLines = 96, maxChars = 9500): string {
-  const entries = getStickerCatalogEntries()
+export function buildStickerCatalogPromptBlock(
+  maxLines = 96,
+  maxChars = 9500,
+  options?: {
+    targetedModeEnabled?: boolean
+    enabledGroups?: string[]
+    targetedEntries?: import('../wechatMediaSendFrequency').StickerTargetedEntryMap
+    bannedRefs?: string[]
+  },
+): string {
+  let entries = getStickerCatalogEntries()
+  const banned = new Set((options?.bannedRefs ?? []).map((r) => r.trim()).filter(Boolean))
+  entries = entries.filter((e) => !banned.has(e.ref))
+  if (options?.targetedModeEnabled) {
+    const groups = new Set(options.enabledGroups ?? [])
+    const legacyEntries = options.targetedEntries ?? {}
+    const hasGroups = groups.size > 0
+    entries = entries.filter((e) => {
+      if (hasGroups) {
+        if (!groups.has(e.groupTag)) return false
+        const pct = legacyEntries[e.ref]
+        if (pct === 0) return false
+        return true
+      }
+      return e.ref in legacyEntries && legacyEntries[e.ref]! > 0
+    })
+  }
   const lines = buildStickerCatalogLines(entries, maxLines, maxChars)
   if (!lines.length) {
     return `---------------------\n【表情包资源】\n---------------------\n当前库中无可用表情条目。请勿输出 [表情包] 行；用户发图仍按「表情包消息」规则接话即可。\n`
