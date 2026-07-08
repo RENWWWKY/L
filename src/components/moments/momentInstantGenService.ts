@@ -4,6 +4,8 @@ import { personaDb } from '../../phone/apps/wechat/newFriendsPersona/idb'
 import { assertMomentsChatApiConfigured } from './momentsChatApiReady'
 import { isMomentsImageGenConfigured } from './momentsImageGenAvailability'
 import { generateMomentsImage } from './momentsImageGen'
+import { buildCharacterMediaImageGenParams } from '../../phone/apps/wechat/characterAppearanceImageGen'
+import type { Character } from '../../phone/apps/wechat/newFriendsPersona/types'
 import { generateInstantMomentWithInteractions } from './momentInstantGenAi'
 import {
   buildInstantGenRecentContext,
@@ -55,18 +57,21 @@ export type InstantGenPublishParams = {
 async function generateImages(
   prompts: string[],
   settings: MomentsImageGenSettings,
+  character?: Character | null,
 ): Promise<string[]> {
   if (!settings.enabled || !prompts.length) return []
   const urls: string[] = []
   for (const prompt of prompts.slice(0, MAX_MOMENT_IMAGES)) {
     try {
-      const url = await generateMomentsImage({
-        prompt,
-        settings,
-        width: 512,
-        height: 512,
-        promptContext: 'character_media',
-      })
+      const url = await generateMomentsImage(
+        buildCharacterMediaImageGenParams({
+          prompt,
+          settings,
+          character,
+          width: 512,
+          height: 512,
+        }),
+      )
       if (url) urls.push(url)
     } catch {
       // skip failed image
@@ -162,7 +167,7 @@ export async function publishInstantCharacterMoment(
     const needsImages = postType === 'image' || postType === 'mixed'
     if (needsImages && imageGenReady && imagePrompts.length) {
       params.onProgress?.('imaging')
-      imageUrls = await generateImages(imagePrompts, params.imageGenSettings)
+      imageUrls = await generateImages(imagePrompts, params.imageGenSettings, character)
     }
 
     if (needsImages && !imageUrls.length) {

@@ -1,6 +1,7 @@
 import { useEffect, useState, type ReactNode } from 'react'
 
 import type { WeChatForwardedMessageItem } from '../newFriendsPersona/types'
+import { ChatImageLightbox } from '../ChatImageLightbox'
 import { RedPacketBubble } from '../redPacket/RedPacketBubble'
 import { parseCharacterStickerLine } from '../stickers/stickerStore'
 import { TransferBubbleFace } from '../transfer/TransferBubble'
@@ -65,17 +66,28 @@ function HistoryImagePreview({
   src: string
   isSticker?: boolean
 }) {
+  const [open, setOpen] = useState(false)
   return (
-    <img
-      src={src}
-      alt=""
-      className={
-        isSticker
-          ? 'max-h-[120px] max-w-[120px] object-contain'
-          : 'max-h-[200px] max-w-[min(240px,70vw)] rounded-lg border border-gray-100 object-cover'
-      }
-      draggable={false}
-    />
+    <>
+      <button
+        type="button"
+        className="cursor-zoom-in border-0 bg-transparent p-0"
+        onClick={() => setOpen(true)}
+        aria-label="查看大图"
+      >
+        <img
+          src={src}
+          alt=""
+          className={
+            isSticker
+              ? 'max-h-[120px] max-w-[120px] object-contain'
+              : 'max-h-[200px] max-w-[min(240px,70vw)] rounded-lg border border-gray-100 object-cover'
+          }
+          draggable={false}
+        />
+      </button>
+      <ChatImageLightbox open={open} src={src} onClose={() => setOpen(false)} />
+    </>
   )
 }
 

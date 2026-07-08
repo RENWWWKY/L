@@ -7,6 +7,8 @@ export type DatingPlotGenerationCompleteDetail = {
   characterId: string
   characterName: string
   linkedNpcNames: string[]
+  /** 开启配图但未成功展示时的提示（如解析失败、CORS 等） */
+  plotImageWarning?: string
 }
 
 export type DatingPlotGenerationErrorDetail = {
@@ -100,6 +102,7 @@ export function dispatchDatingPlotGenerationComplete(detail: DatingPlotGeneratio
         characterId: detail.characterId.trim(),
         characterName: name,
         linkedNpcNames: (detail.linkedNpcNames ?? []).map((n) => String(n).trim()).filter(Boolean),
+        plotImageWarning: detail.plotImageWarning?.trim() || undefined,
       },
     }),
   )

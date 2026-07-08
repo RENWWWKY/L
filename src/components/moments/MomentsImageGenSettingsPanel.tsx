@@ -1,6 +1,6 @@
 import { AnimatePresence, motion } from 'framer-motion'
-import { Check, Eye, EyeOff, ImageIcon, Loader2, RefreshCw, Wand2 } from 'lucide-react'
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { Check, Eye, EyeOff, ImageIcon, Loader2, RefreshCw, Search, Wand2 } from 'lucide-react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 
 import { InlineDropdown } from '../../phone/apps/wechat/newFriendsPersona/InlineDropdown'
 import { MemoryModelIdText } from '../../phone/apps/wechat/memory/MemoryModelIdText'
@@ -111,6 +111,20 @@ function ImageGenProviderCredentialsFields({
               {visible ? <EyeOff className="size-4" strokeWidth={1.75} /> : <Eye className="size-4" strokeWidth={1.75} />}
             </button>
           </div>
+        </label>
+        <label className="block">
+          <span className="text-[11px] font-medium text-[#6B7280]">手动补充模型 ID（可选）</span>
+          <input
+            type="text"
+            value={imageGen.customManualModelIds}
+            onChange={(e) => onPatch({ customManualModelIds: e.target.value })}
+            placeholder="gpt-image-1, dall-e-3, gemini-2.5-flash-image"
+            className="mt-1.5 w-full rounded-xl border border-[#F3F4F6] bg-white px-3 py-2.5 text-[13px] text-[#111827] outline-none"
+            autoComplete="off"
+          />
+          <p className="mt-1.5 text-[11px] text-[#9CA3AF]">
+            许多中转站 <span className="font-mono">/models</span> 只返回聊天模型，不会列出文生图模型。请在此填写中转站后台实际模型名（多个用逗号分隔），拉取后会并入列表。
+          </p>
         </label>
       </div>
     )
@@ -240,6 +254,8 @@ export function MomentsImageGenSettingsPanel({
 }: Props) {
   const [activeTab, setActiveTab] = useState<ImageGenTab>('model')
   const [modelOpen, setModelOpen] = useState(false)
+  const [modelSearch, setModelSearch] = useState('')
+  const modelSearchRef = useRef<HTMLInputElement>(null)
   const [loading, setLoading] = useState(false)
   const [status, setStatus] = useState<{ ok: boolean; text: string } | null>(null)
   const [previewPrompt, setPreviewPrompt] = useState(DEFAULT_PREVIEW_PROMPT)
@@ -261,6 +277,39 @@ export function MomentsImageGenSettingsPanel({
     () => findMomentsImageModel(imageGen.modelId, models),
     [imageGen.modelId, models],
   )
+
+  useEffect(() => {
+    if (!models.length) setModelOpen(false)
+  }, [models.length])
+
+  useEffect(() => {
+    if (!modelOpen) {
+      setModelSearch('')
+      return
+    }
+    const timer = window.setTimeout(() => modelSearchRef.current?.focus(), 50)
+    return () => window.clearTimeout(timer)
+  }, [modelOpen])
+
+  const filteredModels = useMemo(() => {
+    const q = modelSearch.trim().toLowerCase()
+    if (!q) return models
+    return models.filter((model) => {
+      const haystack = [
+        model.labelZh,
+        model.modelName,
+        model.brand,
+        model.title,
+        model.description,
+        model.priceLabel,
+        model.id,
+      ]
+        .filter(Boolean)
+        .join(' ')
+        .toLowerCase()
+      return haystack.includes(q)
+    })
+  }, [modelSearch, models])
 
   const activeStylePrefix = useMemo(() => resolveStylePrefix(imageGen), [imageGen])
 
@@ -621,7 +670,10 @@ export function MomentsImageGenSettingsPanel({
                     OneAPI、NewAPI 等聚合网关，或自建中转服务。
                   </p>
                   <p className="mt-1.5 text-[11px] text-[#9CA3AF]">
-                    填入 API URL 与 Key 后点击「拉取模型列表」，将自动识别可用的文生图模型。
+                    填入 API URL 与 Key 后点击「拉取模型列表」。客户端会优先请求{' '}
+                    <span className="font-mono">/models?sub_type=text-to-image</span>，并过滤掉 gpt-4/claude
+                    等聊天模型；若列表仍无生图模型，请在下方手动填写模型 ID（如 gpt-image-1、gpt-image-2）。
+                    部分中转站的 gpt-image 仅注册 <span className="font-mono">/v1/chat/completions</span>，客户端会优先走该接口生图。
                   </p>
                 </div>
               ) : null}
@@ -675,19 +727,43 @@ export function MomentsImageGenSettingsPanel({
                 disabled={!models.length}
                 onToggle={() => setModelOpen((v) => !v)}
               >
-            <div className="space-y-2 px-3 py-2">
-              {models.map((model) => (
-                <ModelRow
-                  key={model.id}
-                  model={model}
-                  active={imageGen.modelId === model.id}
-                  showServiceActivation={provider === 'volcengine'}
-                  onSelect={() => {
-                    onPatch({ modelId: model.id })
-                  }}
-                />
-              ))}
-            </div>
+                <div className="sticky top-0 z-[1] border-b border-[#F0F0F0] bg-white px-3 py-2.5">
+                  <div className="relative">
+                    <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-[#9CA3AF]" />
+                    <input
+                      ref={modelSearchRef}
+                      type="search"
+                      value={modelSearch}
+                      onChange={(e) => setModelSearch(e.target.value)}
+                      placeholder="搜索模型名称…"
+                      className="w-full rounded-xl border border-[#E5E7EB] bg-[#FAFAFA] py-2.5 pl-9 pr-3 text-[13px] text-[#111827] outline-none focus:border-[#D1D5DB]"
+                      onKeyDown={(e) => e.stopPropagation()}
+                    />
+                  </div>
+                  {modelSearch.trim() ? (
+                    <p className="mt-1.5 text-[11px] text-[#9CA3AF]">
+                      匹配 {filteredModels.length} / {models.length} 个模型
+                    </p>
+                  ) : null}
+                </div>
+                <div className="space-y-2 px-3 py-2">
+                  {filteredModels.length ? (
+                    filteredModels.map((model) => (
+                      <ModelRow
+                        key={model.id}
+                        model={model}
+                        active={imageGen.modelId === model.id}
+                        showServiceActivation={provider === 'volcengine'}
+                        onSelect={() => {
+                          onPatch({ modelId: model.id })
+                          setModelOpen(false)
+                        }}
+                      />
+                    ))
+                  ) : (
+                    <p className="px-1 py-6 text-center text-[12px] text-[#9CA3AF]">没有匹配的模型</p>
+                  )}
+                </div>
               </InlineDropdown>
 
               {selected ? (
@@ -745,8 +821,8 @@ export function MomentsImageGenSettingsPanel({
             >
               <p className="text-[12px] leading-relaxed text-[#6B7280]">
                 {settingsContext === 'api'
-                  ? '生图风格由客户端自动拼接。角色私聊/群聊/朋友圈配图：非自拍写第一视角（平视/仰视/俯视按场景，肢体仅必要时入镜；比耶可写手入镜）；仅自拍才描述人像五官。'
-                  : '生图风格由本页配置自动拼接。角色配图：非自拍为第一视角随手拍（非每张都露脚）；自拍才写五官外貌。预览样张可自由试词。'}
+                  ? '生图风格由客户端自动拼接。角色私聊/群聊/朋友圈配图：非自拍写第一人称视角（平视/仰视/俯视按场景，肢体仅必要时入镜；比耶可写手入镜）；仅自拍才描述人像五官。'
+                  : '生图风格由本页配置自动拼接。角色配图：非自拍为第一人称视角随手拍（非每张都露脚）；自拍才写五官外貌。预览样张可自由试词。'}
               </p>
 
               <div className="inline-flex rounded-full bg-white p-1 shadow-sm">
@@ -819,6 +895,10 @@ export function MomentsImageGenSettingsPanel({
                   </p>
                   <p className="mt-1 text-[11px] leading-relaxed text-[#6B7280]">{activeStylePrefix}</p>
                 </div>
+              ) : imageGen.stylePrefixMode === 'preset' && imageGen.stylePresetId === 'reference_match' ? (
+                <p className="rounded-xl bg-white px-3 py-2.5 text-[11px] leading-relaxed text-[#6B7280]">
+                  已选「跟随参考形象图」：角色自拍且配置了形象参考时，API 会匹配参考图的画风与线条，不再叠加写实/二次元等预设前缀。
+                </p>
               ) : (
                 <p className="rounded-xl bg-white px-3 py-2.5 text-[11px] text-[#9CA3AF]">
                   当前为「无风格」，API 请求仅使用画面内容描述（含客户端人像增强词）。
@@ -847,6 +927,10 @@ export function MomentsImageGenSettingsPanel({
                   </p>
                   <p className="mt-1 text-[11px] leading-relaxed text-[#6B7280]">{activeStylePrefix}</p>
                 </div>
+              ) : imageGen.stylePrefixMode === 'preset' && imageGen.stylePresetId === 'reference_match' ? (
+                <p className="rounded-xl bg-white px-3 py-2.5 text-[11px] leading-relaxed text-[#6B7280]">
+                  已选「跟随参考形象图」：预览不含额外风格前缀；角色自拍锁脸时会匹配参考图画风。
+                </p>
               ) : (
                 <p className="rounded-xl bg-white px-3 py-2.5 text-[11px] text-[#9CA3AF]">
                   当前未设置风格提示词，预览将仅使用下方画面描述。

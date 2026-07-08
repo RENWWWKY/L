@@ -11,6 +11,7 @@ import {
 } from 'react'
 
 import type { LockedRole } from '../gameFlowTypes'
+import { playJbsPageFlipSfx } from '../jbsPageFlipSfx'
 
 import { buildScriptClues } from './jbsClueData'
 import { buildRoleScriptSections } from './jbsScriptContent'
@@ -307,8 +308,9 @@ export function JBSFlowProvider({
   }, [currentStep])
 
   const deliverScriptBook = useCallback((opts?: { autoOpen?: boolean }) => {
+    const autoOpen = opts?.autoOpen === true
+    if (autoOpen) playJbsPageFlipSfx(script.id)
     setReadingSession((prev) => {
-      const autoOpen = opts?.autoOpen === true
       if (prev.bookDelivered && !autoOpen) return prev
       return {
         ...prev,
@@ -318,9 +320,10 @@ export function JBSFlowProvider({
         bookOpenedOnce: autoOpen ? true : prev.bookOpenedOnce,
       }
     })
-  }, [])
+  }, [script.id])
 
   const openScriptBook = useCallback(() => {
+    playJbsPageFlipSfx(script.id)
     setReadingSession((prev) => ({
       ...prev,
       bookDelivered: true,
@@ -328,9 +331,10 @@ export function JBSFlowProvider({
       isOpen: true,
       isMinimized: false,
     }))
-  }, [])
+  }, [script.id])
 
   const openScriptBookToSection = useCallback((sectionId: ScriptSectionId) => {
+    playJbsPageFlipSfx(script.id)
     pendingScriptSectionRef.current = sectionId
     setReadingSession((prev) => {
       const pageIdx = findFirstPageIndexForSection(prev.pages, sectionId)
@@ -346,7 +350,7 @@ export function JBSFlowProvider({
         currentPage: targetPage,
       }
     })
-  }, [])
+  }, [script.id])
 
   const minimizeScriptBook = useCallback(() => {
     setReadingSession((prev) => ({
@@ -357,12 +361,13 @@ export function JBSFlowProvider({
   }, [])
 
   const restoreScriptBook = useCallback(() => {
+    playJbsPageFlipSfx(script.id)
     setReadingSession((prev) => ({
       ...prev,
       isOpen: true,
       isMinimized: false,
     }))
-  }, [])
+  }, [script.id])
 
   const setScriptReaderPage = useCallback((page: number) => {
     setReadingSession((prev) => {
@@ -464,11 +469,8 @@ export function JBSFlowProvider({
   const pushMessage = useCallback(
     (msg: Omit<JBSChatMessage, 'id' | 'at'> & { id?: string }) => {
       const line: JBSChatMessage = {
+        ...msg,
         id: msg.id ?? uid(msg.kind),
-        kind: msg.kind,
-        body: msg.body,
-        roleName: msg.roleName,
-        dmHighlight: msg.dmHighlight,
         at: Date.now(),
       }
       setMessages((prev) => [...prev, line])

@@ -1,4 +1,6 @@
 export { JubenshaHallApp } from './JubenshaHallApp'
+export { JUBENSHA_HALL_UNDER_DEV } from './jubenshaDevFlags'
+export { JubenshaHallUnderDev } from './JubenshaHallUnderDev'
 export { JBSGameFlow } from './gameFlow/JBSGameFlow'
 export { JBSFlowProvider, useJBSFlow } from './gameFlow/chatRoom/JBSFlowEngine'
 export type { JBSStep, JBSChatMessage, DrawerTab } from './gameFlow/chatRoom/jbsFlowTypes'

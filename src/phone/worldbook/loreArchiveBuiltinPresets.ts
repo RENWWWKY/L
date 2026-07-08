@@ -97,7 +97,7 @@ ${CHARACTER_EMOTION_CONFESSION_ENGINE_APPENDIX}`)
   }
   if (resolved.offlineRichInnerOs) {
     parts.push(`【线下约会·多内心 OS 描写引擎】
-以下规则为本轮线下约会内心 OS 的**硬性约束**；须在思维链中先规划 OS 分布与字数，再写正文；**覆盖**小图书馆 InternalMonologue 中「0～3 处」上限：
+以下规则为本轮线下约会内心 OS 的**硬性约束**；须在思维链中先规划 OS 分布与字数，再写正文；**覆盖**默认 OS 篇幅规则（单条不少于 40 汉字）：
 ${OFFLINE_DATING_RICH_INNER_OS_APPENDIX}`)
   }
   return parts.join('\n\n')

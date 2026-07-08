@@ -156,36 +156,23 @@ function attachedToTrack(music: ListenAttachedMusic): MusicTrack | null {
   }
 }
 
+function notifyUserPlaybackIntent() {
+  useMusicStore.getState().notifyUserPlaybackIntent()
+}
+
 function pushStateToStore() {
   const track = attachedToTrack(nowPlaying)
-  const store = useMusicStore.getState()
-  const nextFloatingVisible = Boolean(track && track.id > 0 && track.title !== '暂无播放' && !store.isInsideListenTogether)
-  const unchanged =
-    store.currentTrack?.id === track?.id &&
-    store.currentTrack?.title === track?.title &&
-    store.isPlaying === isPlaying &&
-    store.listenPlayMode === playMode &&
-    store.progress === progress &&
-    store.currentTimeMs === currentTimeMs &&
-    store.durationMs === durationMs &&
-    store.playError === playError &&
-    store.canUseHeartMode === canUseHeartMode &&
-    store.lyrics === lyrics &&
-    store.isFloatingOrbVisible === nextFloatingVisible
-
-  if (!unchanged) {
-    useMusicStore.getState()._syncEngineState({
-      currentTrack: track,
-      isPlaying,
-      listenPlayMode: playMode,
-      progress,
-      currentTimeMs,
-      durationMs,
-      playError,
-      canUseHeartMode,
-      lyrics,
-    })
-  }
+  useMusicStore.getState()._syncEngineState({
+    currentTrack: track,
+    isPlaying,
+    listenPlayMode: playMode,
+    progress,
+    currentTimeMs,
+    durationMs,
+    playError,
+    canUseHeartMode,
+    lyrics,
+  })
   notifyEngineListeners()
 }
 
@@ -624,6 +611,7 @@ export const listenTogetherPlayerEngine = {
 
   async playSong(song: NeteaseSongItem, context?: PlaySongContext) {
     ensureListenTogetherPlayerEngine()
+    notifyUserPlaybackIntent()
     applyPlayContext(song, context)
     return playSongInternal(song)
   },
@@ -649,6 +637,7 @@ export const listenTogetherPlayerEngine = {
     const audio = audioRef
     if (!audio?.src) return
     if (audio.paused) {
+      notifyUserPlaybackIntent()
       void audio.play().catch((e) => {
         playError = formatPlaybackError(e)
         pushStateToStore()
@@ -659,10 +648,12 @@ export const listenTogetherPlayerEngine = {
   },
 
   async playNext() {
+    notifyUserPlaybackIntent()
     await playNextInternal()
   },
 
   async playPrev() {
+    notifyUserPlaybackIntent()
     const queue = queueRef
     if (queue.length === 0) return
     const mode = playModeRef
@@ -687,6 +678,7 @@ export const listenTogetherPlayerEngine = {
 
   async startHeartModePlayback(seed: NeteaseSongItem, likedPlaylistId: number) {
     if (!seed?.id) return false
+    notifyUserPlaybackIntent()
     const ctx = likedPlaylistId
       ? {
           queue: [seed],

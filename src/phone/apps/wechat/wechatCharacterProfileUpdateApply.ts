@@ -3,6 +3,8 @@ import { emitWeChatStorageChanged, personaDb } from './newFriendsPersona/idb'
 import {
   buildWechatSignatureChatUpdateRulesBlock,
   coerceWechatSignature,
+  looksLikeShoutoutWechatSignature,
+  WECHAT_SIGNATURE_CHANGE_COOLDOWN_MS,
 } from './newFriendsPersona/wechatSignatureStyleRules'
 
 const WECHAT_NICK_MAX = 12
@@ -117,7 +119,14 @@ export function buildCharacterWechatProfileStateBlock(
   return `【你的微信资料 · 当前状态】
 微信昵称：${nick}
 个性签名：${sig}
-说明：个性签名**不会**出现在私聊气泡里；只有对方点进你的**个人朋友圈主页**（封面下方）才能看见。你可随关系进展、心情或人设自行更换；不少角色会长期保留同一句——**不必每轮都改**，有真正理由再改更自然。`
+说明：个性签名**不会**出现在私聊气泡里；只有对方点进你的**个人朋友圈主页**（封面下方）才能看见。它像**个人名片/座右铭装饰**——**宜长期稳定**，多数人几个月才换一次；**不要**把聊天里的喊话、吵架台词或临时心情随手写进签名。无充分理由请**保持现状**。`
+}
+
+/** 用户消息里是否明确要求改个性签名 */
+export function userRequestedWechatSignatureUpdate(message?: string | null): boolean {
+  const t = String(message ?? '').trim()
+  if (!t) return false
+  return /个性签名|个签|改签名|换签名|签名改成/i.test(t)
 }
 
 /** 用户消息里提及改昵称/签名时的意图提示 */
@@ -143,19 +152,23 @@ export function buildUserWechatProfileUpdateBias(message?: string | null): strin
 
 export const WECHAT_CHARACTER_PROFILE_UPDATE_APPENDIX = `
 ---------------------
-【微信昵称 / 个性签名（可选 · 每轮可用）】
+【微信昵称 / 个性签名（极少主动 · 签名宜稳定）】
 ---------------------
-你可在**任意一轮**私聊回复中，自行决定是否更新自己的微信昵称或个性签名（也可两者一起改）。**默认大多数轮次不必改**——只有关系、心情或剧情出现**值得对外展示的变化**时再改，才像真人。
+你**可以**在私聊中更新自己的微信昵称或个性签名，但**默认绝大多数轮次都不要改**——尤其**个性签名**应像名片/座右铭一样长期挂着，随意频繁更换非常违和。
 
 ■ 个性签名是什么、谁能看见
 - 个性签名**不会**出现在私聊聊天气泡里。
-- 只有用户或其他角色点进你的**个人朋友圈主页**（封面图下方、昵称下面那一行）才能看到。
-- 因此签名更像「对外展示的半公开状态」，可写关系宣言、心情碎片、摆烂一句等；不必在聊天里复读签名内容。
+- 只有用户点进你的**个人朋友圈主页**（封面图下方、昵称下面那一行）才能看到。
+- 因此签名是**对外展示的个人装饰**，不是聊天喊话的延伸。
 
-■ 何时值得改（结合人设，勿机械每轮改）
-- **昵称**：关系确认后的小甜蜜（如「某某的对象」）、心情转折、玩梗改名；勿把档案**姓名**原样或仅姓氏当昵称。
-- **签名**：确定关系后可换成甜蜜留白（须贴合人设与当前关系）；须像真人随手改的状态，**禁止**打工人模板腔。
-- **人设差异**：有的角色签名只留**一句有意义的话**、几年不换；有的爱随手改——按你的性格与世界书判断，**没有充分理由就保持现状**。
+■ 何时才值得改签名（门槛很高）
+- **用户明确要求**你改签名。
+- **关系里程碑**：如确认恋人关系后，**偶尔**可换成含对方昵称的甜蜜短句（如「某某5201314」），仍须克制。
+- **原签名严重不合当前人设**且你已想很久——极少见。
+- **禁止**因本轮聊天情绪、吵架、调侃、放狠话就改签名；**禁止**喊话式（如「某个小子，下次别被我逮到」）。
+
+■ 何时可改昵称（相对签名宽松，但仍勿每轮改）
+- 关系确认后的小甜蜜、玩梗改名；勿把档案**姓名**原样或仅姓氏当昵称。
 
 ${buildWechatSignatureChatUpdateRulesBlock(WECHAT_SIG_MAX)}
 
@@ -166,12 +179,25 @@ ${buildWechatSignatureChatUpdateRulesBlock(WECHAT_SIG_MAX)}
   - 只改签名：\`[改个性签名]{"signature":"新签名"}\`（≤22 字，一句话）
   - 同时改：\`[改微信资料]{"nickname":"…","signature":"…"}\`（可只填其中一项）
 - 新内容与当前资料**完全相同**时不要输出指令。
-- 用户明确要求你改、或你主动想改时均可；用户没提、你也无改的动力时，**不要**为了刷存在感乱改。
+- 用户没提、你也无改的动力时，**不要**为了刷存在感乱改；**绝大多数轮次应保持签名不变**。
 `.trim()
+
+function signatureChangeAllowed(
+  character: Character,
+  userRequestedSignatureUpdate: boolean,
+): boolean {
+  if (userRequestedSignatureUpdate) return true
+  const current = character.wechatSignature?.trim()
+  if (!current) return true
+  const lastAt = character.wechatSignatureUpdatedAt ?? character.updatedAt ?? 0
+  return Date.now() - lastAt >= WECHAT_SIGNATURE_CHANGE_COOLDOWN_MS
+}
 
 export async function applyCharacterWechatProfileUpdateDirectives(params: {
   characterId: string
   directives: CharacterWechatProfileUpdateDirective[]
+  /** 用户本轮明确要求改签名时，可跳过冷却 */
+  userRequestedSignatureUpdate?: boolean
 }): Promise<{ updated: Character | null; nicknameChanged: boolean; signatureChanged: boolean }> {
   const cid = params.characterId.trim()
   if (!cid || !params.directives.length) {
@@ -202,10 +228,19 @@ export async function applyCharacterWechatProfileUpdateDirectives(params: {
   }
 
   if (nextSig !== undefined) {
-    nextSig = coerceWechatSignature(nextSig, cid, WECHAT_SIG_MAX)
-    if (nextSig !== (ch.wechatSignature?.trim() || '')) {
-      patch.wechatSignature = nextSig
-      signatureChanged = true
+    if (!signatureChangeAllowed(ch, params.userRequestedSignatureUpdate === true)) {
+      nextSig = undefined
+    } else if (looksLikeShoutoutWechatSignature(nextSig)) {
+      nextSig = undefined
+    } else {
+      nextSig = coerceWechatSignature(nextSig, cid, WECHAT_SIG_MAX)
+      if (looksLikeShoutoutWechatSignature(nextSig)) {
+        nextSig = undefined
+      } else if (nextSig !== (ch.wechatSignature?.trim() || '')) {
+        patch.wechatSignature = nextSig
+        patch.wechatSignatureUpdatedAt = Date.now()
+        signatureChanged = true
+      }
     }
   }
 
@@ -222,6 +257,7 @@ export async function applyCharacterWechatProfileUpdateDirectives(params: {
 export async function stripAndApplyCharacterWechatProfileUpdates(params: {
   characterId: string
   bubbles: string[]
+  userRequestedSignatureUpdate?: boolean
 }): Promise<{ bubbles: string[]; updated: Character | null }> {
   const filtered = filterCharacterWechatProfileUpdateDirectives(params.bubbles)
   if (!filtered.directives.length) {
@@ -230,6 +266,7 @@ export async function stripAndApplyCharacterWechatProfileUpdates(params: {
   const result = await applyCharacterWechatProfileUpdateDirectives({
     characterId: params.characterId,
     directives: filtered.directives,
+    userRequestedSignatureUpdate: params.userRequestedSignatureUpdate,
   })
   return { bubbles: filtered.bubbles, updated: result.updated }
 }

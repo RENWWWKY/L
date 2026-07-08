@@ -1,5 +1,5 @@
 import type { PlotItem, WorldBookAfterRevertEntry } from '../dating/types'
-import type { Character, WorldBook, WorldBookItem } from './types'
+import type { Character, WorldBook, WorldBookItem, WeChatChatMessage } from './types'
 import { buildEpilogueExtensionArchiveToneRules } from './epilogueExtensionToneRules'
 
 /** 与 wechatChatAi 中约会合并记忆分隔符一致，用于从混合输出中切出 JSON 段 */
@@ -138,6 +138,7 @@ export function buildChatAfterWorldBookDynamicSection(character: Character | nul
 【世界书·生效时机铁律（剧情与人设一致性）】
 - **序言介入**条目（priority=before）：角色的**恒常基底**（如先天性格模板、长期不变的立场）。用户在线上私聊、线下剧情中如何互动，**都不得**动摇这些条目所描述的「底层设定」——除非你在编辑器里手动改条目。
 - **尾声延展**条目（priority=after）：角色的**当前关系态 / 态度快照**（类似好感度层）：角色应**基于以下最新正文**对用户与情境做出合理反应；当本轮回复所体现的态度、关系、承诺与某条「尾声延展」正文**不一致或已出现可持续渐变**时，你须在输出末尾按协议提交覆盖稿；**尾声是动态快照，不是永久锁死**——持续偏离旧快照时以更新快照为准，而非用旧文否定本轮表现。
+- **尾声不覆盖线下空间事实**：若系统同时注入了「尚未总结·线下剧情」，**物理在场/同室与否/门内外/肢体距离**以该块**最后一条 AI 剧情**为准；尾声里旧的「亲密同场/怀里」等描写**不得**让微信线上假装用户仍在同场被抱着——态度可仍近，空间须服从线下末尾。
 - 若系统另注「当前发言人 ≠ 档案主绑定」：尾声延展中写明的你对**主绑定玩家（第三人）**的暗恋/好感/纠结等**仍约束你的内心**；分线仅禁止把**当前窗口这位**当成主绑定，**不授权**为此对第三人感情 OOC 翻篇或与世界书正面冲突的全盘否认。
 - 下列为当前绑定人设中**已启用**的「尾声延展」条目（仅列可变层；固定层见上文世界书全文）：
 ${lines}
@@ -445,4 +446,67 @@ export function applyWorldBookAfterRevertEntries(
     worldBooks,
     updatedAt: Math.max(character.updatedAt ?? 0, Date.now()),
   }
+}
+
+/** 重新回复兜底：将仍保留 contentPrevious 的尾声条目恢复为上一版正文 */
+export function revertWorldBookAfterUsingContentPrevious(character: Character): Character | null {
+  let worldBooks: WorldBook[] = (character.worldBooks ?? []).map((w) => ({
+    ...w,
+    items: [...(w.items ?? [])],
+  }))
+  let changed = false
+  for (const wb of worldBooks) {
+    for (const it of wb.items ?? []) {
+      if (it.priority !== 'after') continue
+      const prev = String(it.contentPrevious ?? '').trim()
+      if (!prev) continue
+      const cur = String(it.content ?? '').trim()
+      if (!cur || cur === prev) continue
+      const nextItems = patchItemContent(wb.items ?? [], it.id, String(it.contentPrevious ?? ''), {
+        recordPrevious: false,
+      })
+      worldBooks = worldBooks.map((w) => (w.id === wb.id ? { ...w, items: nextItems } : w))
+      changed = true
+    }
+  }
+  if (!changed) return null
+  return {
+    ...character,
+    worldBooks,
+    updatedAt: Math.max(character.updatedAt ?? 0, Date.now()),
+  }
+}
+
+export function enrichWeChatCharacterMessageWithRoundRevert(
+  row: WeChatChatMessage,
+  revertByChar: ReadonlyMap<string, WorldBookAfterRevertEntry[]>,
+): WeChatChatMessage {
+  if (row.type !== 'character') return row
+  const cid = row.characterId.trim()
+  if (!cid) return row
+  const entries = revertByChar.get(cid)
+  if (!entries?.length) return row
+  return { ...row, worldBookAfterRevertEntries: entries }
+}
+
+export function mergeWorldBookAfterRevertByCharacterFromMessages(
+  rows: ReadonlyArray<Pick<WeChatChatMessage, 'id' | 'type' | 'characterId' | 'worldBookAfterRevertEntries'>>,
+  messageIds: ReadonlySet<string>,
+): Map<string, WorldBookAfterRevertEntry[]> {
+  const byChar = new Map<string, Map<string, WorldBookAfterRevertEntry>>()
+  for (const row of rows) {
+    if (!messageIds.has(row.id) || row.type !== 'character') continue
+    const cid = row.characterId.trim()
+    if (!cid) continue
+    const bucket = byChar.get(cid) ?? new Map<string, WorldBookAfterRevertEntry>()
+    for (const e of sanitizeWorldBookAfterRevertEntries(row.worldBookAfterRevertEntries)) {
+      bucket.set(worldBookAfterEntryKey(e.worldBookId, e.itemId), e)
+    }
+    byChar.set(cid, bucket)
+  }
+  const out = new Map<string, WorldBookAfterRevertEntry[]>()
+  for (const [cid, bucket] of byChar) {
+    if (bucket.size) out.set(cid, [...bucket.values()])
+  }
+  return out
 }

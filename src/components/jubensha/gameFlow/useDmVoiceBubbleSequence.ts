@@ -6,9 +6,12 @@ import {
 } from './chatRoom/dmBubbleText'
 import type { DmTextHighlightRange } from './chatRoom/jbsFlowTypes'
 import { createJbsDmVoicePlayer } from './jbsDmVoicePlayer'
+import { createJbsSfxPlayer } from './jbsSfxPlayer'
 import { useTypewriter } from './useTypewriter'
 
 const TYPEWRITER_MS_PER_CHAR = 95
+/** 救护车鸣笛与 DM 旁白叠播时的相对音量 */
+const TRACK_SFX_VOLUME = 0.88
 
 type SequencePhase = 'idle' | 'loading' | 'playing' | 'need-tap' | 'await-perform' | 'done'
 
@@ -25,6 +28,8 @@ export type DmVoiceTrackFinalizeMeta = {
 export type UseDmVoiceBubbleSequenceOptions = {
   tracks: readonly string[]
   scripts: readonly string[]
+  /** 与 tracks 同序；某轨开始时叠加播放的功能音效（可多条顺序播放） */
+  sfxTracks?: readonly (readonly string[] | undefined)[]
   /** 与 tracks 同序；某轨无高亮可省略 */
   highlightRanges?: readonly (DmTextHighlightRange | undefined)[]
   enabled: boolean
@@ -43,6 +48,7 @@ export type UseDmVoiceBubbleSequenceOptions = {
 export function useDmVoiceBubbleSequence({
   tracks,
   scripts,
+  sfxTracks,
   highlightRanges,
   enabled,
   resetSignal = 0,
@@ -57,8 +63,10 @@ export function useDmVoiceBubbleSequence({
   const [phase, setPhase] = useState<SequencePhase>('idle')
   const [typingActive, setTypingActive] = useState(false)
   const playerRef = useRef(createJbsDmVoicePlayer())
+  const sfxPlayerRef = useRef(createJbsSfxPlayer())
   const startedRef = useRef(false)
-  const skipTrackOnceRef = useRef(false)
+  /** stop() 后可能误触 ended，跳过一次以免连跳两轨 */
+  const ignoreNextEndedRef = useRef(false)
   const initialCompletedRef = useRef(initialCompletedTrackCount)
   initialCompletedRef.current = initialCompletedTrackCount
   const onCompleteRef = useRef(onComplete)
@@ -84,6 +92,7 @@ export function useDmVoiceBubbleSequence({
   const finishAll = useCallback(() => {
     setTypingActive(false)
     playerRef.current.stop()
+    sfxPlayerRef.current.stop()
     setPhase('done')
     onCompleteRef.current()
   }, [])
@@ -112,6 +121,7 @@ export function useDmVoiceBubbleSequence({
   const advanceTrack = useCallback(() => {
     setTypingActive(false)
     playerRef.current.stop()
+    sfxPlayerRef.current.stop()
     finalizeCurrentTrack()
 
     if (trackIndex < tracks.length - 1) {
@@ -123,12 +133,7 @@ export function useDmVoiceBubbleSequence({
 
   const playCurrent = useCallback(
     async (fromGesture = false): Promise<boolean> => {
-      const src = tracks[trackIndex]
-      if (!src) {
-        finishAll()
-        return false
-      }
-
+      const src = tracks[trackIndex]?.trim() ?? ''
       if (!currentScript.trim()) {
         advanceTrack()
         return false
@@ -136,6 +141,20 @@ export function useDmVoiceBubbleSequence({
 
       setPhase('loading')
       setTypingActive(false)
+      ignoreNextEndedRef.current = false
+
+      const sfx = sfxTracks?.[trackIndex]
+      if (sfx?.length === 1) {
+        sfxPlayerRef.current.play(sfx[0]!, TRACK_SFX_VOLUME)
+      } else if (sfx && sfx.length > 1) {
+        sfxPlayerRef.current.playSequence(sfx, TRACK_SFX_VOLUME)
+      }
+
+      if (!src) {
+        setPhase('playing')
+        setTypingActive(true)
+        return true
+      }
 
       try {
         await playerRef.current.play(src, 1, { fromGesture })
@@ -152,7 +171,7 @@ export function useDmVoiceBubbleSequence({
         return true
       }
     },
-    [advanceTrack, currentScript, finishAll, trackIndex, tracks],
+    [advanceTrack, currentScript, finishAll, sfxTracks, trackIndex, tracks],
   )
 
   const playCurrentRef = useRef(playCurrent)
@@ -160,8 +179,9 @@ export function useDmVoiceBubbleSequence({
 
   useEffect(() => {
     startedRef.current = false
-    skipTrackOnceRef.current = false
+    ignoreNextEndedRef.current = false
     playerRef.current.stop()
+    sfxPlayerRef.current.stop()
     setTypingActive(false)
     const start = Math.max(
       0,
@@ -175,6 +195,7 @@ export function useDmVoiceBubbleSequence({
     if (enabled) return
     startedRef.current = false
     playerRef.current.stop()
+    sfxPlayerRef.current.stop()
     setTypingActive(false)
     setPhase('idle')
   }, [enabled])
@@ -234,21 +255,35 @@ export function useDmVoiceBubbleSequence({
 
   useEffect(() => {
     if (!startedRef.current) return
-    if (skipTrackOnceRef.current) {
-      skipTrackOnceRef.current = false
-      return
-    }
     if (phase === 'loading') {
       void playCurrentRef.current()
     }
   }, [trackIndex, phase])
 
   useEffect(() => {
-    return playerRef.current.onEnded(advanceTrack)
+    return playerRef.current.onEnded(() => {
+      if (ignoreNextEndedRef.current) {
+        ignoreNextEndedRef.current = false
+        return
+      }
+      advanceTrack()
+    })
   }, [advanceTrack])
 
+  /** 无音频轨：打字机结束后自动进入下一轨 */
   useEffect(() => {
-    return () => playerRef.current.stop()
+    if (phase !== 'playing') return
+    if ((tracks[trackIndex]?.trim() ?? '').length > 0) return
+    if (isTyping) return
+    const t = window.setTimeout(() => advanceTrack(), 480)
+    return () => window.clearTimeout(t)
+  }, [advanceTrack, isTyping, phase, trackIndex, tracks])
+
+  useEffect(() => {
+    return () => {
+      playerRef.current.stop()
+      sfxPlayerRef.current.stop()
+    }
   }, [])
 
   const liveBubble: DmVoiceBubbleLive | null =
@@ -276,9 +311,11 @@ export function useDmVoiceBubbleSequence({
   }, [phase])
 
   const skipCurrentTrack = useCallback(() => {
-    skipTrackOnceRef.current = true
+    ignoreNextEndedRef.current = true
     advanceTrack()
   }, [advanceTrack])
+
+  const canSkipCurrentTrack = phase === 'playing' && !isTyping
 
   return {
     liveBubble,
@@ -289,6 +326,7 @@ export function useDmVoiceBubbleSequence({
     resumeFromGesture,
     resumePerform,
     skipCurrentTrack,
+    canSkipCurrentTrack,
     skipAll: finishAll,
   }
 }

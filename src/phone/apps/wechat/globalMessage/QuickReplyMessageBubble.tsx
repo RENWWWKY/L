@@ -1,10 +1,11 @@
-import { useMemo } from 'react'
+import { useMemo, useState } from 'react'
 import type { WeChatChatMessage } from '../newFriendsPersona/types'
 import { WeChatChatMixedText } from '../WeChatChatMixedText'
 import { formatWeChatMessagesTabPreviewFromStoredMessage, isWeChatStickerPreviewContent } from '../wechatThreadPreviewText'
 import { RedPacketBubble } from '../redPacket/RedPacketBubble'
 import { TransferBubble } from '../transfer/TransferBubble'
 import { parseCharacterStickerLine } from '../stickers/stickerStore'
+import { ChatImageLightbox } from '../ChatImageLightbox'
 
 type Props = {
   message: WeChatChatMessage
@@ -64,15 +65,24 @@ function QuickReplyVoiceBubble({
 }
 
 function QuickReplyStickerImage({ src, isSelf }: { src: string; isSelf: boolean }) {
+  const [open, setOpen] = useState(false)
   return (
-    <div className={`inline-block overflow-hidden ${isSelf ? '' : 'rounded-2xl border border-neutral-200 bg-white'}`}>
-      <img
-        src={src}
-        alt=""
-        className={`block h-auto max-h-[120px] w-[96px] object-cover ${isSelf ? '' : 'rounded-2xl'}`}
-        draggable={false}
-      />
-    </div>
+    <>
+      <button
+        type="button"
+        className={`inline-block cursor-zoom-in overflow-hidden border-0 bg-transparent p-0 ${isSelf ? '' : 'rounded-2xl border border-neutral-200 bg-white'}`}
+        onClick={() => setOpen(true)}
+        aria-label="查看大图"
+      >
+        <img
+          src={src}
+          alt=""
+          className={`block h-auto max-h-[120px] w-[96px] object-cover ${isSelf ? '' : 'rounded-2xl'}`}
+          draggable={false}
+        />
+      </button>
+      <ChatImageLightbox open={open} src={src} onClose={() => setOpen(false)} />
+    </>
   )
 }
 

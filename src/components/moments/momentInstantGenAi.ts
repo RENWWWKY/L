@@ -41,6 +41,7 @@ import {
   resolveCharacterLocationAnchor,
 } from './momentCharacterLocationAnchor'
 import { buildCharacterMomentImagePromptRules } from './momentCharacterImageRules'
+import { characterHasAppearanceReference } from '../../phone/apps/wechat/characterAppearanceImageGen'
 import {
   buildInstantGenTextLengthHint,
   MOMENT_BODY_LENGTH_HINT,
@@ -202,7 +203,7 @@ export async function generateInstantMomentWithInteractions(params: {
       ? '载体含图时 imagePrompts 须按场景给出 1~9 个不同画面的英文 prompt，勿习惯性只输出 1 个。'
       : '',
     (params.config.postType === 'mixed' || params.config.postType === 'image')
-      ? buildCharacterMomentImagePromptRules(isAnimeStyle)
+      ? buildCharacterMomentImagePromptRules(isAnimeStyle, characterHasAppearanceReference(pack.character))
       : '',
     `你刚刚与用户经历的对话/剧情：\n${params.recentContext}`,
     `可与该条朋友圈互动的角色（authorId 须填 characterId；均须与发布者双向互相认识）：${mutualList}`,

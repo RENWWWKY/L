@@ -18,9 +18,11 @@ import {
 } from './novelaiImageCatalog'
 import {
   OPENAI_IMAGE_API_URL,
+  OPENAI_IMAGE_EDITS_API_URL,
+  isGptImageModel,
   resolveOpenaiImageSize,
 } from './openaiImageCatalog'
-import { buildOpenAiImagesGenerationsEndpoint, buildGeminiGenerateContentEndpoint } from '../../phone/apps/api/openAiCompatibleEndpoints'
+import { buildOpenAiChatCompletionsEndpoint, buildOpenAiImagesGenerationsEndpoint, buildGeminiGenerateContentEndpoint, buildOpenAiImagesEditsEndpoint } from '../../phone/apps/api/openAiCompatibleEndpoints'
 import {
   KOLORS_IMAGE_SIZES,
   QIANFAN_IMAGE_SIZES,
@@ -28,7 +30,11 @@ import {
 } from './momentsImageSizePresets'
 import { resolveVolcengineImageSize, VOLCENGINE_IMAGE_API_URL } from './volcengineImageCatalog'
 import { localizeMomentsImageGenError } from './momentsImageGenErrorZh'
-import { buildCharacterMediaImagePrompt, buildMomentsImagePrompt } from './momentsImagePromptEnhancer'
+import { buildCharacterMediaImagePrompt, buildDatingPlotImagePrompt, buildMomentsImagePrompt, isCharacterMediaAppearanceLockPrompt, isCharacterMediaSelfiePrompt } from './momentsImagePromptEnhancer'
+import { buildDatingPlotGenderLockSuffix } from '../../phone/apps/wechat/dating/datingPlotImagePromptGenderEnforcer'
+import { sanitizeCharacterMediaImagePrompt, stripFrontSelfieMirrorCueEnglish } from './characterMediaPromptSanitizer'
+import { resolveCharacterMediaPromptEnglish } from './characterMediaPromptTranslator'
+import { applyCharacterSelfieMirrorFlip } from './characterSelfieMirrorFlip'
 import type { MomentsImageGenSettings } from './useMomentsSettingsStore'
 
 export type MomentsImageGenParams = {
@@ -38,8 +44,27 @@ export type MomentsImageGenParams = {
   height?: number
   /** 显式尺寸（如 1024x1024、2K），优先于 width/height 推算 */
   imageSize?: string
-  /** 角色私聊/群聊/朋友圈：非自拍时客户端强制第一视角风景/环境随手拍 */
-  promptContext?: 'moments' | 'character_media'
+  /** 角色私聊/群聊/朋友圈：非自拍时客户端强制第一视角风景/环境随手拍；dating_plot：第三人称电影镜头剧情插画 */
+  promptContext?: 'moments' | 'character_media' | 'dating_plot'
+  /** 自拍生图：角色形象参考图 URL 或 data URL（首张，兼容旧逻辑） */
+  referenceImageUrl?: string
+  /** 自拍生图：多角度形象参考图（最多 8 张） */
+  referenceImageUrls?: string[]
+  /** 与 referenceImageUrls 一一对应的景别类型 */
+  referenceImageKinds?: Array<'face' | 'half' | 'full' | 'side' | 'other'>
+  /** 自拍生图：从档案/世界书提取的外貌摘要，写入 prompt 以稳定五官 */
+  characterAppearanceHint?: string
+  /** 自拍生图：用户填写的形象参考文字补充（与参考图一并注入，优先于档案摘要） */
+  characterAppearanceRefNote?: string
+  /** 自拍+参考图：档案性别，写入锁脸 prompt 防止换性别 */
+  characterGenderHint?: string
+  /** 非自拍配图：参考图仅锁画风/渲染，不锁第三人称构图 */
+  referenceStyleOnly?: boolean
+  /** 角色配图：原始中文 tag，用于 POV/景别推断（prompt 字段可能已译成英文） */
+  characterMediaPromptForInference?: string
+  /** 剧情配图：前 N 张参考图为约会角色，其后为玩家 */
+  datingPlotCharacterRefCount?: number
+  datingPlotPlayerGenderHint?: string
 }
 
 const SILICONFLOW_IMAGE_URL = 'https://api.siliconflow.cn/v1/images/generations'
@@ -50,12 +75,177 @@ const KOLORS_IMAGE_SIZE_STRINGS = KOLORS_IMAGE_SIZES.map((s) => s.apiSize)
 const QWEN_IMAGE_SIZE_STRINGS = QWEN_IMAGE_SIZES.map((s) => s.apiSize)
 const QIANFAN_IMAGE_SIZE_STRINGS = QIANFAN_IMAGE_SIZES.map((s) => s.apiSize)
 
+const REF_KIND_PROMPT_LABELS: Record<'face' | 'half' | 'full' | 'side' | 'other', string> = {
+  face: 'face and head close-up',
+  half: 'half-body portrait',
+  side: 'side profile',
+  full: 'full-body',
+  other: 'additional view',
+}
+
+function resolveReferenceUrlsFromParams(params: MomentsImageGenParams): string[] {
+  const fromList = (params.referenceImageUrls ?? []).map((u) => u.trim()).filter(Boolean)
+  if (fromList.length) return fromList
+  const single = params.referenceImageUrl?.trim()
+  return single ? [single] : []
+}
+
 function buildFullPrompt(params: MomentsImageGenParams): string {
+  if (params.promptContext === 'dating_plot') {
+    const hasReference = resolveReferenceUrlsFromParams(params).length > 0
+    const cleanedPrompt = params.prompt.trim()
+    let built = buildDatingPlotImagePrompt(cleanedPrompt, params.settings, {
+      hasReferenceImage: hasReference,
+    })
+    const refNote = params.characterAppearanceRefNote?.trim()
+    if (refNote && hasReference) {
+      built += `, mandatory character identity traits from user reference notes (must NOT be ignored): ${refNote}`
+    }
+    const hint = params.characterAppearanceHint?.trim()
+    if (hint && !hasReference) {
+      built += `, consistent character appearance: ${hint}`
+    }
+    const genderHint = params.characterGenderHint?.trim()
+    const playerGenderHint = params.datingPlotPlayerGenderHint?.trim()
+    const mentionsPlayer = /\breference player\b/i.test(cleanedPrompt)
+    const isDualCast =
+      (params.datingPlotCharacterRefCount ?? 0) > 0 &&
+      resolveReferenceUrlsFromParams(params).length > (params.datingPlotCharacterRefCount ?? 0)
+    if (isDualCast && genderHint && playerGenderHint) {
+      built += `, dating character must be ${genderHint}, player must be ${playerGenderHint}, two distinct people, do NOT swap genders`
+    } else if (genderHint && playerGenderHint && mentionsPlayer) {
+      built += `, dating character must be ${genderHint}, player must be ${playerGenderHint}, two distinct people, do NOT swap genders`
+    } else {
+      built += buildDatingPlotGenderLockSuffix({
+        characterGenderHint: genderHint,
+        playerGenderHint,
+        promptMentionsPlayer: mentionsPlayer,
+      })
+    }
+    return built
+  }
+
   if (params.promptContext === 'character_media') {
-    return buildCharacterMediaImagePrompt(params.prompt, params.settings)
+    const hasReference = resolveReferenceUrlsFromParams(params).length > 0
+    const inferencePrompt =
+      params.characterMediaPromptForInference?.trim() || params.prompt.trim()
+    const cleanedPrompt = stripFrontSelfieMirrorCueEnglish(
+      sanitizeCharacterMediaImagePrompt(params.prompt),
+      inferencePrompt,
+    )
+    let built = buildCharacterMediaImagePrompt(cleanedPrompt, params.settings, {
+      hasReferenceImage: hasReference,
+      inferencePrompt,
+    })
+    const hint = params.characterAppearanceHint?.trim()
+    if (hint && !hasReference) {
+      built += `, consistent character appearance: ${hint}`
+    }
+    const refNote = params.characterAppearanceRefNote?.trim()
+    const isSelfie = isCharacterMediaSelfiePrompt(inferencePrompt)
+    const isAppearanceLock = isCharacterMediaAppearanceLockPrompt(inferencePrompt)
+    if (refNote && (isSelfie || isAppearanceLock || params.referenceStyleOnly)) {
+      built += hasReference
+        ? params.referenceStyleOnly
+          ? `, character design traits from reference notes for visible parts only: ${refNote}`
+          : `, mandatory character identity traits from user reference notes (must NOT be ignored): ${refNote}`
+        : `, character appearance traits: ${refNote}`
+    }
+    const genderHint = params.characterGenderHint?.trim()
+    if (genderHint && hasReference && isSelfie) {
+      built += `, subject must be ${genderHint}, do NOT change gender or sex presentation`
+    }
+    return built
   }
   return buildMomentsImagePrompt(params.prompt, params.settings)
 }
+
+function buildDatingPlotReferenceIdentityLockPrompt(
+  scenePrompt: string,
+  genderHint?: string,
+  refCount = 1,
+  refLabels?: string[],
+  appearanceRefNote?: string,
+  characterRefCount = 0,
+  playerGenderHint?: string,
+): string {
+  const notePart = appearanceRefNote?.trim()
+    ? `Mandatory cast and identity rules (must NOT be ignored): ${appearanceRefNote.trim()}. `
+    : ''
+  const isDualCast = characterRefCount > 0 && refCount > characterRefCount
+  if (isDualCast) {
+    const playerRefCount = refCount - characterRefCount
+    const charGenderPart = genderHint?.trim()
+      ? `Dating character must be ${genderHint.trim()}. `
+      : ''
+    const playerGenderPart = playerGenderHint?.trim()
+      ? `Player must be ${playerGenderHint.trim()}. `
+      : ''
+    return (
+      `${notePart}${charGenderPart}${playerGenderPart}` +
+      `You are given ${characterRefCount} reference image(s) for the DATING CHARACTER and ${playerRefCount} for the PLAYER — they are TWO DIFFERENT people. ` +
+      `Do NOT merge faces, swap genders, or treat all references as one person. ` +
+      `Render as a third-person cinematic illustration — NOT first-person POV, NOT smartphone snapshot. ` +
+      `If reference is 2D anime/illustration, output MUST remain 2D illustrated. Scene request: ${scenePrompt}`
+    )
+  }
+
+  const genderPart = genderHint?.trim()
+    ? `The subject is ${genderHint.trim()}. Do NOT change gender, sex, or sex presentation. `
+    : ''
+  const identityPart =
+    refCount > 1
+      ? `You are given ${refCount} reference images of the SAME character from different views (${refLabels?.join(', ') ?? 'multiple angles'}). Use ALL references together to preserve consistent identity, face, body proportions, outfit style, and art style. `
+      : 'The person in the reference image must remain the EXACT same individual — identical face, hairstyle, hair color, eye shape, skin tone, and distinguishing features. '
+  return (
+    `${genderPart}${notePart}${identityPart}Render as a third-person cinematic illustration frame captured by an external film camera — NOT first-person POV, NOT smartphone snapshot, NOT mirror selfie. Preserve reference art style and illustration medium. If reference is 2D anime/illustration, output MUST remain 2D illustrated. Scene request: ${scenePrompt}`
+  )
+}
+
+function buildReferenceStyleOnlyLockPrompt(
+  scenePrompt: string,
+  refCount = 1,
+  appearanceRefNote?: string,
+): string {
+  const notePart = appearanceRefNote?.trim()
+    ? `Mandatory visual traits from user reference notes (costume, prosthetics, accessories — match rendering only): ${appearanceRefNote.trim()}. `
+    : ''
+  const refPart =
+    refCount > 1
+      ? `You are given ${refCount} reference images. Match ONLY their shared art style, line quality, color palette, rendering medium and character design language. `
+      : 'Match ONLY the reference image art style, line quality, color palette, rendering medium and character design language. '
+  return (
+    `${notePart}${refPart}The requested scene is a subjective first-person smartphone POV snapshot. ` +
+    `Do NOT copy reference third-person composition, standing pose, full-body portrait, or mirror framing. ` +
+    `If visible body parts appear (hands, feet, sleeves), render them consistent with reference design (e.g. mechanical prosthetic arm style). ` +
+    `If reference is 2D anime/illustration, output MUST stay 2D illustrated — NOT photorealistic. Scene request: ${scenePrompt}`
+  )
+}
+
+function buildReferenceIdentityLockPrompt(
+  scenePrompt: string,
+  genderHint?: string,
+  refCount = 1,
+  refLabels?: string[],
+  appearanceRefNote?: string,
+): string {
+  const genderPart = genderHint?.trim()
+    ? `The subject is ${genderHint.trim()}. Do NOT change gender, sex, or sex presentation. `
+    : ''
+  const notePart = appearanceRefNote?.trim()
+    ? `Mandatory character identity traits specified by the user (must NOT be ignored or omitted): ${appearanceRefNote.trim()}. `
+    : ''
+  const identityPart =
+    refCount > 1
+      ? `You are given ${refCount} reference images of the SAME character from different views (${refLabels?.join(', ') ?? 'multiple angles'}). Use ALL references together to preserve consistent identity, face, body proportions, outfit style, and art style. `
+      : 'The person in the reference image must remain the EXACT same individual — identical face, hairstyle, hair color, eye shape, skin tone, and distinguishing features. '
+  return (
+    `${genderPart}${notePart}${identityPart}Do not change ethnicity or age. Preserve the reference image art style, illustration medium, line quality, outfit, collar, and accessories. If the reference is 2D anime/illustration, the output MUST remain 2D illustrated — do NOT convert to photorealistic photo, CGI, or 3D render. Scene request: ${scenePrompt}`
+  )
+}
+
+const GPT_REFERENCE_ILLUSTRATION_GUARD =
+  'Keep the same 2D anime/illustration rendering as the reference. Do NOT make photorealistic, CGI, or muscular photo-real body. Keep reference costume design unless the scene explicitly asks to change clothes.'
 
 function pickClosestImageSize(width: number, height: number, presets: string[]): string {
   const targetRatio = width / height
@@ -108,6 +298,47 @@ async function fetchImageAsDataUrl(url: string): Promise<string> {
       reject(new Error(localizeMomentsImageGenError('siliconflow', 0, 'IMAGE_READ_FAILED')))
     reader.readAsDataURL(blob)
   })
+}
+
+const IMAGE_DATA_URL_BASE64_RE = /^data:([^;,]+);base64,(.+)$/i
+
+function isValidImageDataUrl(value: string): boolean {
+  const m = IMAGE_DATA_URL_BASE64_RE.exec(value.trim())
+  const b64 = m?.[2]?.trim()
+  return !!b64 && b64.length >= 64
+}
+
+/** 统一为微信落库可用的 base64 data URL（外链会尝试下载；失败则抛中文说明） */
+async function ensureMomentsImageDataUrl(input: string): Promise<string> {
+  const trimmed = input.trim()
+  if (!trimmed) throw new Error('生图 API 未返回有效图片')
+
+  if (isValidImageDataUrl(trimmed)) {
+    const m = IMAGE_DATA_URL_BASE64_RE.exec(trimmed)!
+    return `data:${m[1]!.trim()};base64,${m[2]!.trim()}`
+  }
+
+  if (trimmed.startsWith('data:')) {
+    throw new Error('生图返回的图片格式无效（需要 data:image/…;base64,… 格式）')
+  }
+
+  if (/^[A-Za-z0-9+/=\s]{80,}$/.test(trimmed) && !/^https?:/i.test(trimmed)) {
+    return `data:image/png;base64,${trimmed.replace(/\s+/g, '')}`
+  }
+
+  if (/^https?:\/\//i.test(trimmed)) {
+    try {
+      const dataUrl = await fetchImageAsDataUrl(trimmed)
+      if (!isValidImageDataUrl(dataUrl)) throw new Error('download_invalid')
+      return dataUrl
+    } catch {
+      throw new Error(
+        '生图返回的是外链图片，但浏览器无法下载（常见原因：中转站 CDN 禁止跨域 CORS）。请换用返回 base64 的模型/接口，或联系中转站开启图片域 CORS。',
+      )
+    }
+  }
+
+  throw new Error('生图结果无法解析为图片（invalid_image_data_url）')
 }
 
 async function generateSiliconFlowImage(params: MomentsImageGenParams): Promise<string> {
@@ -359,6 +590,14 @@ async function requestGeminiGenerateContentImage(params: {
   prompt: string
   auth: GeminiGenerateContentAuth
   errorProvider: MomentsImageProvider
+  referenceImageDataUrls?: string[]
+  referenceImageKinds?: Array<'face' | 'half' | 'full' | 'side' | 'other'>
+  characterGenderHint?: string
+  characterAppearanceRefNote?: string
+  referenceStyleOnly?: boolean
+  promptContext?: MomentsImageGenParams['promptContext']
+  datingPlotCharacterRefCount?: number
+  datingPlotPlayerGenderHint?: string
 }): Promise<string> {
   let url = params.endpoint
   const headers: Record<string, string> = { 'Content-Type': 'application/json' }
@@ -368,11 +607,64 @@ async function requestGeminiGenerateContentImage(params: {
     url = `${url}${url.includes('?') ? '&' : '?'}key=${encodeURIComponent(params.apiKey)}`
   }
 
+  const parts: Array<{ text?: string; inlineData?: { mimeType: string; data: string } }> = []
+  const refDataUrls = (params.referenceImageDataUrls ?? []).filter(Boolean)
+  if (refDataUrls.length) {
+    const refLabels: string[] = []
+    refDataUrls.forEach((dataUrl, index) => {
+      const refParsed = parseImageDataUrl(dataUrl)
+      if (!refParsed) return
+      const kind = params.referenceImageKinds?.[index] ?? 'other'
+      const kindLabel = REF_KIND_PROMPT_LABELS[kind]
+      refLabels.push(kindLabel)
+      parts.push({ inlineData: { mimeType: refParsed.mime, data: refParsed.base64 } })
+      const charRefCount = params.datingPlotCharacterRefCount ?? 0
+      const isDatingPlotDual =
+        params.promptContext === 'dating_plot' && charRefCount > 0 && index >= charRefCount
+      const isDatingPlotChar =
+        params.promptContext === 'dating_plot' && charRefCount > 0 && index < charRefCount
+      const refRole = isDatingPlotChar
+        ? 'DATING CHARACTER (reference character in scene prompt)'
+        : isDatingPlotDual
+          ? 'PLAYER (reference player in scene prompt)'
+          : 'same character appearance'
+      parts.push({ text: `Reference image (${kindLabel}): ${refRole}.` })
+    })
+    parts.push({
+      text:
+        params.promptContext === 'dating_plot'
+          ? buildDatingPlotReferenceIdentityLockPrompt(
+              params.prompt,
+              params.characterGenderHint,
+              refDataUrls.length,
+              refLabels,
+              params.characterAppearanceRefNote,
+              params.datingPlotCharacterRefCount ?? 0,
+              params.datingPlotPlayerGenderHint,
+            )
+          : params.referenceStyleOnly
+            ? buildReferenceStyleOnlyLockPrompt(
+                params.prompt,
+                refDataUrls.length,
+                params.characterAppearanceRefNote,
+              )
+            : buildReferenceIdentityLockPrompt(
+                params.prompt,
+                params.characterGenderHint,
+                refDataUrls.length,
+                refLabels,
+                params.characterAppearanceRefNote,
+              ),
+    })
+  } else {
+    parts.push({ text: params.prompt })
+  }
+
   const res = await fetch(url, {
     method: 'POST',
     headers,
     body: JSON.stringify({
-      contents: [{ parts: [{ text: params.prompt }] }],
+      contents: [{ parts }],
       generationConfig: { responseModalities: ['TEXT', 'IMAGE'] },
     }),
   })
@@ -384,6 +676,350 @@ async function requestGeminiGenerateContentImage(params: {
   const dataUrl = extractImageFromGeminiGenerateContentPayload(await res.json())
   if (!dataUrl) throw new Error('Gemini 未返回图片')
   return dataUrl
+}
+
+function parseImageDataUrl(dataUrl: string): { mime: string; base64: string } | null {
+  const m = /^data:([^;,]+);base64,(.+)$/i.exec(dataUrl.trim())
+  if (!m?.[2]?.trim()) return null
+  return { mime: m[1]!.trim() || 'image/png', base64: m[2]!.trim() }
+}
+
+async function loadImageUrlAsDataUrl(url: string): Promise<string | null> {
+  const trimmed = url.trim()
+  if (!trimmed) return null
+  if (trimmed.startsWith('data:')) return trimmed
+  try {
+    const res = await fetch(trimmed)
+    if (!res.ok) return null
+    const blob = await res.blob()
+    return await new Promise((resolve, reject) => {
+      const reader = new FileReader()
+      reader.onload = () => resolve(typeof reader.result === 'string' ? reader.result : null)
+      reader.onerror = () => reject(new Error('image_read_failed'))
+      reader.readAsDataURL(blob)
+    })
+  } catch {
+    return null
+  }
+}
+
+async function resolveReferenceImageDataUrls(params: MomentsImageGenParams): Promise<string[]> {
+  const urls = resolveReferenceUrlsFromParams(params)
+  const out: string[] = []
+  for (const url of urls) {
+    const dataUrl = await loadImageUrlAsDataUrl(url)
+    if (dataUrl) out.push(dataUrl)
+  }
+  return out
+}
+
+function pickGptReferenceDataUrl(
+  dataUrls: string[],
+  kinds?: Array<'face' | 'half' | 'full' | 'side' | 'other'>,
+): string | null {
+  if (!dataUrls.length) return null
+  if (kinds?.length) {
+    const faceIdx = kinds.indexOf('face')
+    if (faceIdx >= 0 && dataUrls[faceIdx]) return dataUrls[faceIdx]!
+    const halfIdx = kinds.indexOf('half')
+    if (halfIdx >= 0 && dataUrls[halfIdx]) return dataUrls[halfIdx]!
+    const sideIdx = kinds.indexOf('side')
+    if (sideIdx >= 0 && dataUrls[sideIdx]) return dataUrls[sideIdx]!
+  }
+  return dataUrls[0] ?? null
+}
+
+function referenceImageFileName(mime: string): string {
+  const lower = mime.toLowerCase()
+  if (lower.includes('jpeg') || lower.includes('jpg')) return 'reference.jpg'
+  if (lower.includes('webp')) return 'reference.webp'
+  return 'reference.png'
+}
+
+async function dataUrlToBlob(dataUrl: string): Promise<Blob> {
+  const parsed = parseImageDataUrl(dataUrl)
+  if (!parsed) throw new Error('形象参考图无效')
+  const binary = atob(parsed.base64)
+  const bytes = new Uint8Array(binary.length)
+  for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i)
+  return new Blob([bytes], { type: parsed.mime })
+}
+
+function buildGptImageReferenceEditPrompt(
+  prompt: string,
+  genderHint?: string,
+  refCount = 1,
+  refLabels?: string[],
+  appearanceRefNote?: string,
+  styleOnly = false,
+  promptContext?: MomentsImageGenParams['promptContext'],
+  characterRefCount = 0,
+  playerGenderHint?: string,
+): string {
+  if (promptContext === 'dating_plot') {
+    return `${buildDatingPlotReferenceIdentityLockPrompt(prompt, genderHint, refCount, refLabels, appearanceRefNote, characterRefCount, playerGenderHint)} ${GPT_REFERENCE_ILLUSTRATION_GUARD}`
+  }
+  if (styleOnly) {
+    return `${buildReferenceStyleOnlyLockPrompt(prompt, refCount, appearanceRefNote)} ${GPT_REFERENCE_ILLUSTRATION_GUARD}`
+  }
+  return `${buildReferenceIdentityLockPrompt(prompt, genderHint, refCount, refLabels, appearanceRefNote)} ${GPT_REFERENCE_ILLUSTRATION_GUARD}`
+}
+
+function extractOpenAiImagePayloadError(data: unknown): string {
+  if (!data || typeof data !== 'object') return ''
+  const o = data as Record<string, unknown>
+  const errObj = o.error
+  if (errObj && typeof errObj === 'object') {
+    const msg = (errObj as { message?: string }).message
+    if (typeof msg === 'string' && msg.trim()) return msg.trim()
+  }
+  const msg = o.message
+  if (typeof msg === 'string') {
+    const t = msg.trim()
+    if (!t) return ''
+    if (/reject|safety|violation|policy|moderation|blocked|审核|违规/i.test(t)) return t
+    if (o.status_code === 200 && /reject/i.test(t)) return t
+  }
+  const violations = o.safety_violations
+  if (Array.isArray(violations) && violations.length > 0) {
+    const base =
+      typeof msg === 'string' && msg.trim()
+        ? msg.trim()
+        : 'Your request was rejected by the safety system.'
+    return `${base} safety_violations=${JSON.stringify(violations)}`
+  }
+  return ''
+}
+
+function parseOpenAiImageResponse(
+  data: unknown,
+  provider: MomentsImageProvider = 'openai',
+  httpStatus = 200,
+): string {
+  const errText = extractOpenAiImagePayloadError(data)
+  if (errText) throw new Error(localizeMomentsImageGenError(provider, httpStatus, errText))
+  const payload = data as {
+    data?: Array<{ b64_json?: string; url?: string }>
+    images?: Array<{ url?: string; b64_json?: string }>
+  }
+  const item = payload.data?.[0]
+  const b64 = item?.b64_json?.trim() ?? payload.images?.[0]?.b64_json?.trim()
+  if (b64) return `data:image/png;base64,${b64}`
+  const imageUrl = item?.url?.trim() ?? payload.images?.[0]?.url?.trim()
+  if (imageUrl) return imageUrl
+  throw new Error('OpenAI 未返回图片')
+}
+
+function extractImageRefFromText(text: string): string | null {
+  const t = text.trim()
+  if (!t) return null
+  const dataMatch = t.match(/data:image\/[a-z0-9.+-]+;base64,[A-Za-z0-9+/=\s]+/i)
+  if (dataMatch) return dataMatch[0].replace(/\s+/g, '')
+  const mdMatch = t.match(/!\[[^\]]*\]\(([^)]+)\)/)
+  if (mdMatch?.[1]?.trim()) return mdMatch[1].trim()
+  const urlMatch = t.match(/https?:\/\/[^\s"'<>]+/i)
+  if (urlMatch && /\.(png|jpe?g|webp|gif)(\?|$)/i.test(urlMatch[0])) return urlMatch[0]
+  return null
+}
+
+function parseChatCompletionsImageResponse(data: unknown): string | null {
+  if (!data || typeof data !== 'object') return null
+  const root = data as Record<string, unknown>
+  const choice = (root.choices as unknown[])?.[0] as Record<string, unknown> | undefined
+  const msg = (choice?.message ?? choice?.delta) as Record<string, unknown> | undefined
+  if (msg) {
+    const content = msg.content
+    if (typeof content === 'string') {
+      const fromText = extractImageRefFromText(content)
+      if (fromText) return fromText
+    }
+    if (Array.isArray(content)) {
+      for (const part of content) {
+        if (!part || typeof part !== 'object') continue
+        const p = part as Record<string, unknown>
+        if (p.type === 'image_url' && p.image_url && typeof p.image_url === 'object') {
+          const url = String((p.image_url as { url?: string }).url ?? '').trim()
+          if (url) return url
+        }
+        if (p.type === 'text' && typeof p.text === 'string') {
+          const fromText = extractImageRefFromText(p.text)
+          if (fromText) return fromText
+        }
+        if (p.inline_data && typeof p.inline_data === 'object') {
+          const inline = p.inline_data as { data?: string; mime_type?: string }
+          const b64 = inline.data?.trim()
+          if (b64) {
+            const mime = inline.mime_type?.trim() || 'image/png'
+            return `data:${mime};base64,${b64}`
+          }
+        }
+      }
+    }
+    const msgImages = msg.images
+    if (Array.isArray(msgImages)) {
+      for (const img of msgImages) {
+        if (!img || typeof img !== 'object') continue
+        const row = img as { url?: string; b64_json?: string }
+        if (row.b64_json?.trim()) return `data:image/png;base64,${row.b64_json.trim()}`
+        if (row.url?.trim()) return row.url.trim()
+      }
+    }
+  }
+  try {
+    return parseOpenAiImageResponse(data, 'custom', 200)
+  } catch {
+    return null
+  }
+}
+
+async function generateGptImageViaChatCompletions(params: {
+  endpoint: string
+  apiKey: string
+  modelName: string
+  prompt: string
+  errorProvider: MomentsImageProvider
+}): Promise<string> {
+  const res = await fetch(params.endpoint, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${params.apiKey}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      model: params.modelName,
+      messages: [{ role: 'user', content: params.prompt }],
+      stream: false,
+    }),
+  })
+  const text = await res.text()
+  let data: unknown = null
+  try {
+    data = text ? (JSON.parse(text) as unknown) : null
+  } catch {
+    if (!res.ok) {
+      throw new Error(localizeMomentsImageGenError(params.errorProvider, res.status, text))
+    }
+    throw new Error('chat/completions 返回不是合法 JSON')
+  }
+  if (!res.ok) {
+    throw new Error(localizeMomentsImageGenError(params.errorProvider, res.status, text))
+  }
+  const imageRef = parseChatCompletionsImageResponse(data)
+  if (!imageRef) throw new Error('chat/completions 未返回图片（请确认中转站 gpt-image 模型支持该接口）')
+  return ensureMomentsImageDataUrl(imageRef)
+}
+
+async function generateCustomImageViaGenerations(params: {
+  endpoint: string
+  apiKey: string
+  modelName: string
+  prompt: string
+  width: number
+  height: number
+  imageSize?: string
+  errorProvider: MomentsImageProvider
+}): Promise<string> {
+  const body: Record<string, unknown> = { model: params.modelName, prompt: params.prompt }
+
+  if (isOpenAiStyleImageModel(params.modelName)) {
+    body.n = 1
+    body.size = resolveOpenaiImageSize(params.modelName, params.width, params.height, params.imageSize)
+    body.response_format = 'b64_json'
+    if (params.modelName === 'gpt-image-1') body.quality = 'medium'
+    else if (params.modelName === 'dall-e-3') body.quality = 'standard'
+  } else {
+    body.image_size = resolveSiliconFlowImageSize(params.modelName, params.width, params.height, params.imageSize)
+    body.num_inference_steps = 20
+    if (/Qwen\/Qwen-Image/i.test(params.modelName) && !/Edit/i.test(params.modelName)) body.cfg = 4
+    if (/Kolors/i.test(params.modelName)) {
+      body.guidance_scale = 7.5
+      body.batch_size = 1
+    }
+  }
+
+  const res = await fetch(params.endpoint, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${params.apiKey}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify(body),
+  })
+
+  if (!res.ok) {
+    const text = await res.text()
+    throw new Error(localizeMomentsImageGenError(params.errorProvider, res.status, text))
+  }
+
+  const data = await res.json()
+  const payloadErr = extractOpenAiImagePayloadError(data)
+  if (payloadErr) throw new Error(localizeMomentsImageGenError(params.errorProvider, res.status, payloadErr))
+
+  return parseOpenAiImageResponse(data, params.errorProvider, res.status)
+}
+
+async function generateGptImageWithReference(params: {
+  endpoint: string
+  apiKey: string
+  modelName: string
+  prompt: string
+  referenceImageDataUrl: string
+  referenceCount?: number
+  referenceLabels?: string[]
+  width: number
+  height: number
+  imageSize?: string
+  errorProvider: MomentsImageProvider
+  characterGenderHint?: string
+  characterAppearanceRefNote?: string
+  referenceStyleOnly?: boolean
+  promptContext?: MomentsImageGenParams['promptContext']
+  datingPlotCharacterRefCount?: number
+  datingPlotPlayerGenderHint?: string
+}): Promise<string> {
+  const blob = await dataUrlToBlob(params.referenceImageDataUrl)
+  const parsed = parseImageDataUrl(params.referenceImageDataUrl)
+  const form = new FormData()
+  form.append('model', params.modelName)
+  form.append(
+    'prompt',
+    buildGptImageReferenceEditPrompt(
+      params.prompt,
+      params.characterGenderHint,
+      params.referenceCount ?? 1,
+      params.referenceLabels,
+      params.characterAppearanceRefNote,
+      params.referenceStyleOnly === true,
+      params.promptContext,
+      params.datingPlotCharacterRefCount ?? 0,
+      params.datingPlotPlayerGenderHint,
+    ),
+  )
+  form.append('image', blob, referenceImageFileName(parsed?.mime ?? 'image/png'))
+  form.append('n', '1')
+  form.append('size', resolveOpenaiImageSize(params.modelName, params.width, params.height, params.imageSize))
+  form.append('quality', 'high')
+  if (isGptImageModel(params.modelName)) {
+    form.append('input_fidelity', 'high')
+  }
+
+  const res = await fetch(params.endpoint, {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${params.apiKey}` },
+    body: form,
+  })
+  if (!res.ok) {
+    const text = await res.text()
+    throw new Error(localizeMomentsImageGenError(params.errorProvider, res.status, text))
+  }
+
+  const dataUrl = parseOpenAiImageResponse(await res.json(), params.errorProvider, res.status)
+  if (dataUrl.startsWith('data:')) return dataUrl
+  try {
+    return await fetchImageAsDataUrl(dataUrl)
+  } catch {
+    return dataUrl
+  }
 }
 
 async function generateGeminiImage(params: MomentsImageGenParams): Promise<string> {
@@ -428,12 +1064,21 @@ async function generateGeminiImage(params: MomentsImageGenParams): Promise<strin
   }
 
   const url = `${GEMINI_API_BASE_URL}/models/${modelName}:generateContent`
+  const referenceImageDataUrls = await resolveReferenceImageDataUrls(params)
   return requestGeminiGenerateContentImage({
     endpoint: url,
     apiKey,
     prompt,
     auth: 'query',
     errorProvider: 'gemini',
+    referenceImageDataUrls,
+    referenceImageKinds: params.referenceImageKinds,
+    characterGenderHint: params.characterGenderHint,
+    characterAppearanceRefNote: params.characterAppearanceRefNote,
+    referenceStyleOnly: params.referenceStyleOnly,
+    promptContext: params.promptContext,
+    datingPlotCharacterRefCount: params.datingPlotCharacterRefCount,
+    datingPlotPlayerGenderHint: params.datingPlotPlayerGenderHint,
   })
 }
 
@@ -450,6 +1095,49 @@ async function generateOpenaiImage(params: MomentsImageGenParams): Promise<strin
   const width = params.width ?? 1024
   const height = params.height ?? 1024
   const size = resolveOpenaiImageSize(modelName, width, height, params.imageSize)
+
+  const referenceImageDataUrls = await resolveReferenceImageDataUrls(params)
+  const hasReference = referenceImageDataUrls.length > 0
+  const referenceImageDataUrl = pickGptReferenceDataUrl(referenceImageDataUrls, params.referenceImageKinds)
+  const refLabels = (params.referenceImageKinds ?? []).map((k) => REF_KIND_PROMPT_LABELS[k])
+
+  if (hasReference && (params.promptContext === 'character_media' || params.promptContext === 'dating_plot') && !isGptImageModel(modelName)) {
+    throw new Error(
+      '当前 OpenAI 模型不支持形象参考图（DALL·E 仅文生图）。自拍锁脸请改用 GPT Image（gpt-image-1 等），二次元参考图更推荐 Gemini 原生图模。',
+    )
+  }
+
+  if (referenceImageDataUrl && isGptImageModel(modelName)) {
+    try {
+      return await generateGptImageWithReference({
+        endpoint: OPENAI_IMAGE_EDITS_API_URL,
+        apiKey,
+        modelName,
+        prompt,
+        referenceImageDataUrl,
+        referenceCount: referenceImageDataUrls.length,
+        referenceLabels: refLabels,
+        width,
+        height,
+        imageSize: params.imageSize,
+        errorProvider: 'openai',
+        characterGenderHint: params.characterGenderHint,
+        characterAppearanceRefNote: params.characterAppearanceRefNote,
+        referenceStyleOnly: params.referenceStyleOnly,
+        promptContext: params.promptContext,
+        datingPlotCharacterRefCount: params.datingPlotCharacterRefCount,
+        datingPlotPlayerGenderHint: params.datingPlotPlayerGenderHint,
+      })
+    } catch (err) {
+      if (params.promptContext === 'character_media' || params.promptContext === 'dating_plot') {
+        const detail = err instanceof Error ? err.message : String(err)
+        throw new Error(
+          `GPT 形象参考生图失败：${detail}。GPT 对二次元立绘参考容易偏写实/换脸，建议换 Gemini 原生图模；并确认 API 已开通 /v1/images/edits。`,
+        )
+      }
+      // 非角色自拍场景保留文生图回落
+    }
+  }
 
   const body: Record<string, unknown> = {
     model: modelName,
@@ -479,23 +1167,18 @@ async function generateOpenaiImage(params: MomentsImageGenParams): Promise<strin
     throw new Error(localizeMomentsImageGenError('openai', res.status, text))
   }
 
-  const data = (await res.json()) as { data?: Array<{ b64_json?: string; url?: string }> }
-  const item = data.data?.[0]
-  const b64 = item?.b64_json?.trim()
-  if (b64) return `data:image/png;base64,${b64}`
-  const imageUrl = item?.url?.trim()
-  if (imageUrl) {
-    try {
-      return await fetchImageAsDataUrl(imageUrl)
-    } catch {
-      return imageUrl
-    }
+  const dataUrl = parseOpenAiImageResponse(await res.json(), 'openai', res.status)
+  if (dataUrl.startsWith('data:')) return dataUrl
+  try {
+    return await fetchImageAsDataUrl(dataUrl)
+  } catch {
+    return dataUrl
   }
-  throw new Error('OpenAI 未返回图片')
 }
 
 function isOpenAiStyleImageModel(modelName: string): boolean {
-  return /^(dall-?e|gpt-image)/i.test(modelName)
+  const name = modelName.trim()
+  return /gpt-image/i.test(name) || /dall-?e/i.test(name)
 }
 
 async function generateCustomGeminiNativeImage(
@@ -510,12 +1193,21 @@ async function generateCustomGeminiNativeImage(
   const endpoint = buildGeminiGenerateContentEndpoint(apiUrl, modelName)
   if (!endpoint) throw new Error('自定义接口 API URL 无效')
 
+  const referenceImageDataUrls = await resolveReferenceImageDataUrls(params)
   return requestGeminiGenerateContentImage({
     endpoint,
     apiKey,
     prompt,
     auth: 'bearer',
     errorProvider: 'custom',
+    referenceImageDataUrls,
+    referenceImageKinds: params.referenceImageKinds,
+    characterGenderHint: params.characterGenderHint,
+    characterAppearanceRefNote: params.characterAppearanceRefNote,
+    referenceStyleOnly: params.referenceStyleOnly,
+    promptContext: params.promptContext,
+    datingPlotCharacterRefCount: params.datingPlotCharacterRefCount,
+    datingPlotPlayerGenderHint: params.datingPlotPlayerGenderHint,
   })
 }
 
@@ -537,59 +1229,95 @@ async function generateCustomImage(params: MomentsImageGenParams): Promise<strin
     return generateCustomGeminiNativeImage(params, apiUrl, apiKey, modelName)
   }
 
-  const endpoint = buildOpenAiImagesGenerationsEndpoint(apiUrl)
-  if (!endpoint) throw new Error('自定义接口 API URL 无效')
-
   const width = params.width ?? 1024
   const height = params.height ?? 1024
-  const body: Record<string, unknown> = { model: modelName, prompt }
+  const referenceImageDataUrls = await resolveReferenceImageDataUrls(params)
+  const hasReference = referenceImageDataUrls.length > 0
+  const referenceImageDataUrl = pickGptReferenceDataUrl(referenceImageDataUrls, params.referenceImageKinds)
+  const refLabels = (params.referenceImageKinds ?? []).map((k) => REF_KIND_PROMPT_LABELS[k])
 
-  if (isOpenAiStyleImageModel(modelName)) {
-    body.n = 1
-    body.size = resolveOpenaiImageSize(modelName, width, height, params.imageSize)
-    body.response_format = 'b64_json'
-    if (modelName === 'gpt-image-1') body.quality = 'medium'
-    else if (modelName === 'dall-e-3') body.quality = 'standard'
-  } else {
-    body.image_size = resolveSiliconFlowImageSize(modelName, width, height, params.imageSize)
-    body.num_inference_steps = 20
-    if (/Qwen\/Qwen-Image/i.test(modelName) && !/Edit/i.test(modelName)) body.cfg = 4
-    if (/Kolors/i.test(modelName)) {
-      body.guidance_scale = 7.5
-      body.batch_size = 1
+  if (hasReference && (params.promptContext === 'character_media' || params.promptContext === 'dating_plot') && !isGptImageModel(modelName)) {
+    throw new Error(
+      '当前自定义接口模型不支持形象参考图。自拍锁脸请改用 gpt-image 系列或 Gemini 原生图模。',
+    )
+  }
+
+  if (referenceImageDataUrl && isGptImageModel(modelName)) {
+    const editsEndpoint = buildOpenAiImagesEditsEndpoint(apiUrl)
+    if (editsEndpoint) {
+      try {
+        return await generateGptImageWithReference({
+          endpoint: editsEndpoint,
+          apiKey,
+          modelName,
+          prompt,
+          referenceImageDataUrl,
+          referenceCount: referenceImageDataUrls.length,
+          referenceLabels: refLabels,
+          width,
+          height,
+          imageSize: params.imageSize,
+          errorProvider: 'custom',
+          characterGenderHint: params.characterGenderHint,
+          characterAppearanceRefNote: params.characterAppearanceRefNote,
+          referenceStyleOnly: params.referenceStyleOnly,
+          promptContext: params.promptContext,
+          datingPlotCharacterRefCount: params.datingPlotCharacterRefCount,
+          datingPlotPlayerGenderHint: params.datingPlotPlayerGenderHint,
+        })
+      } catch (err) {
+        if (params.promptContext === 'character_media' || params.promptContext === 'dating_plot') {
+          const detail = err instanceof Error ? err.message : String(err)
+          throw new Error(
+            `GPT 形象参考生图失败：${detail}。中转站需支持 /images/edits；二次元参考更推荐 Gemini 原生图模。`,
+          )
+        }
+      }
+    } else if (params.promptContext === 'character_media') {
+      throw new Error('自定义接口未配置 /images/edits，无法使用形象参考图。请换支持 edits 的中转或 Gemini 原生图模。')
     }
   }
 
-  const res = await fetch(endpoint, {
-    method: 'POST',
-    headers: {
-      Authorization: `Bearer ${apiKey}`,
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify(body),
-  })
+  const endpoint = buildOpenAiImagesGenerationsEndpoint(apiUrl)
+  if (!endpoint) throw new Error('自定义接口 API URL 无效')
 
-  if (!res.ok) {
-    const text = await res.text()
-    throw new Error(localizeMomentsImageGenError('custom', res.status, text))
+  const genParams = {
+    endpoint,
+    apiKey,
+    modelName,
+    prompt,
+    width,
+    height,
+    imageSize: params.imageSize,
+    errorProvider: 'custom' as const,
   }
 
-  const data = (await res.json()) as {
-    data?: Array<{ b64_json?: string; url?: string }>
-    images?: Array<{ url?: string }>
+  if (isGptImageModel(modelName)) {
+    const chatEndpoint = buildOpenAiChatCompletionsEndpoint(apiUrl)
+    let lastErr: unknown = null
+    if (chatEndpoint) {
+      try {
+        return await generateGptImageViaChatCompletions({
+          endpoint: chatEndpoint,
+          apiKey,
+          modelName,
+          prompt,
+          errorProvider: 'custom',
+        })
+      } catch (err) {
+        lastErr = err
+      }
+    }
+    try {
+      return await generateCustomImageViaGenerations(genParams)
+    } catch (genErr) {
+      if (lastErr instanceof Error) throw lastErr
+      throw genErr
+    }
   }
-  const openAiItem = data.data?.[0]
-  const b64 = openAiItem?.b64_json?.trim()
-  if (b64) return `data:image/png;base64,${b64}`
 
-  const imageUrl = openAiItem?.url?.trim() ?? data.images?.[0]?.url?.trim()
-  if (!imageUrl) throw new Error('自定义接口未返回图片')
-
-  try {
-    return await fetchImageAsDataUrl(imageUrl)
-  } catch {
-    return imageUrl
-  }
+  const dataUrl = await generateCustomImageViaGenerations(genParams)
+  return ensureMomentsImageDataUrl(dataUrl)
 }
 
 function resolveProvider(settings: MomentsImageGenSettings): MomentsImageProvider {
@@ -597,12 +1325,25 @@ function resolveProvider(settings: MomentsImageGenSettings): MomentsImageProvide
 }
 
 export async function generateMomentsImage(params: MomentsImageGenParams): Promise<string> {
-  const provider = resolveProvider(params.settings)
-  if (provider === 'qianfan') return generateQianfanImage(params)
-  if (provider === 'volcengine') return generateVolcengineImage(params)
-  if (provider === 'novelai') return generateNovelaiImage(params)
-  if (provider === 'gemini') return generateGeminiImage(params)
-  if (provider === 'openai') return generateOpenaiImage(params)
-  if (provider === 'custom') return generateCustomImage(params)
-  return generateSiliconFlowImage(params)
+  let effectiveParams = params
+  if (params.promptContext === 'character_media') {
+    const sanitized = sanitizeCharacterMediaImagePrompt(params.prompt)
+    const englishPrompt = await resolveCharacterMediaPromptEnglish(sanitized)
+    effectiveParams = {
+      ...params,
+      prompt: englishPrompt,
+      characterMediaPromptForInference: sanitized,
+    }
+  }
+  const provider = resolveProvider(effectiveParams.settings)
+  let dataUrl: string
+  if (provider === 'qianfan') dataUrl = await generateQianfanImage(effectiveParams)
+  else if (provider === 'volcengine') dataUrl = await generateVolcengineImage(effectiveParams)
+  else if (provider === 'novelai') dataUrl = await generateNovelaiImage(effectiveParams)
+  else if (provider === 'gemini') dataUrl = await generateGeminiImage(effectiveParams)
+  else if (provider === 'openai') dataUrl = await generateOpenaiImage(effectiveParams)
+  else if (provider === 'custom') dataUrl = await generateCustomImage(effectiveParams)
+  else dataUrl = await generateSiliconFlowImage(effectiveParams)
+  dataUrl = await ensureMomentsImageDataUrl(dataUrl)
+  return applyCharacterSelfieMirrorFlip(effectiveParams, dataUrl)
 }

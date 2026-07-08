@@ -25,6 +25,10 @@ export type JbsVoicePlaybackState = {
   introReadingPromptDismissed: boolean
   /** 第一幕「接取本幕任务」已确认 */
   act1TasksAccepted: boolean
+  /** 公开讨论①开场白（四人轮次）是否已全部播完 */
+  discuss1OpeningDone: boolean
+  /** 公开讨论①开场白已 finalize 的轨数 */
+  discuss1OpeningCompletedTrackCount: number
 }
 
 export const EMPTY_VOICE_PLAYBACK: JbsVoicePlaybackState = {
@@ -35,6 +39,8 @@ export const EMPTY_VOICE_PLAYBACK: JbsVoicePlaybackState = {
   act1ReadingPromptDismissed: false,
   introReadingPromptDismissed: false,
   act1TasksAccepted: false,
+  discuss1OpeningDone: false,
+  discuss1OpeningCompletedTrackCount: 0,
 }
 
 export type JbsEngineSnapshot = {
@@ -120,6 +126,12 @@ function normalizeVoicePlayback(raw: unknown): JbsVoicePlaybackState {
     act1ReadingPromptDismissed: !!o.act1ReadingPromptDismissed,
     introReadingPromptDismissed: !!o.introReadingPromptDismissed,
     act1TasksAccepted: !!o.act1TasksAccepted,
+    discuss1OpeningDone: !!o.discuss1OpeningDone,
+    discuss1OpeningCompletedTrackCount:
+      typeof o.discuss1OpeningCompletedTrackCount === 'number' &&
+      o.discuss1OpeningCompletedTrackCount >= 0
+        ? Math.floor(o.discuss1OpeningCompletedTrackCount)
+        : 0,
   }
 }
 

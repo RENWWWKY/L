@@ -3,7 +3,7 @@ import { DEFAULT_NOVELAI_IMAGE_MODEL_ID } from './novelaiImageCatalog'
 import { DEFAULT_OPENAI_IMAGE_MODEL_ID } from './openaiImageCatalog'
 import { DEFAULT_QIANFAN_IMAGE_MODEL_ID } from './qianfanImageCatalog'
 import { DEFAULT_SILICONFLOW_IMAGE_MODEL_ID } from './siliconflowImageCatalog'
-import { DEFAULT_CUSTOM_IMAGE_MODEL_ID } from './customImageCatalog'
+import { DEFAULT_CUSTOM_IMAGE_MODEL_ID, parseCustomManualModelIds } from './customImageCatalog'
 import { DEFAULT_VOLCENGINE_IMAGE_MODEL_ID } from './volcengineImageCatalog'
 
 export type MomentsImageProvider =
@@ -147,6 +147,7 @@ export type FetchMomentsImageModelCatalogOptions = {
   openaiApiKey?: string
   customApiUrl?: string
   customApiKey?: string
+  customManualModelIds?: string
 }
 
 export async function fetchMomentsImageModelCatalog(
@@ -174,7 +175,11 @@ export async function fetchMomentsImageModelCatalog(
   }
   if (options.provider === 'custom') {
     const { fetchCustomImageModelCatalog } = await import('./customImageCatalog')
-    return fetchCustomImageModelCatalog(options.customApiUrl ?? '', options.customApiKey ?? '')
+    return fetchCustomImageModelCatalog(
+      options.customApiUrl ?? '',
+      options.customApiKey ?? '',
+      parseCustomManualModelIds(options.customManualModelIds),
+    )
   }
   const { fetchSiliconFlowImageModelCatalog } = await import('./siliconflowImageCatalog')
   return fetchSiliconFlowImageModelCatalog(options.siliconflowApiKey ?? '')

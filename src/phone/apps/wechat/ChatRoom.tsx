@@ -55,7 +55,8 @@ import type { ApiConfig } from '../api/types'
 import { isCharacterImageGenEnabled, DEFAULT_IMAGE_GEN_SETTINGS } from '../api/imageGenPresetUtils'
 import { loadResolvedImageGenSettings } from '../api/loadResolvedImageGenSettings'
 import { generateMomentsImage } from '../../../components/moments/momentsImageGen'
-import { resolveImageStyleHint } from '../../../components/moments/momentsImagePromptEnhancer'
+import { buildCharacterMediaImageGenParams, characterHasAppearanceReference, resolveCharacterImageGenPromptAppearanceHint } from './characterAppearanceImageGen'
+import { resolveCharacterMediaImageStyleHint } from '../../../components/moments/momentsImagePromptEnhancer'
 
 import { useChatTheme } from './ChatThemeContext'
 import { WeChatChatMixedText } from './WeChatChatMixedText'
@@ -93,6 +94,7 @@ import {
 } from './wechatCharacterProfileImageApply'
 import {
   applyCharacterWechatProfileUpdateDirectives,
+  userRequestedWechatSignatureUpdate,
   buildCharacterWechatProfileStateBlock,
   buildUserWechatProfileUpdateBias,
   filterCharacterWechatProfileUpdateDirectives,
@@ -121,9 +123,14 @@ import { contactEntryFromCharacter } from './wechatPersonaContactsSync'
 import { useWechatStore } from './useWechatStore'
 import {
   applyWorldBookAfterPatchesToCharacter,
+  applyWorldBookAfterRevertEntries,
   buildAggregateGroupChatAfterPatchItemsSection,
   buildWorldBookAfterPatchOutputAppendix,
+  collectWorldBookAfterRevertSnapshot,
+  enrichWeChatCharacterMessageWithRoundRevert,
   hasChatAfterWorldBookItems,
+  mergeWorldBookAfterRevertByCharacterFromMessages,
+  revertWorldBookAfterUsingContentPrevious,
   WORLD_BOOK_AFTER_PATCH_UPDATED_EVENT,
   type WorldBookAfterPatch,
 } from './newFriendsPersona/worldBookAfterPatch'
@@ -158,14 +165,21 @@ import type {
 import {
   parseStoredRoundTriggerPercent,
   rollRoundMediaTriggerAllowed,
+  rollClassicEmojiRoundTriggerAllowed,
   rollImageRoundTriggerAllowed,
+  shouldHonorModelCharacterImageLinesDespiteProbability,
   drawRoundImageCount,
   parseStoredImageRoundCountRange,
   shouldSuppressCharacterStickerLine,
   shouldSuppressCharacterVoiceLine,
   shouldSuppressCharacterImageLine,
+  isImageGenRateLimitError,
+  isImageGenQuotaOrRateLimitBlocked,
+  markImageGenQuotaOrRateLimitBlocked,
   stripBannedClassicEmojiTokens,
+  shouldStripClassicEmojiTokensThisRound,
 } from './wechatMediaSendFrequency'
+import { stripWechatClassicEmojiTokens } from './stickers/wechatClassicStickerPack'
 import {
   buildCharacterImageGenPromptBlock,
   buildCharacterImageFakeSendRetryBias,
@@ -173,7 +187,11 @@ import {
   imageGenDataUrlToPayload,
   mergeCharacterImageRetryBubbles,
   parseCharacterImageGenLine,
+  countCharacterImageGenLinesInBubbles,
+  stripCharacterImageGenLinesFromBubbles,
+  limitCharacterImageGenLinesFromBubbles,
 } from './wechatCharacterImageGen'
+import { shouldInjectImageGenCompositionLifeFeelCot } from '../../../components/moments/imageGenCompositionLifeFeelCot'
 import {
   buildUserExplicitCharacterImageRequestBias,
   resolveCharacterImageRequestIntent,
@@ -343,6 +361,7 @@ import {
   WECHAT_CHARACTER_MINI_GAME_INVITE_OUTPUT_BLOCK,
 } from './miniGame/wechatCharacterMiniGameInviteAi'
 import type { MiniGameType } from './miniGame/types'
+import { isGameAvailable } from './miniGame/gameCatalog'
 import { WeChatChatCameraScreen } from './WeChatChatCameraScreen'
 import {
   WeChatChatPhotoPickerSheet,
@@ -388,6 +407,8 @@ import { findLatestSelfSharedRecordInBurst } from './favorites/findLatestSelfSha
 import { buildLinkPreviewPromptBlockFromTexts } from './linkPreview/formatLinkPreviewPromptBlock'
 import { WeChatChatRenderErrorBoundary } from './WeChatChatRenderErrorBoundary'
 import { ChatRoomFavoritesPicker } from './favorites/ChatRoomFavoritesPicker'
+import { addWeChatMessageToAlbum } from './album/addWeChatMessageToAlbum'
+import { resolveAlbumSaveMessage } from './album/resolveAlbumSaveMessage'
 import { buildSharedRecordPayloadFromFavorite } from './favorites/buildSharedRecordPayload'
 import type { FavoriteItem } from './favorites/favoriteItemTypes'
 import { sendSharedRecordToContact } from './favorites/sendSharedRecord'
@@ -2048,6 +2069,8 @@ export function ChatRoomInner({
   onPendingQueueCountChange,
   onOpponentRevealQueueActive,
   skipBusySignal = 0,
+  /** 聊天设置内清空记录后递增，强制重载当前会话气泡 */
+  historyRefreshSignal = 0,
   personaCharacterId = null,
   playerDisplayName = '',
   /** 仅在与内置 Lumi 助手会话且未绑人设时为 true；其他聊天勿开，以免注入 Lumi 专用系统提示词 */
@@ -2106,6 +2129,8 @@ export function ChatRoomInner({
   onOpponentRevealQueueActive?: (active: boolean) => void
   /** 上层点击“跳过忙碌”后递增，用于立即触发一轮忙后回复 */
   skipBusySignal?: number
+  /** 聊天设置内清空记录后递增，强制重载当前会话气泡 */
+  historyRefreshSignal?: number
   /** 与人设库角色 id 绑定后注入世界书；未绑定时仅用通用提示词 */
   personaCharacterId?: string | null
   /** 玩家在微信侧展示名，供模型称呼参考 */
@@ -4152,6 +4177,21 @@ export function ChatRoomInner({
   }, [conversationKey, cancelOpponentRevealTimer, setTypingVisible])
 
   useEffect(() => {
+    if (!historyRefreshSignal) return
+    opponentQueueStopRef.current = true
+    pendingAiRepliesRef.current = 0
+    setAwaitingAiKick(false)
+    setTypingVisible(false)
+    onOpponentRevealQueueActiveRef.current?.(false)
+    cancelOpponentRevealTimer()
+    setPendingQueue([])
+    setItems([])
+    itemsRef.current = []
+    ignoreUiOnlyHiddenInListRef.current = false
+    void hydrateMessagesRef.current(true)
+  }, [historyRefreshSignal, cancelOpponentRevealTimer, setTypingVisible])
+
+  useEffect(() => {
     const id = scrollToMessageId?.trim()
     if (!id) {
       // 搜索/日期定位结束后若无重置，ignore 会一直为 true，后续 hydrate 会跳过「仅 UI 清空」裁剪，
@@ -4432,6 +4472,10 @@ export function ChatRoomInner({
   const retryReplyBiasRef = useRef('')
   /** 「重新回复」重生当轮对方稿：不额外 +1 自动总结计轮 */
   const skipMemoryRoundBumpRef = useRef(false)
+  /** 本轮 AI 落库前采集的尾声补丁回滚快照（按 characterId） */
+  const pendingWorldBookRevertByCharRef = useRef<
+    Map<string, import('./dating/types').WorldBookAfterRevertEntry[]>
+  >(new Map())
   const { openConsole } = useWeChatConsole()
   const [composerToast, setComposerToast] = useState<string | null>(null)
   const [centerToast, setCenterToast] = useState<string | null>(null)
@@ -5347,6 +5391,19 @@ export function ChatRoomInner({
     enqueueOpponentMessagesSequential(jobs)
   }, [enqueueOpponentMessagesSequential])
 
+  /** 气泡循环 defer 期间临时露出已排队内容（如生图成功/失败后） */
+  const flushDeferredBubbleRevealJobsBypassDefer = useCallback(() => {
+    if (!deferredBubbleRevealJobsRef.current.length) return
+    const jobs = deferredBubbleRevealJobsRef.current.splice(0)
+    const wasDefer = deferBubbleRevealEnqueueRef.current
+    deferBubbleRevealEnqueueRef.current = false
+    try {
+      enqueueOpponentMessagesSequential(jobs)
+    } finally {
+      deferBubbleRevealEnqueueRef.current = wasDefer
+    }
+  }, [enqueueOpponentMessagesSequential])
+
   /** 前台聊天页：主动消息走与普通 AI 相同的逐条露出 + 顶栏「对方正在输入」 */
   useEffect(() => {
     if (!proactiveCountdownEnabled) return
@@ -5585,6 +5642,28 @@ export function ChatRoomInner({
           showCenterToast('已收藏')
           return
         }
+        case 'saveToAlbum': {
+          try {
+            const local = itemsRef.current.find((it): it is ChatMsg => it.kind === 'msg' && it.id === mid)
+            const msg = await resolveAlbumSaveMessage(mid, local ?? null, {
+              conversationCharacterId,
+              playerIdentityId,
+              conversationKey,
+            })
+            if (!msg) {
+              showCenterToast('该消息无图片')
+              return
+            }
+            const result = await addWeChatMessageToAlbum(msg)
+            if (result === 'duplicate') showCenterToast('已在相册中')
+            else if (result === 'saved') showCenterToast('已保存到相册')
+            else showCenterToast('保存失败，请刷新后重试')
+          } catch (err) {
+            console.error('[saveToAlbum] failed', err)
+            showCenterToast('保存失败，请刷新后重试')
+          }
+          return
+        }
         case 'multiSelect': {
           setIsMultiSelectMode(true)
           setSelectedMessageIds([mid])
@@ -5751,6 +5830,9 @@ export function ChatRoomInner({
       getCurrentTimeMs,
       rebuildWithCurrentTime,
       extractMessages,
+      conversationCharacterId,
+      playerIdentityId,
+      conversationKey,
     ],
   )
 
@@ -5812,8 +5894,9 @@ export function ChatRoomInner({
 
   const handleEnterGameFromInvite = useCallback(
     (invite: WeChatMiniGameInvitePayload) => {
-      if (invite.gameType !== 'gomoku') {
-        showComposerToast('该游戏尚未开放')
+      const playable = isGameAvailable(invite.gameType as MiniGameType)
+      if (!playable) {
+        showComposerToast('该游戏尚在开发中')
         return
       }
       const msgs = extractMessages(itemsRef.current)
@@ -6929,6 +7012,7 @@ export function ChatRoomInner({
         }
         pendingAiRepliesRef.current -= 1
         opponentQueueStopRef.current = false
+        pendingWorldBookRevertByCharRef.current = new Map()
 
         let danmakuConfigForRound: RoundDanmakuInlineConfig | undefined
         let danmakuApiForRound: ApiConfig | null = null
@@ -7535,6 +7619,7 @@ export function ChatRoomInner({
               stickerRoundTriggerPercent?: number
               voiceRoundTriggerPercent?: number
               classicEmojiRoundTriggerPercent?: number
+              applyClassicEmojiDefault?: boolean
               stickerTargetedModeEnabled?: boolean
               stickerTargetedGroups?: string[]
               stickerTargetedEntries?: import('./wechatMediaSendFrequency').StickerTargetedEntryMap
@@ -7588,7 +7673,9 @@ export function ChatRoomInner({
               peerMediaFreqExtras = {
                 ...(sticker !== undefined ? { stickerRoundTriggerPercent: sticker } : {}),
                 ...(voice !== undefined ? { voiceRoundTriggerPercent: voice } : {}),
-                ...(classicEmoji !== undefined ? { classicEmojiRoundTriggerPercent: classicEmoji } : {}),
+                ...(classicEmoji !== undefined
+                  ? { classicEmojiRoundTriggerPercent: classicEmoji }
+                  : { applyClassicEmojiDefault: true }),
                 ...(stickerTargetedModeEnabled ? { stickerTargetedModeEnabled: true } : {}),
                 ...(stickerTargetedGroups?.length ? { stickerTargetedGroups } : {}),
                 ...(stickerTargetedEntries ? { stickerTargetedEntries } : {}),
@@ -7598,7 +7685,10 @@ export function ChatRoomInner({
             }
             resolvedImageGenSettings = await loadResolvedImageGenSettings()
             characterImageGenEnabled = isCharacterImageGenEnabled(resolvedImageGenSettings)
-            const characterImageGenStyleHint = resolveImageStyleHint(resolvedImageGenSettings)
+            const characterImageGenStyleHint = resolveCharacterMediaImageStyleHint(
+              resolvedImageGenSettings,
+              characterHasAppearanceReference(character),
+            )
             const roundImageCountRange = parseStoredImageRoundCountRange(
               convMediaFreqRef.current.imageCountMin,
               convMediaFreqRef.current.imageCountMax,
@@ -7628,6 +7718,7 @@ export function ChatRoomInner({
                   imageRoundCountMax: roundImageCountRange.max,
                   ...(roundImageCountTarget > 0 ? { imageRoundCountTarget: roundImageCountTarget } : {}),
                   userExplicitCharacterImageRequest: roundUserExplicitImageRequest,
+                  ...(roundImageAllowed ? { imageRoundAllowed: true } : {}),
                 } as const)
               : {}
             let characterPersonaSelfServiceExtras: {
@@ -7995,7 +8086,16 @@ export function ChatRoomInner({
                 systemContentFinal += `\n\n${buildWorldBookAfterPatchOutputAppendix()}`
               }
               if (characterImageGenEnabled) {
-                systemContentFinal += `\n\n${buildCharacterImageGenPromptBlock(characterImageGenStyleHint)}`
+                systemContentFinal += `\n\n${buildCharacterImageGenPromptBlock(characterImageGenStyleHint, {
+                  hasAppearanceReference: characterHasAppearanceReference(character),
+                  appearanceHint: resolveCharacterImageGenPromptAppearanceHint(character),
+                  injectCompositionLifeFeelCot: shouldInjectImageGenCompositionLifeFeelCot({
+                    characterImageGenEnabled,
+                    userExplicitCharacterImageRequest: roundUserExplicitImageRequest,
+                    imageRoundCountTarget: roundImageCountTarget,
+                    imageRoundAllowed: roundImageAllowed,
+                  }),
+                })}`
               }
               if (sharedLinkPreviewBlock.trim()) {
                 systemContentFinal += `\n\n---\n${sharedLinkPreviewBlock.trim()}\n`
@@ -8273,20 +8373,26 @@ export function ChatRoomInner({
               for (const [targetId, plist] of byCid) {
                 const row = await personaDb.getCharacter(targetId)
                 if (!row) continue
+                const snap = collectWorldBookAfterRevertSnapshot(row, plist)
                 const next = applyWorldBookAfterPatchesToCharacter(row, plist)
                 if (next) {
                   await personaDb.upsertCharacter(next)
                   worldBookAfterUpdated = true
                   worldBookAfterAppliedPatchCount += plist.length
                   inlineWorldBookPatchAppliedByCharacterId.set(targetId, true)
+                  if (snap.length) pendingWorldBookRevertByCharRef.current.set(targetId.trim(), snap)
                 }
               }
             } else if (roomType !== 'group' && aiReply.worldBookPatches?.length && character?.id) {
+              const snap = collectWorldBookAfterRevertSnapshot(character, aiReply.worldBookPatches)
               const next = applyWorldBookAfterPatchesToCharacter(character, aiReply.worldBookPatches)
               if (next) {
                 await personaDb.upsertCharacter(next)
                 worldBookAfterUpdated = true
                 worldBookAfterAppliedPatchCount = aiReply.worldBookPatches.length
+                if (snap.length) {
+                  pendingWorldBookRevertByCharRef.current.set(character.id.trim(), snap)
+                }
               }
             }
           }
@@ -8399,6 +8505,35 @@ export function ChatRoomInner({
           }
         }
 
+        const modelImageLineCount = countCharacterImageGenLinesInBubbles(aiReply.bubbles ?? [])
+        const honorModelImageLines = shouldHonorModelCharacterImageLinesDespiteProbability(
+          convMediaFreqRef.current.image,
+          roundUserExplicitImageRequest,
+        )
+        if (
+          modelImageLineCount > 0 &&
+          roomType === 'private' &&
+          !lumiAssistantChat &&
+          characterImageGenEnabled &&
+          honorModelImageLines
+        ) {
+          if (!roundImageAllowed && !roundUserExplicitImageRequest) {
+            logConsole(
+              'ai',
+              `模型已输出 ${modelImageLineCount} 条 [图片] 行，绕过本轮发图概率拦截（原 roundAllowed=false）并真实生图`,
+            )
+          }
+          roundImageAllowed = true
+          if (roundImageCountTarget < modelImageLineCount) {
+            roundImageCountTarget = Math.max(modelImageLineCount, roundImageCountTarget, 1)
+          }
+        } else if (modelImageLineCount > 0 && !honorModelImageLines) {
+          logConsole(
+            'ai',
+            `模型输出了 ${modelImageLineCount} 条 [图片] 行，但发图概率=${convMediaFreqRef.current.image ?? 0}% 且非用户明确要求，将剔除`,
+          )
+        }
+
         let bubbles = aiReply.bubbles ?? []
         let orderedSegments: WeChatPeerReplyOrderedSegment[] = aiReply.orderedSegments?.length
           ? aiReply.orderedSegments.map((s) => ({ ...s }))
@@ -8420,6 +8555,29 @@ export function ChatRoomInner({
               seg.kind === 'bubble' ? { kind: 'bubble' as const, text: filtered[i++] ?? '' } : seg,
             )
             .filter((seg) => seg.kind !== 'bubble' || seg.text.trim())
+        }
+        if (roomType !== 'group' && !lumiAssistantChat && characterImageGenEnabled) {
+          if (!roundImageAllowed && !roundUserExplicitImageRequest) {
+            const strippedCount = countCharacterImageGenLinesInBubbles(bubbles)
+            if (strippedCount > 0) {
+              logConsole(
+                'ai',
+                `发图概率未命中且非用户明确要求，已剔除 ${strippedCount} 条 [图片] 行（聊天信息·发图概率=${convMediaFreqRef.current.image ?? 0}%）`,
+              )
+            }
+            bubbles = stripCharacterImageGenLinesFromBubbles(bubbles)
+          } else {
+            const roundImageCountRange = parseStoredImageRoundCountRange(
+              convMediaFreqRef.current.imageCountMin,
+              convMediaFreqRef.current.imageCountMax,
+            )
+            const imageLineCap =
+              typeof roundImageCountTarget === 'number' && roundImageCountTarget > 0
+                ? Math.min(roundImageCountRange.max, roundImageCountTarget)
+                : roundImageCountRange.max
+            bubbles = limitCharacterImageGenLinesFromBubbles(bubbles, imageLineCap)
+          }
+          rebuildOrderedSegmentsFromBubbles(bubbles)
         }
         if (
           roomType !== 'group' &&
@@ -8459,6 +8617,9 @@ export function ChatRoomInner({
             const profileResult = await applyCharacterWechatProfileUpdateDirectives({
               characterId: character.id,
               directives: profileUpdateFiltered.directives,
+              userRequestedSignatureUpdate: userRequestedWechatSignatureUpdate(
+                [...transcript].reverse().find((t) => t.from === 'self')?.text,
+              ),
             })
             if (profileResult.updated) {
               if (profileResult.nicknameChanged) {
@@ -8575,6 +8736,28 @@ export function ChatRoomInner({
           })
           bubbles = musicPre.bubbles
           rebuildOrderedSegmentsFromBubbles(bubbles)
+          const postMusicImageLineCount = countCharacterImageGenLinesInBubbles(bubbles)
+          if (
+            postMusicImageLineCount > 0 &&
+            roomType === 'private' &&
+            !lumiAssistantChat &&
+            characterImageGenEnabled &&
+            honorModelImageLines
+          ) {
+            roundImageAllowed = true
+            roundImageCountTarget = Math.max(postMusicImageLineCount, roundImageCountTarget, 1)
+          }
+          if (modelImageLineCount > 0 && postMusicImageLineCount === 0) {
+            logConsole(
+              'ai',
+              `[imagegen] 警告：模型曾输出 ${modelImageLineCount} 条 [图片] 行，但 music/预处理 后已丢失`,
+            )
+          } else if (postMusicImageLineCount > 0) {
+            logConsole(
+              'ai',
+              `[imagegen] 预处理完成，待生图 [图片] 行数=${postMusicImageLineCount}`,
+            )
+          }
           pendingMusicSyncInvitesThisRound = musicPre.pendingInvites
           pendingMusicSyncSeeksThisRound = musicPre.pendingSeeks
           pendingMusicSyncPlaysThisRound = musicPre.pendingPlays
@@ -9045,7 +9228,12 @@ export function ChatRoomInner({
           roomType !== 'group' ? rollRoundMediaTriggerAllowed(convMediaFreqRef.current.sticker) : true
         const roundVoiceAllowed =
           roomType !== 'group' ? rollRoundMediaTriggerAllowed(convMediaFreqRef.current.voice) : true
+        const roundClassicEmojiAllowed =
+          roomType !== 'group'
+            ? rollClassicEmojiRoundTriggerAllowed(convMediaFreqRef.current.classicEmoji)
+            : true
         let roundImagesEmittedCount = 0
+        let roundImageGenRateLimited = false
         const recentCharacterStickerRefs = collectRecentCharacterStickerRefsFromTranscript(
           itemsToTranscript(buildChatItemsForAiTranscript(), transcriptSpeakerOpts),
         )
@@ -9432,10 +9620,22 @@ export function ChatRoomInner({
               continue
             }
             const currentLineRaw = expandedLines[0] ?? normalizedRawLine
-            let currentLine =
-              roomType !== 'group'
-                ? stripBannedClassicEmojiTokens(currentLineRaw, convMediaFreqRef.current.classicEmojiBannedNames)
-                : currentLineRaw
+            let currentLine = currentLineRaw
+            if (roomType !== 'group') {
+              currentLine = stripBannedClassicEmojiTokens(
+                currentLine,
+                convMediaFreqRef.current.classicEmojiBannedNames,
+              )
+              if (
+                shouldStripClassicEmojiTokensThisRound(
+                  roomType,
+                  convMediaFreqRef.current.classicEmoji,
+                  roundClassicEmojiAllowed,
+                )
+              ) {
+                currentLine = stripWechatClassicEmojiTokens(currentLine)
+              }
+            }
             if (!currentLine.trim()) continue
             if (currentLine === WECHAT_RECALL_ACTION_TOKEN) {
               const lastId = emittedMessageOrderThisRound.length ? emittedMessageOrderThisRound[emittedMessageOrderThisRound.length - 1] : ''
@@ -10287,6 +10487,17 @@ export function ChatRoomInner({
 
             const charImageGen = parseCharacterImageGenLine(currentLine)
             if (charImageGen && characterImageGenEnabled) {
+              if (roundImageGenRateLimited || isImageGenQuotaOrRateLimitBlocked()) {
+                if (isImageGenQuotaOrRateLimitBlocked() && !roundImageGenRateLimited) {
+                  roundImageGenRateLimited = true
+                  showCenterToast('生图额度或频率受限，已跳过本轮其余配图')
+                }
+                logConsole(
+                  'ai',
+                  `[imagegen] 已跳过：生图额度/频率受限（roundImageGenRateLimited=${roundImageGenRateLimited}）`,
+                )
+                continue
+              }
               if (
                 shouldSuppressCharacterImageLine(
                   roomType,
@@ -10296,25 +10507,41 @@ export function ChatRoomInner({
                   roundImagesEmittedCount,
                   convMediaFreqRef.current.imageCountMin,
                   convMediaFreqRef.current.imageCountMax,
+                  roundImageCountTarget,
                 )
               ) {
+                logConsole(
+                  'ai',
+                  `[imagegen] 已跳过：发图张数上限或概率拦截（roundAllowed=${roundImageAllowed}, emitted=${roundImagesEmittedCount}, target=${roundImageCountTarget}）`,
+                )
                 continue
               }
               const dedupeImageGen = `imagegen:${charImageGen.prompt}`
-              if (emittedThisRound.has(dedupeImageGen)) continue
+              if (emittedThisRound.has(dedupeImageGen)) {
+                logConsole('ai', `[imagegen] 已跳过：本轮重复 prompt`)
+                continue
+              }
               emittedThisRound.add(dedupeImageGen)
               if (opponentQueueStopRef.current) break bubbleRunLoop
               const replyToImage = pendingReplyMessageId ? await buildReplyMetaById(pendingReplyMessageId) : null
               pendingReplyMessageId = undefined
               const tsImage = getCurrentTimeMs()
               const oidImage = `wxm-${tsImage}-oimg-${i}-${Math.random().toString(36).slice(2, 6)}`
+              roundImagesEmittedCount += 1
               try {
-                const dataUrl = await generateMomentsImage({
-                  prompt: charImageGen.prompt,
-                  settings: resolvedImageGenSettings,
-                  promptContext: 'character_media',
-                })
+                logConsole(
+                  'ai',
+                  `[imagegen] 开始生图：${charImageGen.prompt.slice(0, 160)}${charImageGen.prompt.length > 160 ? '…' : ''}`,
+                )
+                const dataUrl = await generateMomentsImage(
+                  buildCharacterMediaImageGenParams({
+                    prompt: charImageGen.prompt,
+                    settings: resolvedImageGenSettings,
+                    character,
+                  }),
+                )
                 const payloadImage = imageGenDataUrlToPayload(dataUrl)
+                logConsole('ai', `[imagegen] 生图成功，准备插入图片气泡 id=${oidImage}`)
                 const thinkingForImage = !thinkingAttached && thinking ? thinking : undefined
                 if (thinkingForImage) thinkingAttached = true
                 const incomingImage: ChatMsg = {
@@ -10330,7 +10557,6 @@ export function ChatRoomInner({
                   otherAnimated: true,
                 }
                 const imageStep = markEmittedThisRound(oidImage, tsImage, '（发送了一张图片）')
-                roundImagesEmittedCount += 1
                 enqueueOpponentMessagesSequential([
                   {
                     forConversationKey: conversationKey,
@@ -10357,8 +10583,26 @@ export function ChatRoomInner({
                     afterReveal: withMusicSyncFlushOnBubbleRevealed(imageStep),
                   },
                 ])
+                flushDeferredBubbleRevealJobsBypassDefer()
               } catch (e) {
-                logger.log('error', `角色 AI 配图发送失败: ${e instanceof Error ? e.message : String(e)}`)
+                const msg = e instanceof Error ? e.message : String(e)
+                logger.log('error', `角色 AI 配图发送失败: ${msg}`)
+                logConsole('ai', `[imagegen] 生图失败：${msg}`)
+                if (isImageGenRateLimitError(e)) {
+                  markImageGenQuotaOrRateLimitBlocked(e)
+                  roundImageGenRateLimited = true
+                  const quotaLike = /额度|quota|配额/i.test(msg)
+                  showCenterToast(
+                    quotaLike
+                      ? '生图额度已用尽，已暂停配图（请充值或更换模型）'
+                      : '生图请求过于频繁，已跳过本轮其余配图',
+                  )
+                } else if (/安全审核|content policy|safety|审核未通过|sexual/i.test(msg)) {
+                  showCenterToast('配图未通过内容安全审核，已跳过该图')
+                } else {
+                  showCenterToast('配图生成失败，已跳过该图')
+                }
+                flushDeferredBubbleRevealJobsBypassDefer()
               }
               continue
             }
@@ -10488,16 +10732,21 @@ export function ChatRoomInner({
                 persist: () => {
                   void personaDb
                     .appendWeChatChatMessage({
-                      id: oid,
-                      characterId: emitCharacterId,
-                      playerIdentityId,
-                      type: 'character',
-                      content: segForStore,
-                      thinking: thinkingForRow,
-                      replyTo: replyToMeta ?? undefined,
-                      timestamp: incoming.timestamp,
-                      isRead: true,
-                      conversationKey,
+                      ...enrichWeChatCharacterMessageWithRoundRevert(
+                        {
+                          id: oid,
+                          characterId: emitCharacterId,
+                          playerIdentityId,
+                          type: 'character',
+                          content: segForStore,
+                          thinking: thinkingForRow,
+                          replyTo: replyToMeta ?? undefined,
+                          timestamp: incoming.timestamp,
+                          isRead: true,
+                          conversationKey,
+                        },
+                        pendingWorldBookRevertByCharRef.current,
+                      ),
                       notifyPeerTitle:
                         emitCharacterId === WECHAT_GROUP_BOT_CHARACTER_ID
                           ? '群管家'
@@ -10810,6 +11059,10 @@ export function ChatRoomInner({
 
   const handleSendGameInvite = useCallback(
     (gameType: MiniGameType) => {
+      if (!isGameAvailable(gameType)) {
+        showComposerToast('该游戏尚在开发中')
+        return
+      }
       if (roomType === 'group') {
         showComposerToast('小游戏邀请仅支持私聊')
         return
@@ -12125,6 +12378,43 @@ export function ChatRoomInner({
         .map((m) => m.id)
       const kill = new Set(toRemove)
 
+      const removedOtherCharIds = new Set<string>()
+      for (const m of msgs.slice(lastRealSelfIdx + 1)) {
+        if (m.from !== 'other' || m.kind !== 'msg') continue
+        const cid = m.senderCharacterId?.trim() || conversationCharacterId.trim()
+        if (cid) removedOtherCharIds.add(cid)
+      }
+      try {
+        const revertByChar = mergeWorldBookAfterRevertByCharacterFromMessages(
+          aiContextDbMessagesRef.current,
+          kill,
+        )
+        const charIdsToRevert = new Set<string>([...revertByChar.keys(), ...removedOtherCharIds])
+        let anyReverted = false
+        for (const cid of charIdsToRevert) {
+          let chRow = await personaDb.getCharacter(cid)
+          if (!chRow) continue
+          const entries = revertByChar.get(cid)
+          let restored = entries?.length ? applyWorldBookAfterRevertEntries(chRow, entries) : null
+          if (!restored && removedOtherCharIds.has(cid)) {
+            restored = revertWorldBookAfterUsingContentPrevious(chRow)
+          }
+          if (restored) {
+            await personaDb.upsertCharacter(restored)
+            anyReverted = true
+          }
+        }
+        if (anyReverted) {
+          window.dispatchEvent(
+            new CustomEvent(WORLD_BOOK_AFTER_PATCH_UPDATED_EVENT, {
+              detail: { appliedPatchCount: 1, source: 'retry_revert' },
+            }),
+          )
+        }
+      } catch {
+        /* 尾声回滚失败不阻断重新回复 */
+      }
+
       resetAcceptedIncomingPlayerTransfersForConversationPeer({
         conversationKey,
         playerIdentityId,
@@ -12196,6 +12486,7 @@ export function ChatRoomInner({
 
       retryReplyBiasRef.current = [
         '[系统提示] 用户请求「重新回复」：须视为对该轮用户消息的**首次生成**。上下文已移除你方本轮旧稿，**禁止**引用、延续或复读旧内容；仅依据该条用户消息及更早历史重新作答。',
+        '【重新回复】须写出与旧稿**可区分**的新对白/新信息/新节奏；禁止同义洗稿。若 system 中「尾声延展」已恢复为补丁前基准，勿再按旧稿关系态复读。',
         bias,
       ]
         .filter((x) => x.trim())
@@ -12687,6 +12978,7 @@ export function ChatRoomInner({
     if (actionPanelTargetMsg?.isRecalled) next = next.filter((x) => x !== 'quote')
     if (actionPanelTargetMsg?.voice) next = next.filter((x) => x !== 'copy')
     if (actionPanelTargetMsg?.voice && actionPanelTargetMsg.from === 'other') next = [...next, 'resynthesizeVoice']
+    if (actionPanelTargetMsg?.images?.length) next = [...next, 'saveToAlbum']
     const nonPlainText = Boolean(
       actionPanelTargetMsg?.images?.length ||
         actionPanelTargetMsg?.voice ||

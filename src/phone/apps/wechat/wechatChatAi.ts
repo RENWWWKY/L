@@ -67,9 +67,12 @@ import { buildStickerAntiRepeatPromptBlock } from './stickers/stickerPromptRules
 import {
   buildClassicEmojiBanPromptBlock,
   buildMediaSendFrequencyPromptBlock,
+  resolveEffectiveClassicEmojiRoundTriggerPercent,
   resolveStickerCatalogPromptBlockForSession,
 } from './wechatMediaSendFrequency'
 import { buildCharacterImageGenPromptBlock } from './wechatCharacterImageGen'
+import { shouldInjectImageGenCompositionLifeFeelCot } from '../../../components/moments/imageGenCompositionLifeFeelCot'
+import { characterHasAppearanceReference, resolveCharacterImageGenPromptAppearanceHint } from './characterAppearanceImageGen'
 import {
   WECHAT_CHARACTER_PROFILE_IMAGE_APPLY_APPENDIX,
   WECHAT_CHARACTER_PROFILE_IMAGE_APPLY_IMAGE_ROUND_HINT,
@@ -213,6 +216,7 @@ function buildWeChatStickerAndClassicEmojiPromptBlocks(
   stickerTargetedEntries?: import('./wechatMediaSendFrequency').StickerTargetedEntryMap,
   bannedRefs?: string[],
   classicEmojiBannedNames?: string[],
+  classicEmojiRoundTriggerPercent?: number,
 ): string {
   const stickerCat = resolveStickerCatalogPromptBlockForLore(
     loreInject,
@@ -222,7 +226,11 @@ function buildWeChatStickerAndClassicEmojiPromptBlocks(
     stickerTargetedEntries,
     bannedRefs,
   )
-  const classicCat = buildWechatClassicEmojiCatalogPromptBlock(4200, classicEmojiBannedNames)
+  const classicCat = buildWechatClassicEmojiCatalogPromptBlock(
+    4200,
+    classicEmojiBannedNames,
+    classicEmojiRoundTriggerPercent,
+  )
   const classicBan = buildClassicEmojiBanPromptBlock(classicEmojiBannedNames)
   const classicBlock = classicBan ? `${classicCat}\n\n${classicBan}` : classicCat
   return classicBlock ? `${stickerCat}\n\n${classicBlock}` : stickerCat
@@ -230,6 +238,18 @@ function buildWeChatStickerAndClassicEmojiPromptBlocks(
 
 /** 微信单聊主回复（含思维链解析路径）completion 上限；仍受模型/API 限制 */
 export const WECHAT_PEER_REPLY_MAX_OUTPUT_TOKENS = 30000
+
+export function isWeChatPeerRegenerateReplyBias(replyBias?: string): boolean {
+  return /重新回复|首次生成/.test(String(replyBias ?? ''))
+}
+
+const WECHAT_PEER_REGENERATE_REPLY_APPENDIX = `
+---
+【重新回复（重写上一轮 AI 气泡）】
+1）上下文**不含**你方本轮旧稿；须当作对该条用户消息的**首次作答**，**禁止**洗稿、同义复述或微调旧句交差。
+2）须有**可区分的新钩子**：对白措辞、信息披露顺序、动作/emoji、交涉策略至少一项明显不同。
+3）「尾声延展」：客户端已尝试恢复补丁前关系基准；勿假定旧稿逐字引用仍成立。
+`.trim()
 
 export type WeChatChatPromptMode = 'lumi-assistant' | 'persona'
 export type WeChatDanmakuInlineConfig = {
@@ -748,6 +768,9 @@ export function buildSystemContent(params: {
     ? `\n\n---\n【群聊近期参考（本地消息摘录，非模型总结；用法同上方线下剧情参考）】\n${params.recentGroupChatsReference.trim()}\n`
     : ''
   const replyBias = params.replyBias?.trim() ? `\n\n---\n【本轮回复偏向（最高优先级）】\n${params.replyBias.trim()}\n` : ''
+  const regenAppendix = isWeChatPeerRegenerateReplyBias(params.replyBias)
+    ? `\n\n${WECHAT_PEER_REGENERATE_REPLY_APPENDIX}\n`
+    : ''
   const linkPreviewBlock = params.sharedLinkPreviewBlock?.trim() ?? ''
   const isLumiAssistant = params.promptMode === 'lumi-assistant'
   const currentTime = resolveTimePromptSection({
@@ -816,7 +839,7 @@ export function buildSystemContent(params: {
     params.promptMode === 'persona' ? params.networkNpcPronounBlock?.trim() || '' : ''
   const networkRelationships =
     params.promptMode === 'persona' ? params.networkRelationshipsBlock?.trim() || '' : ''
-  const rawMain = `${WECHAT_ROLEPLAY_SYSTEM_PROMPT}${loreBlock}${mem}${memScopeFence}${storyTimeline}${crossChannelTimeline}${unsPriv}${unsGrp}${unsMeet}${offlinePlots}${meetEncounter}${meetContinuity}${altProbe}${groupChatsRecent}${replyBias}${currentTime}${schedule}${pi}${fictionCot}${extra}${networkRelationships}${networkNpcPronoun}${peerLine}`
+  const rawMain = `${WECHAT_ROLEPLAY_SYSTEM_PROMPT}${loreBlock}${mem}${memScopeFence}${storyTimeline}${crossChannelTimeline}${unsPriv}${unsGrp}${unsMeet}${offlinePlots}${meetEncounter}${meetContinuity}${altProbe}${groupChatsRecent}${replyBias}${regenAppendix}${currentTime}${schedule}${pi}${fictionCot}${extra}${networkRelationships}${networkNpcPronoun}${peerLine}`
   return appendLinkPreview(linkedExpand(rawMain))
 }
 
@@ -1366,6 +1389,8 @@ export async function requestWeChatPeerReplyBubbles(params: {
   stickerTargetedEntries?: import('./wechatMediaSendFrequency').StickerTargetedEntryMap
   stickerBannedRefs?: string[]
   classicEmojiRoundTriggerPercent?: number
+  /** 私聊：未存储时仍按默认 30% 注入黄脸频率与目录规则 */
+  applyClassicEmojiDefault?: boolean
   classicEmojiBannedNames?: string[]
   voiceRoundTriggerPercent?: number
   /** 角色 AI 配图每轮触发概率（缺省 0%） */
@@ -1375,6 +1400,8 @@ export async function requestWeChatPeerReplyBubbles(params: {
   imageRoundCountTarget?: number
   /** 用户本轮明确要求角色发图时 bypass 概率 */
   userExplicitCharacterImageRequest?: boolean
+  /** 本轮概率已命中允许发图（与 imageRoundCountTarget 配合） */
+  imageRoundAllowed?: boolean
   /** 角色主动消息：历史末尾追加系统 user 占位，确保模型以 assistant（角色）侧输出 */
   proactiveInitiation?: boolean
   /** 与 proactiveInitiation 配套；缺省使用内置主动消息占位文案 */
@@ -1409,6 +1436,7 @@ export async function requestWeChatPeerReplyBubbles(params: {
     stickerRoundTriggerPercent: params.stickerRoundTriggerPercent,
     voiceRoundTriggerPercent: params.voiceRoundTriggerPercent,
     classicEmojiRoundTriggerPercent: params.classicEmojiRoundTriggerPercent,
+    applyClassicEmojiDefault: params.applyClassicEmojiDefault,
     ...(params.characterImageGenEnabled
       ? {
           imageRoundTriggerPercent: params.imageRoundTriggerPercent,
@@ -1455,6 +1483,10 @@ export async function requestWeChatPeerReplyBubbles(params: {
   })
   const isLumi = params.promptMode === 'lumi-assistant'
   const busyPrefix = buildBusyPrefix(params.busyContext)
+  const classicEmojiForCatalog =
+    params.applyClassicEmojiDefault || params.classicEmojiRoundTriggerPercent !== undefined
+      ? resolveEffectiveClassicEmojiRoundTriggerPercent(params.classicEmojiRoundTriggerPercent)
+      : undefined
   const stickerCat = buildWeChatStickerAndClassicEmojiPromptBlocks(
     loreInjectForStickerPolicy,
     params.stickerRoundTriggerPercent,
@@ -1463,13 +1495,25 @@ export async function requestWeChatPeerReplyBubbles(params: {
     params.stickerTargetedEntries,
     params.stickerBannedRefs,
     params.classicEmojiBannedNames,
+    classicEmojiForCatalog,
   )
   const stickerAntiRepeat = buildStickerAntiRepeatPromptBlock(
     collectRecentCharacterStickerRefsFromTranscript(params.transcript),
   )
   const stickerBlock = stickerAntiRepeat ? `${stickerCat}\n\n${stickerAntiRepeat}` : stickerCat
+  const injectCompositionLifeFeelCot = shouldInjectImageGenCompositionLifeFeelCot({
+    characterImageGenEnabled: params.characterImageGenEnabled,
+    userExplicitCharacterImageRequest: params.userExplicitCharacterImageRequest,
+    imageRoundCountTarget: params.imageRoundCountTarget,
+    imageRoundAllowed: params.imageRoundAllowed,
+  })
   const imageGenBlock = params.characterImageGenEnabled
-    ? buildCharacterImageGenPromptBlock(params.characterImageGenStyleHint)
+    ? buildCharacterImageGenPromptBlock(params.characterImageGenStyleHint, {
+        hasAppearanceReference: characterHasAppearanceReference(params.character),
+        appearanceHint: resolveCharacterImageGenPromptAppearanceHint(params.character),
+        scope: params.groupChatTranscript ? 'default' : 'private_chat',
+        injectCompositionLifeFeelCot,
+      })
     : ''
   const danmakuInstruction = buildDanmakuInlineInstruction({
     enabled: !!params.danmakuConfig?.enabled,
@@ -1527,7 +1571,13 @@ export async function requestWeChatPeerReplyBubbles(params: {
   const text = await callWeChatPeerReplyChat(cfg, messages, {
     memoryMomentImages,
     characterSelfProfileVisionParts: selfProfileVisionParts,
-    temperature: params.friendRequestAdjudication ? 0.38 : isLumi ? 0.62 : 0.82,
+    temperature: params.friendRequestAdjudication
+      ? 0.38
+      : isLumi
+        ? 0.62
+        : isWeChatPeerRegenerateReplyBias(params.replyBias)
+          ? 0.9
+          : 0.82,
     max_tokens: WECHAT_PEER_REPLY_MAX_OUTPUT_TOKENS,
   })
   const parsed = parseWeChatPeerReplyWithThinking(text)
@@ -1801,6 +1851,8 @@ export async function requestWeChatPeerReplyBubblesWithImage(params: {
   stickerTargetedEntries?: import('./wechatMediaSendFrequency').StickerTargetedEntryMap
   stickerBannedRefs?: string[]
   classicEmojiRoundTriggerPercent?: number
+  /** 私聊：未存储时仍按默认 30% 注入黄脸频率与目录规则 */
+  applyClassicEmojiDefault?: boolean
   classicEmojiBannedNames?: string[]
   voiceRoundTriggerPercent?: number
   imageRoundTriggerPercent?: number
@@ -1808,6 +1860,7 @@ export async function requestWeChatPeerReplyBubblesWithImage(params: {
   imageRoundCountMax?: number
   imageRoundCountTarget?: number
   userExplicitCharacterImageRequest?: boolean
+  imageRoundAllowed?: boolean
   characterImageGenEnabled?: boolean
   characterImageGenStyleHint?: string
   characterMomentsPinCatalog?: string
@@ -1831,6 +1884,7 @@ export async function requestWeChatPeerReplyBubblesWithImage(params: {
     stickerRoundTriggerPercent: params.stickerRoundTriggerPercent,
     voiceRoundTriggerPercent: params.voiceRoundTriggerPercent,
     classicEmojiRoundTriggerPercent: params.classicEmojiRoundTriggerPercent,
+    applyClassicEmojiDefault: params.applyClassicEmojiDefault,
     ...(params.characterImageGenEnabled
       ? {
           imageRoundTriggerPercent: params.imageRoundTriggerPercent,
@@ -1883,6 +1937,10 @@ export async function requestWeChatPeerReplyBubblesWithImage(params: {
       : `${imgRulesBase}\n\n${WECHAT_CHARACTER_PROFILE_IMAGE_APPLY_IMAGE_ROUND_HINT}`
   ).replace(/\[角色姓名\]/g, roleName)
   const busyPrefix = buildBusyPrefix(params.busyContext)
+  const classicEmojiForCatalog =
+    params.applyClassicEmojiDefault || params.classicEmojiRoundTriggerPercent !== undefined
+      ? resolveEffectiveClassicEmojiRoundTriggerPercent(params.classicEmojiRoundTriggerPercent)
+      : undefined
   const stickerCat = buildWeChatStickerAndClassicEmojiPromptBlocks(
     loreInjectForStickerPolicy,
     params.stickerRoundTriggerPercent,
@@ -1891,13 +1949,25 @@ export async function requestWeChatPeerReplyBubblesWithImage(params: {
     params.stickerTargetedEntries,
     params.stickerBannedRefs,
     params.classicEmojiBannedNames,
+    classicEmojiForCatalog,
   )
   const stickerAntiRepeat = buildStickerAntiRepeatPromptBlock(
     collectRecentCharacterStickerRefsFromTranscript(params.transcript),
   )
   const stickerBlock = stickerAntiRepeat ? `${stickerCat}\n\n${stickerAntiRepeat}` : stickerCat
+  const injectCompositionLifeFeelCot = shouldInjectImageGenCompositionLifeFeelCot({
+    characterImageGenEnabled: params.characterImageGenEnabled,
+    userExplicitCharacterImageRequest: params.userExplicitCharacterImageRequest,
+    imageRoundCountTarget: params.imageRoundCountTarget,
+    imageRoundAllowed: params.imageRoundAllowed,
+  })
   const imageGenBlock = params.characterImageGenEnabled
-    ? buildCharacterImageGenPromptBlock(params.characterImageGenStyleHint)
+    ? buildCharacterImageGenPromptBlock(params.characterImageGenStyleHint, {
+        hasAppearanceReference: characterHasAppearanceReference(params.character),
+        appearanceHint: resolveCharacterImageGenPromptAppearanceHint(params.character),
+        scope: params.groupChatTranscript ? 'default' : 'private_chat',
+        injectCompositionLifeFeelCot,
+      })
     : ''
   const danmakuInstruction = buildDanmakuInlineInstruction({
     enabled: !!params.danmakuConfig?.enabled,

@@ -20,6 +20,29 @@ function isPresentMomentLine(line: string): boolean {
 
 const ACT_TASK_MARKER = '【本幕任务】'
 
+/** 局内自我介绍顶部不展示的编剧/主持人备忘 */
+function isHostOnlyPreambleLine(text: string): boolean {
+  return /真凶|扮演目标|随幕推进|勿向玩家|主持人备忘|下毒者|凶手身份|本角色为/.test(text)
+}
+
+/** 陆景川 / 沈知意：局内「我的自我介绍」恋情专块（与 Markdown 叙事互补，便于扫读） */
+const YUYE_SECRET_ROMANCE_INTRO: Record<'陆景川' | '沈知意', string> = {
+  陆景川: [
+    '【与沈知意的秘密恋情 · 第一幕不宜公开】',
+    '· 怎么在一起的：一个月前行业酒会上，有人借酒纠缠沈知意，你从侧面挡开，把她的酒杯换成矿泉水——当时仍在谈对赌延期，表面只是乙方 CTO 对资方代表。',
+    '· 确定关系：酒会后又见过几次（签字室外走廊、深夜电话），约三周前开始地下恋。',
+    '· 对外规矩：她是沈厚泽基金代表，你是归零 CTO；在玻璃湾七号、在任何人面前，只作「宣读条款的资方」和「答技术问题的 CTO」。',
+    '· 暗号：微信「别动那一支」这类短句只有你们懂；第一幕别主动向全员承认你们在谈恋爱。',
+  ].join('\n'),
+  沈知意: [
+    '【与陆景川的秘密恋情 · 第一幕不宜公开】',
+    '· 怎么在一起的：一个月前行业酒会上，有人借酒纠缠你，陆景川从侧面挡开，把你的酒杯换成矿泉水——当时仍是资方与乙方的谈判场合。',
+    '· 确定关系：酒会后又见过几次（签字室外走廊、深夜电话），约三周前开始地下恋；父亲说过「不是让你去谈恋爱」，你们仍约好在桌上只谈条款。',
+    '· 对外规矩：他是归零 CTO，你是沈厚泽基金代表；在林晚星、苏晚晴面前，只谈签字与回购。',
+    '· 暗号：他发「别动那一支」时你当时以为说的是书房威士忌；第一幕别主动公开恋情。',
+  ].join('\n'),
+}
+
 /** 从分幕段落行中提取叙事正文（跳过现时点、首条 ---、本幕任务） */
 function buildNarrativeBodyFromSectionLines(sectionLines: string[]): string {
   const fullSection = sectionLines.join('\n')
@@ -137,13 +160,122 @@ function extractAct1Section(raw: string): { title: string; body: string } {
   return { title, body: buildNarrativeBodyFromSectionLines(sectionLines) }
 }
 
-function buildActsFromRaw(raw: string): YuyeRoleActs {
-  const intro = extractRoleScriptSection(raw, '自我介绍')
+function extractRoleScriptProfilePreamble(raw: string): string {
+  const lines = raw.replace(/\r\n/g, '\n').split('\n')
+  const identity: string[] = []
+  const relations: string[] = []
+  let passedTitle = false
+
+  for (const line of lines) {
+    const trimmed = line.trim()
+    if (!passedTitle) {
+      if (trimmed.startsWith('# ')) passedTitle = true
+      continue
+    }
+    if (trimmed.startsWith('## 【')) break
+    if (!trimmed || trimmed === '---') continue
+    if (trimmed.startsWith('|')) continue
+    if (/^\*\*.+\*\*[：:]/.test(trimmed)) {
+      const plain = stripRoleScriptMarkdown(trimmed)
+      if (/^与/.test(plain.split('：')[0] ?? '')) relations.push(plain)
+      else identity.push(plain)
+      continue
+    }
+    if (trimmed.startsWith('>')) {
+      const plain = stripRoleScriptMarkdown(trimmed.replace(/^>\s?/, ''))
+      if (isHostOnlyPreambleLine(plain)) continue
+      identity.push(plain)
+    }
+  }
+
+  if (identity.length === 0 && relations.length === 0) return ''
+
+  const blocks: string[] = ['【人物关系与身份】']
+  if (identity.length > 0) {
+    blocks.push(...identity.map((p) => `· ${p}`))
+  }
+  if (relations.length > 0) {
+    blocks.push('', '【私人关系 · 第一幕不宜公开】', ...relations.map((p) => `· ${p}`))
+  }
+  return blocks.join('\n')
+}
+
+function buildYuyeIdentityPreamble(raw: string): string {
+  const lines: string[] = []
+  let passedTitle = false
+
+  for (const line of raw.replace(/\r\n/g, '\n').split('\n')) {
+    const trimmed = line.trim()
+    if (!passedTitle) {
+      if (trimmed.startsWith('# ')) passedTitle = true
+      continue
+    }
+    if (trimmed.startsWith('## 【')) break
+    if (!trimmed || trimmed === '---' || trimmed.startsWith('>') || trimmed.startsWith('|')) continue
+    if (/^\*\*.+\*\*[：:]/.test(trimmed)) {
+      const plain = stripRoleScriptMarkdown(trimmed)
+      const key = plain.split('：')[0] ?? ''
+      if (/^与沈知意/.test(key)) continue
+      if (/^与陆景川/.test(key)) continue
+      if (/^性别|^对外身份|^与林晚星/.test(key)) lines.push(`· ${plain}`)
+    }
+  }
+
+  return lines.length ? `【我是谁】\n${lines.join('\n')}` : ''
+}
+
+/** 局内 intro 去掉 Markdown 中与恋情专块重复的段落，并滤掉主持人备忘 */
+function sanitizeIntroNarrativeForRole(roleName: string, narrative: string): string {
+  let text = narrative
+
+  if (roleName === '陆景川') {
+    text = text.replace(
+      /你和沈知意是秘密恋人。[\s\S]*?别主动向全员承认你们在谈恋爱。\s*/g,
+      '',
+    )
+  } else if (roleName === '沈知意') {
+    text = text.replace(
+      /可你还是会想起一个月前的行业酒会。[\s\S]*?（你当时以为说的是书房威士忌）。\s*/g,
+      '',
+    )
+    text = text.replace(
+      /陆景川是乙方，是归零的刀，也是你的秘密恋人[\s\S]*?只当那是地理描述。\s*/g,
+      '',
+    )
+  }
+
+  return text
+    .split(/\n{2,}/)
+    .map((p) => p.trim())
+    .filter((p) => p && !isHostOnlyPreambleLine(p))
+    .join('\n\n')
+    .trim()
+}
+
+function buildIntroBodyForRole(
+  roleName: string,
+  raw: string,
+  profile: string,
+  introNarrative: string,
+): string {
+  if (roleName === '陆景川' || roleName === '沈知意') {
+    const identity = buildYuyeIdentityPreamble(raw)
+    const romance = YUYE_SECRET_ROMANCE_INTRO[roleName]
+    const narrative = sanitizeIntroNarrativeForRole(roleName, introNarrative)
+    return [identity, romance, narrative].filter(Boolean).join('\n\n').trim()
+  }
+  return [profile, introNarrative].filter(Boolean).join('\n\n').trim()
+}
+
+function buildActsFromRaw(raw: string, roleName: string): YuyeRoleActs {
+  const profile = extractRoleScriptProfilePreamble(raw)
+  const introSection = extractRoleScriptSection(raw, '自我介绍')
+  const introBody = buildIntroBodyForRole(roleName, raw, profile, introSection.body)
   const act1 = extractAct1Section(raw)
   const act2 = extractRoleScriptSection(raw, '第二幕')
   const act3 = extractRoleScriptSection(raw, '第三幕')
   return {
-    intro: { title: '我的自我介绍', body: intro.body },
+    intro: { title: '我的自我介绍', body: introBody },
     act1: { title: act1.title, body: act1.body },
     act2: { title: act2.title, body: act2.body },
     act3: { title: act3.title, body: act3.body },
@@ -240,10 +372,10 @@ export function getYuyeActCommissionData(
 }
 
 const YUYE_ROLE_ACTS_BY_NAME: Record<string, YuyeRoleActs> = {
-  程予安: buildActsFromRaw(roleChengyuanRaw),
-  陆景川: buildActsFromRaw(roleLujingchuanRaw),
-  沈知意: buildActsFromRaw(roleShenzhiyiRaw),
-  苏晚晴: buildActsFromRaw(roleSuwanqingRaw),
+  程予安: buildActsFromRaw(roleChengyuanRaw, '程予安'),
+  陆景川: buildActsFromRaw(roleLujingchuanRaw, '陆景川'),
+  沈知意: buildActsFromRaw(roleShenzhiyiRaw, '沈知意'),
+  苏晚晴: buildActsFromRaw(roleSuwanqingRaw, '苏晚晴'),
 }
 
 const GENERIC_FINALE =

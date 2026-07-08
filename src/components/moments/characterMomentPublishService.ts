@@ -8,6 +8,8 @@ import { generateCharacterMomentPost } from './momentCharacterPublishAi'
 import type { CharacterMomentPostType } from './momentCharacterPublishTypes'
 import { isMomentsImageGenConfigured } from './momentsImageGenAvailability'
 import { generateMomentsImage } from './momentsImageGen'
+import { buildCharacterMediaImageGenParams } from '../../phone/apps/wechat/characterAppearanceImageGen'
+import type { Character } from '../../phone/apps/wechat/newFriendsPersona/types'
 import type { MomentContactRef } from './newMomentTypes'
 import { characterPostToMomentItem } from './publishMomentUtils'
 import { resolveCharacterMomentAttachedMusic } from './resolveCharacterMomentAttachedMusic'
@@ -56,19 +58,22 @@ function resolvePostImages(
 async function generateCharacterMomentImages(
   prompts: string[],
   settings: MomentsImageGenSettings,
+  character?: Character | null,
 ): Promise<string[]> {
   if (!settings.enabled) return []
   const capped = prompts.slice(0, MAX_MOMENT_IMAGES)
   const urls: string[] = []
   for (const prompt of capped) {
     try {
-      const url = await generateMomentsImage({
-        prompt,
-        settings,
-        width: 512,
-        height: 512,
-        promptContext: 'character_media',
-      })
+      const url = await generateMomentsImage(
+        buildCharacterMediaImageGenParams({
+          prompt,
+          settings,
+          character,
+          width: 512,
+          height: 512,
+        }),
+      )
       if (url) urls.push(url)
     } catch {
       // 单张失败不阻断整条动态
@@ -139,7 +144,7 @@ export async function publishCharacterMoment(
     const needsImages = postType === 'image' || postType === 'mixed'
     if (needsImages && isMomentsImageGenConfigured(params.imageGenSettings) && aiDraft.images.length) {
       params.onProgress?.('imaging')
-      imageUrls = await generateCharacterMomentImages(aiDraft.images, params.imageGenSettings)
+      imageUrls = await generateCharacterMomentImages(aiDraft.images, params.imageGenSettings, character)
     }
 
     if (needsImages && !imageUrls.length) {

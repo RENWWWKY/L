@@ -14,6 +14,7 @@ import { offlinePlotBodyRelevantToNpcForLinkedExcerpt } from './offlineDatingNpc
 import { datingPlotBodyForPromptInjection } from './plotCoT'
 import { formatPlotPromptTimeBracket } from './plotStoryTimeLabel'
 import { resolvePlotSystemRecordedAtMs } from '../wechatCrossChannelTimeline'
+import { extractStoryCalendarFromPromptBracket } from './datingOnlineInjectScope'
 
 function plotBodyForPrompt(p: DatingPlotSnapshotItem): string {
   return datingPlotBodyForPromptInjection(String(p.content || ''), p.type)
@@ -309,6 +310,50 @@ export async function formatOfflineUnsummarizedBlockFromPlotSnapshots(
   })
 }
 
+/** 取线下摘录正文里最新一条 AI 剧情行，供线上承接空间/在场锚点。 */
+export function extractLatestOfflinePlotSpatialAnchor(body: string): string {
+  const lines = String(body ?? '')
+    .split('\n')
+    .map((l) => l.trim())
+    .filter((l) => l.startsWith('- ['))
+  if (!lines.length) return ''
+  for (let i = lines.length - 1; i >= 0; i--) {
+    const line = lines[i]!
+    if (line.includes('[线下・我]')) continue
+    return line.length > 520 ? `…${line.slice(-520)}` : line
+  }
+  const last = lines[lines.length - 1]!
+  return last.length > 520 ? `…${last.slice(-520)}` : last
+}
+
+/** 微信私聊：线下末尾空间事实优先于尾声/旧记忆，防「门外守着」却写「怀里」。 */
+export function buildOnlineOfflineSpatialContinuityAppendix(
+  body: string,
+  characterDisplayName?: string | null,
+): string {
+  const trimmed = String(body ?? '').trim()
+  if (!trimmed) return ''
+  const peer = characterDisplayName?.trim() || '对方'
+  const tail = extractLatestOfflinePlotSpatialAnchor(trimmed)
+  const storyFromTail = tail ? extractStoryCalendarFromPromptBracket(tail) : null
+  const lines = [
+    `【线下→线上·空间状态铁律（最高优先级）】`,
+    ...(storyFromTail
+      ? [
+          `- **故事内时刻**：线下摘录末条故事时间为 **${storyFromTail}**；微信线上须按该故事时刻理解（同一夜/同一时段），**禁止**用设备落库钟点（如上午 10:20）误判为剧情清晨或另一天。`,
+        ]
+      : []),
+    `- 微信线上 = **远程用手机发消息**；须承接上方「尚未总结·线下剧情」**最后一条 AI 剧情**（时间/落库最新）所写的**当场空间事实**：谁在场、是否同室、门内外、睡/醒、有无肢体接触。`,
+    `- **禁止**用更早条目、【尾声延展】或长期记忆里旧的「同场/怀里/同床」描写，覆盖末尾已写明的**分离状态**（例如末尾已写 ${peer} 出门/在门外守/离开房间/各自在不同空间，则禁止气泡写「你缩在我怀里」「抱着你」「同床」「面对面」等同场肢体接触）。`,
+    `- 【尾声延展】条目约束**态度、称呼、好感档位**，**不约束**物理空间；二者冲突时以**线下末尾最新 AI 条**的空间事实为准。`,
+    `- 用户当轮发来微信，默认表示 ${peer} **不在同一物理接触距离内**打字；可写「还在被窝里玩手机？」「门外守着呢你发什么消息」等符合分离事实的反应，勿写成贴身耳语体。`,
+  ]
+  if (tail) {
+    lines.push('', `【最新线下末尾锚点（空间/在场以本条为准）】`, tail)
+  }
+  return lines.join('\n')
+}
+
 /** 微信与其它线上 completion：注入游标后线下剧情正文。 */
 export async function loadOfflineDatingPlotsPromptBlock(
   characterId: string | null | undefined,
@@ -330,7 +375,8 @@ export async function loadOfflineDatingPlotsPromptBlock(
     : `【尚未总结·线下剧情（约会页 plot 总结游标之后）】` +
       `与当前会话为**同一角色、同一时间线**；下列为游标后**最近 ${rounds} 轮 AI 剧情**及其间玩家输入；${timeHint}；须自然衔接、**禁止**明显矛盾。`
 
-  return `${header}\n\n${body}`
+  const spatialRule = buildOnlineOfflineSpatialContinuityAppendix(body, characterDisplayName)
+  return `${header}\n\n${body}\n\n---\n${spatialRule}`
 }
 
 /** 模型注入块里的「尚未总结·线下剧情」说明段（单行，后接空行再是正文）。 */

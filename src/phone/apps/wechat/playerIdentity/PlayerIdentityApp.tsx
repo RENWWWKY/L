@@ -30,6 +30,9 @@ import { useWechatStore } from '../useWechatStore'
 import { resolveCanonicalCharacterId } from '../wechatGlobalCharacterRegistry'
 import { identityBelongsToWechatAccount, stampWechatAccountOwner } from '../wechatAccountScope'
 import { PHONE_NUM_FONT_FAMILY } from '../../../types'
+import { AppearanceRefSettingsPanel } from '../appearanceRef/AppearanceRefSettingsPanel'
+import { SharedImageGenStyleSection } from '../appearanceRef/SharedImageGenStyleSection'
+import { useAppearanceReferenceStatus } from '../appearanceRef/useAppearanceReferenceStatus'
 
 const COLORS = {
   bg: '#f5f5f5',
@@ -613,6 +616,11 @@ function IdentityEditPage({
   const [identityWbPrompt, setIdentityWbPrompt] = useState('')
   const [scheduleOpen, setScheduleOpen] = useState(false)
   const dirtyRef = useRef(false)
+  const { hasReference: hasAppearanceReference } = useAppearanceReferenceStatus({
+    context: 'global',
+    playerIdentityId: data.id || identityId,
+    subjects: ['user'],
+  })
 
   useEffect(() => {
     dirtyRef.current = dirty
@@ -1435,6 +1443,25 @@ function IdentityEditPage({
                 </label>
             </div>
           </Card>
+          ) : null}
+
+          {loaded && editTab === 'basic' ? (
+            <Card>
+              <div className="px-5 py-4">
+                <AppearanceRefSettingsPanel
+                  subject="user"
+                  context="global"
+                  playerIdentityId={data.id}
+                  title="用户形象参考（全局）"
+                  description="你的外貌参考图，与聊天信息页、线下约会页全局同步；各页面可独立分叉。"
+                  className="mt-0 border-0 pt-0"
+                />
+                <SharedImageGenStyleSection
+                  className="mt-2 border-t border-[#eee] pt-4"
+                  hasAppearanceReference={hasAppearanceReference}
+                />
+              </div>
+            </Card>
           ) : null}
 
           {loaded && editTab === 'schedule' ? (

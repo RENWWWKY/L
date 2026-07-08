@@ -100,6 +100,7 @@ import { WeChatConsoleFloatingPanel } from './WeChatConsoleFloatingPanel'
 import { WeChatConsoleProvider, useWeChatConsole } from './WeChatConsoleContext'
 import { MemoryManagementApp } from './memory/MemoryManagementApp'
 import { WeChatFavoritesPage } from './favorites/WeChatFavoritesPage'
+import { MemoryAlbumApp } from './memoryAlbum/MemoryAlbumApp'
 import { emitWeChatStorageChanged, personaDb } from './newFriendsPersona/idb'
 import { formatWeChatMessagesTabPreviewFromStoredMessage } from './wechatThreadPreviewText'
 import {
@@ -321,6 +322,7 @@ type WxRoute =
   | { name: 'affection-pay'; chat: WxActiveChat }
   | { name: 'memory-manage' }
   | { name: 'favorites' }
+  | { name: 'album' }
   | {
       name: 'contact-profile'
       target: { kind: 'lumi' } | { kind: 'self' } | { kind: 'persona'; characterId: string }
@@ -4547,6 +4549,7 @@ function WeChatAppInner({ onBack }: Props) {
   const [chatSkipBusySignal, setChatSkipBusySignal] = useState(0)
   const [chatMultiSelectActive, setChatMultiSelectActive] = useState(false)
   const [chatMultiSelectExitSignal, setChatMultiSelectExitSignal] = useState(0)
+  const [chatHistoryRefreshSignal, setChatHistoryRefreshSignal] = useState(0)
   const [chatHistoryViewerOpen, setChatHistoryViewerOpen] = useState(false)
   const [chatHistoryViewerData, setChatHistoryViewerData] = useState<WeChatChatHistoryPayload | null>(null)
   const [chatHistoryViewerAvatars, setChatHistoryViewerAvatars] = useState<Record<string, string | undefined>>({})
@@ -4947,6 +4950,7 @@ function WeChatAppInner({ onBack }: Props) {
     if (route.name === 'affection-pay') return '亲情卡支付'
     if (route.name === 'memory-manage') return '记忆档案馆'
     if (route.name === 'favorites') return '收藏'
+    if (route.name === 'album') return '相册'
     if (route.name === 'forward-select-chat') return '选择聊天'
     if (route.name === 'contact-profile-settings') return '资料设置'
     if (route.name === 'contact-recommend-select') return '选择联系人'
@@ -4997,6 +5001,7 @@ function WeChatAppInner({ onBack }: Props) {
     route.name === 'affection-pay' ||
     route.name === 'memory-manage' ||
     route.name === 'favorites' ||
+    route.name === 'album' ||
     route.name === 'forward-select-chat' ||
     route.name === 'contact-profile' ||
     route.name === 'red-packet-send' ||
@@ -6110,6 +6115,7 @@ function WeChatAppInner({ onBack }: Props) {
                 onPendingQueueCountChange={setChatPendingQueueCountDeduped}
                 onOpponentRevealQueueActive={setChatOpponentRevealPendingDeduped}
                 skipBusySignal={chatSkipBusySignal}
+                historyRefreshSignal={chatHistoryRefreshSignal}
                 personaCharacterId={chatRoomPersonaCharacterId ?? undefined}
                 playerDisplayName={state.profile.displayName}
                 playerAvatarUrl={state.profile.avatarImageUrl}
@@ -6288,6 +6294,7 @@ function WeChatAppInner({ onBack }: Props) {
                     currentUserName={state.profile.displayName || '我'}
                     qnaContacts={anonymousQnaContacts}
                     qnaWechatCtx={anonymousQnaWechatCtx}
+                    personaContacts={state.wechatPersonaContacts}
                   />
                 </div>
               ) : (
@@ -6306,6 +6313,7 @@ function WeChatAppInner({ onBack }: Props) {
                       if (id === 'card') setRoute({ name: 'wallet-cards' })
                       if (id === 'memory') setRoute({ name: 'memory-manage' })
                       if (id === 'favorites') setRoute({ name: 'favorites' })
+                      if (id === 'album') setRoute({ name: 'album' })
                       if (id === 'persona') setRoute({ name: 'new-friends-persona', source: 'profile' })
                       if (id === 'emoji') setRoute({ name: 'sticker-center' })
                     }}
@@ -6747,6 +6755,14 @@ function WeChatAppInner({ onBack }: Props) {
                 contacts={memoryManageContacts ?? []}
                 onBack={() => setRoute({ name: 'tabs', tab: 'profile' })}
                 onOpenChat={openPersonaChatByCharacterId}
+              />
+            </motion.div>
+          ) : route.name === 'album' ? (
+            <motion.div key="album" className="flex h-full min-h-0 flex-col" {...pageProps}>
+              <MemoryAlbumApp
+                contacts={memoryManageContacts ?? []}
+                currentAccountId={currentAccountId ?? undefined}
+                onBack={() => setRoute({ name: 'tabs', tab: 'profile' })}
               />
             </motion.div>
           ) : route.name === 'player-identities' ? (
@@ -7265,6 +7281,11 @@ function WeChatAppInner({ onBack }: Props) {
                     setRoute({ name: 'chat', chat: { kind: 'group', groupId } })
                   }}
                   onClose={() => setChatSettingsOpen(false)}
+                  onHistoryCleared={() => {
+                    setChatSettingsOpen(false)
+                    setChatHistoryRefreshSignal((n) => n + 1)
+                    void refreshMessageThreadsMeta()
+                  }}
                   onOpenPersonaEdit={(characterId) => {
                     setChatSettingsOpen(false)
                     setRoute({ name: 'new-friends-persona', editCharacterId: characterId, returnToChat: route.chat })

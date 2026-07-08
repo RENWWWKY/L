@@ -54,6 +54,8 @@ type MusicStoreState = {
   listenPlayMode: ListenPlayMode
   /** 悬浮球是否可见（离开听一听且有曲目时） */
   isFloatingOrbVisible: boolean
+  /** 用户从悬浮面板主动隐藏悬浮球（音乐仍播放；下次手动播歌再显示） */
+  floatingOrbUserDismissed: boolean
   isInsideListenTogether: boolean
   progress: number
   currentTimeMs: number
@@ -77,6 +79,10 @@ type MusicStoreState = {
   setInsideListenTogether: (inside: boolean) => void
   setPopoverOpen: (open: boolean) => void
   setOrbEdgeHidden: (hidden: boolean) => void
+  /** 隐藏悬浮球（不暂停/停止播放） */
+  dismissFloatingOrb: () => void
+  /** 用户手动发起播放时恢复悬浮球 */
+  notifyUserPlaybackIntent: () => void
   setSyncListening: (state: SyncListeningState | null) => void
   setDesktopLyricOpen: (open: boolean) => void
   openDesktopLyricsKeepOrb: () => void
@@ -103,6 +109,7 @@ export const useMusicStore = create<MusicStoreState>((set, get) => ({
   playMode: 'sequence',
   listenPlayMode: 'repeatAll',
   isFloatingOrbVisible: false,
+  floatingOrbUserDismissed: false,
   isInsideListenTogether: false,
   progress: 0,
   currentTimeMs: 0,
@@ -134,6 +141,21 @@ export const useMusicStore = create<MusicStoreState>((set, get) => ({
   setPopoverOpen: (open) => set({ popoverOpen: open }),
 
   setOrbEdgeHidden: (hidden) => set({ orbEdgeHidden: hidden }),
+
+  dismissFloatingOrb: () => {
+    set({
+      floatingOrbUserDismissed: true,
+      popoverOpen: false,
+      orbEdgeHidden: false,
+    })
+    get()._recomputeFloatingVisible()
+  },
+
+  notifyUserPlaybackIntent: () => {
+    if (!get().floatingOrbUserDismissed) return
+    set({ floatingOrbUserDismissed: false })
+    get()._recomputeFloatingVisible()
+  },
 
   setSyncListening: (state) => set({ syncListening: state }),
 
@@ -194,10 +216,14 @@ export const useMusicStore = create<MusicStoreState>((set, get) => ({
   },
 
   _recomputeFloatingVisible: () => {
-    const { currentTrack, isInsideListenTogether, isListenFullscreenOpen } = get()
+    const { currentTrack, isInsideListenTogether, isListenFullscreenOpen, floatingOrbUserDismissed } =
+      get()
     set({
       isFloatingOrbVisible:
-        hasActiveTrack(currentTrack) && !isInsideListenTogether && !isListenFullscreenOpen,
+        hasActiveTrack(currentTrack) &&
+        !isInsideListenTogether &&
+        !isListenFullscreenOpen &&
+        !floatingOrbUserDismissed,
     })
   },
 }))

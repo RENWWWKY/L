@@ -5,6 +5,7 @@ import { useCallback, useEffect, useState } from 'react'
 import type { JubenshaScript } from '../types'
 
 import type { DeckRoleCard } from './gameFlowTypes'
+import { playJbsPageFlipSfx } from './jbsPageFlipSfx'
 import { RoleFlipBook } from './RoleFlipBook'
 
 export type RoleScriptDetailProps = {
@@ -30,6 +31,11 @@ export function RoleScriptDetail({ script, card, onReturn, onLockIn }: RoleScrip
       window.clearTimeout(t2)
     }
   }, [card.id])
+
+  useEffect(() => {
+    if (flipPhase !== 'flip' || closing) return
+    playJbsPageFlipSfx(script.id)
+  }, [closing, flipPhase, script.id])
 
   const handleReturn = useCallback(() => {
     setClosing(true)

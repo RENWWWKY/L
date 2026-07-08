@@ -3,6 +3,7 @@ import {
   ChevronDown,
   FilePenLine,
   Heart,
+  ImageIcon,
   Layers,
   Loader2,
   MoreHorizontal,
@@ -25,6 +26,7 @@ import {
 import { createPortal } from 'react-dom'
 import { AnimatePresence, motion, useAnimation } from 'framer-motion'
 import { useCurrentApiConfig } from '../../api/ApiSettingsContext'
+import { useImageGenSettings } from '../../api/useImageGenSettings'
 import { personaDb } from '../newFriendsPersona/idb'
 import type { Character, CharacterDanmakuSettingsRow, PlayerIdentity, WeChatGlobalSettingsRow } from '../newFriendsPersona/types'
 import { formatWorldBackgroundForPrompt } from '../newFriendsPersona/worldBackgroundFormat'
@@ -54,6 +56,11 @@ import { DatingNum } from './DatingNum'
 import { datingNumStyle } from './datingTypography'
 import { AccountNumericText } from '../../../userSystem/AccountNum'
 import { DatingNetworkMentionControls } from './DatingNetworkMentionControls'
+import { DatingPlotImageSettingsSheet } from './DatingPlotImageSettingsSheet'
+import { DatingCapsuleSwitch } from './DatingCapsuleSwitch'
+import {
+  parseDatingPlotImageCountRange,
+} from './datingPlotImageCount'
 import {
   collectDatingNetworkMentionIds,
   handleDatingNetworkMentionKeyDown,
@@ -234,6 +241,8 @@ function stripInnerThoughtDecorators(text: string): string {
   let t = String(text || '').trim()
   if (!t) return ''
   t = t.replace(/^(?:\(|（|\[|【)?\s*(?:内心|心声|OS|os)\s*(?:\)|）|\]|】)?[：:]\s*/u, '')
+  const ellipsisWrap = t.match(/^(?:……|…|\.\.\.)([\s\S]+?)(?:……|…|\.\.\.)$/u)
+  if (ellipsisWrap?.[1]) t = ellipsisWrap[1].trim()
   const wrapMatch = t.match(/^\*{1,2}([\s\S]+)\*{1,2}$/u)
   if (wrapMatch?.[1]) t = wrapMatch[1].trim()
   return t
@@ -607,6 +616,7 @@ function DatingStoryPageInner({ onBackToSelect }: Props) {
     setGenerateParallelOnSend,
     setGenerateIfLineOnSend,
     setDatingLengthTargetChars,
+    patchPlotImageSettings,
     sendPlayerInput,
     stageBranchChoice,
     branchesLoading,
@@ -654,6 +664,42 @@ function DatingStoryPageInner({ onBackToSelect }: Props) {
   const [autoUserOpen, setAutoUserOpen] = useState(false)
   const godLocksNoInterrupt = currentArchive.godPerspective
   const autoUserReaction = !!currentArchive.autoUserReaction
+  const plotImageGenEnabled = !!currentArchive.plotImageGenEnabled
+  const plotImageCountNode = useMemo(() => {
+    const range = parseDatingPlotImageCountRange(
+      currentArchive.plotImageCountMin,
+      currentArchive.plotImageCountMax,
+    )
+    if (range.min === range.max) {
+      return (
+        <>
+          <DatingNum>{range.min}</DatingNum>
+          {' 张'}
+        </>
+      )
+    }
+    return (
+      <>
+        <DatingNum>{range.min}</DatingNum>
+        ～
+        <DatingNum>{range.max}</DatingNum>
+        {' 张'}
+      </>
+    )
+  }, [currentArchive.plotImageCountMin, currentArchive.plotImageCountMax])
+  const [playerIdentityIdForRefs, setPlayerIdentityIdForRefs] = useState('')
+
+  useEffect(() => {
+    const cid = currentCharacter.id.trim()
+    if (!cid) {
+      setPlayerIdentityIdForRefs('')
+      return
+    }
+    void (async () => {
+      const ch = (await personaDb.getCharacter(cid)) as Character | null
+      setPlayerIdentityIdForRefs(ch?.playerIdentityId?.trim() ?? '')
+    })()
+  }, [currentCharacter.id])
   const [retryBiasOpen, setRetryBiasOpen] = useState(false)
   const [retryBiasText, setRetryBiasText] = useState('')
   const [retryTargetPlotId, setRetryTargetPlotId] = useState<string | null>(null)
@@ -661,6 +707,8 @@ function DatingStoryPageInner({ onBackToSelect }: Props) {
   const [vnRegenerateConfirmOpen, setVnRegenerateConfirmOpen] = useState(false)
   const [resetArchiveConfirmOpen, setResetArchiveConfirmOpen] = useState(false)
   const [styleDrawerOpen, setStyleDrawerOpen] = useState(false)
+  const [plotImageSettingsOpen, setPlotImageSettingsOpen] = useState(false)
+  const { configured: imageGenConfigured } = useImageGenSettings()
   const [styleTuning, setStyleTuning] = useState<DatingStyleTuning>(() => ({ stylePrompt: '', referenceSnippet: '' }))
 
   const [heartWhisperOpen, setHeartWhisperOpen] = useState(false)
@@ -1460,7 +1508,12 @@ function DatingStoryPageInner({ onBackToSelect }: Props) {
     >(),
   )
 
-  const lengthLabel = `${lengthTargetChars || '500'}字`
+  const lengthLabelNode = (
+    <>
+      <DatingNum>{lengthTargetChars || '500'}</DatingNum>
+      字
+    </>
+  )
   const autoUserLabel = godLocksNoInterrupt ? '不抢话' : autoUserReaction ? '抢话' : '不抢话'
 
   useEffect(() => {
@@ -2117,27 +2170,6 @@ function DatingStoryPageInner({ onBackToSelect }: Props) {
     const aiId = String(latestAi?.id || '')
     return `${sid}::${aiId}::${vnBubbleIndex}`
   }, [activeSpeakerId, latestAi?.id, vnBubbleIndex])
-  const VnCapsuleSwitch = useCallback(
-    ({ checked, onToggle, disabled = false }: { checked: boolean; onToggle: () => void; disabled?: boolean }) => (
-      <button
-        type="button"
-        role="switch"
-        aria-checked={checked}
-        disabled={disabled}
-        onClick={onToggle}
-        className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${
-          checked ? 'bg-black' : 'bg-stone-200'
-        } ${disabled ? 'cursor-not-allowed opacity-50' : ''}`}
-      >
-        <span
-          className={`inline-block h-5 w-5 rounded-full border border-stone-300 bg-white shadow transition-transform ${
-            checked ? 'translate-x-5' : 'translate-x-0.5'
-          }`}
-        />
-      </button>
-    ),
-    [],
-  )
   const synthVnVoiceForLine = useCallback(
     async (params: { speakerId: string; text: string; cacheKey: string; contextTexts: string[] }) => {
       const cacheKey = String(params.cacheKey || '').trim()
@@ -3146,14 +3178,14 @@ function DatingStoryPageInner({ onBackToSelect }: Props) {
                     title="开启后每轮 AI 剧情结束会请求弹幕（使用 API 设置中的弹幕预设；需在弹幕配置中为该角色启用）"
                   >
                     <span>弹幕模式</span>
-                    <VnCapsuleSwitch
+                    <DatingCapsuleSwitch
                       checked={!!currentArchive.offlineDanmakuEnabled}
                       onToggle={() => setOfflineDanmakuEnabled(!currentArchive.offlineDanmakuEnabled)}
                     />
                   </div>
                   <div className="flex items-center justify-between rounded-lg px-3 py-2 text-[13px] text-[#262626] hover:bg-stone-50">
                     <span>剧情分支</span>
-                    <VnCapsuleSwitch
+                    <DatingCapsuleSwitch
                       checked={currentArchive.branchEnabled}
                       onToggle={() => setBranchEnabled(!currentArchive.branchEnabled)}
                     />
@@ -3360,7 +3392,7 @@ function DatingStoryPageInner({ onBackToSelect }: Props) {
                     className="inline-flex items-center gap-1 rounded-lg border border-stone-200 bg-stone-50 px-2.5 py-1.5 text-[13px] text-[#262626] transition-all duration-200 hover:border-stone-400"
                     title="选择字数"
                   >
-                    {lengthLabel}
+                    {lengthLabelNode}
                     <ChevronDown className="size-3.5" />
                   </button>
                   {lengthOpen ? (
@@ -3449,6 +3481,43 @@ function DatingStoryPageInner({ onBackToSelect }: Props) {
                     <FilePenLine className="size-4" strokeWidth={1.65} />
                   </button>
                 </div>
+              </div>
+              <div className="mb-2 flex flex-wrap items-center gap-2">
+                <div
+                  className="inline-flex flex-wrap items-center gap-2 rounded-full border border-stone-200/90 bg-stone-50/70 px-2.5 py-1.5"
+                  title={
+                    imageGenConfigured
+                      ? '剧情生成后自动穿插场景配图'
+                      : '请先在 API 设置中配置生图引擎'
+                  }
+                >
+                  <ImageIcon className="size-3.5 text-stone-400" strokeWidth={1.75} />
+                  <span className="text-[12px] text-[#525252]">剧情配图</span>
+                  <DatingCapsuleSwitch
+                    checked={plotImageGenEnabled && imageGenConfigured}
+                    disabled={!imageGenConfigured}
+                    onToggle={() => patchPlotImageSettings({ plotImageGenEnabled: !plotImageGenEnabled })}
+                  />
+                  {plotImageGenEnabled && imageGenConfigured ? (
+                    <>
+                      <span className="mx-0.5 h-3 w-px bg-stone-200" aria-hidden />
+                      <button
+                        type="button"
+                        onClick={() => setPlotImageSettingsOpen(true)}
+                        className="rounded-full px-2 py-0.5 text-[11px] text-[#737373] transition-colors hover:bg-white/80 hover:text-[#262626]"
+                      >
+                        {plotImageCountNode}
+                      </button>
+                    </>
+                  ) : null}
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setPlotImageSettingsOpen(true)}
+                  className="inline-flex items-center rounded-full border border-stone-200/90 bg-white/80 px-2.5 py-1.5 text-[11px] text-[#737373] transition-all duration-200 hover:border-stone-300 hover:bg-white hover:text-[#262626]"
+                >
+                  配图与形象
+                </button>
               </div>
               <DatingNetworkMentionControls
                 datingCharacterId={currentCharacter.id}
@@ -3628,7 +3697,7 @@ function DatingStoryPageInner({ onBackToSelect }: Props) {
                     }}
                   />
                 </div>
-                <VnCapsuleSwitch
+                <DatingCapsuleSwitch
                   checked={!!currentArchive.directorMode}
                   onToggle={() => {
                     setDirectorMode(!currentArchive.directorMode)
@@ -3637,7 +3706,7 @@ function DatingStoryPageInner({ onBackToSelect }: Props) {
               </div>
               <div className="flex items-center justify-between rounded-lg px-3 py-2 text-[13px] text-[#262626] hover:bg-stone-50">
                 <span>弹幕模型</span>
-                <VnCapsuleSwitch
+                <DatingCapsuleSwitch
                   checked={vnDanmakuModelOn}
                   onToggle={() => {
                     void toggleVnDanmakuModel()
@@ -3666,7 +3735,7 @@ function DatingStoryPageInner({ onBackToSelect }: Props) {
               </button>
               <div className="flex items-center justify-between rounded-lg px-3 py-2 text-[13px] text-[#262626] hover:bg-stone-50">
                 <span>自动语音播放</span>
-                <VnCapsuleSwitch
+                <DatingCapsuleSwitch
                   checked={vnAutoVoicePlay}
                   onToggle={() => {
                     setVnAutoVoicePlay((v) => !v)
@@ -3678,7 +3747,7 @@ function DatingStoryPageInner({ onBackToSelect }: Props) {
                 title="开启后将禁用 VN 语音合成/播放，并要求模型不输出隐藏语音参数块，以节省 token"
               >
                 <span>禁用语音合成</span>
-                <VnCapsuleSwitch
+                <DatingCapsuleSwitch
                   checked={!!currentArchive.vnVoiceDisabled}
                   onToggle={() => {
                     const next = !currentArchive.vnVoiceDisabled
@@ -3692,7 +3761,7 @@ function DatingStoryPageInner({ onBackToSelect }: Props) {
               </div>
               <div className="flex items-center justify-between rounded-lg px-3 py-2 text-[13px] text-[#262626] hover:bg-stone-50">
                 <span>剧情分支</span>
-                <VnCapsuleSwitch
+                <DatingCapsuleSwitch
                   checked={currentArchive.branchEnabled}
                   onToggle={() => {
                     setBranchEnabled(!currentArchive.branchEnabled)
@@ -4006,7 +4075,7 @@ function DatingStoryPageInner({ onBackToSelect }: Props) {
               <div className="rounded-xl border border-stone-200 bg-stone-50 px-3 py-2.5">
                 <div className="mb-1 flex items-center justify-between">
                   <p className="text-[12px] text-[#525252]">目标字数限制</p>
-                  <span className="text-[11px] text-[#8e8e8e]">{lengthLabel}</span>
+                  <span className="text-[11px] text-[#8e8e8e]">{lengthLabelNode}</span>
                 </div>
                 <input
                   type="number"
@@ -4776,6 +4845,17 @@ function DatingStoryPageInner({ onBackToSelect }: Props) {
         characterId={currentCharacter.id}
         onClose={() => setStyleDrawerOpen(false)}
         onSaved={(v) => setStyleTuning(v)}
+      />
+
+      <DatingPlotImageSettingsSheet
+        open={plotImageSettingsOpen}
+        onClose={() => setPlotImageSettingsOpen(false)}
+        characterId={currentCharacter.id}
+        playerIdentityId={playerIdentityIdForRefs}
+        plotImageGenEnabled={plotImageGenEnabled}
+        plotImageCountMin={currentArchive.plotImageCountMin}
+        plotImageCountMax={currentArchive.plotImageCountMax}
+        onPatch={(patch) => patchPlotImageSettings(patch)}
       />
 
       {heartWhisperToast ? (

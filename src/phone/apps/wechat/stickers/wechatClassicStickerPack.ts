@@ -107,6 +107,17 @@ export function wechatClassicEmojiToken(name: string): string {
   return `[${name.trim()}]`
 }
 
+/** 从文字气泡中移除《微信经典表情》目录内的 inline 黄脸 token */
+export function stripWechatClassicEmojiTokens(text: string): string {
+  if (!text) return text
+  const catalog = getWechatClassicEmojiUrlByName()
+  if (!catalog.size) return text
+  return text.replace(/\[([^\[\]\n]{1,24})\]/g, (full, name: string) => {
+    if (catalog.has(String(name).trim())) return ''
+    return full
+  })
+}
+
 export function buildWechatClassicStickerGroup(): StickerGroup | null {
   const items = buildWechatClassicStickerItems()
   if (!items.length) return null

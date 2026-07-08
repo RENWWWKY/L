@@ -135,6 +135,15 @@ function migrateCharacterPublicUrls(input: Character): Character {
   if (typeof out.momentsCoverUrl === 'string') {
     out.momentsCoverUrl = canonicalPublicImagePath(out.momentsCoverUrl)
   }
+  if (typeof out.appearanceRefUrl === 'string') {
+    out.appearanceRefUrl = canonicalPublicImagePath(out.appearanceRefUrl)
+  }
+  if (Array.isArray(out.appearanceRefImages)) {
+    out.appearanceRefImages = out.appearanceRefImages.map((entry) => ({
+      ...entry,
+      url: canonicalPublicImagePath(entry.url),
+    }))
+  }
   if (typeof out.chatBackground === 'string') {
     out.chatBackground = canonicalPublicImagePath(out.chatBackground)
   }

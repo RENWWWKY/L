@@ -5,6 +5,12 @@ import { personaDb } from '../newFriendsPersona/idb'
 import type { Character } from '../newFriendsPersona/types'
 import type { GomokuDifficultyLevel } from './games/gomokuDifficulty'
 import {
+  buildDefaultClawSessionSetup,
+  pickClawReactionLine,
+  type ClawSessionSetup,
+} from './games/claw/clawReactionBank'
+import type { ClawDifficultyLevel } from './games/claw/clawDifficulty'
+import {
   type GomokuSessionSetup,
   buildDefaultGomokuSessionSetup,
   loadGomokuPregenPromptContext,
@@ -14,8 +20,25 @@ import {
 } from './gomokuReactionBank'
 import type { GomokuReactionKey } from './gomokuSituation'
 import { fetchGameReaction } from './miniGameAi'
-import type { GameEvent, MiniGameType } from './types'
+import type { ClawReactionKey, GameEvent, MiniGameType } from './types'
 
+const CLAW_KEY_REPEAT_MS: Partial<Record<ClawReactionKey, number>> = {
+  thinking: 3_200,
+  playerGrab: 2_000,
+  playerMiss: 2_000,
+  charGrab: 2_000,
+  charMiss: 2_000,
+  playerRare: 1_500,
+  charRare: 1_500,
+  drawPlayerFirst: 0,
+  drawCharFirst: 0,
+  gameStart: 0,
+  win: 0,
+  lose: 0,
+  draw: 0,
+}
+
+const TURN_BASED_GAMES = new Set<MiniGameType>(['gomoku', 'claw'])
 const THROTTLE_MS = 8_000
 /** 同一局面键最短重复间隔；战术键短、碎碎念类略长 */
 const GOMOKU_KEY_REPEAT_MS: Partial<Record<GomokuReactionKey, number>> = {
@@ -169,7 +192,12 @@ export function useGameReactionEngine(
   const [reactionVisible, setReactionVisible] = useState(false)
   const [settlementReactionText, setSettlementReactionText] = useState<string | null>(null)
   const [gomokuSetupLoading, setGomokuSetupLoading] = useState(false)
-  const [gomokuSetupReady, setGomokuSetupReady] = useState(!reactionEnabled || gameType !== 'gomoku')
+  const [gomokuSetupReady, setGomokuSetupReady] = useState(
+    !reactionEnabled || (gameType !== 'gomoku' && gameType !== 'claw'),
+  )
+  const [clawDifficulty, setClawDifficulty] = useState<ClawDifficultyLevel>(
+    buildDefaultClawSessionSetup().difficulty,
+  )
   const [gomokuDifficulty, setGomokuDifficulty] = useState<GomokuDifficultyLevel>(
     buildDefaultGomokuSessionSetup().difficulty,
   )
@@ -186,7 +214,11 @@ export function useGameReactionEngine(
   const gameStartShownRef = useRef(false)
   const drawResultShownRef = useRef(false)
   const settlementShownRef = useRef(false)
-  const gomokuContextRef = useRef<GomokuReactionContext>({ ...DEFAULT_GOMOKU_CONTEXT })
+  const clawSetupRef = useRef<ClawSessionSetup>(buildDefaultClawSessionSetup())
+  const clawUsedLinesRef = useRef<Partial<Record<ClawReactionKey, Set<string>>>>({})
+  const lastClawKeyShownRef = useRef<{ key: ClawReactionKey; at: number } | null>(null)
+  const clawGameStartShownRef = useRef(false)
+  const clawDrawResultShownRef = useRef(false)
 
   useEffect(() => {
     let cancelled = false
@@ -198,6 +230,8 @@ export function useGameReactionEngine(
       cancelled = true
     }
   }, [charId])
+
+  const gomokuContextRef = useRef<GomokuReactionContext>({ ...DEFAULT_GOMOKU_CONTEXT })
 
   useEffect(() => {
     gameStartShownRef.current = false
@@ -211,6 +245,19 @@ export function useGameReactionEngine(
     gomokuUsedLinesRef.current = {}
     gomokuUsedStartLinesRef.current = new Set()
     setGomokuDifficulty(buildDefaultGomokuSessionSetup().difficulty)
+    clawSetupRef.current = buildDefaultClawSessionSetup()
+    clawUsedLinesRef.current = {}
+    lastClawKeyShownRef.current = null
+    clawGameStartShownRef.current = false
+    clawDrawResultShownRef.current = false
+    setClawDifficulty(buildDefaultClawSessionSetup().difficulty)
+
+    if (gameType === 'claw') {
+      setGomokuSetupLoading(false)
+      setGomokuSetupReady(true)
+      return
+    }
+
     if (!reactionEnabled || gameType !== 'gomoku') {
       setGomokuSetupLoading(false)
       setGomokuSetupReady(true)
@@ -278,7 +325,7 @@ export function useGameReactionEngine(
       setReactionText(text)
       setReactionVisible(true)
       /** 五子棋对局中气泡保持到下一局面替换，避免自动收起造成一闪一闪 */
-      if (opts?.keepVisibleAfterHold || gameType === 'gomoku') return
+      if (opts?.keepVisibleAfterHold || TURN_BASED_GAMES.has(gameType)) return
       hideTimerRef.current = setTimeout(() => {
         setReactionVisible(false)
         hideTimerRef.current = setTimeout(() => setReactionText(null), 400)
@@ -337,6 +384,57 @@ export function useGameReactionEngine(
     [pickGomokuLine, showReaction],
   )
 
+  const showClawReactionForKey = useCallback(
+    (key: ClawReactionKey, holdMs = 3600) => {
+      const now = Date.now()
+      const last = lastClawKeyShownRef.current
+      const repeatMs = CLAW_KEY_REPEAT_MS[key] ?? 1_800
+      if (repeatMs > 0 && last && last.key === key && now - last.at < repeatMs) return false
+
+      if (key === 'win' || key === 'lose' || key === 'draw') {
+        if (settlementShownRef.current) return false
+        settlementShownRef.current = true
+      }
+
+      const used = clawUsedLinesRef.current[key] ?? new Set<string>()
+      const line = pickClawReactionLine(key, used)
+      if (!line) return false
+      clawUsedLinesRef.current[key] = used
+
+      lastCallAtRef.current = now
+      lastClawKeyShownRef.current = { key, at: now }
+      showReaction(line, holdMs, { keepVisibleAfterHold: true })
+
+      if (key === 'win' || key === 'lose' || key === 'draw') {
+        setSettlementReactionText(line)
+      }
+      return true
+    },
+    [showReaction],
+  )
+
+  const triggerClawDrawResultReaction = useCallback(
+    (playerGoesFirst: boolean) => {
+      if (!reactionEnabled || gameType !== 'claw') return
+      if (clawDrawResultShownRef.current) return
+      clawDrawResultShownRef.current = true
+      const key: ClawReactionKey = playerGoesFirst ? 'drawPlayerFirst' : 'drawCharFirst'
+      showClawReactionForKey(key, 3600)
+    },
+    [gameType, reactionEnabled, showClawReactionForKey],
+  )
+
+  const triggerClawGameStartReaction = useCallback(() => {
+    if (!reactionEnabled || gameType !== 'claw') return
+    if (clawGameStartShownRef.current) return
+    if (clawDrawResultShownRef.current) {
+      clawGameStartShownRef.current = true
+      return
+    }
+    clawGameStartShownRef.current = true
+    showClawReactionForKey('gameStart', 4200)
+  }, [gameType, reactionEnabled, showClawReactionForKey])
+
   const triggerGomokuDrawResultReaction = useCallback(
     (playerGoesFirst: boolean) => {
       if (!reactionEnabled || gameType !== 'gomoku') return
@@ -369,7 +467,15 @@ export function useGameReactionEngine(
     (thinking: boolean) => {
       setAiThinkingState(thinking)
       clearThinkingTimer()
-      if (!thinking || !reactionEnabled || gameType !== 'gomoku') return
+      if (!thinking || !reactionEnabled) return
+      if (gameType === 'claw') {
+        thinkingTimerRef.current = setTimeout(() => {
+          thinkingTimerRef.current = null
+          showClawReactionForKey('thinking', 3400)
+        }, 650)
+        return
+      }
+      if (gameType !== 'gomoku') return
       const ctx = gomokuContextRef.current
       if (ctx.gameEnded || ctx.stoneCount <= 0) return
       thinkingTimerRef.current = setTimeout(() => {
@@ -382,16 +488,23 @@ export function useGameReactionEngine(
         showGomokuReactionForKey('thinking', 3400, 'opponentMove')
       }, 650)
     },
-    [clearThinkingTimer, gameType, reactionEnabled, showGomokuReactionForKey],
+    [clearThinkingTimer, gameType, reactionEnabled, showClawReactionForKey, showGomokuReactionForKey],
   )
 
   const pickThinkDelayMs = useCallback((): number => {
+    if (gameType === 'claw') {
+      const setup = clawSetupRef.current
+      const min = setup.thinkDelayMinMs
+      const max = setup.thinkDelayMaxMs
+      if (max <= min) return min
+      return Math.round(min + Math.random() * (max - min))
+    }
     const setup = gomokuSetupRef.current
     const min = setup.thinkDelayMinMs
     const max = setup.thinkDelayMaxMs
     if (max <= min) return min
     return Math.round(min + Math.random() * (max - min))
-  }, [])
+  }, [gameType])
 
   const emitEvent = useCallback(
     (event: GameEvent) => {
@@ -400,6 +513,19 @@ export function useGameReactionEngine(
 
       const now = Date.now()
       const throttle = THROTTLE_MS
+
+      if (gameType === 'claw') {
+        const key = event.clawKey
+        if (!key) return
+        const holdMs =
+          key === 'win' || key === 'lose' || key === 'draw'
+            ? 4200
+            : key === 'thinking'
+              ? 3400
+              : 3000
+        showClawReactionForKey(key, holdMs)
+        return
+      }
 
       if (gameType === 'gomoku') {
         const key = mapEventToGomokuKey(event)
@@ -442,7 +568,7 @@ export function useGameReactionEngine(
         }
       })()
     },
-    [apiConfig, gameType, reactionEnabled, showGomokuReactionForKey, showReaction],
+    [apiConfig, gameType, reactionEnabled, showClawReactionForKey, showGomokuReactionForKey, showReaction],
   )
 
   useEffect(
@@ -464,9 +590,13 @@ export function useGameReactionEngine(
     syncGomokuContext,
     triggerGomokuGameStartReaction,
     triggerGomokuDrawResultReaction,
+    triggerClawDrawResultReaction,
+    triggerClawGameStartReaction,
     pickThinkDelayMs,
     gomokuDifficulty,
+    clawDifficulty,
     gomokuSetupReady,
     getGomokuDifficulty: () => gomokuSetupRef.current.difficulty,
+    getClawDifficulty: () => clawSetupRef.current.difficulty,
   }
 }

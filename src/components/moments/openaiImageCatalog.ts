@@ -33,6 +33,13 @@ export const DEFAULT_OPENAI_IMAGE_MODEL_ID = 'openai:gpt-image-1'
 
 export const OPENAI_IMAGE_API_URL = 'https://api.openai.com/v1/images/generations'
 
+export const OPENAI_IMAGE_EDITS_API_URL = 'https://api.openai.com/v1/images/edits'
+
+/** GPT Image 系列（gpt-image-1 / 1.5 / mini / 2 等）支持 /images/edits 参考图生图；兼容中转站前缀如 [特价]gpt-image-2 */
+export function isGptImageModel(modelName: string): boolean {
+  return /gpt-image/i.test(modelName.trim())
+}
+
 export const OPENAI_PLATFORM_URL = 'https://platform.openai.com/api-keys'
 
 const GPT_IMAGE_SIZES: MomentsImageSizeOption[] = [

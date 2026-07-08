@@ -7,7 +7,9 @@ import {
 import { useCallback, useEffect, useRef, useState } from 'react'
 
 import type { JBSClue } from './jbsFlowTypes'
+import { useJBSFlow } from './JBSFlowEngine'
 import { CLUE_FLIP_PERSPECTIVE, CLUE_FLIP_SPRING } from './clueCardMotion'
+import { playJbsClueCardFlipSfx } from '../jbsClueCardSfx'
 
 export type ClueCollectorProps = {
   clue: JBSClue
@@ -48,6 +50,8 @@ function CompassBadge() {
 }
 
 export function ClueCollector({ clue, collectTargetRef, onCollectComplete }: ClueCollectorProps) {
+  const { locked } = useJBSFlow()
+  const scriptId = locked.script.id
   const [phase, setPhase] = useState<CardPhase>('dealing')
   const cardRef = useRef<HTMLButtonElement>(null)
   const controls = useAnimationControls()
@@ -116,6 +120,7 @@ export function ClueCollector({ clue, collectTargetRef, onCollectComplete }: Clu
     }
 
     if (phase === 'back') {
+      playJbsClueCardFlipSfx(scriptId)
       void startFlip()
       return
     }
@@ -123,7 +128,7 @@ export function ClueCollector({ clue, collectTargetRef, onCollectComplete }: Clu
     if (phase === 'front') {
       void runCollectFlight()
     }
-  }, [phase, runCollectFlight, startFlip])
+  }, [phase, runCollectFlight, scriptId, startFlip])
 
   useEffect(() => {
     let cancelled = false

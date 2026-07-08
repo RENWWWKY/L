@@ -13,6 +13,8 @@ type Props = {
   charAvatarUrl?: string
   charName?: string
   onComplete: (playerGoesFirst: boolean) => void
+  /** gomoku=五子棋先手抽签；claw=抓娃娃机先手抽签 */
+  variant?: 'gomoku' | 'claw'
 }
 
 function DrawAvatar({
@@ -74,8 +76,10 @@ export function GomokuFirstMoveDraw({
   charAvatarUrl,
   charName,
   onComplete,
+  variant = 'gomoku',
 }: Props) {
   const peer = charName?.trim() || '对方'
+  const isClaw = variant === 'claw'
   const [phase, setPhase] = useState<'idle' | 'drawing' | 'reveal'>('idle')
   const [highlight, setHighlight] = useState<'player' | 'char'>('player')
   const resultRef = useRef<boolean>(Math.random() < 0.5)
@@ -150,7 +154,17 @@ export function GomokuFirstMoveDraw({
             className="mb-8 text-[20px] font-medium tracking-tight text-[#0A0A0C]"
             style={{ fontFamily: 'var(--phone-font, "Noto Serif SC", serif)' }}
           >
-            {showReveal ? (playerWins ? '你先手' : `${peer} 先手`) : '谁先下？'}
+            {showReveal
+              ? playerWins
+                ? isClaw
+                  ? '你先抓'
+                  : '你先手'
+                : isClaw
+                  ? `${peer} 先抓`
+                  : `${peer} 先手`
+              : isClaw
+                ? '谁先抓？'
+                : '谁先下？'}
           </motion.h2>
 
           <div className="flex items-start justify-center gap-10">
@@ -192,7 +206,13 @@ export function GomokuFirstMoveDraw({
               animate={{ opacity: 1, y: 0 }}
               className="mt-10 text-[13px] text-[#6B7280]"
             >
-              {playerWins ? '黑棋先行，请落子' : `${peer} 即将落第一子`}
+              {playerWins
+                ? isClaw
+                  ? '你先下爪，祝好运'
+                  : '黑棋先行，请落子'
+                : isClaw
+                  ? `${peer} 即将先抓`
+                  : `${peer} 即将落第一子`}
             </motion.p>
           )}
         </motion.div>

@@ -2,7 +2,9 @@ import { generateMomentsImage } from '../../../components/moments/momentsImageGe
 import type { MomentsImageGenSettings } from '../../../components/moments/useMomentsSettingsStore'
 import { isCharacterImageGenEnabled } from '../api/imageGenPresetUtils'
 import { loadResolvedImageGenSettings } from '../api/loadResolvedImageGenSettings'
-import type { WeChatChatMessage, WeChatImageMime, WeChatVoicePayload, WeChatMusicSyncInvitePayload, WeChatLocationPayload, WeChatTakeoutOrderPayload } from './newFriendsPersona/types'
+import type { Character, WeChatChatMessage, WeChatImageMime, WeChatVoicePayload, WeChatMusicSyncInvitePayload, WeChatLocationPayload, WeChatTakeoutOrderPayload } from './newFriendsPersona/types'
+import { buildCharacterMediaImageGenParams } from './characterAppearanceImageGen'
+import { personaDb } from './newFriendsPersona/idb'
 import type { ProactiveMessageRevealBubble } from './proactiveMessageRevealBridge'
 import { parseCharacterStickerLine, ensureStickerStoreHydrated } from './stickers/stickerStore'
 import {
@@ -10,6 +12,11 @@ import {
   wasCharacterStickerRefUsedRecently,
 } from './stickers/stickerAntiRepeat'
 import { imageGenDataUrlToPayload, parseCharacterImageGenLine } from './wechatCharacterImageGen'
+import {
+  isImageGenQuotaOrRateLimitBlocked,
+  markImageGenQuotaOrRateLimitBlocked,
+  isImageGenThrottleOrQuotaError,
+} from './wechatMediaSendFrequency'
 import { stickerUrlToImagePayload } from './wechatStickerImagePayload'
 import {
   isCharacterMusicSyncDirectiveArtifactLine,
@@ -79,6 +86,7 @@ async function planProactiveBubbleLineAsync(
   imageGen: { enabled: boolean; settings: MomentsImageGenSettings },
   takeoutCtx?: ProactiveTakeoutContext,
   recentCharacterStickerRefs: string[] = [],
+  character?: Character | null,
 ): Promise<PlannedProactiveBubble | null> {
   const trimmed = String(line ?? '').trim()
   if (!trimmed) return null
@@ -148,12 +156,15 @@ async function planProactiveBubbleLineAsync(
 
   const charImageGen = parseCharacterImageGenLine(trimmed)
   if (charImageGen && imageGen.enabled) {
+    if (isImageGenQuotaOrRateLimitBlocked()) return null
     try {
-      const dataUrl = await generateMomentsImage({
-        prompt: charImageGen.prompt,
-        settings: imageGen.settings,
-        promptContext: 'character_media',
-      })
+      const dataUrl = await generateMomentsImage(
+        buildCharacterMediaImageGenParams({
+          prompt: charImageGen.prompt,
+          settings: imageGen.settings,
+          character,
+        }),
+      )
       const payloadImage = imageGenDataUrlToPayload(dataUrl)
       return {
         id: meta.id,
@@ -162,7 +173,10 @@ async function planProactiveBubbleLineAsync(
         timestamp: meta.timestamp,
         images: [{ base64: payloadImage.base64, type: payloadImage.mime }],
       }
-    } catch {
+    } catch (err) {
+      if (isImageGenThrottleOrQuotaError(err)) {
+        markImageGenQuotaOrRateLimitBlocked(err)
+      }
       return null
     }
   }
@@ -207,6 +221,8 @@ export async function planProactiveRevealBubblesAsync(
   const imageGenSettings = await loadResolvedImageGenSettings()
   const imageGenEnabled = isCharacterImageGenEnabled(imageGenSettings)
   const imageGen = { enabled: imageGenEnabled, settings: imageGenSettings }
+  const characterId = takeoutCtx?.characterId?.trim()
+  const character = characterId ? await personaDb.getCharacter(characterId) : null
 
   const out: PlannedProactiveBubble[] = []
   const plainTextsThisBatch: string[] = []
@@ -234,6 +250,7 @@ export async function planProactiveRevealBubblesAsync(
         imageGen,
         takeoutCtx,
         recentCharacterStickerRefs,
+        character,
       )
       if (!planned) continue
       if (planned.voice) {

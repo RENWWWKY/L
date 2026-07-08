@@ -54,6 +54,8 @@ export interface MomentsImageGenSettings {
   customApiUrl: string
   /** 自定义 OpenAI 兼容生图接口 API Key */
   customApiKey: string
+  /** 自定义接口：/models 未列出时手动补充的生图模型 ID（逗号分隔） */
+  customManualModelIds: string
   /** 各引擎拉取的模型列表（持久化到 localStorage，再次拉取会覆盖对应引擎缓存） */
   cachedModelsByProvider: MomentsImageModelCacheByProvider
   modelsFetchedAtByProvider: MomentsImageModelsFetchedAtByProvider
@@ -95,6 +97,7 @@ export const DEFAULT_MOMENTS_SETTINGS: MomentsSettings = {
     openaiApiKey: '',
     customApiUrl: '',
     customApiKey: '',
+    customManualModelIds: '',
     cachedModelsByProvider: { ...EMPTY_MODEL_CACHE_BY_PROVIDER },
     modelsFetchedAtByProvider: { ...EMPTY_MODELS_FETCHED_AT_BY_PROVIDER },
     stylePrefixMode: 'preset',
@@ -279,6 +282,8 @@ function normalizeImageGen(raw: Record<string, unknown>): MomentsImageGenSetting
     openaiApiKey: typeof raw.openaiApiKey === 'string' ? raw.openaiApiKey : '',
     customApiUrl: typeof raw.customApiUrl === 'string' ? raw.customApiUrl : '',
     customApiKey: typeof raw.customApiKey === 'string' ? raw.customApiKey : '',
+    customManualModelIds:
+      typeof raw.customManualModelIds === 'string' ? raw.customManualModelIds : '',
     cachedModelsByProvider: normalizeModelCacheByProvider(raw),
     modelsFetchedAtByProvider: normalizeModelsFetchedAtByProvider(raw, provider),
     stylePrefixMode:

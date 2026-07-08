@@ -179,7 +179,7 @@ export function DmVoiceIntro({
     <>
       <div className="flex min-h-0 flex-1 flex-col items-center justify-center px-5 py-4">
         <motion.div
-          className="jbs-gf-dm-intro-panel flex w-full max-w-[min(100%,380px)] min-h-[min(52vh,420px)] flex-col px-5 py-5"
+          className="jbs-gf-dm-intro-panel flex w-full max-w-[min(100%,380px)] flex-col px-5 py-5"
           initial={{ opacity: 0, y: 12 }}
           animate={{ opacity: 1, y: 0 }}
           transition={{ duration: 0.45 }}
@@ -193,50 +193,52 @@ export function DmVoiceIntro({
             </p>
           </div>
 
-          {phase === 'need-tap' ? (
-            <div className="mt-4 flex flex-col items-center text-center">
-              <p className="jbs-gf-dm-intro-hint">{phaseHint}</p>
-              <button
-                type="button"
-                onClick={() => void beginDualPlayback(true)}
-                className="jbs-gf-chat-voice-btn jbs-font-serif mt-4 inline-flex items-center gap-2 rounded-lg px-5 py-2.5 text-[11px]"
-              >
-                <Volume2 className="size-3.5" strokeWidth={1.25} />
-                点击继续
-              </button>
-            </div>
-          ) : null}
+          <div className="jbs-gf-dm-intro-body mt-4 flex flex-col">
+            {phase === 'need-tap' ? (
+              <div className="mb-3 flex shrink-0 flex-col items-center text-center">
+                <p className="jbs-gf-dm-intro-hint">{phaseHint}</p>
+                <button
+                  type="button"
+                  onClick={() => void beginDualPlayback(true)}
+                  className="jbs-gf-chat-voice-btn jbs-font-serif mt-4 inline-flex items-center gap-2 rounded-lg px-5 py-2.5 text-[11px]"
+                >
+                  <Volume2 className="size-3.5" strokeWidth={1.25} />
+                  点击继续
+                </button>
+              </div>
+            ) : null}
 
-          {showTypewriter && currentScript ? (
-            <div
-              ref={scrollRef}
-              className="jbs-gf-chat-typewriter-scroll mt-4 min-h-0 flex-1 overflow-y-auto jbs-hide-scrollbar px-1"
-            >
-              <p className="jbs-font-kai jbs-gf-dm-intro-script whitespace-pre-wrap">
-                {displayed}
-                {isTyping ? (
-                  <span className="jbs-gf-dm-intro-cursor ml-0.5 inline-block w-[2px] align-middle" />
-                ) : null}
+            {showTypewriter && currentScript ? (
+              <div
+                ref={scrollRef}
+                className="jbs-gf-dm-intro-scroll jbs-gf-chat-typewriter-scroll min-h-0 flex-1 overflow-y-auto jbs-hide-scrollbar px-1"
+              >
+                <p className="jbs-font-kai jbs-gf-dm-intro-script whitespace-pre-wrap">
+                  {displayed}
+                  {isTyping ? (
+                    <span className="jbs-gf-dm-intro-cursor ml-0.5 inline-block w-[2px] align-middle" />
+                  ) : null}
+                </p>
+              </div>
+            ) : phase === 'loading' ? (
+              <p className="jbs-gf-dm-intro-hint flex flex-1 items-center justify-center text-center tracking-wider">
+                {phaseHint}
               </p>
-            </div>
-          ) : phase === 'loading' ? (
-            <p className="jbs-gf-dm-intro-hint mt-8 text-center tracking-wider">
-              {phaseHint}
-            </p>
-          ) : null}
+            ) : null}
 
-          {phase === 'error' && errorHint ? (
-            <div className="mt-4 text-center">
-              <p className="jbs-gf-dm-intro-hint">{errorHint}</p>
-              <button
-                type="button"
-                onClick={() => void beginDualPlayback(true)}
-                className="jbs-gf-chat-voice-btn jbs-font-serif mt-4 rounded-lg px-4 py-2 text-[10px]"
-              >
-                重试播放
-              </button>
-            </div>
-          ) : null}
+            {phase === 'error' && errorHint ? (
+              <div className="shrink-0 text-center">
+                <p className="jbs-gf-dm-intro-hint">{errorHint}</p>
+                <button
+                  type="button"
+                  onClick={() => void beginDualPlayback(true)}
+                  className="jbs-gf-chat-voice-btn jbs-font-serif mt-4 rounded-lg px-4 py-2 text-[10px]"
+                >
+                  重试播放
+                </button>
+              </div>
+            ) : null}
+          </div>
 
           <div className="mt-4 flex shrink-0 justify-center gap-1">
             {tracks.map((_, i) => (
@@ -256,25 +258,27 @@ export function DmVoiceIntro({
       </div>
 
       <div className="jbs-gf-chat-input-bar shrink-0 px-4 py-4 pb-[max(16px,env(safe-area-inset-bottom))]">
-        <div className="flex items-center justify-center gap-3">
-          <button
-            type="button"
-            onClick={advanceTrack}
-            className="jbs-gf-chat-voice-btn flex items-center gap-1.5 rounded-lg px-4 py-2.5 font-sans text-[11px] font-extralight tracking-wider"
-          >
-            <SkipForward className="size-3.5" strokeWidth={1.25} />
-            {trackIndex < tracks.length - 1 ? '下一段' : '跳过并完成'}
-          </button>
-          {trackIndex < tracks.length - 1 ? (
+        {phase === 'playing' && !isTyping ? (
+          <div className="flex items-center justify-center gap-3">
             <button
               type="button"
-              onClick={finish}
-              className="jbs-gf-chat-voice-skip rounded-lg px-3 py-2.5 text-[10px]"
+              onClick={advanceTrack}
+              className="jbs-gf-chat-voice-btn flex items-center gap-1.5 rounded-lg px-4 py-2.5 font-sans text-[11px] font-extralight tracking-wider"
             >
-              全部跳过
+              <SkipForward className="size-3.5" strokeWidth={1.25} />
+              {trackIndex < tracks.length - 1 ? '下一段' : '跳过并完成'}
             </button>
-          ) : null}
-        </div>
+            {trackIndex < tracks.length - 1 ? (
+              <button
+                type="button"
+                onClick={finish}
+                className="jbs-gf-chat-voice-skip rounded-lg px-3 py-2.5 text-[10px]"
+              >
+                全部跳过
+              </button>
+            ) : null}
+          </div>
+        ) : null}
       </div>
     </>
   )

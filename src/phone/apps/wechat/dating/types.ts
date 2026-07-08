@@ -69,6 +69,13 @@ export type NarrativeGenOptions = {
 
 export type PlotItemType = 'player' | 'ai'
 
+export type PlotImageItem = {
+  id: string
+  prompt: string
+  url: string
+  addedAt: number
+}
+
 export type DatingCardBgMode = 'solid' | 'gradient' | 'image'
 
 export type DatingCardStyle = {
@@ -144,6 +151,8 @@ export type PlotItem = {
   content: string
   timestamp: number
   highlightText?: string
+  /** 剧情配图（穿插在剧情卡片中展示） */
+  plotImages?: PlotImageItem[]
   /** 完整思维链（`<thinking>...</thinking>` 内原文；兼容旧存档 `<logicpass>`，供折叠查看） */
   logicPass?: string
   /** 旧版：仅一行规划摘要，兼容历史存档 */
@@ -225,5 +234,12 @@ export type CharacterArchive = {
   branchContinuationHint?: string
   /** 线下/VN 剧情生成：目标正文字数（汉字），与界面「目标字数」同步落盘，避免切换角色后仍用默认 500 */
   datingLengthTargetChars?: number
+  /** 剧情生成后是否穿插剧情配图 */
+  plotImageGenEnabled?: boolean
+  /** 每轮剧情配图张数范围 */
+  plotImageCountMin?: number
+  plotImageCountMax?: number
 }
+
+export type ArchivesStore = Record<string, CharacterArchive>
 

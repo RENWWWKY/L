@@ -2,12 +2,12 @@
 export type MiniGameType =
   | 'gravity'
   | 'gomoku'
+  | 'claw'
   | 'serpent'
   | 'tetromino'
   | 'bubble'
   | 'stars'
 
-/** 游戏内事件 — 由本地引擎抛出，驱动 LLM 伴玩反馈 */
 export type GameEventType =
   | 'combo'
   | 'crisis'
@@ -38,6 +38,22 @@ export type GomokuReactionKey =
   | 'lose'
   | 'draw'
 
+/** 抓娃娃机局面反应键 */
+export type ClawReactionKey =
+  | 'drawPlayerFirst'
+  | 'drawCharFirst'
+  | 'playerGrab'
+  | 'playerMiss'
+  | 'charGrab'
+  | 'charMiss'
+  | 'playerRare'
+  | 'charRare'
+  | 'thinking'
+  | 'win'
+  | 'lose'
+  | 'draw'
+  | 'gameStart'
+
 export interface GameEvent {
   type: GameEventType
   /** 人类可读细节，如「三连消」「棋盘将满」 */
@@ -46,6 +62,8 @@ export interface GameEvent {
   won?: boolean
   /** 五子棋：预生成台词库索引键 */
   gomokuKey?: GomokuReactionKey
+  /** 抓娃娃机：预置台词库索引键 */
+  clawKey?: ClawReactionKey
 }
 
 export type GameEventEmitter = (event: GameEvent) => void

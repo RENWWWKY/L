@@ -3,8 +3,13 @@ import './jbs-game-flow.css'
 import './jbs-gf-chat-room.css'
 
 import { motion } from 'framer-motion'
-import { ArrowLeft, Send, Volume2, VolumeX } from 'lucide-react'
+import { ArrowLeft, Gamepad2, Send, Volume2, VolumeX } from 'lucide-react'
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
+
+import { useComposerKeyboardInset } from '../../../phone/hooks/useComposerKeyboardInset'
+import { GameLobbySheet } from '../../../phone/apps/wechat/miniGame/GameLobbySheet'
+import { getGameLabel, isGameAvailable } from '../../../phone/apps/wechat/miniGame/gameCatalog'
+import type { MiniGameType } from '../../../phone/apps/wechat/miniGame/types'
 
 import { getStoryBackgroundVoiceUrls } from '../jbsDmVoiceAssets'
 import { getStoryBackgroundTracks } from '../jbsDmVoiceScripts'
@@ -13,7 +18,16 @@ import {
   getAct1PublicPlotDmRunFullText,
   getYuyeAct1PublicPlotTracks,
 } from './chatRoom/yuyeAct1PublicPlotVoice'
+import {
+  DISCUSS1_OPENING_SYSTEM_BRIEF,
+  DISCUSS1_OPENING_SYSTEM_READY,
+  getYuyeDiscuss1OpeningTracks,
+} from './chatRoom/yuyeDiscuss1OpeningVoice'
 import { getStoryBackgroundPremiseClueIds } from './chatRoom/jbsClueData'
+import { JBSDiscussActionPicker } from './chatRoom/JBSDiscussActionPicker'
+import { getEvidenceClueBatches } from './chatRoom/jbsDevFlowNodes'
+import { resolvePublicDiscussPhase } from './chatRoom/jbsPublicDiscuss'
+import { useJbsNpcDiscuss } from './chatRoom/useJbsNpcDiscuss'
 import {
   getYuyeGuilingSystemHint,
   isYuyeGuilingScript,
@@ -23,11 +37,14 @@ import { compactDmNarrationLines } from './chatRoom/dmBubbleText'
 import { RolePortraitMsgBubble } from './chatRoom/RolePortraitMsgBubble'
 import type { LockedRole } from './gameFlowTypes'
 import { HallRoomBackdrop } from './HallRoomBackdrop'
+import { GameFlowToast } from './GameFlowToast'
 import { useDmVoiceBubbleSequence } from './useDmVoiceBubbleSequence'
 import { useTypewriter } from './useTypewriter'
 import { JBS_STEP_LABELS } from './chatRoom/jbsFlowTypes'
 import { ClueCollectorLayer } from './chatRoom/ClueCollectorLayer'
 import { DMMsgBubble } from './chatRoom/DMMsgBubble'
+import { DiscussThinkingIndicator } from './chatRoom/DiscussThinkingIndicator'
+import { DmVoiceTrackSkipButton } from './chatRoom/DmVoiceTrackSkipButton'
 import { JBSBookmarkButton } from './chatRoom/JBSBookmarkButton'
 import { useJBSDevJumpBridge } from './chatRoom/JBSDevJumpBridge'
 import { JBSDevStageJump } from './chatRoom/JBSDevStageJump'
@@ -113,6 +130,7 @@ function ChatRoomActive({ onExit, hideShell = false }: { onExit: () => void; hid
   const step2ScriptAutoDeliveredRef = useRef(false)
   const introUnlockHintPushedRef = useRef(false)
   const act1UnlockHintPushedRef = useRef(false)
+  const discuss1BriefPushedRef = useRef(false)
   const voicePlaybackInferredRef = useRef(false)
   const act1VoicePlaybackInferredRef = useRef(false)
   const devStageEpochSeenRef = useRef(0)
@@ -126,6 +144,35 @@ function ChatRoomActive({ onExit, hideShell = false }: { onExit: () => void; hid
   }, [debugJumpToFlowNode, devJumpBridge])
   /** 本阶段已点过「进入下一阶段」后隐藏按钮，直至 step/loop 变化 */
   const [stageAdvanceHidden, setStageAdvanceHidden] = useState(false)
+  const [gameLobbyOpen, setGameLobbyOpen] = useState(false)
+  const [flowToast, setFlowToast] = useState<string | null>(null)
+  const flowToastTimerRef = useRef<number | null>(null)
+
+  const showFlowToast = useCallback((msg: string) => {
+    if (flowToastTimerRef.current != null) window.clearTimeout(flowToastTimerRef.current)
+    setFlowToast(msg)
+    flowToastTimerRef.current = window.setTimeout(() => {
+      setFlowToast(null)
+      flowToastTimerRef.current = null
+    }, 2200)
+  }, [])
+
+  useEffect(() => {
+    return () => {
+      if (flowToastTimerRef.current != null) window.clearTimeout(flowToastTimerRef.current)
+    }
+  }, [])
+
+  const handleSendGameInvite = useCallback(
+    (gameType: MiniGameType) => {
+      if (!isGameAvailable(gameType)) {
+        showFlowToast(`「${getGameLabel(gameType)}」尚在开发中`)
+        return
+      }
+      showFlowToast('剧本杀暗室暂不支持发起小游戏邀请')
+    },
+    [showFlowToast],
+  )
 
   const scriptId = locked.script.id
   const playerRoleName = locked.card.role.name
@@ -179,6 +226,10 @@ function ChatRoomActive({ onExit, hideShell = false }: { onExit: () => void; hid
   )
   const act1PublicPlotScripts = useMemo(
     () => act1PublicPlotMeta.map((t) => t.script),
+    [act1PublicPlotMeta],
+  )
+  const act1PublicPlotSfx = useMemo(
+    () => act1PublicPlotMeta.map((t) => t.sfxUrls),
     [act1PublicPlotMeta],
   )
   const act1PublicPlotEnabled =
@@ -301,6 +352,7 @@ function ChatRoomActive({ onExit, hideShell = false }: { onExit: () => void; hid
     step2ScriptAutoDeliveredRef.current = false
     introUnlockHintPushedRef.current = false
     act1UnlockHintPushedRef.current = false
+    discuss1BriefPushedRef.current = false
     act1DmRunPendingRef.current = []
     setStageAdvanceHidden(false)
     if (!voicePlayback.act1TasksAccepted) {
@@ -311,6 +363,7 @@ function ChatRoomActive({ onExit, hideShell = false }: { onExit: () => void; hid
   const act1PublicPlotVoice = useDmVoiceBubbleSequence({
     tracks: act1PublicPlotTracks,
     scripts: act1PublicPlotScripts,
+    sfxTracks: act1PublicPlotSfx,
     enabled: act1PublicPlotEnabled && !act1PublicPlotDone,
     resetSignal: devStageEpoch,
     initialCompletedTrackCount: inferredAct1PublicPlotCompletedCount,
@@ -324,6 +377,168 @@ function ChatRoomActive({ onExit, hideShell = false }: { onExit: () => void; hid
     act1PublicPlotEnabled &&
     act1PublicPlotVoice.phase !== 'done' &&
     act1PublicPlotVoice.phase !== 'idle'
+
+  const batch1ClueIds = useMemo(
+    () => (isYuyeGuilingScript(scriptId) ? getEvidenceClueBatches(scriptId).batch1 : []),
+    [scriptId],
+  )
+  const batch1CluesCollected =
+    batch1ClueIds.length > 0 && batch1ClueIds.every((id) => collectedClueIds.includes(id))
+
+  const discuss1OpeningMeta = useMemo(
+    () => (isYuyeGuilingScript(scriptId) ? getYuyeDiscuss1OpeningTracks(playerRoleName) : []),
+    [playerRoleName, scriptId],
+  )
+  const discuss1OpeningTracks = useMemo(
+    () => discuss1OpeningMeta.map((t) => t.url),
+    [discuss1OpeningMeta],
+  )
+  const discuss1OpeningScripts = useMemo(
+    () => discuss1OpeningMeta.map((t) => t.script),
+    [discuss1OpeningMeta],
+  )
+
+  const inferredDiscuss1OpeningCompletedCount = useMemo(() => {
+    if (voicePlayback.discuss1OpeningCompletedTrackCount > 0) {
+      return voicePlayback.discuss1OpeningCompletedTrackCount
+    }
+    let count = 0
+    for (const track of discuss1OpeningMeta) {
+      const plain = track.script.trim()
+      if (!plain) continue
+      const found = messages.some(
+        (m) =>
+          m.kind === 'player' &&
+          m.roleName === track.speaker.role &&
+          m.body.trim() === plain,
+      )
+      if (found) count++
+      else break
+    }
+    return count
+  }, [discuss1OpeningMeta, messages, voicePlayback.discuss1OpeningCompletedTrackCount])
+
+  const discuss1OpeningDone =
+    voicePlayback.discuss1OpeningDone ||
+    (discuss1OpeningMeta.length > 0 &&
+      inferredDiscuss1OpeningCompletedCount >= discuss1OpeningMeta.length)
+
+  const discuss1OpeningEnabled =
+    isYuyeGuilingScript(scriptId) &&
+    currentStep === 6 &&
+    loopRound === 0 &&
+    batch1CluesCollected &&
+    activeDispersalClueId == null &&
+    !discuss1OpeningDone
+
+  const handleDiscuss1OpeningFinalize = useCallback(
+    (body: string, _meta: { highlight?: { start: number; end: number } } | undefined, trackIndex: number) => {
+      const track = discuss1OpeningMeta[trackIndex]
+      if (!track) return
+      const line = compactDmNarrationLines(body)
+      if (!line) return
+      pushMessage({
+        kind: 'player',
+        roleName: track.speaker.role,
+        body: line,
+      })
+    },
+    [discuss1OpeningMeta, pushMessage],
+  )
+
+  const handleDiscuss1OpeningTrackProgress = useCallback(
+    (completedTrackCount: number) => {
+      patchVoicePlayback({ discuss1OpeningCompletedTrackCount: completedTrackCount })
+    },
+    [patchVoicePlayback],
+  )
+
+  const handleDiscuss1OpeningComplete = useCallback(() => {
+    patchVoicePlayback({
+      discuss1OpeningDone: true,
+      discuss1OpeningCompletedTrackCount: discuss1OpeningMeta.length,
+    })
+    if (
+      !messages.some((m) => m.kind === 'system' && m.body === DISCUSS1_OPENING_SYSTEM_READY)
+    ) {
+      pushMessage({ kind: 'system', body: DISCUSS1_OPENING_SYSTEM_READY })
+    }
+  }, [discuss1OpeningMeta.length, messages, patchVoicePlayback, pushMessage])
+
+  const discuss1OpeningVoice = useDmVoiceBubbleSequence({
+    tracks: discuss1OpeningTracks,
+    scripts: discuss1OpeningScripts,
+    enabled: discuss1OpeningEnabled,
+    resetSignal: devStageEpoch,
+    initialCompletedTrackCount: inferredDiscuss1OpeningCompletedCount,
+    onFinalizeTrack: handleDiscuss1OpeningFinalize,
+    onTrackProgress: handleDiscuss1OpeningTrackProgress,
+    onComplete: handleDiscuss1OpeningComplete,
+  })
+
+  const discuss1OpeningInProgress =
+    discuss1OpeningEnabled &&
+    discuss1OpeningVoice.phase !== 'done' &&
+    discuss1OpeningVoice.phase !== 'idle'
+
+  useEffect(() => {
+    if (!discuss1OpeningEnabled) return
+    if (discuss1BriefPushedRef.current) return
+    if (messages.some((m) => m.kind === 'system' && m.body === DISCUSS1_OPENING_SYSTEM_BRIEF)) {
+      discuss1BriefPushedRef.current = true
+      return
+    }
+    discuss1BriefPushedRef.current = true
+    pushMessage({ kind: 'system', body: DISCUSS1_OPENING_SYSTEM_BRIEF })
+  }, [discuss1OpeningEnabled, messages, pushMessage])
+
+  const discussOpeningContext = useMemo(() => {
+    if (discuss1OpeningMeta.length === 0) return undefined
+    return discuss1OpeningMeta.map((t) => `${t.speaker.role}：${t.script}`).join('\n')
+  }, [discuss1OpeningMeta])
+
+  const publicDiscussPhase = useMemo(
+    () =>
+      resolvePublicDiscussPhase({
+        scriptId,
+        currentStep,
+        loopRound,
+        collectedClueIds,
+        discuss1OpeningDone,
+        activeDispersalClueId,
+      }),
+    [
+      activeDispersalClueId,
+      collectedClueIds,
+      currentStep,
+      discuss1OpeningDone,
+      loopRound,
+      scriptId,
+    ],
+  )
+
+  const {
+    discussAiBusy,
+    discussAiGenerating,
+    discussGenerationFailed,
+    awaitingNpcReply,
+    pendingAction,
+    appendPendingAction,
+    clearPendingAction,
+    postDiscussPlayerLine,
+    triggerDiscussNpcReplies,
+    retryDiscussNpcReplies,
+  } = useJbsNpcDiscuss({
+    locked,
+    discussPhase: publicDiscussPhase,
+    messages,
+    collectedClueIds,
+    playerRoleName,
+    pushMessage,
+    openingContext: publicDiscussPhase?.round === 1 ? discussOpeningContext : undefined,
+  })
+
+  const inPublicDiscuss = !!publicDiscussPhase?.discussReady
 
   const showAct1PerformButton = act1PublicPlotVoice.phase === 'await-perform'
 
@@ -479,6 +694,8 @@ function ChatRoomActive({ onExit, hideShell = false }: { onExit: () => void; hid
   const inputLocked =
     storyBg.isActive ||
     act1PlotInProgress ||
+    discuss1OpeningInProgress ||
+    discussAiBusy ||
     activeDispersalClueId != null ||
     (readingSession.isOpen && !readingSession.isMinimized)
 
@@ -486,11 +703,19 @@ function ChatRoomActive({ onExit, hideShell = false }: { onExit: () => void; hid
     ? '主持人宣读背景中…'
     : act1PlotInProgress
       ? '公共剧情演绎中…'
-      : '在此落笔…'
+      : discuss1OpeningInProgress
+        ? '讨论开场白播放中…'
+        : discussAiGenerating
+          ? '众人正在思考…'
+          : discussAiBusy
+            ? '众人正在接话…'
+            : inPublicDiscuss
+              ? '回车发消息 · 发送键等待众人回应'
+              : '在此落笔…'
 
   const stageContentReady = useMemo(() => {
     if (currentStep >= 8) return false
-    if (storyBg.isActive || act1PlotInProgress || activeDispersalClueId != null) {
+    if (storyBg.isActive || act1PlotInProgress || discuss1OpeningInProgress || activeDispersalClueId != null) {
       return false
     }
     if (currentStep === 2) {
@@ -508,6 +733,7 @@ function ChatRoomActive({ onExit, hideShell = false }: { onExit: () => void; hid
   }, [
     act1PublicPlotDone,
     act1PlotInProgress,
+    discuss1OpeningInProgress,
     activeDispersalClueId,
     collectedClueIds,
     currentStep,
@@ -522,7 +748,14 @@ function ChatRoomActive({ onExit, hideShell = false }: { onExit: () => void; hid
     currentStep === 4 && act1PublicPlotDone && !voicePlayback.act1TasksAccepted
 
   const showStageAdvanceButton =
-    stageContentReady && !stageAdvanceHidden && !act1AwaitingTaskAccept
+    stageContentReady && !stageAdvanceHidden && !act1AwaitingTaskAccept && !inPublicDiscuss
+
+  const showDiscussEndButton =
+    stageContentReady &&
+    !stageAdvanceHidden &&
+    !act1AwaitingTaskAccept &&
+    inPublicDiscuss &&
+    !discussAiBusy
 
   const showAct1TaskAcceptButton = stageContentReady && !stageAdvanceHidden && act1AwaitingTaskAccept && !modalOpen
 
@@ -608,6 +841,13 @@ function ChatRoomActive({ onExit, hideShell = false }: { onExit: () => void; hid
 
   const [draft, setDraft] = useState('')
   const scrollRef = useRef<HTMLDivElement>(null)
+  const inputBarRef = useRef<HTMLDivElement>(null)
+  const keyboardInsetFillRef = useRef<HTMLDivElement>(null)
+  const chatInputRef = useRef<HTMLInputElement>(null)
+
+  useComposerKeyboardInset(scrollRef, inputBarRef, keyboardInsetFillRef, {
+    scrollPaddingAnchor: '5.5rem + env(safe-area-inset-bottom, 0px)',
+  })
 
   const scrollChatToBottom = useCallback((behavior: ScrollBehavior = 'smooth') => {
     requestAnimationFrame(() => {
@@ -622,6 +862,13 @@ function ChatRoomActive({ onExit, hideShell = false }: { onExit: () => void; hid
     act1PublicPlotVoice.phase === 'loading' ||
     act1PublicPlotVoice.phase === 'need-tap'
       ? act1PublicPlotMeta[act1PublicPlotVoice.trackIndex]
+      : null
+
+  const discuss1LiveTrack =
+    discuss1OpeningVoice.phase === 'playing' ||
+    discuss1OpeningVoice.phase === 'loading' ||
+    discuss1OpeningVoice.phase === 'need-tap'
+      ? discuss1OpeningMeta[discuss1OpeningVoice.trackIndex]
       : null
 
   /** 连续旁白段：合并全文，打字机跨多轨连续输出（不随分段音频重置） */
@@ -686,6 +933,20 @@ function ChatRoomActive({ onExit, hideShell = false }: { onExit: () => void; hid
     useAct1NarrationPanels,
   ])
 
+  const act1CanSkipCurrentTrack = useMemo(() => {
+    if (!act1PublicPlotVoice.canSkipCurrentTrack) return false
+    if (useAct1NarrationPanels && act1LiveTrack?.speaker === 'dm') {
+      return act1PublicPlotVoice.phase === 'playing' && !act1DmRunIsTyping
+    }
+    return true
+  }, [
+    act1DmRunIsTyping,
+    act1LiveTrack?.speaker,
+    act1PublicPlotVoice.canSkipCurrentTrack,
+    act1PublicPlotVoice.phase,
+    useAct1NarrationPanels,
+  ])
+
   useEffect(() => {
     scrollChatToBottom()
   }, [
@@ -693,6 +954,8 @@ function ChatRoomActive({ onExit, hideShell = false }: { onExit: () => void; hid
     storyBg.liveBubble?.body,
     act1PublicPlotVoice.liveBubble?.body,
     act1LiveNarrationPanelBody,
+    discuss1OpeningVoice.liveBubble?.body,
+    discussAiGenerating,
     scrollChatToBottom,
   ])
 
@@ -729,22 +992,93 @@ function ChatRoomActive({ onExit, hideShell = false }: { onExit: () => void; hid
     }
   }, [act1PublicPlotVoice.phase, act1PublicPlotVoice.resumeFromGesture])
 
+  useEffect(() => {
+    if (discuss1OpeningVoice.phase !== 'need-tap') return
+    const unlock = () => discuss1OpeningVoice.resumeFromGesture()
+    window.addEventListener('pointerdown', unlock, { passive: true })
+    window.addEventListener('keydown', unlock)
+    return () => {
+      window.removeEventListener('pointerdown', unlock)
+      window.removeEventListener('keydown', unlock)
+    }
+  }, [discuss1OpeningVoice.phase, discuss1OpeningVoice.resumeFromGesture])
+
   const act1AwaitPerformTrack =
     act1PublicPlotVoice.phase === 'await-perform'
       ? act1PublicPlotMeta[act1PublicPlotVoice.trackIndex]
       : null
+
+  const postDiscussDraftLine = useCallback(() => {
+    if (!postDiscussPlayerLine({ body: draft })) return false
+    setDraft('')
+    return true
+  }, [draft, postDiscussPlayerLine])
 
   const send = useCallback(() => {
     sendPlayerMessage(draft)
     setDraft('')
   }, [draft, sendPlayerMessage])
 
+  const handleDiscussSendKey = useCallback(() => {
+    void triggerDiscussNpcReplies({ body: draft })
+    setDraft('')
+  }, [draft, triggerDiscussNpcReplies])
+
+  const handleComposerEnter = useCallback(() => {
+    if (inPublicDiscuss) {
+      postDiscussDraftLine()
+      return
+    }
+    send()
+  }, [inPublicDiscuss, postDiscussDraftLine, send])
+
+  const handleComposerSendClick = useCallback(() => {
+    if (inPublicDiscuss) {
+      handleDiscussSendKey()
+      return
+    }
+    send()
+  }, [handleDiscussSendKey, inPublicDiscuss, send])
+
+  const discussSendDisabled =
+    discussAiBusy || (!awaitingNpcReply && !draft.trim() && !pendingAction)
+
   const toggleBgm = useCallback(() => {
     setBgmMuted(!bgmMuted)
   }, [bgmMuted, setBgmMuted])
 
+  const syncChatScrollForKeyboard = useCallback(() => {
+    scrollChatToBottom('auto')
+    window.setTimeout(() => scrollChatToBottom('auto'), 120)
+  }, [scrollChatToBottom])
+
+  useEffect(() => {
+    const bar = inputBarRef.current
+    const input = chatInputRef.current
+    if (!bar || !input) return
+
+    const onPointerDown = (e: PointerEvent) => {
+      const target = e.target
+      if (!(target instanceof Node)) return
+      if (target !== input && !input.contains(target)) return
+      if (document.activeElement === input) return
+      e.preventDefault()
+      input.focus({ preventScroll: true })
+      syncChatScrollForKeyboard()
+    }
+
+    const onFocus = () => syncChatScrollForKeyboard()
+
+    bar.addEventListener('pointerdown', onPointerDown, { capture: true })
+    input.addEventListener('focus', onFocus)
+    return () => {
+      bar.removeEventListener('pointerdown', onPointerDown, { capture: true })
+      input.removeEventListener('focus', onFocus)
+    }
+  }, [syncChatScrollForKeyboard, showAct1PerformButton])
+
   return (
-    <div className={`flex min-h-0 flex-col ${hideShell ? 'absolute inset-0 z-10' : 'absolute inset-0'}`}>
+    <div className={`relative flex min-h-0 flex-col ${hideShell ? 'absolute inset-0 z-10' : 'absolute inset-0'}`}>
       {!hideShell ? <HallRoomBackdrop media={media} /> : null}
 
       <header className="jbs-gf-chat-header jbs-safe-header shrink-0 px-4 pb-3">
@@ -767,6 +1101,14 @@ function ChatRoomActive({ onExit, hideShell = false }: { onExit: () => void; hid
           </div>
           <div className="flex shrink-0 items-center gap-1.5">
             <JBSDevStageJump />
+            <button
+              type="button"
+              onClick={() => setGameLobbyOpen(true)}
+              className="jbs-gf-chat-icon-btn flex size-9 shrink-0 items-center justify-center rounded-full"
+              aria-label="小游戏"
+            >
+              <Gamepad2 className="size-4" strokeWidth={1.35} />
+            </button>
             <JBSBookmarkButton
               ref={bookmarkRef}
               absorbPulseKey={drawerAbsorbPulse}
@@ -805,7 +1147,7 @@ function ChatRoomActive({ onExit, hideShell = false }: { onExit: () => void; hid
 
       <div
         ref={scrollRef}
-        className="min-h-0 flex-1 overflow-y-auto jbs-hide-scrollbar px-3 py-4"
+        className="jbs-gf-chat-messages-scroll min-h-0 flex-1 overflow-y-auto jbs-hide-scrollbar px-3 py-4"
       >
         {messages.map((line) => {
           if (line.kind === 'system') {
@@ -841,22 +1183,47 @@ function ChatRoomActive({ onExit, hideShell = false }: { onExit: () => void; hid
               roleName={roleName}
               isSelf={roleName === playerRoleName}
               portraitUrl={rolePortraitUrl(roleName)}
+              actionLine={line.actionLine}
+              bubbleContinued={line.bubbleContinued}
             />
           )
         })}
         {storyBg.liveBubble ? (
-          <DMMsgBubble
-            body={storyBg.liveBubble.body}
-            isTyping={storyBg.liveBubble.isTyping}
-            highlight={storyBg.liveBubble.highlight}
-          />
+          <>
+            <DMMsgBubble
+              body={storyBg.liveBubble.body}
+              isTyping={storyBg.liveBubble.isTyping}
+              highlight={storyBg.liveBubble.highlight}
+            />
+            {storyBg.canSkipCurrentTrack ? (
+              <DmVoiceTrackSkipButton
+                onSkip={storyBg.skipCurrentTrack}
+                isLastTrack={storyBg.trackIndex >= storyBg.trackCount - 1}
+              />
+            ) : null}
+          </>
         ) : null}
         {act1PublicPlotVoice.liveBubble ? (
-          useAct1NarrationPanels ? (
-            act1LiveTrack?.speaker === 'dm' || !act1LiveTrack ? (
-              <NarrationPlotPanel
-                body={act1LiveNarrationPanelBody ?? act1PublicPlotVoice.liveBubble.body}
-                isTyping={act1LiveNarrationPanelTyping}
+          <>
+            {useAct1NarrationPanels ? (
+              act1LiveTrack?.speaker === 'dm' || !act1LiveTrack ? (
+                <NarrationPlotPanel
+                  body={act1LiveNarrationPanelBody ?? act1PublicPlotVoice.liveBubble.body}
+                  isTyping={act1LiveNarrationPanelTyping}
+                />
+              ) : (
+                <RolePortraitMsgBubble
+                  body={act1PublicPlotVoice.liveBubble.body}
+                  roleName={act1LiveTrack.speaker.role}
+                  isSelf={act1LiveTrack.speaker.role === playerRoleName}
+                  portraitUrl={rolePortraitUrl(act1LiveTrack.speaker.role)}
+                  isTyping={act1PublicPlotVoice.liveBubble.isTyping}
+                />
+              )
+            ) : act1LiveTrack?.speaker === 'dm' || !act1LiveTrack ? (
+              <DMMsgBubble
+                body={act1PublicPlotVoice.liveBubble.body}
+                isTyping={act1PublicPlotVoice.liveBubble.isTyping}
               />
             ) : (
               <RolePortraitMsgBubble
@@ -866,23 +1233,39 @@ function ChatRoomActive({ onExit, hideShell = false }: { onExit: () => void; hid
                 portraitUrl={rolePortraitUrl(act1LiveTrack.speaker.role)}
                 isTyping={act1PublicPlotVoice.liveBubble.isTyping}
               />
-            )
-          ) : act1LiveTrack?.speaker === 'dm' || !act1LiveTrack ? (
-            <DMMsgBubble
-              body={act1PublicPlotVoice.liveBubble.body}
-              isTyping={act1PublicPlotVoice.liveBubble.isTyping}
-            />
-          ) : (
-            <RolePortraitMsgBubble
-              body={act1PublicPlotVoice.liveBubble.body}
-              roleName={act1LiveTrack.speaker.role}
-              isSelf={act1LiveTrack.speaker.role === playerRoleName}
-              portraitUrl={rolePortraitUrl(act1LiveTrack.speaker.role)}
-              isTyping={act1PublicPlotVoice.liveBubble.isTyping}
-            />
-          )
+            )}
+            {act1CanSkipCurrentTrack ? (
+              <DmVoiceTrackSkipButton
+                onSkip={act1PublicPlotVoice.skipCurrentTrack}
+                isLastTrack={
+                  act1PublicPlotVoice.trackIndex >= act1PublicPlotVoice.trackCount - 1
+                }
+              />
+            ) : null}
+          </>
         ) : null}
-        {storyBg.phase === 'need-tap' || act1PublicPlotVoice.phase === 'need-tap' ? (
+        {discuss1OpeningVoice.liveBubble && discuss1LiveTrack ? (
+          <>
+            <RolePortraitMsgBubble
+              body={discuss1OpeningVoice.liveBubble.body}
+              roleName={discuss1LiveTrack.speaker.role}
+              isSelf={discuss1LiveTrack.speaker.role === playerRoleName}
+              portraitUrl={rolePortraitUrl(discuss1LiveTrack.speaker.role)}
+              isTyping={discuss1OpeningVoice.liveBubble.isTyping}
+            />
+            {discuss1OpeningVoice.canSkipCurrentTrack ? (
+              <DmVoiceTrackSkipButton
+                onSkip={discuss1OpeningVoice.skipCurrentTrack}
+                isLastTrack={
+                  discuss1OpeningVoice.trackIndex >= discuss1OpeningVoice.trackCount - 1
+                }
+              />
+            ) : null}
+          </>
+        ) : null}
+        {storyBg.phase === 'need-tap' ||
+        act1PublicPlotVoice.phase === 'need-tap' ||
+        discuss1OpeningVoice.phase === 'need-tap' ? (
           <p className="jbs-gf-chat-system-line jbs-font-serif mb-3 text-center text-[9px] tracking-[0.12em]">
             轻触屏幕以继续播放主持语音
           </p>
@@ -901,6 +1284,7 @@ function ChatRoomActive({ onExit, hideShell = false }: { onExit: () => void; hid
             onOpen={handleOpenAct1Script}
           />
         ) : null}
+        {discussAiGenerating && inPublicDiscuss ? <DiscussThinkingIndicator /> : null}
       </div>
 
       <ScriptInteractiveReader
@@ -925,7 +1309,14 @@ function ChatRoomActive({ onExit, hideShell = false }: { onExit: () => void; hid
       <TaskFloatingBall />
 
       <div
-        className={`jbs-gf-chat-input-bar shrink-0 px-3 py-3 pb-[max(12px,env(safe-area-inset-bottom))]${readerFullscreenOpen ? ' jbs-gf-chat-input-bar--over-reader' : ''}`}
+        ref={keyboardInsetFillRef}
+        className="pointer-events-none absolute inset-x-0 bottom-0 z-[8]"
+        aria-hidden
+      />
+
+      <div
+        ref={inputBarRef}
+        className={`jbs-gf-chat-input-bar shrink-0 transform-gpu px-3 py-3 pb-[max(12px,env(safe-area-inset-bottom))]${readerFullscreenOpen ? ' jbs-gf-chat-input-bar--over-reader' : ''}`}
       >
         {showAct1TaskAcceptButton ? (
           <button
@@ -934,6 +1325,15 @@ function ChatRoomActive({ onExit, hideShell = false }: { onExit: () => void; hid
             className="jbs-gf-chat-stage-advance-btn jbs-font-serif mb-2.5 w-full rounded-lg py-3 text-[12px] tracking-[0.14em]"
           >
             接取本幕任务
+          </button>
+        ) : null}
+        {showDiscussEndButton ? (
+          <button
+            type="button"
+            onClick={handleStageAdvance}
+            className="jbs-gf-chat-discuss-end-btn jbs-font-serif mb-2.5 w-full rounded-lg py-3 text-[12px] tracking-[0.14em]"
+          >
+            讨论结束 · 进入下一阶段
           </button>
         ) : null}
         {showStageAdvanceButton ? (
@@ -960,30 +1360,69 @@ function ChatRoomActive({ onExit, hideShell = false }: { onExit: () => void; hid
           </>
         ) : null}
         {!showAct1PerformButton ? (
-          <div className="flex gap-2">
-            <input
-              value={draft}
-              onChange={(e) => setDraft(e.target.value)}
-              onKeyDown={(e) => e.key === 'Enter' && !inputLocked && send()}
-              placeholder={inputLocked ? inputLockedPlaceholder : '在此落笔…'}
-              disabled={inputLocked}
-              className="jbs-gf-chat-input jbs-font-serif min-w-0 flex-1 rounded-lg px-3 py-2.5 text-[14px] disabled:opacity-45"
-            />
-            <button
-              type="button"
-              onClick={send}
-              disabled={inputLocked || !draft.trim()}
-              className="jbs-gf-chat-send-btn flex size-11 shrink-0 items-center justify-center rounded-lg disabled:opacity-35"
-              aria-label="发送"
-            >
-              <Send className="size-4" strokeWidth={1.25} />
-            </button>
-          </div>
+          <>
+            {inPublicDiscuss && discussGenerationFailed && !discussAiBusy ? (
+              <div className="jbs-gf-discuss-retry-row mb-2 flex items-center gap-2">
+                <p className="jbs-gf-discuss-retry-hint jbs-font-serif min-w-0 flex-1 text-[10px] leading-relaxed tracking-[0.06em]">
+                  众人回应生成失败
+                </p>
+                <button
+                  type="button"
+                  onClick={() => void retryDiscussNpcReplies()}
+                  className="jbs-gf-discuss-retry-btn jbs-font-serif shrink-0 rounded-lg px-3 py-2 text-[11px] tracking-[0.12em]"
+                >
+                  重新生成
+                </button>
+              </div>
+            ) : null}
+            {inPublicDiscuss && pendingAction ? (
+              <p className="jbs-gf-discuss-pending-action jbs-font-serif mb-2 rounded-lg px-3 py-2 text-[11px] leading-relaxed">
+                待发动作：{pendingAction}
+              </p>
+            ) : null}
+            <div className="flex gap-2">
+              {inPublicDiscuss ? (
+                <JBSDiscussActionPicker
+                  playerRoleName={playerRoleName}
+                  pendingAction={pendingAction}
+                  disabled={inputLocked}
+                  onPickAction={appendPendingAction}
+                  onClearAction={clearPendingAction}
+                />
+              ) : null}
+              <input
+                ref={chatInputRef}
+                value={draft}
+                onChange={(e) => setDraft(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' && !inputLocked) handleComposerEnter()
+                }}
+                placeholder={inputLockedPlaceholder}
+                disabled={inputLocked}
+                className="jbs-gf-chat-input jbs-font-serif min-w-0 flex-1 rounded-lg px-3 py-2.5 text-[14px] disabled:opacity-45"
+              />
+              <button
+                type="button"
+                onClick={handleComposerSendClick}
+                disabled={inputLocked || (inPublicDiscuss ? discussSendDisabled : !draft.trim())}
+                className="jbs-gf-chat-send-btn flex size-11 shrink-0 items-center justify-center rounded-lg disabled:opacity-35"
+                aria-label={inPublicDiscuss ? '等待众人回应' : '发送'}
+              >
+                <Send className="size-4" strokeWidth={1.25} />
+              </button>
+            </div>
+          </>
         ) : null}
       </div>
 
       <JBSControlDrawer />
       <ClueCollectorLayer collectTargetRef={bookmarkRef} />
+      <GameLobbySheet
+        open={gameLobbyOpen}
+        onClose={() => setGameLobbyOpen(false)}
+        onSendInvite={handleSendGameInvite}
+      />
+      <GameFlowToast message={flowToast} />
     </div>
   )
 }

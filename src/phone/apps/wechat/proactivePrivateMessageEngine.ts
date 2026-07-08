@@ -1,7 +1,8 @@
 import { loadResolvedApiConfig } from '../api/loadResolvedApiConfig'
 import { isCharacterImageGenEnabled } from '../api/imageGenPresetUtils'
 import { loadResolvedImageGenSettings } from '../api/loadResolvedImageGenSettings'
-import { resolveImageStyleHint } from '../../../components/moments/momentsImagePromptEnhancer'
+import { resolveCharacterMediaImageStyleHint } from '../../../components/moments/momentsImagePromptEnhancer'
+import { characterHasAppearanceReference } from './characterAppearanceImageGen'
 import { buildCharacterMomentsPinCatalogBlock } from '../../../components/moments/momentPinService'
 import { buildUserMomentsVisibleToCharacterCatalogBlock } from '../../../components/moments/userMomentChatCatalog'
 import { setBackgroundNotifyPendingWork } from '../backgroundNotify/backgroundNotifyPendingWork'
@@ -309,7 +310,10 @@ async function fireProactiveMessage(row: ChatConversationSettingsRow): Promise<v
 
     const resolvedImageGenSettings = await loadResolvedImageGenSettings()
     const characterImageGenEnabled = isCharacterImageGenEnabled(resolvedImageGenSettings)
-    const characterImageGenStyleHint = resolveImageStyleHint(resolvedImageGenSettings)
+    const characterImageGenStyleHint = resolveCharacterMediaImageStyleHint(
+      resolvedImageGenSettings,
+      characterHasAppearanceReference(character),
+    )
 
     const characterMomentsPinCatalog =
       wechatAccountId && characterId
@@ -443,7 +447,9 @@ async function fireProactiveMessage(row: ChatConversationSettingsRow): Promise<v
         worldBookUserLineLabel: worldBookBinding?.lineLabel,
         stickerRoundTriggerPercent: activeRow.stickerRoundTriggerPercent,
         voiceRoundTriggerPercent: activeRow.voiceRoundTriggerPercent,
-        classicEmojiRoundTriggerPercent: activeRow.classicEmojiRoundTriggerPercent,
+        ...(activeRow.classicEmojiRoundTriggerPercent !== undefined
+          ? { classicEmojiRoundTriggerPercent: activeRow.classicEmojiRoundTriggerPercent }
+          : { applyClassicEmojiDefault: true }),
         ...(activeRow.stickerTargetedModeEnabled ? { stickerTargetedModeEnabled: true } : {}),
         ...(activeRow.stickerTargetedGroups?.length ? { stickerTargetedGroups: activeRow.stickerTargetedGroups } : {}),
         ...(activeRow.stickerTargetedEntries ? { stickerTargetedEntries: activeRow.stickerTargetedEntries } : {}),
@@ -459,6 +465,7 @@ async function fireProactiveMessage(row: ChatConversationSettingsRow): Promise<v
               imageRoundCountMin: imageCountRange.min,
               imageRoundCountMax: imageCountRange.max,
               ...(imageRoundCountTarget > 0 ? { imageRoundCountTarget: imageRoundCountTarget } : {}),
+              ...(imageRoundAllowed ? { imageRoundAllowed: true } : {}),
             }
           : {}),
         ...(characterMomentsPinCatalog.trim()

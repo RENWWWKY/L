@@ -7,6 +7,8 @@ import { assertMomentsChatApiConfigured } from './momentsChatApiReady'
 import type { CharacterMomentPostType } from './momentCharacterPublishTypes'
 import { isMomentsImageGenConfigured } from './momentsImageGenAvailability'
 import { generateMomentsImage } from './momentsImageGen'
+import { buildCharacterMediaImageGenParams } from '../../phone/apps/wechat/characterAppearanceImageGen'
+import type { Character } from '../../phone/apps/wechat/newFriendsPersona/types'
 import { generateHistoricalCharacterMomentPost } from './momentHistoricalGenAi'
 import type { HistoricalGenConfig } from './momentHistoricalGenTypes'
 import { pickHistoricalPoolItem, pickHistoricalPinnedIndices } from './momentHistoricalGenTypes'
@@ -47,19 +49,22 @@ function resolvePostImages(
 async function generateHistoricalMomentImages(
   prompts: string[],
   settings: MomentsImageGenSettings,
+  character?: Character | null,
 ): Promise<string[]> {
   if (!settings.enabled) return []
   const capped = prompts.slice(0, MAX_MOMENT_IMAGES)
   const urls: string[] = []
   for (const prompt of capped) {
     try {
-      const url = await generateMomentsImage({
-        prompt,
-        settings,
-        width: 512,
-        height: 512,
-        promptContext: 'character_media',
-      })
+      const url = await generateMomentsImage(
+        buildCharacterMediaImageGenParams({
+          prompt,
+          settings,
+          character,
+          width: 512,
+          height: 512,
+        }),
+      )
       if (url) urls.push(url)
     } catch {
       // 单张失败不阻断整条动态
@@ -172,7 +177,7 @@ export async function publishHistoricalCharacterMoments(
           aiDraft.images.length
         ) {
           params.onProgress?.('imaging', i + 1, timestamps.length)
-          imageUrls = await generateHistoricalMomentImages(aiDraft.images, params.imageGenSettings)
+          imageUrls = await generateHistoricalMomentImages(aiDraft.images, params.imageGenSettings, character)
         }
 
         if (needsImages && !imageUrls.length) {

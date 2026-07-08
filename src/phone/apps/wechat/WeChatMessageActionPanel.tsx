@@ -5,6 +5,7 @@ import {
   CheckSquare,
   Copy,
   Edit,
+  ImageDown,
   Languages,
   RefreshCcw,
   Share,
@@ -18,6 +19,7 @@ export type WeChatMessageActionId =
   | 'copy'
   | 'forward'
   | 'favorite'
+  | 'saveToAlbum'
   | 'delete'
   | 'multiSelect'
   | 'quote'
@@ -56,6 +58,7 @@ const ACTIONS: Action[] = [
   { id: 'copy', label: '复制', Icon: Copy },
   { id: 'forward', label: '转发', Icon: Share },
   { id: 'favorite', label: '收藏', Icon: Star },
+  { id: 'saveToAlbum', label: '存相册', Icon: ImageDown },
   { id: 'delete', label: '删除', Icon: Trash2 },
   { id: 'multiSelect', label: '多选', Icon: CheckSquare },
   { id: 'quote', label: '引用', Icon: QuoteRightSvg },

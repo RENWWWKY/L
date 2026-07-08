@@ -192,7 +192,7 @@ export function GameLobbySheet({
 
                   {!canLaunch ? (
 
-                    <p className="text-[13px] text-[#9CA3AF]">该游戏尚在开发中，请先选择五子棋。</p>
+                    <p className="text-[13px] text-[#9CA3AF]">该游戏尚在开发中，请先选择已开放的游戏。</p>
 
                   ) : (
 

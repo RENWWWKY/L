@@ -1,4 +1,5 @@
 import { LEGACY_TERRAIN_ALIASES } from './worldMapCatalog'
+import type { WorldBookAfterRevertEntry } from '../dating/types'
 
 export type Gender = 'male' | 'female' | 'other'
 
@@ -88,6 +89,16 @@ export type CharacterProfileImageHistoryEntry = {
   savedAt: number
 }
 
+/** 形象参考图类型（多角度/多景别） */
+export type CharacterAppearanceRefKind = 'face' | 'half' | 'full' | 'side' | 'other'
+
+export type CharacterAppearanceRefImage = {
+  id: string
+  url: string
+  kind: CharacterAppearanceRefKind
+  addedAt: number
+}
+
 export type Character = {
   id: string
   createdAt: number
@@ -106,12 +117,20 @@ export type Character = {
   /** 角色侧开场白：每行一个气泡消息 */
   openingLines?: string
   avatarUrl?: string // dataURL or url
+  /** AI 生图形象参考（自拍等人脸出镜时专用；与微信头像独立，留空则不自拍锁脸） */
+  appearanceRefUrl?: string
+  /** 多角度形象参考图（优先于单张 appearanceRefUrl；最多 8 张） */
+  appearanceRefImages?: CharacterAppearanceRefImage[]
+  /** 形象参考文字补充：强调发色、瞳色、配饰、画风等，自拍生图时与参考图一并注入 */
+  appearanceRefNote?: string
   /** 微信昵称（可与「姓名」独立） */
   wechatNickname?: string
   /** 微信号（自定义展示用） */
   wechatId?: string
   /** 微信「我」/资料卡个性签名（与 motto 独立） */
   wechatSignature?: string
+  /** 上次修改个性签名的时间戳（用于冷却，避免频繁更换） */
+  wechatSignatureUpdatedAt?: number
   /** 微信资料地区（留空则资料卡不展示具体地区文案） */
   wechatRegion?: string
   /** 微信朋友圈顶部背景图（dataURL 或 http(s) URL） */
@@ -1047,6 +1066,11 @@ export type WeChatChatMessage = {
   conversationKey: string
   /** 为 true 时不触发新消息提示音等（程序化系统条等） */
   quiet?: boolean
+  /**
+   * 本条 AI 回合若成功写入「尾声延展」补丁：重新回复时用于把人设恢复为补丁前正文。
+   * 同轮多条气泡可重复携带同一快照。
+   */
+  worldBookAfterRevertEntries?: WorldBookAfterRevertEntry[]
   /** 扩展展示/群助手管线（IndexedDB 透传） */
   ext?: {
     /** 群助手程序化回复：黑底白字高冷风 */
@@ -1085,6 +1109,24 @@ export type Favorite = {
   voiceAudioUrl?: string
   /** Phone KV 键（通常为 favorite.id） */
   voiceAudioKvKey?: string
+}
+
+/** 微信内置相册条目（IndexedDB `wechatAlbum`） */
+export type WeChatAlbumItem = {
+  id: string
+  messageId: string
+  characterId: string
+  conversationKey?: string
+  senderKind: 'character' | 'player'
+  mimeType: WeChatImageMime
+  /** Phone KV 副本；写入失败时可仅保留 messageId 引用原聊天图片 */
+  imageKvKey?: string
+  /** 原消息摘要，如 [图片] / [表情包] */
+  caption?: string
+  /** 原消息时间 */
+  timestamp: number
+  /** 保存到相册时间 */
+  savedAt: number
 }
 
 export type HeartWhisper = {

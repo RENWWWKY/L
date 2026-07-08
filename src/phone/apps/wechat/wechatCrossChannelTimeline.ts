@@ -124,6 +124,9 @@ export function buildOfflinePlotGenerationTimelineRule(snap: CrossChannelTimelin
     lines.push(
       `因本轮真实生成 ${genLabel} **晚于**上述最晚线上落库，**本轮线下剧情须视为发生在这些线上消息之后**，须承接其事实与顺序（故事内时段仍以【剧情时间轴】为准）。`,
     )
+    lines.push(
+      `**空间承接**：线上末条若写 ${genLabel} 之前 ${snap.lastOfflineAiPlotTs != null ? '（且晚于上一轮线下）' : ''}的远程对话、门外守候、进门/陪睡等待兑现，线下开场须**直接承接**，禁止无过渡跳到次日清晨或无关换场；详见【线上→线下·承接铁律】。`,
+    )
   }
   if (snap.lastOfflineAiPlotTs != null) {
     lines.push(
@@ -147,6 +150,9 @@ export function buildOnlineChatGenerationTimelineRule(snap: CrossChannelTimeline
   ]
   if (snap.lastOfflineAiPlotTs != null) {
     lines.push(`最新一轮线下 AI 正文系统落库于 ${formatSystemRecordTime(snap.lastOfflineAiPlotTs)}。`)
+    lines.push(
+      `**空间承接**：若注入了「尚未总结·线下剧情」，当场同室/分离/门内外/肢体距离以该块**最后一条 AI 剧情**为准；微信本轮为远程消息，勿用更早亲密同场或【尾声延展】覆盖末尾分离事实。`,
+    )
   }
   if (snap.onlineInjectMinTs != null && snap.onlineInjectMaxTs != null) {
     if (snap.onlineInjectMinTs === snap.onlineInjectMaxTs) {
@@ -164,6 +170,9 @@ export function buildOnlineChatGenerationTimelineRule(snap: CrossChannelTimeline
   } else if (snap.lastOfflineAiPlotTs != null) {
     lines.push(
       `当前无新注入私聊摘录；用户本轮发送/你本轮回复真实生成于 ${genLabel}，**晚于** 上述线下落库，须按此顺序承接。`,
+    )
+    lines.push(
+      `**空间承接**：用户本轮为**远程微信**；须以「尚未总结·线下剧情」**最后一条 AI 剧情**为当场空间锚点（同室/分离/门内外/睡醒）。若线下末尾已写你离开房间或在门外守，禁止线上写「你缩在我怀里」等同场肢体接触。`,
     )
   }
   lines.push(

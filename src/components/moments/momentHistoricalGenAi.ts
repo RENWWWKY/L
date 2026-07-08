@@ -19,7 +19,8 @@ import {
 } from './momentCharacterLocationAnchor'
 import { MOMENT_LOCATION_PROMPT_HINT } from './momentLocationUtils'
 import { buildHistoricalTextLengthHint } from './momentContentLimits'
-import { CHARACTER_MEDIA_IMAGE_DESCRIPTION_RULES } from './momentCharacterImageRules'
+import { buildCharacterMediaImageDescriptionRules } from './momentCharacterImageRules'
+import { characterHasAppearanceReference } from '../../phone/apps/wechat/characterAppearanceImageGen'
 import { MOMENT_IMAGE_COUNT_PROMPT } from './momentContentLimits'
 import { MOMENT_TEXT_OUTPUT_HINT } from './momentTextSanitize'
 import {
@@ -61,7 +62,7 @@ const HISTORICAL_MOMENT_TASK_APPENDIX = `
 4. **字数须服从用户给定的本条目标**；宁可短，不要超标。
 5. 配图 prompt 只写画面内容（英文 SD/MJ 风格），**禁止写风格词**；每张描述不同局部/角度。
 
-${CHARACTER_MEDIA_IMAGE_DESCRIPTION_RULES}
+{{IMAGE_DESCRIPTION_RULES}}
 
 ${MOMENT_IMAGE_COUNT_PROMPT}
 
@@ -206,7 +207,10 @@ export async function generateHistoricalCharacterMomentPost(params: {
     [
       {
         role: 'system',
-        content: `${system}\n\n${HISTORICAL_MOMENT_TASK_APPENDIX}\n\n${CHARACTER_MOMENT_PRIVACY_RULES}`,
+        content: `${system}\n\n${HISTORICAL_MOMENT_TASK_APPENDIX.replace(
+          '{{IMAGE_DESCRIPTION_RULES}}',
+          buildCharacterMediaImageDescriptionRules(characterHasAppearanceReference(pack.character)),
+        )}\n\n${CHARACTER_MOMENT_PRIVACY_RULES}`,
       },
       { role: 'user', content: userTask },
     ],

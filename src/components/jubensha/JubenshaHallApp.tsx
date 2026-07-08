@@ -7,6 +7,8 @@ import { useCallback, useMemo, useState } from 'react'
 import type { WeChatPersonaContact } from '../../phone/types'
 
 import { buildContactDBFromWeChat } from './contactDB'
+import { JUBENSHA_HALL_UNDER_DEV } from './jubenshaDevFlags'
+import { JubenshaHallUnderDev } from './JubenshaHallUnderDev'
 import { LibraryHome } from './LibraryHome'
 import { MyJournal } from './MyJournal'
 import { loadPlayRecord } from './jubenshaStorage'
@@ -24,7 +26,14 @@ export type JubenshaHallAppProps = {
 type HallTab = 'library' | 'journal'
 type Screen = 'main' | 'detail' | 'game-flow'
 
-export function JubenshaHallApp({
+export function JubenshaHallApp(props: JubenshaHallAppProps) {
+  if (JUBENSHA_HALL_UNDER_DEV) {
+    return <JubenshaHallUnderDev onBack={props.onBack} />
+  }
+  return <JubenshaHallAppInner {...props} />
+}
+
+function JubenshaHallAppInner({
   onBack,
   currentUserName = '我',
   personaContacts = [],

@@ -9,6 +9,7 @@ import { useDating } from './DatingContext'
 import { PlotDimensionPanel } from './PlotDimensionPanel'
 import { getAiPlotVersionSlices, getAiVersionArrays } from './plotVersions'
 import { resolveDatingPlotDisplayFromItem } from './plotCoT'
+import { PlotMagazineBody } from './PlotMagazineBody'
 import { PlotRichParagraph } from './plotRichText'
 import type { BranchOption, NarrativePerspective, PlotDimensionKind, PlotItem } from './types'
 
@@ -121,7 +122,7 @@ export function StoryBlock({
   branchChoices,
   narrativePerspective = 'second',
 }: Props) {
-  const { generatePlotDimension, currentArchive } = useDating()
+  const { generatePlotDimension, currentArchive, currentCharacterId } = useDating()
   const aiSplit = useMemo(() => {
     if (plot.type !== 'ai') return { thinkingText: '', displayBody: plot.content }
     return resolveDatingPlotDisplayFromItem(plot)
@@ -259,6 +260,8 @@ export function StoryBlock({
   }
 
   const bodyChars = countPlotCharsExcludePunctuation(plot.type === 'ai' ? aiSplit.displayBody : plot.content)
+
+  const albumCharacterId = (timelineExpandCharacterId ?? currentCharacterId)?.trim() ?? ''
 
   const defaultDimensionLength =
     typeof currentArchive.datingLengthTargetChars === 'number' &&
@@ -635,7 +638,16 @@ export function StoryBlock({
                 style={suppressSystemTextUi.style}
                 className={`rounded-xl pr-2 text-[16px] font-normal leading-[1.85] text-[#262626] transition-shadow duration-200 hover:shadow-[0_6px_22px_rgba(0,0,0,0.04)] ${suppressSystemTextUi.className}`}
               >
-                <PlotRichParagraph content={displayBody} />
+                {plot.type === 'ai' && plot.plotImages?.length ? (
+                  <PlotMagazineBody
+                    content={displayBody}
+                    plotImages={plot.plotImages}
+                    characterId={albumCharacterId}
+                    plotId={plot.id}
+                  />
+                ) : (
+                  <PlotRichParagraph content={displayBody} />
+                )}
               </motion.div>
             )}
           </AnimatePresence>

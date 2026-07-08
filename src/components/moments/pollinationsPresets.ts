@@ -38,6 +38,12 @@ export const POLLINATIONS_STYLE_PRESETS: PollinationsStylePreset[] = [
     labelEn: 'FILM',
     prefix: 'film photography, vintage aesthetic, subtle grain, warm tones, ',
   },
+  {
+    id: 'reference_match',
+    labelZh: '跟随参考形象图',
+    labelEn: 'MATCH REF',
+    prefix: '',
+  },
 ]
 
 export const DEFAULT_STYLE_PRESET_ID = 'realistic'

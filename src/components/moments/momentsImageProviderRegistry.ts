@@ -119,5 +119,6 @@ export function buildFetchCatalogOptions(
     openaiApiKey: settings.openaiApiKey,
     customApiUrl: settings.customApiUrl,
     customApiKey: settings.customApiKey,
+    customManualModelIds: settings.customManualModelIds,
   }
 }

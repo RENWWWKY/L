@@ -54,6 +54,10 @@ export function buildOpenAiImagesGenerationsEndpoint(apiUrl: string): string {
   return buildOpenAiCompatibleEndpoint(apiUrl, 'images/generations')
 }
 
+export function buildOpenAiImagesEditsEndpoint(apiUrl: string): string {
+  return buildOpenAiCompatibleEndpoint(apiUrl, 'images/edits')
+}
+
 /** 自定义中转：Gemini 原生图模走 /v1beta/models/{model}:generateContent */
 export function buildGeminiGenerateContentEndpoint(apiUrl: string, modelName: string): string {
   const base = trimApiBase(apiUrl)

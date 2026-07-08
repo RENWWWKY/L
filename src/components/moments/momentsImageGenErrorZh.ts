@@ -25,6 +25,10 @@ const ERROR_RULES: ErrorRule[] = [
     zh: '{p_balance_hint}',
   },
   {
+    test: /recaptcha token is required|trial generation/i,
+    zh: '{p}当前为试用/免费档账户，官方 API 要求 reCAPTCHA 验证；本应用暂不支持自动过验证。请订阅 NovelAI 付费套餐（Tablet/Opus 等）后使用 API Key，或改用其他生图引擎',
+  },
+  {
     test: /invalid api[_\s-]?key|api key is invalid|incorrect api key|authentication failed|unauthorized|invalid authentication/i,
     zh: '{p} API Key 无效或已过期，请检查密钥',
   },
@@ -33,8 +37,8 @@ const ERROR_RULES: ErrorRule[] = [
     zh: '{p}请求过于频繁，请稍后再试',
   },
   {
-    test: /quota exceeded|exceeded.*quota|用量超限|配额/i,
-    zh: '{p}调用额度已用尽，请充值或明日再试',
+    test: /no available image quota|no available.*quota|image quota|quota exceeded|exceeded.*quota|用量超限|配额/i,
+    zh: '{p}生图额度已用尽，请充值、更换模型或稍后再试',
   },
   {
     test: /only imagen models are supported|not supported model for image generation/i,
@@ -43,6 +47,10 @@ const ERROR_RULES: ErrorRule[] = [
   {
     test: /model not found|model does not exist|unknown model|invalid model|模型不存在|模型未找到/i,
     zh: '{p}指定的生图模型不可用，请重新选择模型',
+  },
+  {
+    test: /safety system|safety_violations|rejected by the safety|sexual/i,
+    zh: '{p}提示词未通过内容安全审核，请修改描述后重试',
   },
   {
     test: /content policy|sensitive content|moderation|违规|敏感内容|审核未通过/i,
@@ -153,7 +161,12 @@ export function localizeMomentsImageGenError(
 
   if (status === 401) return `${label} API Key 无效或已过期，请检查密钥`
   if (status === 403) return `${label}无权限调用该接口，请检查账户与模型开通状态`
-  if (status === 429) return `${label}请求过于频繁，请稍后再试`
+  if (status === 429) {
+    if (/no available image quota|no available.*quota|image quota/i.test(raw)) {
+      return `${label}生图额度已用尽，请充值、更换模型或稍后再试`
+    }
+    return `${label}请求过于频繁，请稍后再试`
+  }
   if (status === 503 || status === 502 || status === 504) {
     return `${label}服务暂时不可用，请稍后再试`
   }

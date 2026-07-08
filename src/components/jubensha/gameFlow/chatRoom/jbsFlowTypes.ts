@@ -2,7 +2,7 @@
 
 export type JBSStep = 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8
 
-export type JBSChatMessageKind = 'dm' | 'player' | 'system'
+export type JBSChatMessageKind = 'dm' | 'player' | 'npc' | 'system'
 
 /** DM 气泡内一段文字高亮（字符下标，含 start、不含 end） */
 export type DmTextHighlightRange = {
@@ -18,6 +18,12 @@ export type JBSChatMessage = {
   body: string
   /** 玩家发言时的剧本杀角色昵称 */
   roleName?: string
+  /** 非语言动作描写（看向谁、表情等） */
+  actionLine?: string
+  /** 同一条 beat 拆出的连续气泡组 id（transcript 合并用） */
+  discussBubbleGroup?: string
+  /** 连发气泡：不重复头像/昵称（微信式叠泡） */
+  bubbleContinued?: boolean
   /** DM 气泡内高亮区间（如故事背景「公共前提」） */
   dmHighlight?: DmTextHighlightRange
   at: number

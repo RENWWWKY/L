@@ -91,6 +91,8 @@ function voiceBase(): JbsVoicePlaybackState {
     act1ReadingPromptDismissed: false,
     introReadingPromptDismissed: false,
     act1TasksAccepted: false,
+    discuss1OpeningDone: false,
+    discuss1OpeningCompletedTrackCount: 0,
   }
 }
 

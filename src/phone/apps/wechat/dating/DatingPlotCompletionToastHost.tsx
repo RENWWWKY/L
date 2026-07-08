@@ -40,11 +40,15 @@ export function DatingPlotCompletionToastHost() {
       const hero = ce.detail?.characterName?.trim()
       if (!hero) return
       const linked = (ce.detail?.linkedNpcNames ?? []).map((n) => String(n).trim()).filter(Boolean)
-      const body =
+      const plotImgWarn = ce.detail?.plotImageWarning?.trim()
+      let body =
         linked.length > 0
           ? `「${hero}」的剧情已写入。已为 ${formatNpcList(linked)} 写入关联记忆。`
           : `「${hero}」的剧情已生成并写入。`
-      setToast({ kind: 'success', title: '线下剧情 · 已完成', body })
+      if (plotImgWarn) {
+        body += `\n\n配图：${plotImgWarn}`
+      }
+      setToast({ kind: plotImgWarn ? 'error' : 'success', title: '线下剧情 · 已完成', body })
       dismissLater()
     }
 

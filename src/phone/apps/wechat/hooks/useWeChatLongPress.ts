@@ -6,12 +6,14 @@ type Params = {
   /** 超过该位移视为滚动/拖动，取消长按 */
   moveThresholdPx?: number
   onLongPress: (e: PointerEvent) => void
+  /** 短按（未触发长按、未明显移动） */
+  onTap?: (e: PointerEvent) => void
 }
 
 type BindHandlers = {
   onPointerDown: (e: React.PointerEvent) => void
   onPointerMove: (e: React.PointerEvent) => void
-  onPointerUp: () => void
+  onPointerUp: (e: React.PointerEvent) => void
   onPointerCancel: () => void
   onPointerLeave: () => void
   onContextMenu: (e: React.MouseEvent) => void
@@ -26,6 +28,7 @@ export function useLongPress({
   ms = 500,
   moveThresholdPx = 10,
   onLongPress,
+  onTap,
 }: Params) {
   const timerRef = useRef<number | null>(null)
   const startRef = useRef<{ x: number; y: number; pointerId: number } | null>(null)
@@ -48,16 +51,14 @@ export function useLongPress({
 
   const onPointerDown = useCallback(
     (e: React.PointerEvent) => {
-      if (!enabled) return
       if (e.button != null && e.button !== 0) return
-      // 仅处理触摸/鼠标的主指针
       const ne = e.nativeEvent
       pressingRef.current = true
       firedRef.current = false
-      setPressing(true)
+      setPressing(enabled)
       startRef.current = { x: ne.clientX, y: ne.clientY, pointerId: ne.pointerId }
-      // 捕获指针：减少滚动/滑动过程中丢事件概率
       ;(e.currentTarget as HTMLElement | null)?.setPointerCapture?.(ne.pointerId)
+      if (!enabled) return
       timerRef.current = window.setTimeout(() => {
         timerRef.current = null
         if (!pressingRef.current || firedRef.current) return
@@ -80,7 +81,6 @@ export function useLongPress({
 
   const onPointerMove = useCallback(
     (e: React.PointerEvent) => {
-      if (!enabled) return
       const st = startRef.current
       if (!st) return
       const ne = e.nativeEvent
@@ -91,10 +91,24 @@ export function useLongPress({
         clear()
       }
     },
-    [enabled, moveThresholdPx, clear],
+    [moveThresholdPx, clear],
   )
 
-  const onPointerUp = useCallback(() => clear(), [clear])
+  const onPointerUp = useCallback(
+    (e: React.PointerEvent) => {
+      const st = startRef.current
+      const ne = e.nativeEvent
+      if (onTap && st && !firedRef.current && pressingRef.current && ne.pointerId === st.pointerId) {
+        const dx = ne.clientX - st.x
+        const dy = ne.clientY - st.y
+        if (dx * dx + dy * dy < moveThresholdPx * moveThresholdPx) {
+          onTap(ne)
+        }
+      }
+      clear()
+    },
+    [clear, moveThresholdPx, onTap],
+  )
   const onPointerCancel = useCallback(() => clear(), [clear])
   const onPointerLeave = useCallback(() => clear(), [clear])
 

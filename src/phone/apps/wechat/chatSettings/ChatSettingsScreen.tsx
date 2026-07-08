@@ -14,16 +14,7 @@ import type {
 } from '../newFriendsPersona/types'
 import {
   displayRoundTriggerPercent,
-  IMAGE_DEFAULT_ROUND_TRIGGER_PERCENT,
-  IMAGE_DEFAULT_ROUND_COUNT_MIN,
-  IMAGE_DEFAULT_ROUND_COUNT_MAX,
-  IMAGE_ROUND_COUNT_MIN_LIMIT,
-  IMAGE_ROUND_COUNT_MAX_LIMIT,
-  clampImageRoundCount,
-  formatImageRoundCountRangeLabel,
-  isImageRoundCountRangeCustomized,
   isRoundTriggerCustomized,
-  parseStoredImageRoundCountRange,
   VOICE_PROTOCOL_DEFAULT_ROUND_TRIGGER_PERCENT,
 } from '../wechatMediaSendFrequency'
 import { resolveProactiveMessageIntervalSeconds, hasProactiveMessageScheduleSaved } from '../proactivePrivateMessageTypes'
@@ -40,6 +31,11 @@ import {
   ProactiveMessageVariableIntervalControl,
   resolveSavedProactiveVariableIdleBounds,
 } from './ProactiveMessageVariableIntervalControl'
+import {
+  ChatImageGenSettingsScreen,
+  summarizeChatImageGenSettings,
+  type ChatImageGenSettingsPatch,
+} from './ChatImageGenSettingsScreen'
 import { personaDb } from '../newFriendsPersona/idb'
 import { ChatTimeSettingsScreen } from './ChatTimeSettingsScreen'
 import { ChatFindChatHistoryScreen } from './ChatFindChatHistoryScreen'
@@ -81,44 +77,28 @@ function SettingsListCard({ children }: { children: React.ReactNode }) {
 }
 
 function RoundTriggerPercentControl({
-  kind,
   stored,
   onChange,
   onResetDefault,
 }: {
-  kind: 'voice' | 'sticker' | 'image'
   stored: number | undefined
   onChange: (percent: number) => void
   onResetDefault: () => void
 }) {
-  const display = displayRoundTriggerPercent(stored, kind)
+  const display = displayRoundTriggerPercent(stored, 'voice')
   const customized = isRoundTriggerCustomized(stored)
-  const defaultHint =
-    kind === 'voice'
-      ? `系统默认约 ${VOICE_PROTOCOL_DEFAULT_ROUND_TRIGGER_PERCENT}%`
-      : kind === 'image'
-        ? `默认 ${IMAGE_DEFAULT_ROUND_TRIGGER_PERCENT}%（不发图）`
-        : '系统默认由语境决定（无固定概率）'
 
   return (
     <div className="mt-2">
       <div className="flex items-center justify-between gap-2">
         <span className="text-[14px] font-medium text-black">
           {customized ? (
-            <>
-              <span style={phoneNumStyle}>{display}%</span>
-            </>
-          ) : kind === 'voice' ? (
+            <span style={phoneNumStyle}>{display}%</span>
+          ) : (
             <>
               系统默认约{' '}
               <span style={phoneNumStyle}>{VOICE_PROTOCOL_DEFAULT_ROUND_TRIGGER_PERCENT}%</span>
             </>
-          ) : kind === 'image' ? (
-            <>
-              默认 <span style={phoneNumStyle}>{IMAGE_DEFAULT_ROUND_TRIGGER_PERCENT}%</span>（不发图）
-            </>
-          ) : (
-            defaultHint
           )}
         </span>
         {customized ? (
@@ -139,13 +119,7 @@ function RoundTriggerPercentControl({
         value={display}
         onChange={(e) => onChange(Number(e.target.value))}
         className="mt-2 w-full accent-black"
-        aria-label={
-          kind === 'voice'
-            ? '语音消息每轮触发概率'
-            : kind === 'image'
-              ? 'AI 配图每轮触发概率'
-              : '表情包每轮触发概率'
-        }
+        aria-label="语音消息每轮触发概率"
       />
       <div className="mt-1 flex justify-between text-[11px] text-[#8e8e8e]">
         <span>
@@ -153,96 +127,6 @@ function RoundTriggerPercentControl({
         </span>
         <span>
           <span style={phoneNumStyle}>100%</span> 每轮必发
-        </span>
-      </div>
-    </div>
-  )
-}
-
-function ImageRoundCountRangeControl({
-  minStored,
-  maxStored,
-  onChange,
-  onResetDefault,
-}: {
-  minStored?: number
-  maxStored?: number
-  onChange: (min: number, max: number) => void
-  onResetDefault: () => void
-}) {
-  const range = parseStoredImageRoundCountRange(minStored, maxStored)
-  const customized = isImageRoundCountRangeCustomized(minStored, maxStored)
-
-  return (
-    <div className="mt-2">
-      <div className="flex items-center justify-between gap-2">
-        <span className="text-[14px] font-medium text-black">
-          {customized ? (
-            <span style={phoneNumStyle}>{formatImageRoundCountRangeLabel(range)}</span>
-          ) : (
-            <>
-              默认{' '}
-              <span style={phoneNumStyle}>
-                {IMAGE_DEFAULT_ROUND_COUNT_MIN}～{IMAGE_DEFAULT_ROUND_COUNT_MAX}
-              </span>{' '}
-              张
-            </>
-          )}
-        </span>
-        {customized ? (
-          <button
-            type="button"
-            onClick={onResetDefault}
-            className="shrink-0 text-[12px] text-[#576b95]"
-          >
-            恢复默认
-          </button>
-        ) : null}
-      </div>
-      <div className="mt-3">
-        <div className="flex items-center justify-between text-[12px] text-[#8e8e8e]">
-          <span>最少张数</span>
-          <span style={phoneNumStyle}>{range.min} 张</span>
-        </div>
-        <input
-          type="range"
-          min={IMAGE_ROUND_COUNT_MIN_LIMIT}
-          max={IMAGE_ROUND_COUNT_MAX_LIMIT}
-          step={1}
-          value={range.min}
-          onChange={(e) => {
-            const min = clampImageRoundCount(Number(e.target.value))
-            onChange(min, Math.max(min, range.max))
-          }}
-          className="mt-1 w-full accent-black"
-          aria-label="AI 配图每次最少张数"
-        />
-      </div>
-      <div className="mt-3">
-        <div className="flex items-center justify-between text-[12px] text-[#8e8e8e]">
-          <span>最多张数</span>
-          <span style={phoneNumStyle}>{range.max} 张</span>
-        </div>
-        <input
-          type="range"
-          min={IMAGE_ROUND_COUNT_MIN_LIMIT}
-          max={IMAGE_ROUND_COUNT_MAX_LIMIT}
-          step={1}
-          value={range.max}
-          onChange={(e) => {
-            const max = clampImageRoundCount(Number(e.target.value))
-            onChange(Math.min(range.min, max), max)
-          }}
-          className="mt-1 w-full accent-black"
-          aria-label="AI 配图每次最多张数"
-        />
-      </div>
-      <div className="mt-1 flex justify-between text-[11px] text-[#8e8e8e]">
-        <span>
-          <span style={phoneNumStyle}>{IMAGE_ROUND_COUNT_MIN_LIMIT}</span> 张
-        </span>
-        <span>
-          <span style={phoneNumStyle}>{IMAGE_ROUND_COUNT_MAX_LIMIT}</span> 张
         </span>
       </div>
     </div>
@@ -296,6 +180,8 @@ export type ChatSettingsScreenProps = {
   /** 打开「人设编辑」时使用的角色 id；Lumi 未绑人设时为 null */
   personaEditTargetId: string | null
   onClose: () => void
+  /** 聊天室内清空记录后：关闭设置并刷新当前聊天室 */
+  onHistoryCleared?: () => void
   onOpenPersonaEdit: (characterId: string) => void
   /** 查找聊天记录：定位到消息后关闭设置并回聊天页 */
   onJumpToChatMessage: (messageId: string) => void
@@ -317,6 +203,7 @@ export function ChatSettingsScreen({
   peerAvatarUrl,
   personaEditTargetId,
   onClose,
+  onHistoryCleared,
   onOpenPersonaEdit,
   onJumpToChatMessage,
   onOpenPeerProfile,
@@ -334,6 +221,7 @@ export function ChatSettingsScreen({
   const [globalModeBusyEnabled, setGlobalModeBusyEnabled] = useState(true)
   const [findHistoryOpen, setFindHistoryOpen] = useState(false)
   const [emojiProbOpen, setEmojiProbOpen] = useState(false)
+  const [imageGenOpen, setImageGenOpen] = useState(false)
   const [stub, setStub] = useState<StubKind | null>(null)
   const [chatBgDraft, setChatBgDraft] = useState('')
   const [chatBgCropSrc, setChatBgCropSrc] = useState<string | null>(null)
@@ -494,10 +382,8 @@ export function ChatSettingsScreen({
   )
 
   const emojiProbSummary = summarizeEmojiProbabilitySettings(effective)
+  const imageGenSummary = summarizeChatImageGenSettings(effective)
   const voiceStored = effective.voiceRoundTriggerPercent
-  const imageStored = effective.imageRoundTriggerPercent
-  const imageCountMinStored = effective.imageRoundCountMin
-  const imageCountMaxStored = effective.imageRoundCountMax
   const proactiveEnabled = effective.proactiveMessageEnabled ?? false
   const proactiveVariableEnabled = isProactiveVariableIntervalEnabled(effective)
   const proactiveIntervalSeconds = resolveProactiveMessageIntervalSeconds(effective)
@@ -950,38 +836,18 @@ export function ChatSettingsScreen({
                 <span style={phoneNumStyle}>{VOICE_PROTOCOL_DEFAULT_ROUND_TRIGGER_PERCENT}%</span>。
               </p>
               <RoundTriggerPercentControl
-                kind="voice"
                 stored={voiceStored}
                 onChange={(percent) => void patch({ voiceRoundTriggerPercent: percent })}
                 onResetDefault={() => void patch({ clearVoiceRoundTriggerPercent: true })}
               />
             </div>
           </ListRow>
-          <ListRow stacked borderBottom>
-            <div>
-              <span className="text-[16px] text-black">AI 配图每轮触发概率</span>
-              <p className="mt-1 text-[12px] leading-relaxed text-[#8e8e8e]">
-                拖动滑块设定角色每轮回复中至少发 1 张 AI 配图的目标概率（默认{' '}
-                <span style={phoneNumStyle}>{IMAGE_DEFAULT_ROUND_TRIGGER_PERCENT}%</span>{' '}
-                不发；用户直接要求发图时不受限制；须已配置生图 API）。
-              </p>
-              <RoundTriggerPercentControl
-                kind="image"
-                stored={imageStored}
-                onChange={(percent) => void patch({ imageRoundTriggerPercent: percent })}
-                onResetDefault={() => void patch({ clearImageRoundTriggerPercent: true })}
-              />
-              <p className="mt-4 text-[12px] leading-relaxed text-[#8e8e8e]">
-                每次触发发图时，角色可发送的图片张数范围（每条 <span className="font-mono">[图片]</span>{' '}
-                行计 1 张）。
-              </p>
-              <ImageRoundCountRangeControl
-                minStored={imageCountMinStored}
-                maxStored={imageCountMaxStored}
-                onChange={(min, max) => void patch({ imageRoundCountMin: min, imageRoundCountMax: max })}
-                onResetDefault={() => void patch({ clearImageRoundCountRange: true })}
-              />
+          <ListRow onClick={() => setImageGenOpen(true)} borderBottom>
+            <div className="min-w-0 flex-1">
+              <span className="text-[16px] text-black">AI 配图与形象</span>
+              <p className="mt-1 text-[12px] text-[#8e8e8e]">{imageGenSummary}</p>
             </div>
+            <ChevronRight className="size-4 shrink-0 text-[#c7c7cc]" aria-hidden />
           </ListRow>
         </SettingsListCard>
 
@@ -1039,9 +905,11 @@ export function ChatSettingsScreen({
                 className="h-11 w-full text-[16px] font-medium text-[#fa5151] transition-colors active:bg-[#fff1f1]"
                 onClick={() => {
                   void (async () => {
-                    await personaDb.deleteAllWeChatMessagesForConversation(conversationKey)
+                    await personaDb.deleteAllWeChatMessagesForConversation(conversationKey, {
+                      keepInMessageList: true,
+                    })
                     setClearOpen(false)
-                    onClose()
+                    ;(onHistoryCleared ?? onClose)()
                   })()
                 }}
               >
@@ -1053,9 +921,11 @@ export function ChatSettingsScreen({
                 className="h-11 w-full text-[16px] text-[#576b95] transition-colors active:bg-[#f2f2f2]"
                 onClick={() => {
                   void (async () => {
-                    await personaDb.hideWeChatConversationHistoryFromUiKeepAiContext(conversationKey)
+                    await personaDb.hideWeChatConversationHistoryFromUiKeepAiContext(conversationKey, {
+                      keepInMessageList: true,
+                    })
                     setClearOpen(false)
-                    onClose()
+                    ;(onHistoryCleared ?? onClose)()
                   })()
                 }}
               >
@@ -1105,6 +975,27 @@ export function ChatSettingsScreen({
               settings={effective}
               onClose={() => setEmojiProbOpen(false)}
               onPatch={async (partial: ChatEmojiProbabilityPatch) => {
+                await patch(partial)
+              }}
+            />
+          </motion.div>
+        ) : null}
+        {imageGenOpen ? (
+          <motion.div
+            key="wx-image-gen-settings"
+            initial={disableTransitions ? false : { x: '100%' }}
+            animate={{ x: 0 }}
+            exit={disableTransitions ? { x: 0 } : { x: '100%' }}
+            transition={disableTransitions ? { duration: 0 } : { duration: 0.28, ease: [0.22, 1, 0.36, 1] }}
+            className="absolute inset-0 z-[86] flex min-h-0 flex-col overflow-hidden bg-[#ededed]"
+          >
+            <ChatImageGenSettingsScreen
+              peerDisplayName={peerDisplayName}
+              peerCharacterId={peerCharacterId}
+              playerIdentityId={playerIdentityId}
+              settings={effective}
+              onClose={() => setImageGenOpen(false)}
+              onPatch={async (partial: ChatImageGenSettingsPatch) => {
                 await patch(partial)
               }}
             />

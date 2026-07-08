@@ -2,8 +2,10 @@
 export const VOICE_PROTOCOL_DEFAULT_ROUND_TRIGGER_PERCENT = 30
 /** 聊天信息页未定制时，表情包 slider 的展示默认值（协议本身无固定百分比） */
 export const STICKER_UI_DEFAULT_ROUND_TRIGGER_PERCENT = 40
-/** 聊天信息页未定制时，微信经典黄脸 slider 的展示默认值（协议本身无固定百分比） */
-export const CLASSIC_EMOJI_UI_DEFAULT_ROUND_TRIGGER_PERCENT = 60
+/** 聊天信息页未定制时，微信经典黄脸每轮触发概率（与语音默认 30% 对齐） */
+export const CLASSIC_EMOJI_DEFAULT_ROUND_TRIGGER_PERCENT = 30
+/** @deprecated 使用 {@link CLASSIC_EMOJI_DEFAULT_ROUND_TRIGGER_PERCENT} */
+export const CLASSIC_EMOJI_UI_DEFAULT_ROUND_TRIGGER_PERCENT = CLASSIC_EMOJI_DEFAULT_ROUND_TRIGGER_PERCENT
 /** 聊天信息页未定制时，角色 AI 配图每轮触发概率的默认值 */
 export const IMAGE_DEFAULT_ROUND_TRIGGER_PERCENT = 0
 /** 每次发图张数下限 / 上限 */
@@ -32,7 +34,7 @@ export function parseStoredRoundTriggerPercent(raw: unknown): number | undefined
   return undefined
 }
 
-/** UI 展示用：未定制时语音 30%、表情包 40、黄脸 60、AI 配图 0 */
+/** UI 展示用：未定制时语音 30%、表情包 40、黄脸 30、AI 配图 0 */
 export function displayRoundTriggerPercent(
   stored: number | undefined,
   kind: 'voice' | 'sticker' | 'image' | 'classicEmoji',
@@ -40,8 +42,32 @@ export function displayRoundTriggerPercent(
   if (stored !== undefined) return stored
   if (kind === 'image') return IMAGE_DEFAULT_ROUND_TRIGGER_PERCENT
   if (kind === 'voice') return VOICE_PROTOCOL_DEFAULT_ROUND_TRIGGER_PERCENT
-  if (kind === 'classicEmoji') return CLASSIC_EMOJI_UI_DEFAULT_ROUND_TRIGGER_PERCENT
+  if (kind === 'classicEmoji') return CLASSIC_EMOJI_DEFAULT_ROUND_TRIGGER_PERCENT
   return STICKER_UI_DEFAULT_ROUND_TRIGGER_PERCENT
+}
+
+/** 私聊黄脸：未存储定制值时默认 30% */
+export function resolveEffectiveClassicEmojiRoundTriggerPercent(stored: number | undefined): number {
+  return stored !== undefined ? clampRoundTriggerPercent(stored) : CLASSIC_EMOJI_DEFAULT_ROUND_TRIGGER_PERCENT
+}
+
+/** 私聊每轮是否允许出现经典黄脸 inline token */
+export function rollClassicEmojiRoundTriggerAllowed(storedPercent: number | undefined): boolean {
+  const effective = resolveEffectiveClassicEmojiRoundTriggerPercent(storedPercent)
+  if (effective <= 0) return false
+  if (effective >= 100) return true
+  return Math.random() * 100 < effective
+}
+
+/** 客户端剥离文字行内经典黄脸（0% 或本轮骰子未命中时） */
+export function shouldStripClassicEmojiTokensThisRound(
+  roomType: 'private' | 'group',
+  storedPercent: number | undefined,
+  roundAllowed: boolean,
+): boolean {
+  if (roomType === 'group') return false
+  if (resolveEffectiveClassicEmojiRoundTriggerPercent(storedPercent) <= 0) return true
+  return !roundAllowed
 }
 
 export type StickerTargetedEntryMap = Record<string, number>
@@ -370,6 +396,27 @@ export function isRoundTriggerCustomized(stored: number | undefined): boolean {
   return stored !== undefined
 }
 
+/** 每轮回复请求前掷骰结果（注入 prompt + 客户端拦截共用） */
+export type RoundMediaTriggerDecisions = {
+  stickerAllowed?: boolean
+  voiceAllowed?: boolean
+  classicEmojiAllowed?: boolean
+  imageAllowed?: boolean
+}
+
+/** 本会话已定制 GIF / 语音 / 黄脸概率时：每轮回复前各掷一次骰 */
+export function rollRoundMediaTriggerDecisions(params: {
+  stickerRoundTriggerPercent?: number
+  voiceRoundTriggerPercent?: number
+  classicEmojiRoundTriggerPercent?: number
+}): Pick<RoundMediaTriggerDecisions, 'stickerAllowed' | 'voiceAllowed' | 'classicEmojiAllowed'> {
+  return {
+    stickerAllowed: rollRoundMediaTriggerAllowed(params.stickerRoundTriggerPercent),
+    voiceAllowed: rollRoundMediaTriggerAllowed(params.voiceRoundTriggerPercent),
+    classicEmojiAllowed: rollClassicEmojiRoundTriggerAllowed(params.classicEmojiRoundTriggerPercent),
+  }
+}
+
 /** 本会话已定制概率时：按百分比决定本轮回复是否允许出现语音/表情包（非条数上限） */
 export function rollRoundMediaTriggerAllowed(storedPercent: number | undefined): boolean {
   if (storedPercent === undefined) return true
@@ -386,6 +433,18 @@ export function rollImageRoundTriggerAllowed(storedPercent: number | undefined):
   return Math.random() * 100 < percent
 }
 
+/**
+ * 模型已输出 `[图片]` 行时，是否仍应尊重「发图概率=0%」并拦截（而非强制 bypass 生图）。
+ * 仅当概率 > 0 或用户本轮明确要求发图时，才因模型输出而放行。
+ */
+export function shouldHonorModelCharacterImageLinesDespiteProbability(
+  imageRoundTriggerPercent: number | undefined,
+  userExplicitRequest: boolean,
+): boolean {
+  if (userExplicitRequest) return true
+  return resolveEffectiveImageRoundTriggerPercent(imageRoundTriggerPercent) > 0
+}
+
 const STICKER_CATALOG_SUPPRESSED_BY_USER = `---------------------
 【表情包资源】
 ---------------------
@@ -398,6 +457,8 @@ export function buildMediaSendFrequencyPromptBlock(params: {
   stickerRoundTriggerPercent?: number
   voiceRoundTriggerPercent?: number
   classicEmojiRoundTriggerPercent?: number
+  /** 私聊：未存储黄脸概率时仍注入默认 30% 规则 */
+  applyClassicEmojiDefault?: boolean
   /** 已启用角色 AI 配图时注入 */
   imageRoundTriggerPercent?: number
   imageRoundCountMin?: number
@@ -408,7 +469,12 @@ export function buildMediaSendFrequencyPromptBlock(params: {
 }): string {
   const sticker = params.stickerRoundTriggerPercent
   const voice = params.voiceRoundTriggerPercent
-  const classicEmoji = params.classicEmojiRoundTriggerPercent
+  const classicEmoji =
+    params.classicEmojiRoundTriggerPercent !== undefined
+      ? clampRoundTriggerPercent(params.classicEmojiRoundTriggerPercent)
+      : params.applyClassicEmojiDefault
+        ? CLASSIC_EMOJI_DEFAULT_ROUND_TRIGGER_PERCENT
+        : undefined
   const imagePercent =
     params.imageRoundTriggerPercent !== undefined
       ? resolveEffectiveImageRoundTriggerPercent(params.imageRoundTriggerPercent)
@@ -593,12 +659,45 @@ export function shouldSuppressCharacterImageLine(
   emittedCount: number,
   imageCountMinRaw: unknown,
   imageCountMaxRaw: unknown,
+  imageCountTarget?: number,
 ): boolean {
   if (roomType !== 'private') return true
   const range = parseStoredImageRoundCountRange(imageCountMinRaw, imageCountMaxRaw)
-  if (emittedCount >= range.max) return true
-  if (userExplicitRequest) return false
+  const cap =
+    typeof imageCountTarget === 'number' && imageCountTarget > 0
+      ? Math.min(range.max, imageCountTarget)
+      : range.max
+  if (emittedCount >= cap) return true
+  if (userExplicitRequest || roundAllowed) return false
   const percent = resolveEffectiveImageRoundTriggerPercent(imageRoundTriggerPercent)
   if (percent <= 0) return true
   return !roundAllowed
+}
+
+const IMAGE_GEN_QUOTA_COOLDOWN_MS = 120_000
+
+let imageGenQuotaBlockedUntilMs = 0
+
+/** 429 / 额度用尽 / 频率限制：命中后短时不再请求生图 API，避免连续打穿中转站 */
+export function markImageGenQuotaOrRateLimitBlocked(
+  err?: unknown,
+  cooldownMs = IMAGE_GEN_QUOTA_COOLDOWN_MS,
+): void {
+  if (err !== undefined && !isImageGenThrottleOrQuotaError(err)) return
+  imageGenQuotaBlockedUntilMs = Date.now() + cooldownMs
+}
+
+export function isImageGenQuotaOrRateLimitBlocked(): boolean {
+  return Date.now() < imageGenQuotaBlockedUntilMs
+}
+
+export function isImageGenThrottleOrQuotaError(err: unknown): boolean {
+  const msg = err instanceof Error ? err.message : String(err ?? '')
+  return /429|过于频繁|rate limit|too many requests|throttl|no available image quota|no available.*quota|image quota|quota exceeded|exceeded.*quota|额度|配额|用量超限/i.test(
+    msg,
+  )
+}
+
+export function isImageGenRateLimitError(err: unknown): boolean {
+  return isImageGenThrottleOrQuotaError(err)
 }

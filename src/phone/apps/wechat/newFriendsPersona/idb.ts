@@ -1,6 +1,7 @@
 import { migrateLegacyRootPublicUrl } from '../../../../publicAssetUrl'
 import { repairCharacterAvatarForBundleImport } from '../../../utils/characterAvatarUrl'
 import { parseCharacterProfileImageHistory } from '../wechatCharacterProfileImageHistory'
+import { parseCharacterAppearanceRefImages } from '../characterAppearanceRefImages'
 import type {
   Character,
   CharacterMemory,
@@ -15,6 +16,7 @@ import type {
   HeartWhisper,
   HeartWhisperRow,
   Favorite,
+  WeChatAlbumItem,
   GroupChatRow,
   GroupMember,
   GroupRobotRule,
@@ -204,7 +206,7 @@ import { characterBelongsToWechatAccount, stampWechatAccountOwner } from '../wec
 import { WECHAT_USER_PROFILE_KV_KEY, WECHAT_USER_PROFILE_KV_KEY_LEGACY } from '../wechatProfileTypes'
 
 const DB_NAME = 'wechat-personas-v1'
-const DB_VERSION = 29
+const DB_VERSION = 31
 
 /** 复合索引：按会话 + 时间戳范围查询（日历、按日跳转） */
 const CHAT_MSG_INDEX_CONV_TS = 'conversationKey_timestamp'
@@ -236,6 +238,7 @@ const CHARACTER_NOTIFY_STORE = 'characterNotificationSettings'
 const CHARACTER_BUSY_STORE = 'characterBusySettings'
 const CHARACTER_TIME_STORE = 'characterTimeSettings'
 const FAVORITES_STORE = 'favorites'
+const WECHAT_ALBUM_STORE = 'wechatAlbum'
 const HEART_WHISPER_STORE = 'heartWhispers'
 const GROUP_PSYCHE_STORE = 'groupPsyche'
 const INDEXED_TRASH_STORE = 'indexedTrash'
@@ -733,6 +736,17 @@ function normalizeCharacter(input: unknown): Stored {
       updatedAt,
     }
   }
+  const legacyAppearanceRefUrl =
+    typeof raw.appearanceRefUrl === 'string' && raw.appearanceRefUrl.trim()
+      ? migrateLegacyRootPublicUrl(raw.appearanceRefUrl as string)
+      : undefined
+  const appearanceRefImages = parseCharacterAppearanceRefImages(
+    raw.appearanceRefImages,
+    legacyAppearanceRefUrl,
+  ).map((entry) => ({
+    ...entry,
+    url: migrateLegacyRootPublicUrl(entry.url),
+  }))
   return {
     id: typeof c.id === 'string' ? c.id : `ch-${now}-${Math.random().toString(36).slice(2, 6)}`,
     createdAt: typeof c.createdAt === 'number' ? c.createdAt : now,
@@ -766,6 +780,12 @@ function normalizeCharacter(input: unknown): Stored {
             avatarUrl: migrateLegacyRootPublicUrl(raw.avatarUrl as string),
           })
         : '',
+    appearanceRefUrl: appearanceRefImages[0]?.url,
+    appearanceRefImages: appearanceRefImages.length ? appearanceRefImages : undefined,
+    appearanceRefNote:
+      typeof raw.appearanceRefNote === 'string'
+        ? raw.appearanceRefNote.trim().replace(/\s+/g, ' ').slice(0, 500) || undefined
+        : undefined,
     wechatNickname: typeof raw.wechatNickname === 'string' ? (raw.wechatNickname as string) : '',
     wechatId: typeof raw.wechatId === 'string' ? (raw.wechatId as string) : '',
     wechatSignature: typeof raw.wechatSignature === 'string' ? (raw.wechatSignature as string) : '',
@@ -1638,6 +1658,39 @@ function normalizeFavorite(input: unknown): Favorite | null {
     ...(voiceTranscript ? { voiceTranscript } : {}),
     ...(voiceAudioUrl ? { voiceAudioUrl } : {}),
     ...(voiceAudioKvKey ? { voiceAudioKvKey } : {}),
+  }
+}
+
+function normalizeWeChatAlbumItem(input: unknown): WeChatAlbumItem | null {
+  const r = (input ?? {}) as Partial<WeChatAlbumItem>
+  if (typeof r.id !== 'string' || !r.id.trim()) return null
+  if (typeof r.messageId !== 'string' || !r.messageId.trim()) return null
+  if (typeof r.characterId !== 'string') return null
+  const imageKvKey =
+    typeof r.imageKvKey === 'string' ? r.imageKvKey.trim().slice(0, 128) : undefined
+  const now = Date.now()
+  const senderKind: WeChatAlbumItem['senderKind'] = r.senderKind === 'player' ? 'player' : 'character'
+  const mimeRaw = typeof r.mimeType === 'string' ? r.mimeType.trim() : 'image/jpeg'
+  const mimeType: WeChatAlbumItem['mimeType'] =
+    mimeRaw === 'image/png' || mimeRaw === 'image/gif' || mimeRaw === 'image/webp'
+      ? mimeRaw
+      : 'image/jpeg'
+  const timestamp = typeof r.timestamp === 'number' && Number.isFinite(r.timestamp) ? r.timestamp : now
+  const savedAt = typeof r.savedAt === 'number' && Number.isFinite(r.savedAt) ? r.savedAt : now
+  const conversationKey =
+    typeof r.conversationKey === 'string' ? r.conversationKey.trim().slice(0, 256) : undefined
+  const caption = typeof r.caption === 'string' ? r.caption.trim().slice(0, 200) : undefined
+  return {
+    id: r.id.trim(),
+    messageId: r.messageId.trim(),
+    characterId: r.characterId,
+    senderKind,
+    mimeType,
+    imageKvKey,
+    timestamp,
+    savedAt,
+    ...(conversationKey ? { conversationKey } : {}),
+    ...(caption ? { caption } : {}),
   }
 }
 
@@ -3002,6 +3055,12 @@ function openDb(): Promise<IDBDatabase> {
         fav.createIndex('characterId', 'characterId', { unique: false })
         fav.createIndex('createdAt', 'createdAt', { unique: false })
       }
+      if (!db.objectStoreNames.contains(WECHAT_ALBUM_STORE)) {
+        const album = db.createObjectStore(WECHAT_ALBUM_STORE, { keyPath: 'id' })
+        album.createIndex('messageId', 'messageId', { unique: false })
+        album.createIndex('savedAt', 'savedAt', { unique: false })
+        album.createIndex('timestamp', 'timestamp', { unique: false })
+      }
       if (!db.objectStoreNames.contains(HEART_WHISPER_STORE)) {
         db.createObjectStore(HEART_WHISPER_STORE, { keyPath: 'characterId' })
       }
@@ -3048,6 +3107,12 @@ function txDone(tx: IDBTransaction) {
 export function emitWeChatStorageChanged(): void {
   if (typeof window === 'undefined') return
   window.dispatchEvent(new CustomEvent('wechat-storage-changed'))
+}
+
+/** 仅微信内置相册条目增删时触发（记忆相册预览监听此事件，避免全局 storage 刷屏） */
+export function emitWeChatAlbumItemsChanged(): void {
+  if (typeof window === 'undefined') return
+  window.dispatchEvent(new CustomEvent('wechat-album-items-changed'))
 }
 
 export class PersonaDb {
@@ -5263,6 +5328,207 @@ export class PersonaDb {
     } else {
       emitWeChatStorageChanged()
     }
+  }
+
+  async findWeChatAlbumItemByMessageId(messageId: string): Promise<WeChatAlbumItem | null> {
+    const mid = messageId.trim()
+    if (!mid) return null
+    const db = await openDb()
+    if (!db.objectStoreNames.contains(WECHAT_ALBUM_STORE)) {
+      db.close()
+      return null
+    }
+    const tx = db.transaction(WECHAT_ALBUM_STORE, 'readonly')
+    const store = tx.objectStore(WECHAT_ALBUM_STORE)
+    const index = store.indexNames.contains('messageId') ? store.index('messageId') : null
+    const row = await new Promise<WeChatAlbumItem | null>((resolve, reject) => {
+      if (index) {
+        const req = index.getAll(mid)
+        req.onsuccess = () => {
+          const rows = (req.result ?? []) as unknown[]
+          const hit = rows.map((r) => normalizeWeChatAlbumItem(r)).find(Boolean) ?? null
+          resolve(hit)
+        }
+        req.onerror = () => reject(req.error ?? new Error('album by messageId'))
+        return
+      }
+      const req = store.getAll()
+      req.onsuccess = () => {
+        const rows = (req.result ?? []) as unknown[]
+        const hit =
+          rows
+            .map((r) => normalizeWeChatAlbumItem(r))
+            .find((x) => x?.messageId === mid) ?? null
+        resolve(hit)
+      }
+      req.onerror = () => reject(req.error ?? new Error('album list'))
+    })
+    await txDone(tx)
+    db.close()
+    return row
+  }
+
+  async addWeChatAlbumItemFromMessage(
+    msg: WeChatChatMessage,
+    imageDataUrl: string,
+  ): Promise<WeChatAlbumItem | null> {
+    const mid = msg.id?.trim()
+    const dataUrl = imageDataUrl.trim()
+    const img = msg.images?.[0]
+    if (!mid || !dataUrl || !img) return null
+    const existing = await this.findWeChatAlbumItemByMessageId(mid)
+    if (existing) return existing
+
+    const now = Date.now()
+    const albumId = `album-${now}-${Math.random().toString(36).slice(2, 8)}`
+    const { persistAlbumImage } = await import('../album/wechatAlbumImageCache')
+    let imageKvKey: string | undefined = albumId
+    try {
+      await persistAlbumImage(albumId, dataUrl)
+    } catch (err) {
+      console.warn('[wechatAlbum] phoneKv persist failed, fallback to chat message ref', err)
+      imageKvKey = undefined
+    }
+
+    const senderKind: WeChatAlbumItem['senderKind'] = msg.type === 'player' ? 'player' : 'character'
+    const caption = msg.content?.trim().slice(0, 200) || undefined
+    const item: WeChatAlbumItem = {
+      id: albumId,
+      messageId: mid,
+      characterId: msg.characterId,
+      conversationKey: msg.conversationKey?.trim() || undefined,
+      senderKind,
+      mimeType: img.type || 'image/jpeg',
+      timestamp: msg.timestamp ?? now,
+      savedAt: now,
+      ...(imageKvKey ? { imageKvKey } : {}),
+      ...(caption ? { caption } : {}),
+    }
+    const normalized = normalizeWeChatAlbumItem(item)
+    if (!normalized) return null
+
+    const db = await openDb()
+    if (!db.objectStoreNames.contains(WECHAT_ALBUM_STORE)) {
+      db.close()
+      return null
+    }
+    const tx = db.transaction(WECHAT_ALBUM_STORE, 'readwrite')
+    tx.objectStore(WECHAT_ALBUM_STORE).put(normalized)
+    await txDone(tx)
+    db.close()
+    emitWeChatStorageChanged()
+    emitWeChatAlbumItemsChanged()
+    return normalized
+  }
+
+  /** 将任意图片 data URL 写入相册（剧情配图等非聊天消息来源） */
+  async addWeChatAlbumItemFromImageUrl(params: {
+    messageId: string
+    characterId: string
+    imageDataUrl: string
+    mimeType?: WeChatAlbumItem['mimeType']
+    caption?: string
+    timestamp?: number
+    senderKind?: WeChatAlbumItem['senderKind']
+    conversationKey?: string
+  }): Promise<WeChatAlbumItem | null> {
+    const mid = params.messageId?.trim()
+    const cid = params.characterId?.trim()
+    const dataUrl = params.imageDataUrl?.trim()
+    if (!mid || !cid || !dataUrl) return null
+
+    const existing = await this.findWeChatAlbumItemByMessageId(mid)
+    if (existing) return existing
+
+    const now = Date.now()
+    const albumId = `album-${now}-${Math.random().toString(36).slice(2, 8)}`
+    const { persistAlbumImage } = await import('../album/wechatAlbumImageCache')
+    try {
+      await persistAlbumImage(albumId, dataUrl)
+    } catch (err) {
+      console.warn('[wechatAlbum] phoneKv persist failed for direct image', err)
+      return null
+    }
+
+    const mimeRaw = params.mimeType?.trim() || 'image/jpeg'
+    const mimeType: WeChatAlbumItem['mimeType'] =
+      mimeRaw === 'image/png' || mimeRaw === 'image/gif' || mimeRaw === 'image/webp'
+        ? mimeRaw
+        : 'image/jpeg'
+    const caption = params.caption?.trim().slice(0, 200) || undefined
+    const item: WeChatAlbumItem = {
+      id: albumId,
+      messageId: mid,
+      characterId: cid,
+      conversationKey: params.conversationKey?.trim() || undefined,
+      senderKind: params.senderKind === 'player' ? 'player' : 'character',
+      mimeType,
+      timestamp: params.timestamp ?? now,
+      savedAt: now,
+      imageKvKey: albumId,
+      ...(caption ? { caption } : {}),
+    }
+    const normalized = normalizeWeChatAlbumItem(item)
+    if (!normalized) return null
+
+    const db = await openDb()
+    if (!db.objectStoreNames.contains(WECHAT_ALBUM_STORE)) {
+      db.close()
+      return null
+    }
+    const tx = db.transaction(WECHAT_ALBUM_STORE, 'readwrite')
+    tx.objectStore(WECHAT_ALBUM_STORE).put(normalized)
+    await txDone(tx)
+    db.close()
+    emitWeChatStorageChanged()
+    emitWeChatAlbumItemsChanged()
+    return normalized
+  }
+
+  async listWeChatAlbumItems(): Promise<WeChatAlbumItem[]> {
+    const db = await openDb()
+    if (!db.objectStoreNames.contains(WECHAT_ALBUM_STORE)) {
+      db.close()
+      return []
+    }
+    const tx = db.transaction(WECHAT_ALBUM_STORE, 'readonly')
+    const req = tx.objectStore(WECHAT_ALBUM_STORE).getAll()
+    const rows = await new Promise<unknown[]>((resolve, reject) => {
+      req.onsuccess = () => resolve(req.result ?? [])
+      req.onerror = () => reject(req.error ?? new Error('list album'))
+    })
+    await txDone(tx)
+    db.close()
+    return rows
+      .map((row) => normalizeWeChatAlbumItem(row))
+      .filter((x): x is WeChatAlbumItem => !!x)
+      .sort((a, b) => b.savedAt - a.savedAt)
+  }
+
+  async deleteWeChatAlbumItem(id: string): Promise<void> {
+    const aid = id.trim()
+    if (!aid) return
+    const db = await openDb()
+    if (!db.objectStoreNames.contains(WECHAT_ALBUM_STORE)) {
+      db.close()
+      return
+    }
+    const tx = db.transaction(WECHAT_ALBUM_STORE, 'readwrite')
+    const store = tx.objectStore(WECHAT_ALBUM_STORE)
+    const existing = await new Promise<WeChatAlbumItem | null>((resolve, reject) => {
+      const req = store.get(aid)
+      req.onsuccess = () => resolve(normalizeWeChatAlbumItem(req.result))
+      req.onerror = () => reject(req.error ?? new Error('get album'))
+    })
+    store.delete(aid)
+    await txDone(tx)
+    db.close()
+    if (existing?.imageKvKey) {
+      const { deleteAlbumImage } = await import('../album/wechatAlbumImageCache')
+      await deleteAlbumImage(existing.imageKvKey)
+    }
+    emitWeChatStorageChanged()
+    emitWeChatAlbumItemsChanged()
   }
 
   private async maybePlayWeChatNewMessageSound(params: {
@@ -9167,15 +9433,17 @@ export class PersonaDb {
   private async markConversationHiddenAfterHistoryCleared(
     conversationKey: string,
     existing: ChatConversationSettingsRow | null,
+    opts?: { keepInMessageList?: boolean },
   ): Promise<void> {
     const k = conversationKey.trim()
     if (!k) return
+    const keepInList = opts?.keepInMessageList === true
     if (existing) {
       await this.upsertChatConversationSettings({
         conversationKey: k,
         peerCharacterId: existing.peerCharacterId,
         playerIdentityId: existing.playerIdentityId,
-        hiddenFromMessageList: true,
+        hiddenFromMessageList: keepInList ? false : true,
         clearUiOnlyHiddenBeforeTimestamp: true,
         clearFriendRequestAcceptedAt: true,
       })
@@ -9190,7 +9458,7 @@ export class PersonaDb {
           conversationKey: k,
           peerCharacterId: wechatGroupPeerCharacterId(gid),
           playerIdentityId: pid,
-          hiddenFromMessageList: true,
+          hiddenFromMessageList: keepInList ? false : true,
           clearUiOnlyHiddenBeforeTimestamp: true,
           clearFriendRequestAcceptedAt: true,
         })
@@ -9205,7 +9473,7 @@ export class PersonaDb {
             conversationKey: k,
             peerCharacterId: peer,
             playerIdentityId: pid,
-            hiddenFromMessageList: true,
+            hiddenFromMessageList: keepInList ? false : true,
             clearUiOnlyHiddenBeforeTimestamp: true,
             clearFriendRequestAcceptedAt: true,
           })
@@ -9219,7 +9487,10 @@ export class PersonaDb {
    * 时间戳 ≤ 写入时刻的泡泡在界面隐藏，新消息照常显示。
    * 与「彻底删除」一致写入回收站快照（payload.uiClearOnly），恢复时仅撤销界面隐藏、不重复插入消息。
    */
-  async hideWeChatConversationHistoryFromUiKeepAiContext(conversationKey: string): Promise<void> {
+  async hideWeChatConversationHistoryFromUiKeepAiContext(
+    conversationKey: string,
+    opts?: { keepInMessageList?: boolean },
+  ): Promise<void> {
     const k = conversationKey.trim()
     if (!k) return
     const msgs = await this.listWeChatChatMessagesByConversationKey(k)
@@ -9252,15 +9523,19 @@ export class PersonaDb {
     } else {
       cut = Date.now()
     }
+    const keepInList = opts?.keepInMessageList === true
     if (existing) {
       await this.upsertChatConversationSettings({
         conversationKey: k,
         peerCharacterId: existing.peerCharacterId,
         playerIdentityId: existing.playerIdentityId,
-        hiddenFromMessageList: true,
+        hiddenFromMessageList: keepInList ? false : true,
         uiOnlyHiddenBeforeTimestamp: cut,
         clearFriendRequestAcceptedAt: true,
       })
+      emitWeChatStorageChanged()
+      const { notifyUserWeChatDataClear } = await import('../wechatDataInventoryNotify')
+      notifyUserWeChatDataClear('clear_conversation_ui_only', { conversationKey: k })
       return
     }
     if (isWechatGroupConversationKey(k)) {
@@ -9272,7 +9547,7 @@ export class PersonaDb {
           conversationKey: k,
           peerCharacterId: wechatGroupPeerCharacterId(gid),
           playerIdentityId: pid,
-          hiddenFromMessageList: true,
+          hiddenFromMessageList: keepInList ? false : true,
           uiOnlyHiddenBeforeTimestamp: cut,
           clearFriendRequestAcceptedAt: true,
         })
@@ -9287,18 +9562,22 @@ export class PersonaDb {
             conversationKey: k,
             peerCharacterId: peer,
             playerIdentityId: pid,
-            hiddenFromMessageList: true,
+            hiddenFromMessageList: keepInList ? false : true,
             uiOnlyHiddenBeforeTimestamp: cut,
             clearFriendRequestAcceptedAt: true,
           })
         }
       }
     }
+    emitWeChatStorageChanged()
     const { notifyUserWeChatDataClear } = await import('../wechatDataInventoryNotify')
     notifyUserWeChatDataClear('clear_conversation_ui_only', { conversationKey: k })
   }
 
-  async deleteAllWeChatMessagesForConversation(conversationKey: string): Promise<void> {
+  async deleteAllWeChatMessagesForConversation(
+    conversationKey: string,
+    opts?: { keepInMessageList?: boolean },
+  ): Promise<void> {
     const k = conversationKey.trim()
     if (!k) return
     const msgs = await this.listWeChatChatMessagesByConversationKey(k)
@@ -9335,7 +9614,7 @@ export class PersonaDb {
     await txDone(tx)
     db.close()
     await this.setWechatReadCursor(k, Date.now())
-    await this.markConversationHiddenAfterHistoryCleared(k, conv)
+    await this.markConversationHiddenAfterHistoryCleared(k, conv, opts)
     emitWeChatStorageChanged()
     const { notifyUserWeChatDataClear } = await import('../wechatDataInventoryNotify')
     notifyUserWeChatDataClear('clear_conversation_messages', { conversationKey: k })

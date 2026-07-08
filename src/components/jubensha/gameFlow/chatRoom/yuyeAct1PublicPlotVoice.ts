@@ -4,6 +4,13 @@ import {
   findDmSection,
   parseDmSections,
 } from './parseDmHostScript'
+import {
+  getAmbulanceSirenUrl,
+  getDoctorRunSfxUrl,
+  getOpenWineBottleSfxUrl,
+  getPlateSfxUrl,
+  getPourWineSfxUrl,
+} from '../../jbsChatRoomMedia'
 
 import dmScriptRaw from '../../../../../剧本杀/《雨夜归零》/剧本/DM-主持剧本.md?raw'
 
@@ -89,10 +96,65 @@ const ACT1_ROLE_SCRIPT_OVERRIDES: Partial<Record<(typeof ACT1_WAV_ORDER)[number]
   '陆景川公共第一幕2.wav': '这瓶不在酒水单上',
 }
 
+/** 第一幕 20:10 救护车鸣笛（与 dm公共第一幕18.wav 旁白同步） */
+const ACT1_AMBULANCE_SFX_MARKER = '救护车鸣笛'
+const ACT1_AMBULANCE_SFX_URL = getAmbulanceSirenUrl('yuye-guiling')
+/** 程予安开席换盘（放盘子 → 倒酒，仅第一处添酒） */
+const ACT1_PLATE_SFX_MARKER = '换盘'
+const ACT1_PLATE_SFX_URL = getPlateSfxUrl('yuye-guiling')
+const ACT1_POUR_WINE_SFX_MARKER = '添酒'
+const ACT1_POUR_WINE_SFX_URL = getPourWineSfxUrl('yuye-guiling')
+/** 19:55 林晚星亲手开瓶 */
+const ACT1_OPEN_BOTTLE_SFX_MARKER = '亲手开瓶'
+const ACT1_OPEN_BOTTLE_SFX_URL = getOpenWineBottleSfxUrl('yuye-guiling')
+/** 20:03 驻家医生从侧廊冲入 */
+const ACT1_DOCTOR_RUN_SFX_MARKER = '从侧廊冲入'
+const ACT1_DOCTOR_RUN_SFX_URL = getDoctorRunSfxUrl('yuye-guiling')
+
+type Act1SfxAssignContext = {
+  pourWineUsed: boolean
+}
+
+function resolveAct1TrackSfxUrls(
+  script: string,
+  ctx: Act1SfxAssignContext,
+): readonly string[] | undefined {
+  if (ACT1_AMBULANCE_SFX_URL && script.includes(ACT1_AMBULANCE_SFX_MARKER)) {
+    return [ACT1_AMBULANCE_SFX_URL]
+  }
+  if (ACT1_DOCTOR_RUN_SFX_URL && script.includes(ACT1_DOCTOR_RUN_SFX_MARKER)) {
+    return [ACT1_DOCTOR_RUN_SFX_URL]
+  }
+  if (ACT1_OPEN_BOTTLE_SFX_URL && script.includes(ACT1_OPEN_BOTTLE_SFX_MARKER)) {
+    return [ACT1_OPEN_BOTTLE_SFX_URL]
+  }
+
+  const hasPlate = script.includes(ACT1_PLATE_SFX_MARKER)
+  const hasFirstPour = script.includes(ACT1_POUR_WINE_SFX_MARKER) && !script.includes('添杯')
+
+  if (hasPlate && ACT1_PLATE_SFX_URL) {
+    const urls: string[] = [ACT1_PLATE_SFX_URL]
+    if (hasFirstPour && !ctx.pourWineUsed && ACT1_POUR_WINE_SFX_URL) {
+      urls.push(ACT1_POUR_WINE_SFX_URL)
+      ctx.pourWineUsed = true
+    }
+    return urls
+  }
+
+  if (hasFirstPour && !ctx.pourWineUsed && ACT1_POUR_WINE_SFX_URL) {
+    ctx.pourWineUsed = true
+    return [ACT1_POUR_WINE_SFX_URL]
+  }
+
+  return undefined
+}
+
 export type PublicPlotVoiceTrack = {
   url: string
   script: string
   speaker: 'dm' | { role: string }
+  /** 该轨开始播放时叠加的功能音效（如救护车鸣笛；可多条顺序播放） */
+  sfxUrls?: readonly string[]
 }
 
 type DialogueHit = {
@@ -349,6 +411,7 @@ function buildTracksFromSection(section: string): PublicPlotVoiceTrack[] {
   const dialogues = extractSpokenDialoguesInOrder(fullText)
   const tracks: PublicPlotVoiceTrack[] = []
   let narrationCursor = 0
+  const sfxCtx: Act1SfxAssignContext = { pourWineUsed: false }
 
   for (let i = 0; i < ACT1_WAV_ORDER.length; ) {
     const file = ACT1_WAV_ORDER[i]!
@@ -405,7 +468,10 @@ function buildTracksFromSection(section: string): PublicPlotVoiceTrack[] {
       script = compactDmNarrationLines(script)
       if (!script) continue
 
-      tracks.push({ url: dmUrl, script, speaker: 'dm' })
+      const track: PublicPlotVoiceTrack = { url: dmUrl, script, speaker: 'dm' }
+      const sfxUrls = resolveAct1TrackSfxUrls(script, sfxCtx)
+      if (sfxUrls?.length) track.sfxUrls = sfxUrls
+      tracks.push(track)
     }
 
     i += dmRun

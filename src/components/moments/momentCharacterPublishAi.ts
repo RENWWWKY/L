@@ -23,7 +23,8 @@ import {
 } from './momentAttachedMusic'
 import { MOMENT_BODY_LENGTH_HINT, MOMENT_IMAGE_COUNT_PROMPT } from './momentContentLimits'
 import { MOMENT_LOCATION_PROMPT_HINT } from './momentLocationUtils'
-import { CHARACTER_MEDIA_IMAGE_DESCRIPTION_RULES } from './momentCharacterImageRules'
+import { buildCharacterMediaImageDescriptionRules } from './momentCharacterImageRules'
+import { characterHasAppearanceReference } from '../../phone/apps/wechat/characterAppearanceImageGen'
 import { MOMENT_TEXT_OUTPUT_HINT } from './momentTextSanitize'
 import {
   buildCharacterMomentPrivacyPromptSection,
@@ -49,7 +50,7 @@ const CHARACTER_MOMENT_TASK_APPENDIX_BASE = `
 3. **隐晦的情感拉扯**：若与用户暧昧或冷战，可夹带私货、指桑骂槐，写只有你们俩能看懂的暗语。
 4. 配图 prompt 只写画面内容（英文 SD/MJ 风格），**禁止写风格词**；每张描述不同局部/角度。
 
-${CHARACTER_MEDIA_IMAGE_DESCRIPTION_RULES}
+{{IMAGE_DESCRIPTION_RULES}}
 
 ${MOMENT_IMAGE_COUNT_PROMPT}
 
@@ -85,9 +86,15 @@ ${MOMENT_TEXT_OUTPUT_HINT}
 ${MOMENT_BODY_LENGTH_HINT}
 `.trim()
 
-function buildCharacterMomentTaskAppendix(musicLocaleHint?: string): string {
+function buildCharacterMomentTaskAppendix(
+  musicLocaleHint?: string,
+  hasAppearanceReference = false,
+): string {
   const musicPostPrompt = buildCharacterMomentMusicPostPrompt(musicLocaleHint)
-  return CHARACTER_MOMENT_TASK_APPENDIX_BASE.replace('{{MUSIC_POST_PROMPT}}', musicPostPrompt)
+  return CHARACTER_MOMENT_TASK_APPENDIX_BASE.replace('{{MUSIC_POST_PROMPT}}', musicPostPrompt).replace(
+    '{{IMAGE_DESCRIPTION_RULES}}',
+    buildCharacterMediaImageDescriptionRules(hasAppearanceReference),
+  )
 }
 
 function formatCurrentMomentContext(): string {
@@ -217,7 +224,10 @@ export async function generateCharacterMomentPost(params: {
     [
       {
         role: 'system',
-        content: `${system}\n\n${buildCharacterMomentTaskAppendix(proactiveMusicShareLocaleHint || undefined)}\n\n${CHARACTER_MOMENT_PRIVACY_RULES}`,
+        content: `${system}\n\n${buildCharacterMomentTaskAppendix(
+          proactiveMusicShareLocaleHint || undefined,
+          characterHasAppearanceReference(pack.character),
+        )}\n\n${CHARACTER_MOMENT_PRIVACY_RULES}`,
       },
       { role: 'user', content: userTask },
     ],

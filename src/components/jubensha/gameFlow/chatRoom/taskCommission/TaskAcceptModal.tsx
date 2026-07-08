@@ -17,6 +17,7 @@ import './jbs-task-commission.css'
 
 type RitualPhase = 'landing' | 'seal-break' | 'unfold' | 'typing' | 'ready' | 'departing'
 
+const ENVELOPE_CLOSED_HEIGHT = 248
 const UNFOLD_HEIGHT = 420
 
 function padTaskIndex(n: number): string {
@@ -259,11 +260,18 @@ export function TaskAcceptModal() {
               layoutId={TASK_COMMISSION_LAYOUT_ID}
               className={`jbs-task-envelope${unfolded ? ' jbs-task-envelope--open' : ''}`}
               animate={{
-                height: unfolded ? UNFOLD_HEIGHT : 96,
+                height: unfolded ? UNFOLD_HEIGHT : ENVELOPE_CLOSED_HEIGHT,
               }}
               transition={{ type: 'spring', stiffness: 180, damping: 26 }}
             >
               <div className="jbs-task-envelope-fold" aria-hidden />
+              {!unfolded ? (
+                <div className="jbs-task-envelope-closed-mark jbs-font-serif" aria-hidden>
+                  <span className="jbs-task-envelope-closed-kicker">CLASSIFIED</span>
+                  <span className="jbs-task-envelope-closed-title">本幕密函</span>
+                  <span className="jbs-task-envelope-closed-hint">点击火漆拆封</span>
+                </div>
+              ) : null}
               {(phase === 'landing' || phase === 'seal-break') ? (
                 <WaxSeal onBreak={handleSealBreak} breaking={phase === 'seal-break'} />
               ) : null}

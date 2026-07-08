@@ -10,6 +10,7 @@ import {
   Shuffle,
   SkipBack,
   SkipForward,
+  X,
 } from 'lucide-react'
 import { useCallback, useState } from 'react'
 
@@ -75,6 +76,7 @@ export function MiniPlayerPopover({
   const syncListening = useMusicStore((s) => s.syncListening)
   const setSyncListening = useMusicStore((s) => s.setSyncListening)
   const openDesktopLyricsKeepOrb = useMusicStore((s) => s.openDesktopLyricsKeepOrb)
+  const dismissFloatingOrb = useMusicStore((s) => s.dismissFloatingOrb)
   const { state } = useCustomization()
   const [inviteDrawerOpen, setInviteDrawerOpen] = useState(false)
   const [inviteSending, setInviteSending] = useState(false)
@@ -151,19 +153,34 @@ export function MiniPlayerPopover({
             onClick={(e) => e.stopPropagation()}
           >
             <div className="relative px-4 pb-4 pt-3.5">
-              <button
-                type="button"
-                aria-label="打开听一听全屏播放"
-                title="全屏播放"
-                onClick={(e) => {
-                  e.stopPropagation()
-                  onClose()
-                  void navigateToListenTogetherFullscreen()
-                }}
-                className="absolute right-3 top-3 flex h-7 w-7 items-center justify-center rounded-full text-stone-400 transition-colors hover:bg-rose-50/80 hover:text-stone-600"
-              >
-                <ArrowUpRight className="size-3.5" strokeWidth={1.75} />
-              </button>
+              <div className="absolute right-3 top-3 flex items-center gap-0.5">
+                <button
+                  type="button"
+                  aria-label="隐藏悬浮球"
+                  title="隐藏悬浮球（音乐继续播放）"
+                  onClick={(e) => {
+                    e.stopPropagation()
+                    dismissFloatingOrb()
+                    onClose()
+                  }}
+                  className="flex h-7 w-7 items-center justify-center rounded-full text-stone-400 transition-colors hover:bg-rose-50/80 hover:text-stone-600"
+                >
+                  <X className="size-3.5" strokeWidth={1.75} />
+                </button>
+                <button
+                  type="button"
+                  aria-label="打开听一听全屏播放"
+                  title="全屏播放"
+                  onClick={(e) => {
+                    e.stopPropagation()
+                    onClose()
+                    void navigateToListenTogetherFullscreen()
+                  }}
+                  className="flex h-7 w-7 items-center justify-center rounded-full text-stone-400 transition-colors hover:bg-rose-50/80 hover:text-stone-600"
+                >
+                  <ArrowUpRight className="size-3.5" strokeWidth={1.75} />
+                </button>
+              </div>
 
               <SyncCapsule
                 sync={syncListening}
@@ -172,7 +189,7 @@ export function MiniPlayerPopover({
                 onInviteClick={() => setInviteDrawerOpen(true)}
               />
 
-              <div className="flex items-center gap-3 pr-8">
+              <div className="flex items-center gap-3 pr-16">
                 {track.cover ? (
                   <div className="h-11 w-11 shrink-0 overflow-hidden rounded-xl ring-1 ring-rose-100/80 shadow-sm">
                     <img src={track.cover} alt="" className="h-full w-full object-cover" />

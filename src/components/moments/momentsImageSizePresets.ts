@@ -124,7 +124,7 @@ export function getSupportedImageSizes(
   if (provider === 'gemini') return GEMINI_IMAGE_SIZES
   if (provider === 'openai') return getOpenaiImageSizes(modelName)
   if (provider === 'custom') {
-    if (/^(dall-?e|gpt-image)/i.test(modelName)) return getOpenaiImageSizes(modelName)
+    if (/gpt-image/i.test(modelName) || /dall-?e/i.test(modelName)) return getOpenaiImageSizes(modelName)
     return GENERIC_SILICONFLOW_IMAGE_SIZES
   }
   if (/Kolors/i.test(modelName)) return KOLORS_IMAGE_SIZES

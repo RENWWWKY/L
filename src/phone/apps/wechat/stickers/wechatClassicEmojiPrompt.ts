@@ -1,4 +1,5 @@
 import { buildWechatClassicStickerItems } from './wechatClassicStickerPack'
+import { clampRoundTriggerPercent } from '../wechatMediaSendFrequency'
 
 /** 与 GIF `[表情包]` 独立行区分：inline 经典黄脸写在普通文字行内 */
 export const WECHAT_CLASSIC_EMOJI_SEND_RULE = `
@@ -17,9 +18,28 @@ export const WECHAT_CLASSIC_EMOJI_SEND_RULE = `
 - **仍须贴脸**：严肃争吵、冷战、分手谈判、正式通知、对方明显需要被认真对待时，**优先纯文字**把事说清楚，勿用黄脸糊弄。
 `.trim()
 
+export function buildWechatClassicEmojiSendRuleForSession(percent: number): string {
+  const pct = clampRoundTriggerPercent(percent)
+  if (pct <= 0) {
+    return `■ 微信经典黄脸（inline 文字表情 · 非 GIF 表情包）
+- 当前会话在聊天信息中设为 **0%**；**禁止**在文字行内写 \`[呲牙]\` \`[OK]\` 等经典黄脸 token，本轮仅用纯文字。
+- {{user}} 若发来黄脸，可用文字接住，**不要**回发经典黄脸 token。`
+  }
+  if (pct >= 100) {
+    return WECHAT_CLASSIC_EMOJI_SEND_RULE
+  }
+  return `■ 微信经典黄脸（inline 文字表情 · 非 GIF 表情包）
+- 可在**普通文字气泡**里写 \`[呲牙]\`、\`[偷笑]\` 等；名称须与下方《微信经典表情》目录**逐字一致**。
+- **可与文字混排**或**单独一行**；**不是** \`[表情包]\` GIF 行。
+- **本轮频率**：约 **${pct}%** 的回复轮次可在文字内含 1 个贴脸黄脸；约 **${100 - pct}%** 轮次**纯文字**。一旦写则须贴脸，勿机械刷屏。
+- **偏负面黄脸**：\`[裂开]\` \`[尴尬]\` \`[再见]\` \`[擦汗]\` \`[汗]\` \`[便便]\` \`[吐]\` 等通常表负面/无语/尴尬，勿误判为开心。
+- 严肃争吵、冷战、正式通知时**优先纯文字**，勿用黄脸糊弄。`
+}
+
 export function buildWechatClassicEmojiCatalogPromptBlock(
   maxChars = 4200,
   bannedNames?: string[],
+  classicEmojiRoundTriggerPercent?: number,
 ): string {
   const banned = new Set((bannedNames ?? []).map((x) => x.trim()).filter(Boolean))
   const items = buildWechatClassicStickerItems().filter((it) => !banned.has(it.description.trim()))
@@ -35,6 +55,10 @@ export function buildWechatClassicEmojiCatalogPromptBlock(
   if (body.length > maxChars) {
     body = `${body.slice(0, maxChars)}…（目录过长已截断，请只用已列名称）`
   }
+  const sendRule =
+    classicEmojiRoundTriggerPercent !== undefined
+      ? buildWechatClassicEmojiSendRuleForSession(classicEmojiRoundTriggerPercent)
+      : WECHAT_CLASSIC_EMOJI_SEND_RULE
   const banBlock =
     banned.size > 0
       ? `\n\n**永久禁止（勿使用）**：${[...banned].map((n) => `\`[${n}]\``).join('、')}`
@@ -42,7 +66,7 @@ export function buildWechatClassicEmojiCatalogPromptBlock(
   return `---------------------
 【微信经典表情（inline · 写进文字行；非 [表情包] GIF）】
 ---------------------
-${WECHAT_CLASSIC_EMOJI_SEND_RULE}
+${sendRule}
 
 可用名称（正文里用方括号包裹，如 \`[微笑]\`）：
 ${body}${banBlock}

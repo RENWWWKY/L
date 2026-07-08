@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useRef, type ReactNode } from 'react'
+import { useCallback, useMemo, useRef, useState, type ReactNode } from 'react'
 
 import type { WeChatBubbleTheme } from '../../types'
 import {
@@ -7,6 +7,7 @@ import {
 } from './group/ChatGroupSpeakerAvatarWrap'
 import { useWeChatLongPress } from './hooks/useWeChatLongPress'
 import { composeMultiSelectLeading } from './chatHistory/MultiSelectAvatarSlot'
+import { ChatImageLightbox } from './ChatImageLightbox'
 
 type Props = {
   id: string
@@ -49,6 +50,7 @@ export function WeChatChatImageBubbleRow({
   multiSelectAvatar,
 }: Props) {
   const anchorRef = useRef<HTMLDivElement>(null)
+  const [lightboxOpen, setLightboxOpen] = useState(false)
   const avatarPx = 40
   const bubbleRadius = isSelf ? `${bubble.selfBubbleRadiusPx}px` : `${bubble.otherBubbleRadiusPx}px`
 
@@ -71,13 +73,14 @@ export function WeChatChatImageBubbleRow({
     ms: 500,
     moveThresholdPx: 10,
     onLongPress: () => handleLongPress(),
+    onTap: () => setLightboxOpen(true),
   })
 
   const imageBlock = useMemo(() => {
     return (
       <div
         ref={anchorRef}
-        className="inline-block overflow-hidden select-none transition-[transform,opacity] duration-150 ease-out"
+        className="relative inline-block cursor-zoom-in select-none transition-[transform,opacity] duration-150 ease-out"
         style={{
           borderRadius: bubbleRadius,
           border,
@@ -94,7 +97,11 @@ export function WeChatChatImageBubbleRow({
         <img
           src={src}
           alt=""
-          className={isSticker ? 'block h-auto w-[160px] max-w-[46vw] select-none object-cover' : 'block h-auto w-[180px] max-w-[56vw] select-none object-cover'}
+          className={
+            isSticker
+              ? 'block h-auto max-h-[min(200px,36vh)] w-[160px] max-w-[46vw] select-none object-contain'
+              : 'block h-auto max-h-[min(360px,50vh)] w-[180px] max-w-[56vw] select-none object-contain'
+          }
           style={{ borderRadius: bubbleRadius }}
           draggable={false}
         />
@@ -120,7 +127,8 @@ export function WeChatChatImageBubbleRow({
 
   if (!isSelf) {
     return (
-      <div className="w-full max-w-full shrink-0 overflow-x-visible" data-wx-msg-id={_id}>
+      <>
+        <div className="w-full max-w-full shrink-0 overflow-x-visible" data-wx-msg-id={_id}>
         {!showAvatar && !multiSelectAvatar ? (
           <div className="ml-[24px] mr-auto min-w-0">{imageBlock}</div>
         ) : showAvatarVisual || multiSelectAvatar ? (
@@ -224,11 +232,14 @@ export function WeChatChatImageBubbleRow({
           <div className="ml-[24px] mr-auto min-w-0">{imageBlock}</div>
         )}
       </div>
+        <ChatImageLightbox open={lightboxOpen} src={src} onClose={() => setLightboxOpen(false)} />
+      </>
     )
   }
 
   return (
-    <div className="flex w-full max-w-full shrink-0 items-end justify-end gap-[4px] overflow-x-visible" data-wx-msg-id={_id}>
+    <>
+      <div className="flex w-full max-w-full shrink-0 items-end justify-end gap-[4px] overflow-x-visible" data-wx-msg-id={_id}>
       {!showAvatar && !multiSelectAvatar ? (
         <div className="mr-[24px] ml-auto min-w-0">{imageBlock}</div>
       ) : showAvatarVisual || multiSelectAvatar ? (
@@ -308,7 +319,9 @@ export function WeChatChatImageBubbleRow({
       ) : (
         <div className="mr-[24px] ml-auto min-w-0">{imageBlock}</div>
       )}
-    </div>
+      </div>
+      <ChatImageLightbox open={lightboxOpen} src={src} onClose={() => setLightboxOpen(false)} />
+    </>
   )
 }
 
