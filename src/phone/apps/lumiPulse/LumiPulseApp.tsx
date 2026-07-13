@@ -1,7 +1,6 @@
 import { AnimatePresence, motion } from 'framer-motion'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 
-import { AppPlaceholderScreen } from '../../components/AppPlaceholderScreen'
 import { Pressable } from '../../components/Pressable'
 import { useCustomization } from '../../CustomizationContext'
 import { PULSE_COLORS, PULSE_TAB_SPRING } from './constants'
@@ -23,37 +22,42 @@ import {
   usePulseProfileStats,
 } from './pulseStoreSelectors'
 import { usePulsePovOptions } from './usePulsePovOptions'
+import { usePulsePlayerAccount } from './usePulsePlayerAccount'
 import { usePulseStore } from './usePulseStore'
 
-/** 改 false 恢复 Lumi Pulse 微博完整功能 */
-const WEIBO_UNDER_DEV = true
-
-export function LumiPulseApp({ onBack }: { onBack: () => void }) {
-  if (WEIBO_UNDER_DEV) {
-    return (
-      <AppPlaceholderScreen
-        appId="weibo"
-        onBack={onBack}
-        underDev
-        message="功能开发中"
-        hint="微博广场、动态发布与私信等功能正在打磨，完成后将在此接入。"
-      />
-    )
-  }
-  return <LumiPulseAppContent onBack={onBack} />
+export function LumiPulseApp({
+  onBack,
+  backTarget = 'desktop',
+  className = '',
+}: {
+  onBack: () => void
+  /** desktop：返回手机桌面；discover：返回微信发现列表 */
+  backTarget?: 'desktop' | 'discover'
+  className?: string
+}) {
+  return <LumiPulseAppContent onBack={onBack} backTarget={backTarget} className={className} />
 }
 
-function LumiPulseAppContent({ onBack }: { onBack: () => void }) {
+function LumiPulseAppContent({
+  onBack,
+  backTarget,
+  className,
+}: {
+  onBack: () => void
+  backTarget: 'desktop' | 'discover'
+  className?: string
+}) {
   const { state, themeStyle } = useCustomization()
   const pageStyle = state.appPageStyles.weibo
 
   const { hydrated, currentAccountId, options } = usePulsePovOptions()
+  const { playerPovId, displayName: playerName, avatarUrl: playerAvatarUrl } = usePulsePlayerAccount()
   const bindAccount = usePulseStore((s) => s.bindAccount)
-  const currentPOVId = usePulseStore((s) => s.currentPOVId)
-  const setCurrentPOVId = usePulseStore((s) => s.setCurrentPOVId)
+  const currentWorldId = usePulseStore((s) => s.currentPOVId)
+  const setCurrentWorldId = usePulseStore((s) => s.setCurrentPOVId)
   const publishPost = usePulseStore((s) => s.publishPost)
   const posts = usePulseDiscoverPosts()
-  const profileStats = usePulseProfileStats(currentPOVId)
+  const profileStats = usePulseProfileStats(playerPovId)
   const interactions = usePulseInteractions()
   const dmThreads = usePulseDmThreads()
 
@@ -61,11 +65,11 @@ function LumiPulseAppContent({ onBack }: { onBack: () => void }) {
   const [openPostId, setOpenPostId] = useState<string | null>(null)
   const [forwardPostId, setForwardPostId] = useState<string | null>(null)
   const [toast, setToast] = useState('')
-  const prevPovRef = useRef<string | null>(null)
+  const prevWorldRef = useRef<string | null>(null)
 
-  const activePov = useMemo(
-    () => options.find((o) => o.povId === currentPOVId) ?? null,
-    [currentPOVId, options],
+  const activeWorld = useMemo(
+    () => options.find((o) => o.povId === currentWorldId) ?? null,
+    [currentWorldId, options],
   )
 
   const openPost = useMemo(() => {
@@ -94,12 +98,12 @@ function LumiPulseAppContent({ onBack }: { onBack: () => void }) {
 
   /** 切换世界时关闭跨世界的动态详情（首次进入世界不清空） */
   useEffect(() => {
-    const prev = prevPovRef.current
-    prevPovRef.current = currentPOVId
-    if (prev && currentPOVId && prev !== currentPOVId) {
+    const prev = prevWorldRef.current
+    prevWorldRef.current = currentWorldId
+    if (prev && currentWorldId && prev !== currentWorldId) {
       setOpenPostId(null)
     }
-  }, [currentPOVId])
+  }, [currentWorldId])
 
   useEffect(() => {
     const pending = consumePendingPulsePostId()
@@ -116,19 +120,19 @@ function LumiPulseAppContent({ onBack }: { onBack: () => void }) {
 
   const handleTrendingTopic = useCallback(
     (topic: PulseTrendingTopic) => {
-      if (!currentPOVId || !activePov) return
+      if (!currentWorldId || !playerPovId) return
       publishPost({
-        authorPovId: currentPOVId,
-        authorName: activePov.label,
-        authorAvatarUrl: activePov.avatarUrl,
+        authorPovId: playerPovId,
+        authorName: playerName,
+        authorAvatarUrl: playerAvatarUrl,
         content: `${topic.title}\n${topic.excerpt ?? ''}`.trim(),
         trendingTopicId: topic.id,
-        verified: true,
+        verified: false,
       })
       setTab('home')
       showToast('已从热搜发布动态')
     },
-    [activePov, currentPOVId, publishPost, showToast],
+    [currentWorldId, playerAvatarUrl, playerName, playerPovId, publishPost, showToast],
   )
 
   if (!hydrated) {
@@ -139,22 +143,36 @@ function LumiPulseAppContent({ onBack }: { onBack: () => void }) {
     )
   }
 
-  if (!currentPOVId || !activePov) {
+  if (!playerPovId) {
+    return (
+      <div className="flex h-full items-center justify-center bg-[#FCFCFC] px-8 text-center text-[13px] leading-relaxed text-neutral-400">
+        请先登录微信账号后再使用微博广场
+      </div>
+    )
+  }
+
+  if (!currentWorldId || !activeWorld) {
     return (
       <div
-        className="flex h-full min-h-0 flex-col bg-[#FCFCFC]"
+        className={`flex h-full min-h-0 flex-col bg-[#FCFCFC] ${className}`}
         data-phone-page="app"
         data-app-id="weibo"
         style={{ ...themeStyle, fontFamily: 'var(--phone-font)' }}
       >
-        <PulseAuthGuard options={options} onSelect={setCurrentPOVId} onBack={onBack} />
+        <PulseAuthGuard
+          options={options}
+          onSelect={setCurrentWorldId}
+          onBack={onBack}
+          backLabel={backTarget === 'discover' ? '返回发现' : '返回主页'}
+          playerName={playerName}
+        />
       </div>
     )
   }
 
   return (
     <div
-      className="relative flex h-full min-h-0 flex-col bg-[#FCFCFC]"
+      className={`relative flex h-full min-h-0 flex-col bg-[#FCFCFC] ${className}`}
       data-phone-page="app"
       data-app-id="weibo"
       style={{
@@ -173,14 +191,14 @@ function LumiPulseAppContent({ onBack }: { onBack: () => void }) {
         <Pressable
           onClick={onBack}
           className="flex size-9 items-center justify-center rounded-full opacity-60"
-          aria-label="返回桌面"
+          aria-label={backTarget === 'discover' ? '返回发现' : '返回桌面'}
         >
           <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.35">
             <path d="M14 6L8 12l6 6" strokeLinecap="round" strokeLinejoin="round" />
           </svg>
         </Pressable>
         <p className="min-w-0 flex-1 truncate text-[11px] tracking-[0.08em] text-neutral-400">
-          {activePov.worldName} · {activePov.label}的世界
+          {activeWorld.worldName} · {playerName}
         </p>
       </header>
 
@@ -196,30 +214,30 @@ function LumiPulseAppContent({ onBack }: { onBack: () => void }) {
           >
             {tab === 'home' ? (
               <PulseHomeFeed
-                currentPovId={currentPOVId}
-                authorName={activePov.label}
-                authorAvatarUrl={activePov.avatarUrl}
+                currentPlayerPovId={playerPovId}
+                authorName={playerName}
+                authorAvatarUrl={playerAvatarUrl}
+                povOptions={options}
                 onOpenPost={setOpenPostId}
                 onRepostPost={handleRepostPost}
               />
             ) : tab === 'discover' ? (
               <PulseDiscover
-                povName={activePov.label}
-                currentPovId={currentPOVId}
+                povName={activeWorld.label}
+                currentWorldId={currentWorldId}
                 onOpenTopic={handleTrendingTopic}
               />
             ) : tab === 'inbox' ? (
-              <PulseInbox povName={activePov.label} currentPovId={currentPOVId} />
+              <PulseInbox povName={activeWorld.label} currentPlayerPovId={playerPovId} />
             ) : (
               <PulseProfile
-                displayName={activePov.label}
-                avatarUrl={activePov.avatarUrl}
+                displayName={playerName}
+                avatarUrl={playerAvatarUrl}
                 stats={profileStats}
-                currentPovId={currentPOVId}
-                characterId={activePov.rawId}
-                worldName={activePov.worldName}
+                currentPlayerPovId={playerPovId}
+                currentWorldId={currentWorldId}
                 povOptions={options}
-                onSwitchPov={setCurrentPOVId}
+                onSwitchWorld={setCurrentWorldId}
                 onOpenPost={setOpenPostId}
                 onRepostPost={handleRepostPost}
                 onToast={showToast}
@@ -237,8 +255,9 @@ function LumiPulseAppContent({ onBack }: { onBack: () => void }) {
         {openPost ? (
           <PostDetail
             post={openPost}
-            currentPovId={currentPOVId}
-            authorLabel={activePov.label}
+            currentPlayerPovId={playerPovId}
+            authorLabel={playerName}
+            authorAvatarUrl={playerAvatarUrl}
             onBack={() => setOpenPostId(null)}
             onToast={showToast}
             onRepost={() => handleRepostPost(openPost.id)}

@@ -52,11 +52,14 @@ export function getPollinationsStylePreset(id: string): PollinationsStylePreset 
   return POLLINATIONS_STYLE_PRESETS.find((s) => s.id === id)
 }
 
+import { isImageGenArtistStyleMode, type ImageGenStyleMode } from './imageGenStyleMode'
+
 export function resolveStylePrefix(params: {
-  stylePrefixMode: 'preset' | 'custom'
+  stylePrefixMode: ImageGenStyleMode
   stylePresetId: string
   customStylePrefix: string
 }): string {
+  if (isImageGenArtistStyleMode(params.stylePrefixMode)) return ''
   if (params.stylePrefixMode === 'custom') {
     const custom = params.customStylePrefix.trim()
     if (!custom) return ''

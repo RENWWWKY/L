@@ -1,10 +1,14 @@
 import {
   isCharacterMediaAppearanceLockPrompt,
+  isCharacterMediaCharacterAppearanceNeededPrompt,
   isCharacterMediaReferenceImagePrompt,
 } from '../../../components/moments/momentsImagePromptEnhancer'
 import { translateCharacterMediaPromptTagsToEnglishSync } from '../../../components/moments/characterMediaPromptTranslator'
 import type { MomentsImageGenParams } from '../../../components/moments/momentsImageGen'
+import { modelSupportsReferenceImageUpload } from '../../../components/moments/imageGenModelCapabilities'
+import { resolveImageGenDimensions } from '../../../components/moments/resolveImageGenDimensions'
 import type { MomentsImageGenSettings } from '../../../components/moments/useMomentsSettingsStore'
+import { inferMomentsImageProviderFromModelId, parseMomentsImageModelId } from '../../../components/moments/momentsImageModelCatalog'
 import { resolveCharacterAvatarUrl } from '../../utils/characterAvatarUrl'
 import { normalizeCharacterImageGenPromptForApi } from '../../../components/moments/momentCharacterImageRules'
 import { sanitizeCharacterMediaImagePrompt } from '../../../components/moments/characterMediaPromptSanitizer'
@@ -178,27 +182,47 @@ export function buildCharacterMediaImageGenParams(opts: {
       .map((item) => resolveCharacterAvatarUrl({ avatarUrl: item.url }) || item.url.trim())
       .filter(Boolean),
   ].filter((url, index, arr) => arr.indexOf(url) === index)
-  const hasReference = referenceImageUrls.length > 0
-  const promptForApi = !hasReference
+  const hasReferenceConfigured = referenceImageUrls.length > 0
+  const provider = opts.settings.provider ?? inferMomentsImageProviderFromModelId(opts.settings.modelId)
+  const { modelName } = parseMomentsImageModelId(opts.settings.modelId)
+  const refUploadSupported = modelSupportsReferenceImageUpload(provider, modelName)
+
+  const promptForApi = !hasReferenceConfigured
     ? replaceReferenceCharacterPlaceholder(rawPrompt, buildNoRefCharacterSubjectTags(opts.character))
     : rawPrompt
   const prompt = sanitizeCharacterMediaImagePrompt(normalizeCharacterImageGenPromptForApi(promptForApi))
   const lockAppearance = isCharacterMediaAppearanceLockPrompt(prompt)
-  const attachIdentityReference = isCharacterMediaReferenceImagePrompt(prompt)
-  const attachStyleReference = hasReference && !attachIdentityReference
+  const attachIdentityReference =
+    refUploadSupported && hasReferenceConfigured && isCharacterMediaReferenceImagePrompt(prompt)
+  const attachStyleReference =
+    refUploadSupported && hasReferenceConfigured && !attachIdentityReference
   const attachReferenceImages = attachIdentityReference || attachStyleReference
+  const characterAppearanceNeeded = isCharacterMediaCharacterAppearanceNeededPrompt(rawPrompt)
   const refNoteParts = [
-    lockAppearance || attachStyleReference ? extractCharacterAppearanceRefNote(opts.character) : '',
-    lockAppearance || attachStyleReference ? opts.additionalAppearanceRefNote?.trim() ?? '' : '',
+    characterAppearanceNeeded ? extractCharacterAppearanceRefNote(opts.character) : '',
+    lockAppearance && characterAppearanceNeeded ? opts.additionalAppearanceRefNote?.trim() ?? '' : '',
   ].filter(Boolean)
   const refNote = refNoteParts.join('；').slice(0, 500)
+
+  const defaultDims =
+    opts.width == null && opts.height == null && !opts.imageSize
+      ? resolveImageGenDimensions(
+          opts.settings,
+          opts.settings.imageSizeMode === 'fixed'
+            ? undefined
+            : {
+                prompt: rawPrompt,
+                context: 'character_media',
+              },
+        )
+      : null
 
   return {
     prompt,
     settings: opts.settings,
-    width: opts.width,
-    height: opts.height,
-    imageSize: opts.imageSize,
+    width: opts.width ?? defaultDims?.width,
+    height: opts.height ?? defaultDims?.height,
+    imageSize: opts.imageSize ?? defaultDims?.imageSize,
     promptContext: 'character_media',
     characterMediaPromptForInference: rawPrompt,
     referenceImageUrls: attachReferenceImages && referenceImageUrls.length ? referenceImageUrls : undefined,
@@ -206,9 +230,12 @@ export function buildCharacterMediaImageGenParams(opts: {
       attachReferenceImages && refEntries.length ? refEntries.map((item) => item.kind) : undefined,
     referenceImageUrl: attachReferenceImages ? referenceImageUrls[0] : undefined,
     characterAppearanceRefNote: refNote || undefined,
-    characterAppearanceHint: !hasReference ? extractCharacterAppearanceHint(opts.character) || undefined : undefined,
+    characterAppearanceHint:
+      !hasReferenceConfigured || !refUploadSupported
+        ? extractCharacterAppearanceHint(opts.character) || undefined
+        : undefined,
     characterGenderHint:
-      attachIdentityReference && hasReference
+      attachIdentityReference && hasReferenceConfigured
         ? extractCharacterGenderHintForImageGen(opts.character?.gender)
         : undefined,
     referenceStyleOnly: attachStyleReference || undefined,
@@ -238,7 +265,11 @@ export function buildDatingPlotImageGenParams(opts: {
     (url, index, arr) => arr.indexOf(url) === index,
   )
   const refEntries = [...characterRefEntries, ...playerRefEntries]
-  const hasReference = referenceImageUrls.length > 0
+  const hasReferenceConfigured = referenceImageUrls.length > 0
+  const provider = opts.settings.provider ?? inferMomentsImageProviderFromModelId(opts.settings.modelId)
+  const { modelName } = parseMomentsImageModelId(opts.settings.modelId)
+  const refUploadSupported = modelSupportsReferenceImageUpload(provider, modelName)
+  const attachReferenceImages = refUploadSupported && hasReferenceConfigured
   const castLockNote = buildDatingPlotCastReferenceLockNote({
     character: opts.character,
     playerIdentity: opts.playerIdentity,
@@ -247,19 +278,27 @@ export function buildDatingPlotImageGenParams(opts: {
     playerRefCount: playerRefUrls.length,
   })
 
+  const defaultDims =
+    opts.width == null && opts.height == null && !opts.imageSize
+      ? resolveImageGenDimensions(opts.settings)
+      : null
+
   return {
     prompt,
     settings: opts.settings,
-    width: opts.width,
-    height: opts.height,
-    imageSize: opts.imageSize,
+    width: opts.width ?? defaultDims?.width,
+    height: opts.height ?? defaultDims?.height,
+    imageSize: opts.imageSize ?? defaultDims?.imageSize,
     promptContext: 'dating_plot',
-    referenceImageUrls: hasReference ? referenceImageUrls : undefined,
-    referenceImageKinds: hasReference && refEntries.length ? refEntries.map((item) => item.kind) : undefined,
-    referenceImageUrl: hasReference ? referenceImageUrls[0] : undefined,
-    characterAppearanceRefNote: castLockNote || undefined,
+    referenceImageUrls: attachReferenceImages ? referenceImageUrls : undefined,
+    referenceImageKinds:
+      attachReferenceImages && refEntries.length ? refEntries.map((item) => item.kind) : undefined,
+    referenceImageUrl: attachReferenceImages ? referenceImageUrls[0] : undefined,
+    characterAppearanceRefNote: attachReferenceImages ? castLockNote || undefined : undefined,
     characterAppearanceHint:
-      !hasReference ? extractCharacterAppearanceHint(opts.character) : undefined,
+      !hasReferenceConfigured || !refUploadSupported
+        ? extractCharacterAppearanceHint(opts.character)
+        : undefined,
     characterGenderHint: extractCharacterGenderHintForImageGen(opts.character?.gender) || undefined,
     datingPlotCharacterRefCount: characterRefUrls.length,
     datingPlotPlayerGenderHint: extractCharacterGenderHintForImageGen(opts.playerIdentity?.gender) || undefined,

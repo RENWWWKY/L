@@ -2,8 +2,8 @@
 export const VOICE_PROTOCOL_DEFAULT_ROUND_TRIGGER_PERCENT = 30
 /** 聊天信息页未定制时，表情包 slider 的展示默认值（协议本身无固定百分比） */
 export const STICKER_UI_DEFAULT_ROUND_TRIGGER_PERCENT = 40
-/** 聊天信息页未定制时，微信经典黄脸每轮触发概率（与语音默认 30% 对齐） */
-export const CLASSIC_EMOJI_DEFAULT_ROUND_TRIGGER_PERCENT = 30
+/** 聊天信息页未定制时，微信经典黄脸每轮触发概率 */
+export const CLASSIC_EMOJI_DEFAULT_ROUND_TRIGGER_PERCENT = 0
 /** @deprecated 使用 {@link CLASSIC_EMOJI_DEFAULT_ROUND_TRIGGER_PERCENT} */
 export const CLASSIC_EMOJI_UI_DEFAULT_ROUND_TRIGGER_PERCENT = CLASSIC_EMOJI_DEFAULT_ROUND_TRIGGER_PERCENT
 /** 聊天信息页未定制时，角色 AI 配图每轮触发概率的默认值 */
@@ -34,7 +34,7 @@ export function parseStoredRoundTriggerPercent(raw: unknown): number | undefined
   return undefined
 }
 
-/** UI 展示用：未定制时语音 30%、表情包 40、黄脸 30、AI 配图 0 */
+/** UI 展示用：未定制时语音 30%、表情包 40、黄脸 0、AI 配图 0 */
 export function displayRoundTriggerPercent(
   stored: number | undefined,
   kind: 'voice' | 'sticker' | 'image' | 'classicEmoji',
@@ -46,7 +46,7 @@ export function displayRoundTriggerPercent(
   return STICKER_UI_DEFAULT_ROUND_TRIGGER_PERCENT
 }
 
-/** 私聊黄脸：未存储定制值时默认 30% */
+/** 私聊黄脸：未存储定制值时默认 0% */
 export function resolveEffectiveClassicEmojiRoundTriggerPercent(stored: number | undefined): number {
   return stored !== undefined ? clampRoundTriggerPercent(stored) : CLASSIC_EMOJI_DEFAULT_ROUND_TRIGGER_PERCENT
 }
@@ -387,9 +387,9 @@ export function formatImageRoundCountRangeLabel(range: ImageRoundCountRange): st
 function buildImageRoundCountPromptLine(range: ImageRoundCountRange, target?: number): string {
   const rangeLabel = formatImageRoundCountRangeLabel(range)
   if (typeof target === 'number' && target > 0) {
-    return `- **AI 配图张数**：每次发图 **${rangeLabel}**（每条 \`[图片]\` 行 = 1 张）；**本轮目标 ${target} 张**，请输出恰好 ${target} 条 \`[图片]\` 行，不要超过 ${range.max} 条。`
+    return `- **AI 配图张数（仅当本轮确实要发图时）**：上限 **${rangeLabel}**（每条 \`[图片]\` 行 = 1 张）；若本轮决定发图，请输出 **${target}** 条 \`[图片]\` 行，不要超过 ${range.max} 条；若语境不适合发图则 **0 条**。`
   }
-  return `- **AI 配图张数**：每次发图 **${rangeLabel}**（每条 \`[图片]\` 行 = 1 张）；不要超过 ${range.max} 条。`
+  return `- **AI 配图张数（仅当本轮确实要发图时）**：上限 **${rangeLabel}**（每条 \`[图片]\` 行 = 1 张）；不要超过 ${range.max} 条；不适合发图则 **0 条**。`
 }
 
 export function isRoundTriggerCustomized(stored: number | undefined): boolean {
@@ -434,8 +434,10 @@ export function rollImageRoundTriggerAllowed(storedPercent: number | undefined):
 }
 
 /**
- * 模型已输出 `[图片]` 行时，是否仍应尊重「发图概率=0%」并拦截（而非强制 bypass 生图）。
- * 仅当概率 > 0 或用户本轮明确要求发图时，才因模型输出而放行。
+ * 模型已输出 `[图片]` 行时，是否放行并真实生图（可绕过本轮概率骰子未命中）。
+ * - 用户本轮明确要求发图 → 始终放行；
+ * - 发图概率 > 0 → 模型既已输出则放行；
+ * - 发图概率 = 0 且非用户要求 → 不放行，后处理会剔除。
  */
 export function shouldHonorModelCharacterImageLinesDespiteProbability(
   imageRoundTriggerPercent: number | undefined,
@@ -457,7 +459,7 @@ export function buildMediaSendFrequencyPromptBlock(params: {
   stickerRoundTriggerPercent?: number
   voiceRoundTriggerPercent?: number
   classicEmojiRoundTriggerPercent?: number
-  /** 私聊：未存储黄脸概率时仍注入默认 30% 规则 */
+  /** 私聊：未存储黄脸概率时仍注入默认 0% 规则 */
   applyClassicEmojiDefault?: boolean
   /** 已启用角色 AI 配图时注入 */
   imageRoundTriggerPercent?: number
@@ -466,6 +468,8 @@ export function buildMediaSendFrequencyPromptBlock(params: {
   /** 本轮已抽中的目标张数（仅当允许发图时传入） */
   imageRoundCountTarget?: number
   userExplicitCharacterImageRequest?: boolean
+  /** 私聊：本轮概率骰是否命中；群聊不传（无逐轮门槛） */
+  imageRoundAllowed?: boolean
 }): string {
   const sticker = params.stickerRoundTriggerPercent
   const voice = params.voiceRoundTriggerPercent
@@ -548,17 +552,31 @@ export function buildMediaSendFrequencyPromptBlock(params: {
       lines.push(buildImageRoundCountPromptLine(imageCountRange, params.imageRoundCountTarget))
     } else if (imagePercent <= 0) {
       lines.push(
-        `- **AI 配图（\`[图片]\` 行）**：概率 **0%**，**禁止**输出任何 \`[图片]\` 行；**例外**：用户本轮**直接要求**你发图/照片/自拍时，须按张数规则发图。`,
+        `- **AI 配图（\`[图片]\` 行）**：概率 **0%**，本轮**禁止**输出任何 \`[图片]\` 行；**唯一例外**：用户本轮**直接要求**你发图/照片/自拍时，须按张数规则发图。不要自发、不要顺带、不要「顺手」发图。`,
       )
+    } else if (params.imageRoundAllowed === false) {
+      lines.push(
+        `- **AI 配图（\`[图片]\` 行）**：会话发图概率 **${imagePercent}%**，**本轮未命中**——**禁止**输出任何 \`[图片]\` 行。仅用**纯文字**回复；不要分享随手拍、不要晒物、不要配图烘托气氛。用户**直接要求**发图时不受此限制。`,
+      )
+    } else if (params.imageRoundAllowed === true) {
+      if (imagePercent >= 100) {
+        lines.push(
+          '- **AI 配图（\`[图片]\` 行）**：概率 **100%**，本轮**允许**发图——**仍须**有分享/展示类语境才输出 \`[图片]\` 行；纯文字聊天、问答、安慰、斗嘴、解释、承诺等**禁止**配图；无合适画面则只发文字。',
+        )
+      } else {
+        lines.push(
+          `- **AI 配图（\`[图片]\` 行）**：会话发图概率 **${imagePercent}%**，**本轮已命中允许**——**可以**发图，但**绝大多数轮次仍应纯文字**；仅当对话里确实在分享照片、晒物、展示场景、或视觉内容本身就是回复重点时，才输出 \`[图片]\` 行。情绪安慰、争吵和解、日常问答、纯闲聊**不要**配图。`,
+        )
+      }
       lines.push(buildImageRoundCountPromptLine(imageCountRange, params.imageRoundCountTarget))
     } else if (imagePercent >= 100) {
       lines.push(
-        '- **AI 配图（\`[图片]\` 行）**：概率 **100%**，每轮回复**须**包含至少 1 条 \`[图片]\` 行（仍须贴合语境，禁止无意义刷屏）。',
+        '- **AI 配图（\`[图片]\` 行）**：概率 **100%**，每轮回复**宜**在确有分享/展示语境时包含 \`[图片]\` 行；无合适画面则只发文字，禁止无意义刷屏。',
       )
       lines.push(buildImageRoundCountPromptLine(imageCountRange, params.imageRoundCountTarget))
     } else {
       lines.push(
-        `- **AI 配图（\`[图片]\` 行）**：每轮约 **${imagePercent}%** 概率包含至少 1 条 \`[图片]\` 行；约 **${100 - imagePercent}%** 轮次不发。用户**直接要求**发图时不受此概率限制。`,
+        `- **AI 配图（\`[图片]\` 行）**：会话发图概率约 **${imagePercent}%**（非每轮必发）。**默认纯文字**；仅在有分享/展示类语境或用户直接要求时才考虑 \`[图片]\` 行。`,
       )
       lines.push(buildImageRoundCountPromptLine(imageCountRange, params.imageRoundCountTarget))
     }

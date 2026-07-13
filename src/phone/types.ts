@@ -503,7 +503,6 @@ export const DEFAULT_CUSTOMIZATION: CustomizationState = {
   apps: [
     { id: 'wechat', label: '微信', iconImageUrl: '', iconRadius: 18 },
     { id: 'takeout', label: '外卖', iconImageUrl: '', iconRadius: 18 },
-    { id: 'weibo', label: 'Lumi Pulse', iconImageUrl: '', iconRadius: 18 },
     { id: 'api', label: 'API设置', iconImageUrl: '', iconRadius: 18 },
     { id: 'lumiMeet', label: '遇见', iconImageUrl: '', iconRadius: 18 },
     { id: 'voiceprint', label: '声纹档案', iconImageUrl: '', iconRadius: 18 },

@@ -25,6 +25,8 @@ export type PulsePost = {
   /** 展示认证 V 标（主要角色 / 热搜帖） */
   verified?: boolean
   imageUrls?: string[]
+  /** 发布时附带的位置标签 */
+  locationLabel?: string
 }
 
 export type PulseComment = {

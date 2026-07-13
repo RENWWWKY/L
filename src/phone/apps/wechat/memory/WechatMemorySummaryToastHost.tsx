@@ -1,6 +1,7 @@
 import { AnimatePresence, motion } from 'framer-motion'
 import { useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
+import { MemorySummaryFailureOutputModal } from './MemorySummaryFailureOutputModal'
 import {
   WECHAT_MEMORY_SUMMARY_RESULT_EVENT,
   memorySummaryRetryKindLabel,
@@ -9,9 +10,10 @@ import {
 
 const AUTO_DISMISS_MS = 3800
 
-/** 监听合并自动总结成功/失败，居中展示临时提示 */
+/** 监听合并自动总结成功/失败：成功居中 toast，失败弹窗展示模型输出 */
 export function WechatMemorySummaryToastHost() {
-  const [detail, setDetail] = useState<WechatMemorySummaryResultDetail | null>(null)
+  const [successDetail, setSuccessDetail] = useState<WechatMemorySummaryResultDetail | null>(null)
+  const [failureDetail, setFailureDetail] = useState<WechatMemorySummaryResultDetail | null>(null)
   const timerRef = useRef<number | null>(null)
 
   useEffect(() => {
@@ -19,11 +21,19 @@ export function WechatMemorySummaryToastHost() {
       const ce = e as CustomEvent<WechatMemorySummaryResultDetail>
       if (!ce.detail) return
       if (timerRef.current != null) window.clearTimeout(timerRef.current)
-      setDetail(ce.detail)
-      timerRef.current = window.setTimeout(() => {
-        timerRef.current = null
-        setDetail(null)
-      }, AUTO_DISMISS_MS)
+
+      if (ce.detail.ok) {
+        setFailureDetail(null)
+        setSuccessDetail(ce.detail)
+        timerRef.current = window.setTimeout(() => {
+          timerRef.current = null
+          setSuccessDetail(null)
+        }, AUTO_DISMISS_MS)
+        return
+      }
+
+      setSuccessDetail(null)
+      setFailureDetail(ce.detail)
     }
     window.addEventListener(WECHAT_MEMORY_SUMMARY_RESULT_EVENT, onResult as EventListener)
     return () => {
@@ -34,52 +44,53 @@ export function WechatMemorySummaryToastHost() {
 
   if (typeof document === 'undefined') return null
 
-  const name = detail?.displayName?.trim() || '对方'
-  const kindLabel = detail ? memorySummaryRetryKindLabel(detail.kind) : ''
-  const ok = detail?.ok === true
+  const successName = successDetail?.displayName?.trim() || '对方'
+  const successKindLabel = successDetail ? memorySummaryRetryKindLabel(successDetail.kind) : ''
+
+  const failureName = failureDetail?.displayName?.trim() || '对方'
+  const failureKindLabel = failureDetail ? memorySummaryRetryKindLabel(failureDetail.kind) : ''
 
   return createPortal(
-    <AnimatePresence>
-      {detail ? (
-        <motion.div
-          key="wechat-memory-summary-result"
-          role="status"
-          aria-live="polite"
-          className="pointer-events-none fixed inset-0 z-[10055] flex items-center justify-center px-6"
-          initial={{ opacity: 0 }}
-          animate={{ opacity: 1 }}
-          exit={{ opacity: 0 }}
-        >
+    <>
+      <AnimatePresence>
+        {successDetail ? (
           <motion.div
-            initial={{ opacity: 0, scale: 0.96, y: 8 }}
-            animate={{ opacity: 1, scale: 1, y: 0 }}
-            exit={{ opacity: 0, scale: 0.96, y: 8 }}
-            transition={{ type: 'spring', stiffness: 420, damping: 34 }}
-            className={`max-w-[min(100vw-3rem,360px)] rounded-[14px] px-5 py-4 text-center shadow-lg ${
-              ok ? 'bg-black/90 text-white' : 'bg-white text-gray-900 ring-1 ring-rose-200/80'
-            }`}
+            key="wechat-memory-summary-success"
+            role="status"
+            aria-live="polite"
+            className="pointer-events-none fixed inset-0 z-[10055] flex items-center justify-center px-6"
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
           >
-            <p
-              className={`text-[11px] font-medium uppercase tracking-[0.2em] ${
-                ok ? 'text-white/55' : 'text-rose-500/80'
-              }`}
+            <motion.div
+              initial={{ opacity: 0, scale: 0.96, y: 8 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.96, y: 8 }}
+              transition={{ type: 'spring', stiffness: 420, damping: 34 }}
+              className="max-w-[min(100vw-3rem,360px)] rounded-[14px] bg-black/90 px-5 py-4 text-center text-white shadow-lg"
             >
-              {ok ? '记忆总结 · 已写入' : '记忆总结 · 未完成'}
-            </p>
-            <p className="mt-2 text-[14px] font-medium leading-relaxed">
-              {ok
-                ? `已为「${name}」写入${kindLabel}长期记忆`
-                : `「${name}」的${kindLabel}总结未写入长期记忆`}
-            </p>
-            {!ok ? (
-              <p className="mt-2 text-[12px] leading-relaxed text-gray-500">
-                {detail.failureReason?.trim() || '请打开记忆档案馆 · 待补总结 手动补跑'}
+              <p className="text-[11px] font-medium uppercase tracking-[0.2em] text-white/55">
+                记忆总结 · 已写入
               </p>
-            ) : null}
+              <p className="mt-2 text-[14px] font-medium leading-relaxed">
+                已为「{successName}」写入{successKindLabel}长期记忆
+              </p>
+            </motion.div>
           </motion.div>
-        </motion.div>
-      ) : null}
-    </AnimatePresence>,
+        ) : null}
+      </AnimatePresence>
+
+      <MemorySummaryFailureOutputModal
+        open={!!failureDetail}
+        onClose={() => setFailureDetail(null)}
+        displayName={failureName}
+        kindLabel={failureKindLabel}
+        failureReason={failureDetail?.failureReason}
+        modelOutput={failureDetail?.modelOutput}
+        parsedPreview={failureDetail?.parsedPreview}
+      />
+    </>,
     document.body,
   )
 }

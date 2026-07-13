@@ -1,3 +1,4 @@
+import { Trash2 } from 'lucide-react'
 import { ListenNumericText } from '../../../../components/discoverListen/ListenNum'
 import type { MemoryUnifiedRosterItem } from './memoryUnifiedSummaryArchive'
 import { ARCHIVE_BG } from './memoryArchiveTheme'
@@ -10,10 +11,14 @@ export function MemoryUnifiedCharacterHero({
   character,
   rosterIndex,
   rosterTotal,
+  onClearAll,
+  clearAllDisabled,
 }: {
   character: MemoryUnifiedRosterItem
   rosterIndex: number
   rosterTotal: number
+  onClearAll?: () => void
+  clearAllDisabled?: boolean
 }) {
   const { onlineMemoryCount, offlineRowCount } = character
 
@@ -57,6 +62,18 @@ export function MemoryUnifiedCharacterHero({
             </div>
           </div>
         </div>
+        {onClearAll ? (
+          <button
+            type="button"
+            data-memory-coach="clear-all"
+            disabled={clearAllDisabled}
+            onClick={onClearAll}
+            className="mt-4 flex w-full items-center justify-center gap-2 rounded-2xl border border-red-200 bg-red-50/80 py-3 text-[14px] font-semibold text-red-600 active:bg-red-100/80 disabled:border-gray-200 disabled:bg-gray-50 disabled:text-gray-400"
+          >
+            <Trash2 className="size-4" strokeWidth={2} />
+            一键清空记忆
+          </button>
+        ) : null}
       </div>
     </div>
   )

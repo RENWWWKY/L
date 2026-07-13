@@ -1,4 +1,4 @@
-import { Loader2, RefreshCw } from 'lucide-react'
+import { Eye, Loader2, RefreshCw } from 'lucide-react'
 import { useCallback, useEffect, useState } from 'react'
 import { useCurrentApiConfig } from '../../api/ApiSettingsContext'
 import { personaDb } from '../newFriendsPersona/idb'
@@ -19,6 +19,7 @@ import {
 } from './memoryRetryCoachSteps'
 import { MEMORY_RETRY_COACH_SEEN_KEY } from './memoryCoachTypes'
 import { useMemoryTabCoach } from './useMemoryTabCoach'
+import { MemorySummaryFailureOutputModal } from './MemorySummaryFailureOutputModal'
 
 function formatFailedAt(ts: number): string {
   try {
@@ -39,6 +40,7 @@ export function MemorySummaryRetryPanel({ coachActive = true }: { coachActive?: 
   const [loading, setLoading] = useState(true)
   const [busyId, setBusyId] = useState<string | null>(null)
   const [batchBusy, setBatchBusy] = useState(false)
+  const [inspectItem, setInspectItem] = useState<MemorySummaryRetryItem | null>(null)
   const coach = useMemoryTabCoach({
     seenKey: MEMORY_RETRY_COACH_SEEN_KEY,
     coachActive,
@@ -139,6 +141,7 @@ export function MemorySummaryRetryPanel({ coachActive = true }: { coachActive?: 
           <ul data-memory-coach="retry-list" className="mt-4 space-y-3">
             {rows.map((item) => {
               const busy = busyId === item.id || batchBusy
+              const canInspect = !!(item.modelOutput?.trim() || item.parsedPreview?.trim())
               return (
                 <li
                   key={item.id}
@@ -154,14 +157,26 @@ export function MemorySummaryRetryPanel({ coachActive = true }: { coachActive?: 
                         {formatMemorySummaryRetrySubtitle(item)}
                       </p>
                     </div>
-                    <button
-                      type="button"
-                      disabled={busy}
-                      onClick={() => void runRetry(item)}
-                      className="shrink-0 rounded-full bg-gray-900 px-4 py-2 text-[12px] font-semibold text-white disabled:opacity-45"
-                    >
-                      {busy ? '补跑中…' : '补跑'}
-                    </button>
+                    <div className="flex shrink-0 flex-col items-end gap-2">
+                      {canInspect ? (
+                        <button
+                          type="button"
+                          onClick={() => setInspectItem(item)}
+                          className="flex items-center gap-1 rounded-full bg-gray-100 px-3 py-1.5 text-[11px] font-medium text-gray-700"
+                        >
+                          <Eye className="size-3.5" />
+                          查看
+                        </button>
+                      ) : null}
+                      <button
+                        type="button"
+                        disabled={busy}
+                        onClick={() => void runRetry(item)}
+                        className="rounded-full bg-gray-900 px-4 py-2 text-[12px] font-semibold text-white disabled:opacity-45"
+                      >
+                        {busy ? '补跑中…' : '补跑'}
+                      </button>
+                    </div>
                   </div>
                 </li>
               )
@@ -169,6 +184,17 @@ export function MemorySummaryRetryPanel({ coachActive = true }: { coachActive?: 
           </ul>
         </>
       )}
+
+      <MemorySummaryFailureOutputModal
+        open={!!inspectItem}
+        onClose={() => setInspectItem(null)}
+        displayName={inspectItem?.displayName?.trim() || '对方'}
+        kindLabel={inspectItem ? memorySummaryRetryKindLabel(inspectItem.kind) : ''}
+        failureReason={inspectItem?.failureReason}
+        modelOutput={inspectItem?.modelOutput}
+        parsedPreview={inspectItem?.parsedPreview}
+        zIndex={57000}
+      />
 
       <MemoryTutorialModal
         open={coach.tutorialOpen}

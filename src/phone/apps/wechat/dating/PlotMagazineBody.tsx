@@ -18,18 +18,18 @@ export function PlotMagazineBody({ content, plotImages, characterId, plotId }: P
   )
 
   return (
-    <div className="overflow-hidden text-[16px] font-normal leading-[1.85] text-[#262626]">
+    <div className="text-[16px] font-normal leading-[1.85] text-[#262626]">
       {segments.map((seg, index) => {
         if (seg.type === 'image') {
           return (
-            <PlotImageTile
-              key={seg.image.id}
-              image={seg.image}
-              characterId={characterId}
-              plotId={plotId}
-              variant="magazine"
-              floatSide={seg.float}
-            />
+            <div key={seg.image.id} className="my-3 w-full">
+              <PlotImageTile
+                image={seg.image}
+                characterId={characterId}
+                plotId={plotId}
+                variant="block"
+              />
+            </div>
           )
         }
         return (

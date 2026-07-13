@@ -1,6 +1,6 @@
 import { motion } from 'framer-motion'
-import { ArrowLeft, Sparkles } from 'lucide-react'
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { ArrowLeft, Hash, Sparkles } from 'lucide-react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 
 import { Pressable } from '../../components/Pressable'
 import { useCurrentApiConfig } from '../api/ApiSettingsContext'
@@ -8,6 +8,7 @@ import { PostCard } from './components/PostCard'
 import { PulseWeiboFacePicker } from './components/PulseWeiboFacePicker'
 import { PulseWeiboFaceText } from './components/PulseWeiboFaceText'
 import { PULSE_COLORS, PULSE_MODAL_SPRING } from './constants'
+import { insertAtTextareaCursor } from './pulseWeiboRichText'
 import { aiGeneratePulseComments, aiGeneratePulseFeedPosts, nestPulseComments } from './lumiPulseAi'
 import {
   pickStablePulseNetizenAvatarPath,
@@ -59,15 +60,17 @@ function CommentBlock({
 
 export function PostDetail({
   post,
-  currentPovId,
-  authorLabel: _authorLabel,
+  currentPlayerPovId,
+  authorLabel,
+  authorAvatarUrl,
   onBack,
   onToast,
   onRepost,
 }: {
   post: PulsePost
-  currentPovId: string
+  currentPlayerPovId: string
   authorLabel: string
+  authorAvatarUrl?: string
   onBack: () => void
   onToast: (msg: string) => void
   onRepost: () => void
@@ -81,6 +84,21 @@ export function PostDetail({
   const ensurePostDetailAvatars = usePulseStore((s) => s.ensurePostDetailAvatars)
   const [refreshing, setRefreshing] = useState(false)
   const [commentDraft, setCommentDraft] = useState('')
+  const commentInputRef = useRef<HTMLInputElement>(null)
+
+  const insertCommentToken = useCallback((token: string) => {
+    setCommentDraft((prev) => {
+      const el = commentInputRef.current
+      const { next, cursor } = insertAtTextareaCursor(prev, token, el)
+      requestAnimationFrame(() => {
+        if (el) {
+          el.focus()
+          el.setSelectionRange(cursor, cursor)
+        }
+      })
+      return next
+    })
+  }, [])
 
   const nested = useMemo(() => nestPulseComments(comments), [comments])
 
@@ -97,7 +115,7 @@ export function PostDetail({
         viewerName: post.authorName,
         count: 4,
       })
-      appendAiPosts(feedRows, currentPovId)
+      appendAiPosts(feedRows, currentPlayerPovId)
 
       const commentRows = await aiGeneratePulseComments({
         apiConfig,
@@ -133,7 +151,7 @@ export function PostDetail({
     } finally {
       setRefreshing(false)
     }
-  }, [addComment, apiConfig, appendAiPosts, currentPovId, onToast, post])
+  }, [addComment, apiConfig, appendAiPosts, currentPlayerPovId, onToast, post])
 
   return (
     <>
@@ -157,7 +175,7 @@ export function PostDetail({
         <div className="min-h-0 flex-1 overflow-y-auto px-3 pb-32 pt-2">
           <PostCard
             post={post}
-            currentPovId={currentPovId}
+            currentPovId={currentPlayerPovId}
             onOpen={() => {}}
             onLike={() => toggleLike(post.id)}
             onRepost={onRepost}
@@ -189,10 +207,17 @@ export function PostDetail({
           style={{ paddingBottom: 'max(12px, env(safe-area-inset-bottom, 0px))' }}
         >
           <div className="flex items-center gap-1 rounded-full bg-[#F5F5F4]/80 px-2 py-2">
-            <PulseWeiboFacePicker
-              onPick={(token) => setCommentDraft((prev) => `${prev}${token}`)}
-            />
+            <PulseWeiboFacePicker onPick={insertCommentToken} />
+            <Pressable
+              type="button"
+              onClick={() => insertCommentToken('#')}
+              className="flex size-8 shrink-0 items-center justify-center rounded-full"
+              aria-label="插入话题"
+            >
+              <Hash className="size-4" strokeWidth={1.35} style={{ color: PULSE_COLORS.topicBlue }} />
+            </Pressable>
             <input
+              ref={commentInputRef}
               value={commentDraft}
               onChange={(e) => setCommentDraft(e.target.value)}
               placeholder="写评论…"
@@ -204,8 +229,9 @@ export function PostDetail({
               onClick={() => {
                 addUserComment({
                   postId: post.id,
-                  authorPovId: currentPovId,
-                  authorName: _authorLabel,
+                  authorPovId: currentPlayerPovId,
+                  authorName: authorLabel,
+                  authorAvatarUrl,
                   content: commentDraft.trim(),
                 })
                 setCommentDraft('')

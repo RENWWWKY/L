@@ -209,6 +209,12 @@ export type ChatConversationSettingsRow = {
   notifyEnabled: boolean
   /** 是否在回复中输出可见思维链（关闭可节省 token） */
   showThinkingChain: boolean
+  /** 是否注入「伪造聊天记录卡片」能力协议（默认关） */
+  forwardHistoryCardEnabled: boolean
+  /** 是否注入「换头像/朋友圈背景」能力协议（默认关） */
+  profileImageChangeEnabled: boolean
+  /** 是否注入「网络玩梗轻量词库」附录（默认关） */
+  internetMemeLexiconEnabled: boolean
   isDanmakuMode: boolean
   /** 群聊：是否在消息头像旁显示发送者群昵称（默认开启） */
   showGroupMemberNicknameInChat: boolean
@@ -672,6 +678,10 @@ export type MemorySummaryRetryItem = {
   datingAiPlotId?: string
   failedAt: number
   failureReason?: string
+  /** 最近一次失败时模型原始输出（便于排查） */
+  modelOutput?: string
+  /** 最近一次失败时解析后的摘要预览 */
+  parsedPreview?: string
 }
 
 /** 微信私聊持久化消息（IndexedDB `chatMessages`） */
@@ -1046,6 +1056,12 @@ export type WeChatChatMessage = {
   chatHistory?: WeChatChatHistoryPayload
   /** 图片消息：纯图片时 content 允许为空串 */
   images?: { base64: string; type: WeChatImageMime }[]
+  /** AI 配图异步生成中（占位气泡） */
+  imageGenPending?: boolean
+  /** AI 配图生成失败（占位气泡） */
+  imageGenFailed?: boolean
+  /** AI 配图原始 prompt（失败后可重试） */
+  imageGenPrompt?: string
   /** 是否收藏 */
   isFavorite?: boolean
   /** 引用消息结构化快照（兼容旧版 string id） */

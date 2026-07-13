@@ -14,11 +14,11 @@ import { usePulseStore } from './usePulseStore'
 
 export function PulseDiscover({
   povName,
-  currentPovId,
+  currentWorldId,
   onOpenTopic,
 }: {
   povName: string
-  currentPovId: string
+  currentWorldId: string
   onOpenTopic?: (topic: PulseTrendingTopic) => void
 }) {
   const apiConfig = useCurrentApiConfig('chatCard')
@@ -48,15 +48,15 @@ export function PulseDiscover({
         tag: r.tag,
         excerpt: r.excerpt,
         createdAt: now,
-        generatedForPovId: currentPovId,
+        generatedForPovId: currentWorldId,
       }))
-      setTrending(topics, currentPovId)
+      setTrending(topics, currentWorldId)
     } catch (e) {
       window.alert(e instanceof Error ? e.message : '生成失败')
     } finally {
       setLoading(false)
     }
-  }, [apiConfig, currentPovId, povName, setTrending])
+  }, [apiConfig, currentWorldId, povName, setTrending])
 
   return (
     <div className="flex min-h-0 flex-1 flex-col bg-[#FCFCFC]">

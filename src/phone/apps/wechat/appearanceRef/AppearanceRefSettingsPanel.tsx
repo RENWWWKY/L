@@ -20,6 +20,9 @@ import {
 import { ImageCropperModal } from '../../../components/ImageCropperModal'
 import { resolveCharacterAvatarUrl } from '../../../utils/characterAvatarUrl'
 import { emitWeChatStorageChanged, personaDb } from '../newFriendsPersona/idb'
+import { useImageGenSettings } from '../../api/useImageGenSettings'
+import { describeReferenceImageSupportForModel } from '../../../../components/moments/imageGenModelCapabilities'
+import { parseMomentsImageModelId } from '../../../../components/moments/momentsImageModelCatalog'
 import type {
   Character,
   CharacterAppearanceRefImage,
@@ -172,6 +175,11 @@ export function AppearanceRefSettingsPanel({
 
   const panelTitle = title ?? (subject === 'character' ? '角色形象参考' : '用户形象参考')
   const panelDesc = description ?? (subject === 'character' ? DEFAULT_CHARACTER_DESC : DEFAULT_USER_DESC)
+  const { imageGen } = useImageGenSettings()
+  const refSupportNote = useMemo(() => {
+    const { modelName } = parseMomentsImageModelId(imageGen.modelId)
+    return modelName ? describeReferenceImageSupportForModel(imageGen.provider, modelName) : ''
+  }, [imageGen])
 
   const persistGlobal = async (images: CharacterAppearanceRefImage[], note: string) => {
     if (subject === 'character') {
@@ -573,6 +581,9 @@ export function AppearanceRefSettingsPanel({
           </span>
         </div>
         <p className="mt-1 text-[12px] leading-relaxed text-[#8e8e8e]">{panelDesc}</p>
+        {refSupportNote ? (
+          <p className="mt-1.5 text-[11px] leading-relaxed text-[#9CA3AF]">{refSupportNote}</p>
+        ) : null}
         {scoped && forked ? (
           <button
             type="button"

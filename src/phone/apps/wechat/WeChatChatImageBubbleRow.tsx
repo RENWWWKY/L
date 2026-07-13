@@ -12,7 +12,13 @@ import { ChatImageLightbox } from './ChatImageLightbox'
 type Props = {
   id: string
   isSelf: boolean
-  src: string
+  src?: string
+  /** 生图占位：正在生成 */
+  generating?: boolean
+  /** 生图占位：生成失败 */
+  genFailed?: boolean
+  /** 生图失败时点击重试 */
+  onRetry?: () => void
   isSticker?: boolean
   bubble: WeChatBubbleTheme
   showAvatar: boolean
@@ -33,7 +39,9 @@ type Props = {
 export function WeChatChatImageBubbleRow({
   id: _id,
   isSelf,
-  src,
+  src = '',
+  generating = false,
+  genFailed = false,
   isSticker = false,
   bubble,
   showAvatar,
@@ -47,12 +55,15 @@ export function WeChatChatImageBubbleRow({
   onOtherAvatarClick,
   selected = false,
   onLongPress,
+  onRetry,
   multiSelectAvatar,
 }: Props) {
   const anchorRef = useRef<HTMLDivElement>(null)
   const [lightboxOpen, setLightboxOpen] = useState(false)
   const avatarPx = 40
   const bubbleRadius = isSelf ? `${bubble.selfBubbleRadiusPx}px` : `${bubble.otherBubbleRadiusPx}px`
+  const showGenerating = generating && !genFailed
+  const showFailed = genFailed && !showGenerating
 
   const bg = isSticker ? 'transparent' : '#ffffff'
   const border = isSticker
@@ -69,14 +80,78 @@ export function WeChatChatImageBubbleRow({
   }, [onLongPress])
 
   const { bind, pressing } = useWeChatLongPress({
-    enabled: !!onLongPress,
+    enabled: !!onLongPress && !showGenerating,
     ms: 500,
     moveThresholdPx: 10,
     onLongPress: () => handleLongPress(),
-    onTap: () => setLightboxOpen(true),
+    onTap: () => {
+      if (showGenerating) return
+      if (showFailed) {
+        onRetry?.()
+        return
+      }
+      setLightboxOpen(true)
+    },
   })
 
+  const failedBind = useWeChatLongPress({
+    enabled: showFailed && !!onRetry,
+    ms: 500,
+    moveThresholdPx: 10,
+    onLongPress: () => handleLongPress(),
+    onTap: () => onRetry?.(),
+  }).bind
+
   const imageBlock = useMemo(() => {
+    if (showGenerating || showFailed) {
+      return (
+        <div
+          ref={anchorRef}
+          className="relative inline-flex select-none items-center justify-center"
+          style={{
+            width: isSticker ? 160 : 180,
+            maxWidth: isSticker ? '46vw' : '56vw',
+            minHeight: isSticker ? 120 : 160,
+            borderRadius: bubbleRadius,
+            border,
+            background: '#f3f3f3',
+            userSelect: 'none',
+            WebkitUserSelect: 'none' as any,
+            WebkitTouchCallout: 'none' as any,
+          }}
+          {...(showFailed && onRetry ? failedBind : onLongPress ? bind : {})}
+        >
+          <div className="flex flex-col items-center gap-2 px-4 py-6 text-center">
+            {showGenerating ? (
+              <>
+                <span
+                  className="inline-block h-5 w-5 animate-spin rounded-full border-2 border-black/10 border-t-black/45"
+                  aria-hidden
+                />
+                <span className="text-[12px] leading-snug text-black/55">正在生成中…</span>
+              </>
+            ) : (
+              <>
+                <span className="text-[12px] leading-snug text-black/45">图片生成失败</span>
+                {onRetry ? (
+                  <span className="text-[12px] font-medium leading-snug text-[#576B95]">点击重试</span>
+                ) : null}
+              </>
+            )}
+          </div>
+          {selected ? (
+            <span
+              className="pointer-events-none absolute inset-0"
+              style={{
+                borderRadius: bubbleRadius,
+                background: 'rgba(0,0,0,0.08)',
+              }}
+              aria-hidden
+            />
+          ) : null}
+        </div>
+      )
+    }
     return (
       <div
         ref={anchorRef}
@@ -117,7 +192,7 @@ export function WeChatChatImageBubbleRow({
         ) : null}
       </div>
     )
-  }, [bg, bind, border, bubbleRadius, isSticker, pressing, selected, src])
+  }, [bg, bind, border, bubbleRadius, failedBind, isSticker, onLongPress, onRetry, pressing, selected, showFailed, showGenerating, src])
 
   const showAvatarVisual = showAvatar && showAvatarColumn
   const reserveAvatarGutter = showAvatar
@@ -232,7 +307,9 @@ export function WeChatChatImageBubbleRow({
           <div className="ml-[24px] mr-auto min-w-0">{imageBlock}</div>
         )}
       </div>
+      {!showGenerating && !showFailed ? (
         <ChatImageLightbox open={lightboxOpen} src={src} onClose={() => setLightboxOpen(false)} />
+      ) : null}
       </>
     )
   }
@@ -320,8 +397,9 @@ export function WeChatChatImageBubbleRow({
         <div className="mr-[24px] ml-auto min-w-0">{imageBlock}</div>
       )}
       </div>
-      <ChatImageLightbox open={lightboxOpen} src={src} onClose={() => setLightboxOpen(false)} />
+      {!showGenerating && !showFailed ? (
+        <ChatImageLightbox open={lightboxOpen} src={src} onClose={() => setLightboxOpen(false)} />
+      ) : null}
     </>
   )
 }
-

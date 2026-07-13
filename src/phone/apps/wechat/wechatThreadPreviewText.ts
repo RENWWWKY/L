@@ -32,6 +32,7 @@ type NotifyPreviewMessage = {
   content: string
   voice?: { durationSec?: number; transcriptText?: string } | null
   images?: unknown[] | null
+  imageGenPending?: boolean | null
   redPacket?: unknown | null
   transfer?: unknown | null
   musicSync?: unknown | null
@@ -75,6 +76,7 @@ export function formatWeChatNotifyPreviewFromStoredMessage(msg: NotifyPreviewMes
   if (msg.musicSync) return '[音乐]'
   if (msg.redPacket) return '[红包]'
   if (isWeChatStickerPreviewContent(msg.content)) return '[动画表情]'
+  if (msg.imageGenPending) return '[图片]'
   if (msg.images?.length) return '[图片]'
   return formatWeChatMessagesTabPreviewFromStoredMessageContent(msg.content)
 }

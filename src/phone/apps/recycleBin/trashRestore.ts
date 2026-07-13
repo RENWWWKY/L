@@ -61,6 +61,9 @@ export async function restoreIndexedTrashEntry(entry: IndexedTrashEntry): Promis
                 hiddenFromMessageList: p.conversationSettings.hiddenFromMessageList,
                 notifyEnabled: p.conversationSettings.notifyEnabled,
                 showThinkingChain: p.conversationSettings.showThinkingChain,
+                forwardHistoryCardEnabled: p.conversationSettings.forwardHistoryCardEnabled,
+                profileImageChangeEnabled: p.conversationSettings.profileImageChangeEnabled,
+                internetMemeLexiconEnabled: p.conversationSettings.internetMemeLexiconEnabled,
                 isDanmakuMode: p.conversationSettings.isDanmakuMode,
                 showGroupMemberNicknameInChat: p.conversationSettings.showGroupMemberNicknameInChat,
                 showGroupRankBadgesInChat: p.conversationSettings.showGroupRankBadgesInChat,
@@ -94,6 +97,9 @@ export async function restoreIndexedTrashEntry(entry: IndexedTrashEntry): Promis
               hiddenFromMessageList: p.conversationSettings.hiddenFromMessageList,
               notifyEnabled: p.conversationSettings.notifyEnabled,
               showThinkingChain: p.conversationSettings.showThinkingChain,
+              forwardHistoryCardEnabled: p.conversationSettings.forwardHistoryCardEnabled,
+              profileImageChangeEnabled: p.conversationSettings.profileImageChangeEnabled,
+              internetMemeLexiconEnabled: p.conversationSettings.internetMemeLexiconEnabled,
               isDanmakuMode: p.conversationSettings.isDanmakuMode,
               showGroupMemberNicknameInChat: p.conversationSettings.showGroupMemberNicknameInChat,
               showGroupRankBadgesInChat: p.conversationSettings.showGroupRankBadgesInChat,
@@ -106,6 +112,20 @@ export async function restoreIndexedTrashEntry(entry: IndexedTrashEntry): Promis
         case 'character-memory': {
           const { memory } = entry.payload as { memory: CharacterMemory }
           await personaDb.upsertCharacterMemory(memory)
+          break
+        }
+        case 'story-timeline-archive': {
+          const p = entry.payload as {
+            characterId: string
+            rows: import('../wechat/memory/storyTimelineTypes').StoryTimelinePlotRow[]
+            state: import('../wechat/memory/storyTimelineTypes').StoryTimelineState | null
+          }
+          for (const row of p.rows ?? []) {
+            await personaDb.upsertStoryTimelinePlotRow(row)
+          }
+          if (p.state) {
+            await personaDb.putStoryTimelineState(p.state)
+          }
           break
         }
         case 'friend-request': {
@@ -164,6 +184,9 @@ export async function restoreIndexedTrashEntry(entry: IndexedTrashEntry): Promis
               hiddenFromMessageList: payload.conversationSettings.hiddenFromMessageList,
               notifyEnabled: payload.conversationSettings.notifyEnabled,
               showThinkingChain: payload.conversationSettings.showThinkingChain,
+              forwardHistoryCardEnabled: payload.conversationSettings.forwardHistoryCardEnabled,
+              profileImageChangeEnabled: payload.conversationSettings.profileImageChangeEnabled,
+              internetMemeLexiconEnabled: payload.conversationSettings.internetMemeLexiconEnabled,
               isDanmakuMode: payload.conversationSettings.isDanmakuMode,
               showGroupMemberNicknameInChat: payload.conversationSettings.showGroupMemberNicknameInChat,
               showGroupRankBadgesInChat: payload.conversationSettings.showGroupRankBadgesInChat,
@@ -216,6 +239,9 @@ export async function restoreIndexedTrashEntry(entry: IndexedTrashEntry): Promis
               hiddenFromMessageList: row.hiddenFromMessageList,
               notifyEnabled: row.notifyEnabled,
               showThinkingChain: row.showThinkingChain,
+              forwardHistoryCardEnabled: row.forwardHistoryCardEnabled,
+              profileImageChangeEnabled: row.profileImageChangeEnabled,
+              internetMemeLexiconEnabled: row.internetMemeLexiconEnabled,
               isDanmakuMode: row.isDanmakuMode,
               showGroupMemberNicknameInChat: row.showGroupMemberNicknameInChat,
               showGroupRankBadgesInChat: row.showGroupRankBadgesInChat,
@@ -261,6 +287,9 @@ export async function restoreIndexedTrashEntry(entry: IndexedTrashEntry): Promis
               hiddenFromMessageList: row.hiddenFromMessageList,
               notifyEnabled: row.notifyEnabled,
               showThinkingChain: row.showThinkingChain,
+              forwardHistoryCardEnabled: row.forwardHistoryCardEnabled,
+              profileImageChangeEnabled: row.profileImageChangeEnabled,
+              internetMemeLexiconEnabled: row.internetMemeLexiconEnabled,
               isDanmakuMode: row.isDanmakuMode,
               showGroupMemberNicknameInChat: row.showGroupMemberNicknameInChat,
               showGroupRankBadgesInChat: row.showGroupRankBadgesInChat,

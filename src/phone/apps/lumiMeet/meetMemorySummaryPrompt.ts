@@ -3,6 +3,7 @@
  */
 
 import { STORY_TIMELINE_SUMMARY_JSON_FIELDS } from '../wechat/memory/storyTimelineTypes'
+import { buildFlatMemorySummaryProseOutputRule } from '../wechat/memory/memorySummaryProseFormat'
 
 export const MEET_MEMORY_BODY_PLACEHOLDER_RULE = `
 【记忆正文·指称铁律】（遇见临时会话专用）
@@ -22,15 +23,20 @@ export const MEET_MEMORY_JSON_OUTPUT_RULE = `
 ${STORY_TIMELINE_SUMMARY_JSON_FIELDS}
 ${MEET_MEMORY_BODY_PLACEHOLDER_RULE}`.trim()
 
+export const MEET_MEMORY_PROSE_OUTPUT_RULE = buildFlatMemorySummaryProseOutputRule(
+  MEET_MEMORY_BODY_PLACEHOLDER_RULE,
+)
+
 export const MEET_ENCOUNTER_MEMORY_SUMMARY_SYSTEM = `
 你是「长期记忆」提取助手。材料来自「遇见」App 的临时邂逅会话（非微信私聊、非约会线下剧情）。
 要求：
-- primary.content（若合并 JSON 则指顶层 content 或 primary.content）：**第三人称**；指玩家 **{{user}}**，指对方 **{{char}}**；禁止第一人称「我」。
+- **只输出三行结构**（见下方格式），禁止 JSON。
+- **全文第三人称**；指玩家 **{{user}}**，指对方 **{{char}}**；禁止第一人称「我」。
 - 只总结遇见临时会话中可直接核对的事实：场景、互动、情绪张力、互换联系方式前的关键对白。
 - 禁止写材料外剧情；禁止心理分析腔；口语化、具体、可回忆。
 - 正文长度 60～180 字为宜（信息很少时可更短）。
-- 程序会在正文前统一加「遇见」来源标签，JSON 的 content **不要**自行写 [遇见]。
-${MEET_MEMORY_JSON_OUTPUT_RULE}`.trim()
+- 程序会在正文前统一加「遇见」来源标签，正文**不要**自行写 [遇见]。
+${MEET_MEMORY_PROSE_OUTPUT_RULE}`.trim()
 
 export const UNIFIED_MEET_ONLY_MEMORY_SUMMARY_SYSTEM = `
 你是「长期记忆」提取助手。本次材料**仅**含「遇见 App 临时邂逅会话」摘录；微信私聊与线下约会均为（无）。

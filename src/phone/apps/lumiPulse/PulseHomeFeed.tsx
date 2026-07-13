@@ -6,8 +6,9 @@ import { Pressable } from '../../components/Pressable'
 import { PostCard } from './components/PostCard'
 import { PULSE_COLORS, PULSE_TAB_SPRING } from './constants'
 import { PublishEditor } from './PublishEditor'
-import type { PulseHomeSegment } from './pulseTypes'
+import type { PulseHomeSegment, PulsePovOption } from './pulseTypes'
 import { usePulseHomePosts } from './pulseStoreSelectors'
+import { usePublishMentionCandidates } from './usePublishMentionCandidates'
 import { usePulseStore } from './usePulseStore'
 
 const SEGMENTS: { id: PulseHomeSegment; label: string }[] = [
@@ -16,22 +17,25 @@ const SEGMENTS: { id: PulseHomeSegment; label: string }[] = [
 ]
 
 export function PulseHomeFeed({
-  currentPovId,
+  currentPlayerPovId,
   authorName,
   authorAvatarUrl,
+  povOptions,
   onOpenPost,
   onRepostPost,
 }: {
-  currentPovId: string
+  currentPlayerPovId: string
   authorName: string
   authorAvatarUrl?: string
+  povOptions: PulsePovOption[]
   onOpenPost: (postId: string) => void
   onRepostPost: (postId: string) => void
 }) {
   const [segment, setSegment] = useState<PulseHomeSegment>('following')
   const [editorOpen, setEditorOpen] = useState(false)
-  const posts = usePulseHomePosts(segment, currentPovId)
+  const posts = usePulseHomePosts(segment, currentPlayerPovId)
   const toggleLike = usePulseStore((s) => s.toggleLike)
+  const mentionCandidates = usePublishMentionCandidates(currentPlayerPovId, povOptions)
 
   return (
     <>
@@ -85,7 +89,7 @@ export function PulseHomeFeed({
                   <PostCard
                     key={post.id}
                     post={post}
-                    currentPovId={currentPovId}
+                    currentPovId={currentPlayerPovId}
                     onOpen={() => onOpenPost(post.id)}
                     onLike={() => toggleLike(post.id)}
                     onRepost={() => onRepostPost(post.id)}
@@ -107,9 +111,10 @@ export function PulseHomeFeed({
       <AnimatePresence>
         {editorOpen ? (
           <PublishEditor
-            authorPovId={currentPovId}
+            authorPovId={currentPlayerPovId}
             authorName={authorName}
             authorAvatarUrl={authorAvatarUrl}
+            mentionCandidates={mentionCandidates}
             onClose={() => setEditorOpen(false)}
             onPublished={() => setEditorOpen(false)}
           />

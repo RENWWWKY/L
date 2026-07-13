@@ -42,7 +42,7 @@ const ERROR_RULES: ErrorRule[] = [
   },
   {
     test: /only imagen models are supported|not supported model for image generation/i,
-    zh: '当前中转站的 /images/generations 仅支持 Imagen 等模型；Gemini 原生生图模型（如 gemini-2.5-flash-image）在自定义接口下会自动走 generateContent',
+    zh: '当前中转站的 /images/generations 仅支持 Imagen 等模型；Gemini 原生图模会自动尝试 generateContent，并在失败时回退到 /images/generations',
   },
   {
     test: /model not found|model does not exist|unknown model|invalid model|模型不存在|模型未找到/i,

@@ -33,6 +33,31 @@ import {
   setWechatAiReplyPipelineActive,
   subscribeWechatAiReplyPipelineActive,
 } from './wechatAiReplyInFlight'
+import {
+  getConversationFlushContext,
+  getConversationPendingAiReplies,
+  getConversationPipelineFlags,
+  isAnyConversationPeerTypingForNotify,
+  isConversationAiPipelineBlockingSend,
+  isConversationPeerReplyingVisible,
+  isConversationFlushAiRepliesBusy,
+  isConversationOpponentQueueStopped,
+  isConversationProcessingSend,
+  setConversationAiCalling,
+  setConversationAwaitingAiKick,
+  clearConversationFlushContext,
+  setConversationFlushContext,
+  setConversationFlushAiRepliesBusy,
+  setConversationFlushUiBusy,
+  setConversationHeaderTyping,
+  setConversationOpponentQueueStop,
+  setConversationPendingAiReplies,
+  setConversationPendingQueueCount,
+  setConversationProcessingSend,
+  subscribeWechatConversationAiPipeline,
+  notifyWechatConversationAiPipeline,
+  resolveBoundConversationFlushContext,
+} from './wechatConversationAiPipeline'
 import { hasProactiveMessageScheduleSaved } from './proactivePrivateMessageTypes'
 import {
   drawProactiveVariableIntervalSeconds,
@@ -54,8 +79,29 @@ import { useCurrentApiConfig, useIsSubApiEnabled } from '../api/ApiSettingsConte
 import type { ApiConfig } from '../api/types'
 import { isCharacterImageGenEnabled, DEFAULT_IMAGE_GEN_SETTINGS } from '../api/imageGenPresetUtils'
 import { loadResolvedImageGenSettings } from '../api/loadResolvedImageGenSettings'
-import { generateMomentsImage } from '../../../components/moments/momentsImageGen'
-import { buildCharacterMediaImageGenParams, characterHasAppearanceReference, resolveCharacterImageGenPromptAppearanceHint } from './characterAppearanceImageGen'
+import {
+  buildCharacterImageGenPromptBlock,
+  buildCharacterImageFakeSendRetryBias,
+  characterOutputClaimsSentImageWithoutLine,
+  mergeCharacterImageRetryBubbles,
+  parseCharacterImageGenLine,
+  countCharacterImageGenLinesInBubbles,
+  stripCharacterImageGenLinesFromBubbles,
+  limitCharacterImageGenLinesFromBubbles,
+} from './wechatCharacterImageGen'
+import { buildChatContextTailFromTranscript } from './nsfwPoseLibrary/buildWeChatNsfwPoseLibraryPromptBlock'
+import {
+  retryWeChatCharacterImageGenMessage,
+  startWeChatCharacterImageGenInBackground,
+  WECHAT_IMAGE_GEN_UI_PATCH_EVENT,
+  clearWeChatImageGenUiPatch,
+  getWeChatImageGenUiPatch,
+  getWeChatImageGenUiPatchMap,
+  isWeChatImageGenUiPatchResolved,
+  rememberWeChatImageGenUiPatch,
+  type WeChatImageGenUiPatch,
+} from './wechatCharacterImageGenAsync'
+import { characterHasAppearanceReference, resolveCharacterImageGenPromptAppearanceHint } from './characterAppearanceImageGen'
 import { resolveCharacterMediaImageStyleHint } from '../../../components/moments/momentsImagePromptEnhancer'
 
 import { useChatTheme } from './ChatThemeContext'
@@ -173,24 +219,11 @@ import {
   shouldSuppressCharacterStickerLine,
   shouldSuppressCharacterVoiceLine,
   shouldSuppressCharacterImageLine,
-  isImageGenRateLimitError,
   isImageGenQuotaOrRateLimitBlocked,
-  markImageGenQuotaOrRateLimitBlocked,
   stripBannedClassicEmojiTokens,
   shouldStripClassicEmojiTokensThisRound,
 } from './wechatMediaSendFrequency'
 import { stripWechatClassicEmojiTokens } from './stickers/wechatClassicStickerPack'
-import {
-  buildCharacterImageGenPromptBlock,
-  buildCharacterImageFakeSendRetryBias,
-  characterOutputClaimsSentImageWithoutLine,
-  imageGenDataUrlToPayload,
-  mergeCharacterImageRetryBubbles,
-  parseCharacterImageGenLine,
-  countCharacterImageGenLinesInBubbles,
-  stripCharacterImageGenLinesFromBubbles,
-  limitCharacterImageGenLinesFromBubbles,
-} from './wechatCharacterImageGen'
 import { shouldInjectImageGenCompositionLifeFeelCot } from '../../../components/moments/imageGenCompositionLifeFeelCot'
 import {
   buildUserExplicitCharacterImageRequestBias,
@@ -533,6 +566,11 @@ import { MemoizedMessageItem, chatMsgRenderFingerprint } from './chatRoom/Messag
 import { ChatMessageList } from './chatRoom/ChatMessageList'
 import { probeChatRender, probeMemoDeps } from './chatRoom/chatRenderProbe'
 import { useChatQueue } from './chatRoom/useChatQueue'
+import {
+  hasStashedOpponentRevealJobs,
+  stashOpponentRevealJobs,
+  takeStashedOpponentRevealJobs,
+} from './chatRoom/opponentRevealQueueStore'
 import { computeRevealDelayMs } from './chatRoom/computeRevealDelayMs'
 import { useConsoleLogger } from './useConsoleLogger'
 
@@ -902,6 +940,9 @@ function mapWeChatMessagesToChatItems(msgs: WeChatChatMessage[]): ChatMsg[] {
         timestamp: m.timestamp,
         replyTo: m.replyTo,
         images: m.images,
+        imageGenPending: m.imageGenPending,
+        imageGenFailed: m.imageGenFailed,
+        imageGenPrompt: m.imageGenPrompt,
         redPacket: m.redPacket,
         transfer: m.transfer,
         callStatus: m.callStatus,
@@ -974,6 +1015,9 @@ function mapWeChatMessagesToChatItems(msgs: WeChatChatMessage[]): ChatMsg[] {
       timestamp: m.timestamp,
       replyTo: m.replyTo,
       images: m.images,
+      imageGenPending: m.imageGenPending,
+      imageGenFailed: m.imageGenFailed,
+      imageGenPrompt: m.imageGenPrompt,
       redPacket: m.redPacket,
       transfer: m.transfer,
       callStatus: m.callStatus,
@@ -1047,7 +1091,7 @@ function rebuildChatItemsWithTimestamps(msgs: ChatMsg[], formatWxTimeLabel: (ts:
 function messagePlainPreview(
   msg: Pick<
     ChatMsg,
-    'text' | 'images' | 'redPacket' | 'transfer' | 'callStatus' | 'voice' | 'musicSync' | 'miniGameInvite' | 'listenCommentShare' | 'listenProfileShare' | 'listenTrackShare' | 'locationShare' | 'takeoutOrder' | 'pulseShare' | 'sharedRecord' | 'chatHistory' | 'isRecalled' | 'isGroupEventStrip'
+    'text' | 'images' | 'imageGenPending' | 'imageGenFailed' | 'redPacket' | 'transfer' | 'callStatus' | 'voice' | 'musicSync' | 'miniGameInvite' | 'listenCommentShare' | 'listenProfileShare' | 'listenTrackShare' | 'locationShare' | 'takeoutOrder' | 'pulseShare' | 'sharedRecord' | 'chatHistory' | 'isRecalled' | 'isGroupEventStrip'
   >,
 ): string {
   if (msg.isGroupEventStrip && msg.text?.trim()) return msg.text.trim()
@@ -1097,6 +1141,8 @@ function messagePlainPreview(
   }
   const t = msg.text?.trim()
   if (t) return t
+  if (msg.imageGenPending) return '[图片]（生成中）'
+  if (msg.imageGenFailed) return '[图片]（生成失败）'
   if (msg.images?.length) return '[图片]'
   return '...'
 }
@@ -1628,6 +1674,9 @@ type ChatMsg = {
   timestamp: number
   replyTo?: WeChatReplyToMeta
   images?: { base64: string; type: WeChatImageMime }[]
+  imageGenPending?: boolean
+  imageGenFailed?: boolean
+  imageGenPrompt?: string
   redPacket?: WeChatRedPacketPayload
   transfer?: WeChatTransferPayload
   callStatus?: { status: 'rejected' | 'no_answer' | 'duration'; durationSec?: number }
@@ -2048,6 +2097,105 @@ function staggerDmBulletsAfterRestore(bullets: DmBullet[], trackCount: number): 
   })
 }
 
+/** hydrate / DB 回放与内存 patch 合并：优先保留已出图或已失败状态，避免 imageGenPending 盖掉成功结果 */
+function preferResolvedImageGenChatMsg(dbMsg: ChatMsg, liveMsg: ChatMsg): ChatMsg {
+  const dbImg = dbMsg.images?.[0]?.base64?.trim()
+  const liveImg = liveMsg.images?.[0]?.base64?.trim()
+  if (liveImg && !dbImg) {
+    return {
+      ...dbMsg,
+      ...liveMsg,
+      images: liveMsg.images,
+      imageGenPending: undefined,
+      imageGenFailed: liveMsg.imageGenFailed,
+      imageGenPrompt: liveMsg.imageGenPrompt ?? dbMsg.imageGenPrompt,
+    }
+  }
+  if (dbImg) {
+    return {
+      ...liveMsg,
+      ...dbMsg,
+      images: dbMsg.images,
+      imageGenPending: undefined,
+      imageGenFailed: dbMsg.imageGenFailed,
+      imageGenPrompt: dbMsg.imageGenPrompt ?? liveMsg.imageGenPrompt,
+    }
+  }
+  if (!liveMsg.imageGenPending && liveMsg.imageGenFailed) {
+    return { ...dbMsg, ...liveMsg }
+  }
+  if (!dbMsg.imageGenPending && dbMsg.imageGenFailed) {
+    return { ...liveMsg, ...dbMsg }
+  }
+  if (liveMsg.imageGenPending && !dbMsg.imageGenPending) {
+    return { ...liveMsg, ...dbMsg }
+  }
+  if (!liveMsg.imageGenPending && dbMsg.imageGenPending) {
+    return { ...dbMsg, ...liveMsg }
+  }
+  return { ...dbMsg, ...liveMsg }
+}
+
+function applyImageGenUiPatchToMsg(
+  msg: ChatMsg,
+  patch: Partial<Pick<ChatMsg, 'images' | 'imageGenPending' | 'imageGenFailed'>>,
+): ChatMsg {
+  return {
+    ...msg,
+    ...patch,
+    ...(patch.imageGenPending === false ? { imageGenPending: undefined } : {}),
+    ...(patch.imageGenFailed === false ? { imageGenFailed: undefined } : {}),
+  }
+}
+
+function resolveImageGenPatchForMessageId(
+  messageId: string,
+  localPatches?: ReadonlyMap<string, WeChatImageGenUiPatch>,
+): WeChatImageGenUiPatch | undefined {
+  const id = messageId.trim()
+  if (!id) return undefined
+  return localPatches?.get(id) ?? getWeChatImageGenUiPatch(id)
+}
+
+function mergeImageGenUiPatchMaps(
+  localPatches?: ReadonlyMap<string, WeChatImageGenUiPatch>,
+): Map<string, WeChatImageGenUiPatch> {
+  const merged = new Map(getWeChatImageGenUiPatchMap())
+  if (localPatches) {
+    for (const [id, patch] of localPatches) merged.set(id, patch)
+  }
+  return merged
+}
+
+function applyImageGenUiPatchToChatMsgIfAny(
+  msg: ChatMsg,
+  patchById?: ReadonlyMap<string, WeChatImageGenUiPatch>,
+): ChatMsg {
+  const patch = resolveImageGenPatchForMessageId(msg.id, patchById)
+  return patch ? applyImageGenUiPatchToMsg(msg, patch) : msg
+}
+
+/** hydrate 落库时用 React 最新 prev 再合并，避免异步 DB 快照盖掉已出图的内存 patch */
+function mergeHydratedMsgsWithLivePrev(
+  mappedMsgs: ChatMsg[],
+  prevMsgs: ChatMsg[],
+  pendingPatchById?: ReadonlyMap<string, WeChatImageGenUiPatch>,
+): ChatMsg[] {
+  const prevById = new Map(prevMsgs.map((m) => [m.id, m]))
+  const mappedIds = new Set(mappedMsgs.map((m) => m.id))
+  const applyPending = (msg: ChatMsg): ChatMsg => {
+    const pending = resolveImageGenPatchForMessageId(msg.id, pendingPatchById)
+    return pending ? applyImageGenUiPatchToMsg(msg, pending) : msg
+  }
+  const mergedMapped = mappedMsgs.map((dbMsg) => {
+    const live = prevById.get(dbMsg.id)
+    const base = live ? preferResolvedImageGenChatMsg(dbMsg, live) : dbMsg
+    return applyPending(base)
+  })
+  const pendingOnly = prevMsgs.filter((m) => !mappedIds.has(m.id)).map(applyPending)
+  return dedupeChatMsgsById([...mergedMapped, ...pendingOnly].sort(compareChatMsgByRevealOrder))
+}
+
 function chatItemsMessageSnapshotEqual(prev: ChatItem[], next: ChatItem[]): boolean {
   const pick = (list: ChatItem[]) =>
     list
@@ -2057,7 +2205,13 @@ function chatItemsMessageSnapshotEqual(prev: ChatItem[], next: ChatItem[]): bool
         const mgKey = mg
           ? `${mg.kind}\0${mg.inviteId ?? ''}\0${'charResponded' in mg ? mg.charResponded ?? '' : ''}\0${'matchResult' in mg ? mg.matchResult ?? '' : ''}`
           : ''
-        return `${m.id}\0${m.from}\0${m.timestamp}\0${m.text ?? ''}\0${mgKey}`
+        const mediaKey = [
+          m.imageGenPending ? '1' : '0',
+          m.imageGenFailed ? '1' : '0',
+          m.images?.[0]?.base64?.length ?? 0,
+          m.images?.[0]?.type ?? '',
+        ].join(':')
+        return `${m.id}\0${m.from}\0${m.timestamp}\0${m.text ?? ''}\0${mgKey}\0${mediaKey}`
       })
       .join('\n')
   return pick(prev) === pick(next)
@@ -2093,6 +2247,14 @@ export function ChatRoomInner({
   chatRoomDefaultBg = DEFAULT_WECHAT_CHAT_ROOM_BG,
   /** 会话设置：弹幕模式 */
   danmakuEnabled = false,
+  /** 会话设置：后台思维链 CoT（默认关） */
+  thinkingChainEnabled = false,
+  /** 会话设置：伪造聊天记录卡片协议（默认关） */
+  forwardHistoryCardEnabled = false,
+  /** 会话设置：换头像/朋友圈背景协议（默认关） */
+  profileImageChangeEnabled = false,
+  /** 会话设置：网络玩梗轻量词库（默认关） */
+  internetMemeLexiconEnabled = false,
   /** 群聊：是否在对方消息头像右侧显示发送者群昵称 */
   showGroupMemberNicknameInChat = true,
   /** 群聊：是否在发言者头像左上角显示群主/管理员头衔 */
@@ -2117,6 +2279,8 @@ export function ChatRoomInner({
   onPsycheRadarOpenChange,
   onCheckPhoneOpenChange,
   onMiniGameOverlayOpenChange,
+  /** 当前是否在聊天页前台（消息列表/子页为 false）：false 时暂停逐条露出计时，回聊天页后续跑 */
+  chatRouteVisible = true,
   embedMode,
   onEmbedSendReady,
 }: {
@@ -2145,6 +2309,10 @@ export function ChatRoomInner({
   chatBackgroundUrl?: string
   chatRoomDefaultBg?: WeChatChatRoomBg
   danmakuEnabled?: boolean
+  thinkingChainEnabled?: boolean
+  forwardHistoryCardEnabled?: boolean
+  profileImageChangeEnabled?: boolean
+  internetMemeLexiconEnabled?: boolean
   showGroupMemberNicknameInChat?: boolean
   showGroupRankBadgesInChat?: boolean
   scrollToMessageId?: string | null
@@ -2199,6 +2367,8 @@ export function ChatRoomInner({
   onCheckPhoneOpenChange?: (open: boolean) => void
   /** 小游戏全屏层打开时通知上层隐藏微信聊天顶栏，避免与「一起玩游戏」标题重叠 */
   onMiniGameOverlayOpenChange?: (open: boolean) => void
+  /** 当前是否在聊天页前台（消息列表/子页为 false）：false 时暂停逐条露出计时，回聊天页后续跑 */
+  chatRouteVisible?: boolean
   /** 隐藏 UI，仅保留发送与 AI 管线（全局快捷回复引擎） */
   embedMode?: 'quick-reply'
   onEmbedSendReady?: (api: { sendText: (text: string) => void }) => void
@@ -2279,6 +2449,22 @@ export function ChatRoomInner({
   /** 与 UI 当前会话一致；异步 hydrate 结束前若已切会话则丢弃结果，避免错写/空窗 */
   const conversationKeyLiveRef = useRef(conversationKey)
   conversationKeyLiveRef.current = conversationKey
+  const chatRouteVisibleRef = useRef(chatRouteVisible)
+  chatRouteVisibleRef.current = chatRouteVisible
+  /** flushAiReplies 绑定会话 key；后台 flush 时与可见 conversationKey 可能不一致 */
+  const flushOpponentRevealConvKeyRef = useRef<string | null>(null)
+  const stashOpponentRevealJobsByKey = useCallback((jobs: OpponentRevealJob[]) => {
+    const byKey = new Map<string, OpponentRevealJob[]>()
+    for (const j of jobs) {
+      const k = j.forConversationKey.trim()
+      if (!k) continue
+      const list = byKey.get(k) ?? []
+      list.push(j)
+      byKey.set(k, list)
+    }
+    for (const [k, list] of byKey) stashOpponentRevealJobs(k, list)
+    if (byKey.size > 0) notifyWechatConversationAiPipeline()
+  }, [])
   /** 追踪 storage 键变更：区分「切会话」与「马甲键升级」 */
   /** 须为 ''：若用 conversationKey 初始化，首进聊天室时 prev===next 会跳过 hydrate（刷新后历史空白） */
   const prevConversationKeyRef = useRef('')
@@ -2738,6 +2924,9 @@ export function ChatRoomInner({
   const [miniGameInviteRespondBusy, setMiniGameInviteRespondBusy] = useState(false)
   const itemsRef = useRef(items)
   itemsRef.current = items
+  const pendingImageGenUiPatchesRef = useRef(new Map<string, WeChatImageGenUiPatch>())
+  const [imageGenPatchVersion, bumpImageGenPatchVersion] = useState(0)
+  const scheduleReconcilePendingImageGenBubblesRef = useRef<() => void>(() => {})
   /** 仅在虚拟/真实日历日切换时重建时间分隔行，避免 currentTimeMs 每秒 tick 全量 setItems */
   const timeRebuildDayKeyRef = useRef('')
   /** 当前会话从 DB 拉取窗口内的完整消息（含「仅 UI 隐藏」），供 AI 转写；与气泡列表展示可不同步 */
@@ -2803,6 +2992,60 @@ export function ChatRoomInner({
     const enrichedById = new Map(enrichedMsgs.map((m) => [m.id, m]))
     return trimmed.map((it) => (it.kind === 'msg' && enrichedById.has(it.id) ? enrichedById.get(it.id)! : it))
   }, [extractMessages, groupId, rebuildWithCurrentTime, roomType])
+
+  /** 后台 flush（用户已切到其他会话）时从 DB 构建 transcript，避免 itemsRef 被清空导致串会话/空上下文 */
+  const buildChatItemsForAiTranscriptForKey = useCallback(
+    async (forKey: string, ctx: ReturnType<typeof getConversationFlushContext>): Promise<ChatItem[]> => {
+      const key = forKey.trim()
+      if (!key) return []
+      const bound = resolveBoundConversationFlushContext(
+        key,
+        ctx,
+        null,
+        conversationKeyLiveRef.current.trim() === key,
+      )
+      const fxRoomType = bound.roomType
+      const fxGroupId = bound.groupId
+      const fxPersonaCharacterId = bound.personaCharacterId
+      const fxConversationCharacterId = bound.conversationCharacterId
+      const fxUseLumi = bound.useLumiProjectAssistantPrompt
+      let rows = await personaDb.listWeChatChatMessagesRecent({ conversationKey: key, limit: 200 })
+      if (
+        fxRoomType === 'private' &&
+        !fxUseLumi &&
+        !isWechatGroupConversationKey(key)
+      ) {
+        const peerSan = (fxPersonaCharacterId || fxConversationCharacterId.trim() || '').trim()
+        if (peerSan && peerSan !== WECHAT_LUMI_PEER_CHARACTER_ID) {
+          rows = rows.filter((m) => {
+            if (m.type === 'player') return parseGroupIdFromGroupPeerCharacterId(m.characterId) == null
+            if (m.type === 'character') {
+              return m.characterId === peerSan || m.characterId === WECHAT_GROUP_BOT_CHARACTER_ID
+            }
+            return true
+          })
+        }
+      }
+      let items = rebuildWithCurrentTime(mapWeChatMessagesToChatItems(rows))
+      if (fxRoomType === 'group' && fxGroupId) {
+        const gDoc = await personaDb.getGroupChat(fxGroupId)
+        items = filterGroupChatItemsHideModeratorOnlyBubbles(items, fxRoomType, gDoc)
+      }
+      const trimmed = trimChatItemsToAiTurnAnchor(items)
+      const msgRows = trimmed.filter((it): it is ChatMsg => it.kind === 'msg')
+      const enrichedMsgs = enrichChatRowsMiniGameForAiTranscript(msgRows)
+      const enrichedById = new Map(enrichedMsgs.map((m) => [m.id, m]))
+      return trimmed.map((it) => (it.kind === 'msg' && enrichedById.has(it.id) ? enrichedById.get(it.id)! : it))
+    },
+    [
+      conversationCharacterId,
+      groupId,
+      personaCharacterId,
+      rebuildWithCurrentTime,
+      roomType,
+      useLumiProjectAssistantPrompt,
+    ],
+  )
   const resolveVoiceSynthCharacterId = useCallback(
     (msg: ChatMsg): string => {
       if (roomType === 'group') {
@@ -2889,8 +3132,32 @@ export function ChatRoomInner({
   const mergeIncomingMessage = useCallback(
     (prev: ChatItem[], incoming: ChatMsg) => {
       // 与异步 hydrate 并发时，可能已存在同 id 行；先去重再追加，避免短暂双气泡闪烁
+      const existing = extractMessages(prev).find((m) => m.id === incoming.id)
       const base = extractMessages(prev).filter((m) => m.id !== incoming.id)
-      let msg = incoming
+      let msg = applyImageGenUiPatchToChatMsgIfAny(incoming, mergeImageGenUiPatchMaps(pendingImageGenUiPatchesRef.current))
+      const existingResolved = existing
+        ? applyImageGenUiPatchToChatMsgIfAny(existing, mergeImageGenUiPatchMaps(pendingImageGenUiPatchesRef.current))
+        : undefined
+      const existingImage = existingResolved?.images?.[0]?.base64?.trim()
+      const incomingImage = msg.images?.[0]?.base64?.trim()
+      if (existingImage && !incomingImage) {
+        msg = {
+          ...msg,
+          images: existingResolved?.images,
+          imageGenPending: undefined,
+          imageGenFailed: undefined,
+        }
+      } else if (
+        existingResolved?.imageGenPending &&
+        !existingImage &&
+        incomingImage
+      ) {
+        msg = {
+          ...msg,
+          imageGenPending: undefined,
+          imageGenFailed: msg.imageGenFailed ?? existingResolved.imageGenFailed,
+        }
+      }
       /**
        * 对方气泡必须与当前列表时间单调一致：否则 hydrate 合并时用 timestamp 排序，
        * 会把「虚拟时间倒退 / 同毫秒」的新消息排到旧消息前面，看起来像跑到列表顶部。
@@ -2910,6 +3177,133 @@ export function ChatRoomInner({
     },
     [extractMessages, rebuildWithCurrentTime],
   )
+
+  const patchChatMsgInList = useCallback(
+    (messageId: string, patch: Partial<Pick<ChatMsg, 'images' | 'imageGenPending' | 'imageGenFailed'>>) => {
+      const mid = messageId.trim()
+      if (!mid) return
+      const normalizedPatch: WeChatImageGenUiPatch = {
+        images: patch.images,
+        imageGenPending: patch.imageGenPending,
+        imageGenFailed: patch.imageGenFailed,
+      }
+      pendingImageGenUiPatchesRef.current.set(mid, normalizedPatch)
+      rememberWeChatImageGenUiPatch(mid, normalizedPatch)
+      const applyPatchToMsg = (msg: ChatMsg) => applyImageGenUiPatchToMsg(msg, patch)
+      for (const j of opponentRevealJobsRef.current) {
+        if (j.msg.id !== mid) continue
+        j.msg = applyPatchToMsg(j.msg)
+      }
+      for (const j of deferredBubbleRevealJobsRef.current) {
+        if (j.msg.id !== mid) continue
+        j.msg = applyPatchToMsg(j.msg)
+      }
+      syncPendingQueueFromRefFnRef.current?.()
+      let applied = false
+      flushSync(() => {
+        setItems((prev) => {
+          const prevMsgs = extractMessages(prev)
+          const idx = prevMsgs.findIndex((msg) => msg.id === mid)
+          if (idx < 0) return prev
+          applied = true
+          const nextMsgs = prevMsgs.map((msg, i) => (i === idx ? applyPatchToMsg(msg) : msg))
+          const next = rebuildWithCurrentTime(nextMsgs)
+          itemsRef.current = next
+          pendingImageGenUiPatchesRef.current.delete(mid)
+          const patchedMsg = nextMsgs[idx]
+          if (
+            patchedMsg &&
+            (patchedMsg.images?.[0]?.base64?.trim() ||
+              patchedMsg.imageGenFailed ||
+              !patchedMsg.imageGenPending)
+          ) {
+            clearWeChatImageGenUiPatch(mid)
+          }
+          return next
+        })
+      })
+      bumpImageGenPatchVersion((v) => v + 1)
+      if (!applied) scheduleReconcilePendingImageGenBubblesRef.current()
+    },
+    [extractMessages, rebuildWithCurrentTime],
+  )
+  const patchChatMsgInListRef = useRef(patchChatMsgInList)
+  patchChatMsgInListRef.current = patchChatMsgInList
+
+  const reconcilePendingImageGenBubblesFromDb = useCallback(async () => {
+    const ck = conversationKeyLiveRef.current.trim()
+    if (!ck) return
+    const stuck = extractMessages(itemsRef.current).filter(
+      (m) => m.imageGenPending && !m.images?.[0]?.base64?.trim(),
+    )
+    const ids = new Set(stuck.map((m) => m.id))
+    for (const [id] of pendingImageGenUiPatchesRef.current) ids.add(id)
+    for (const [id, patch] of getWeChatImageGenUiPatchMap()) {
+      if (isWeChatImageGenUiPatchResolved(patch)) ids.add(id)
+    }
+    for (const id of ids) {
+      try {
+        const row = await personaDb.getWeChatChatMessageById(id)
+        if (!row || row.conversationKey?.trim() !== ck) continue
+        if (row.images?.[0]?.base64?.trim()) {
+          patchChatMsgInListRef.current(id, {
+            images: row.images,
+            imageGenPending: false,
+            imageGenFailed: false,
+          })
+          continue
+        }
+        if (row.imageGenFailed) {
+          patchChatMsgInListRef.current(id, {
+            imageGenPending: false,
+            imageGenFailed: true,
+          })
+        }
+      } catch {
+        /* ignore */
+      }
+    }
+  }, [extractMessages])
+  const reconcilePendingImageGenBubblesFromDbRef = useRef(reconcilePendingImageGenBubblesFromDb)
+  reconcilePendingImageGenBubblesFromDbRef.current = reconcilePendingImageGenBubblesFromDb
+
+  const scheduleReconcilePendingImageGenBubbles = useCallback(() => {
+    const run = () => void reconcilePendingImageGenBubblesFromDbRef.current()
+    queueMicrotask(run)
+    window.setTimeout(run, 120)
+    window.setTimeout(run, 480)
+    window.setTimeout(run, 1500)
+    window.setTimeout(run, 4000)
+  }, [])
+  scheduleReconcilePendingImageGenBubblesRef.current = scheduleReconcilePendingImageGenBubbles
+
+  useEffect(() => {
+    const hasStuckPendingImageGen = () =>
+      extractMessages(itemsRef.current).some(
+        (m) => m.imageGenPending && !m.images?.[0]?.base64?.trim(),
+      ) || getWeChatImageGenUiPatchMap().size > 0
+    if (!hasStuckPendingImageGen()) return
+    const timer = window.setInterval(() => {
+      if (!hasStuckPendingImageGen()) return
+      void reconcilePendingImageGenBubblesFromDbRef.current()
+      bumpImageGenPatchVersion((v) => v + 1)
+    }, 2000)
+    return () => window.clearInterval(timer)
+  }, [items, imageGenPatchVersion, extractMessages])
+
+  useEffect(() => {
+    const onPatch = (ev: Event) => {
+      const detail = (ev as CustomEvent<{ messageId?: string; patch?: WeChatImageGenUiPatch }>).detail
+      const messageId = detail?.messageId?.trim()
+      const patch = detail?.patch
+      if (!messageId || !patch) return
+      patchChatMsgInList(messageId, patch)
+      scheduleReconcilePendingImageGenBubbles()
+      bumpImageGenPatchVersion((v) => v + 1)
+    }
+    window.addEventListener(WECHAT_IMAGE_GEN_UI_PATCH_EVENT, onPatch)
+    return () => window.removeEventListener(WECHAT_IMAGE_GEN_UI_PATCH_EVENT, onPatch)
+  }, [patchChatMsgInList, scheduleReconcilePendingImageGenBubbles])
 
   const mergeOtherIncomingForRoom = useCallback(
     (prev: ChatItem[], incoming: ChatMsg) => {
@@ -3744,7 +4138,6 @@ export function ChatRoomInner({
     }
   }, [appendSystemNote, extractMessages, getCurrentTimeMs, peerNotifyTitle, playerIdentityId])
 
-  const opponentQueueStopRef = useRef(false)
   const oldestMsgTsRef = useRef<number | null>(null)
   const [historyLoading, setHistoryLoading] = useState(false)
   const [, setHistoryExhausted] = useState(false)
@@ -3994,19 +4387,22 @@ export function ChatRoomInner({
       {
         const dbMsgs = extractMessages(mapped)
         const dbIds = new Set(msgsForWeChat.map((m) => m.id))
+        const liveById = new Map(extractMessages(itemsRef.current).map((m) => [m.id, m]))
+        const mergedDbMsgs = dbMsgs.map((dbMsg) => {
+          const live = liveById.get(dbMsg.id)
+          return live ? preferResolvedImageGenChatMsg(dbMsg, live) : dbMsg
+        })
         const pending = extractMessages(itemsRef.current).filter((m) => !dbIds.has(m.id))
-        if (pending.length) {
-          const mergedMsgs = dedupeChatMsgsById([...dbMsgs, ...pending].sort(compareChatMsgByRevealOrder))
-          let mergedItems = rebuildWithCurrentTime(mergedMsgs)
-          if (roomType === 'group' && groupId?.trim()) {
-            mergedItems = filterGroupChatItemsHideModeratorOnlyBubbles(
-              mergedItems,
-              roomType,
-              groupDocRef.current,
-            )
-          }
-          mapped = mergedItems
+        const mergedMsgs = dedupeChatMsgsById([...mergedDbMsgs, ...pending].sort(compareChatMsgByRevealOrder))
+        let mergedItems = rebuildWithCurrentTime(mergedMsgs)
+        if (roomType === 'group' && groupId?.trim()) {
+          mergedItems = filterGroupChatItemsHideModeratorOnlyBubbles(
+            mergedItems,
+            roomType,
+            groupDocRef.current,
+          )
         }
+        mapped = mergedItems
       }
       if (!stillThisRun()) return
       const prevOtherIds = new Set(
@@ -4044,8 +4440,26 @@ export function ChatRoomInner({
         persistChatAwaitingAiTyping(hydrateForKey, false)
         typingInterruptPendingUiClearRef.current = hydrateForKey
       }
-      setItems((prev) => (chatItemsMessageSnapshotEqual(prev, mapped) ? prev : mapped))
-      itemsRef.current = mapped
+      setItems((prev) => {
+        const mergedMsgs = mergeHydratedMsgsWithLivePrev(
+          extractMessages(mapped),
+          extractMessages(prev),
+          mergeImageGenUiPatchMaps(pendingImageGenUiPatchesRef.current),
+        )
+        let finalItems = rebuildWithCurrentTime(mergedMsgs)
+        if (roomType === 'group' && groupId?.trim()) {
+          finalItems = filterGroupChatItemsHideModeratorOnlyBubbles(
+            finalItems,
+            roomType,
+            groupDocRef.current,
+          )
+        }
+        if (chatItemsMessageSnapshotEqual(prev, finalItems)) {
+          return prev
+        }
+        itemsRef.current = finalItems
+        return finalItems
+      })
       if (scrollToBottom) {
         requestAnimationFrame(() => {
           requestAnimationFrame(() => {
@@ -4095,8 +4509,6 @@ export function ChatRoomInner({
   const hydrateMessagesRef = useRef(hydrateMessages)
   hydrateMessagesRef.current = hydrateMessages
 
-  /** 须早于依赖它的 storage 监听；与 {@link flushAiReplies} 共用 */
-  const flushAiRepliesBusyRef = useRef(false)
   const storageHydrateDebounceRef = useRef<number | null>(null)
   const storageGroupSyncDebounceRef = useRef<number | null>(null)
 
@@ -4158,14 +4570,8 @@ export function ChatRoomInner({
      * 切换会话必须先清空内存列表：hydrate 会把 itemsRef 里「DB 尚无 id」的气泡与本轮 DB 结果合并（同会话乐观更新）。
      * 若不置空，从群聊切到私聊时上一屏群消息仍留在 ref 中，会被误并进私聊列表（串会话）。
      */
-    opponentQueueStopRef.current = true
-    pendingAiRepliesRef.current = 0
-    if (aiPipelineOwnerKeyRef.current?.trim() === prevKey) {
-      aiPipelineOwnerKeyRef.current = null
-    }
-    setWechatAiReplyPipelineActive(prevKey, false)
-    setWechatAiReplyPipelineActive(nextKey, false)
-    setAwaitingAiKick(false)
+    setConversationOpponentQueueStop(nextKey, true)
+    setConversationAwaitingAiKick(nextKey, false)
     setTypingVisible(false)
     onOpponentRevealQueueActiveRef.current?.(false)
     cancelOpponentRevealTimer()
@@ -4178,9 +4584,8 @@ export function ChatRoomInner({
 
   useEffect(() => {
     if (!historyRefreshSignal) return
-    opponentQueueStopRef.current = true
-    pendingAiRepliesRef.current = 0
-    setAwaitingAiKick(false)
+    setConversationOpponentQueueStop(conversationKey.trim(), true)
+    setConversationAwaitingAiKick(conversationKey.trim(), false)
     setTypingVisible(false)
     onOpponentRevealQueueActiveRef.current?.(false)
     cancelOpponentRevealTimer()
@@ -4240,8 +4645,26 @@ export function ChatRoomInner({
       if (cancelled) return
       ignoreUiOnlyHiddenInListRef.current = true
       aiContextDbMessagesRef.current = merged
-      setItems((prev) => (chatItemsMessageSnapshotEqual(prev, mapped) ? prev : mapped))
-      itemsRef.current = mapped
+      setItems((prev) => {
+        const mergedMsgs = mergeHydratedMsgsWithLivePrev(
+          extractMessages(mapped),
+          extractMessages(prev),
+          mergeImageGenUiPatchMaps(pendingImageGenUiPatchesRef.current),
+        )
+        let finalItems = rebuildWithCurrentTime(mergedMsgs)
+        if (roomType === 'group' && groupId?.trim()) {
+          finalItems = filterGroupChatItemsHideModeratorOnlyBubbles(
+            finalItems,
+            roomType,
+            groupDocRef.current,
+          )
+        }
+        if (chatItemsMessageSnapshotEqual(prev, finalItems)) {
+          return prev
+        }
+        itemsRef.current = finalItems
+        return finalItems
+      })
       // 来自「按日期/搜索定位」的跳转必须能直接看到目标消息：
       // 若仍按默认 30 条裁剪，目标锚点可能被截断导致看起来“没跳转”。
       const mergedMsgCount = mapped.reduce((n, it) => (it.kind === 'msg' ? n + 1 : n), 0)
@@ -4271,7 +4694,8 @@ export function ChatRoomInner({
   useEffect(() => {
     const debounceMs = 160
     const onStorage = () => {
-      if (flushAiRepliesBusyRef.current) return
+      scheduleReconcilePendingImageGenBubbles()
+      if (isConversationFlushAiRepliesBusy(conversationKeyLiveRef.current.trim())) return
       if (opponentRevealTimerRef.current != null) return
       if (opponentRevealJobsRef.current.length > 0) return
       if (storageHydrateDebounceRef.current != null) window.clearTimeout(storageHydrateDebounceRef.current)
@@ -4288,7 +4712,7 @@ export function ChatRoomInner({
         storageHydrateDebounceRef.current = null
       }
     }
-  }, [])
+  }, [scheduleReconcilePendingImageGenBubbles])
 
   const [draft, setDraft] = useState('')
   const [sendBusy, setSendBusy] = useState(false)
@@ -4350,7 +4774,7 @@ export function ChatRoomInner({
     void sync()
     const debounceMs = 160
     const scheduleSync = () => {
-      if (flushAiRepliesBusyRef.current) return
+      if (isConversationFlushAiRepliesBusy(conversationKeyLiveRef.current.trim())) return
       if (storageGroupSyncDebounceRef.current != null) window.clearTimeout(storageGroupSyncDebounceRef.current)
       storageGroupSyncDebounceRef.current = window.setTimeout(() => {
         storageGroupSyncDebounceRef.current = null
@@ -4531,6 +4955,38 @@ export function ChatRoomInner({
       centerToastTimerRef.current = null
     }, 1500)
   }, [])
+
+  const retryCharacterImageGenInFlightRef = useRef(new Set<string>())
+
+  const handleRetryCharacterImageGen = useCallback(
+    (msg: Pick<ChatMsg, 'id' | 'imageGenPrompt'>) => {
+      const messageId = msg.id.trim()
+      if (!messageId || retryCharacterImageGenInFlightRef.current.has(messageId)) return
+      retryCharacterImageGenInFlightRef.current.add(messageId)
+      void retryWeChatCharacterImageGenMessage({
+        messageId,
+        prompt: msg.imageGenPrompt,
+        playerIdentityId,
+      })
+        .then((result) => {
+          if (result.ok) return
+          const { failure } = result
+          if (failure.kind === 'rate_limit') {
+            showCenterToast(/额度|quota|配额/i.test(failure.message) ? '生图额度已用尽' : '生图请求过于频繁，请稍后再试')
+          } else if (failure.kind === 'safety') {
+            showCenterToast('配图未通过内容安全审核')
+          } else if (failure.message === 'missing_image_gen_prompt') {
+            showCenterToast('缺少配图描述，无法重试')
+          } else {
+            showCenterToast('配图生成失败，请稍后再试')
+          }
+        })
+        .finally(() => {
+          retryCharacterImageGenInFlightRef.current.delete(messageId)
+        })
+    },
+    [playerIdentityId, showCenterToast],
+  )
 
   const requestVoiceMessageAudio = useCallback(
     async (msg: ChatMsg): Promise<string> => {
@@ -5060,20 +5516,22 @@ export function ChatRoomInner({
     (ck: string): boolean => {
       const key = ck.trim()
       if (!key) return false
-      const owner = aiPipelineOwnerKeyRef.current?.trim() ?? ''
-      if (owner && conversationKeysMatch(owner, key)) {
-        if (
-          flushAiRepliesBusyRef.current ||
-          aiCallingRef.current ||
-          pendingAiRepliesRef.current > 0
-        ) {
-          return true
-        }
+      const flags = getConversationPipelineFlags(key)
+      if (
+        flags.flushAiRepliesBusy ||
+        flags.aiCalling ||
+        flags.pendingAiReplies > 0 ||
+        flags.flushUiBusy ||
+        flags.awaitingAiKick ||
+        flags.processingSend
+      ) {
+        return true
       }
       if (opponentRevealJobsRef.current.some((j) => conversationKeysMatch(j.forConversationKey, key))) {
         return true
       }
       if (isProactiveMessageInFlight(key)) return true
+      if (hasStashedOpponentRevealJobs(key)) return true
       return false
     },
     [conversationKeysMatch],
@@ -5186,12 +5644,8 @@ export function ChatRoomInner({
     onOpponentRevealQueueActive?.(false)
     setBackgroundNotifyPendingWork({ wechatRevealPending: false })
     syncAiReplyPipelineActiveRef.current(conversationKeyLiveRef.current.trim())
-    if (
-      !flushAiRepliesBusyRef.current &&
-      !aiCallingRef.current &&
-      pendingAiRepliesRef.current <= 0 &&
-      !isProactiveMessageInFlight(conversationKeyLiveRef.current.trim())
-    ) {
+    const liveCk = conversationKeyLiveRef.current.trim()
+    if (liveCk && !isConversationAiPipelineBusyRef.current(liveCk)) {
       setTypingVisible(false)
     }
   }, [
@@ -5209,15 +5663,12 @@ export function ChatRoomInner({
     onOpponentRevealQueueActive?.(false)
     setBackgroundNotifyPendingWork({ wechatRevealPending: false })
     syncAiReplyPipelineActiveRef.current(conversationKeyLiveRef.current.trim())
-    if (
-      !flushAiRepliesBusyRef.current &&
-      !aiCallingRef.current &&
-      pendingAiRepliesRef.current <= 0 &&
-      !isProactiveMessageInFlight(conversationKeyLiveRef.current.trim())
-    ) {
+    scheduleReconcilePendingImageGenBubbles()
+    const liveCk = conversationKeyLiveRef.current.trim()
+    if (liveCk && !isConversationAiPipelineBusyRef.current(liveCk)) {
       setTypingVisible(false)
     }
-  }, [onOpponentRevealQueueActive, setTypingVisible])
+  }, [onOpponentRevealQueueActive, setTypingVisible, scheduleReconcilePendingImageGenBubbles])
 
   const processOpponentCallbackOnly = useCallback(
     (job: OpponentRevealJob) => {
@@ -5238,7 +5689,26 @@ export function ChatRoomInner({
 
   const processOpponentRevealJob = useCallback(
     (job: OpponentRevealJob) => {
-      const incoming = { ...job.msg, otherAnimated: true }
+      const live = conversationKeyLiveRef.current.trim()
+      const jobKey = job.forConversationKey.trim()
+      if (
+        live &&
+        jobKey &&
+        live !== jobKey &&
+        !isSameWeChatStorageConversationMigration(jobKey, live)
+      ) {
+        persistOpponentRevealJobOnly(job)
+        return
+      }
+      const pendingPatch = resolveImageGenPatchForMessageId(
+        job.msg.id,
+        mergeImageGenUiPatchMaps(pendingImageGenUiPatchesRef.current),
+      )
+      let incoming: ChatMsg = { ...job.msg, otherAnimated: true }
+      if (pendingPatch) {
+        incoming = applyImageGenUiPatchToMsg(incoming, pendingPatch)
+        job.msg = incoming
+      }
       if (job.msg.musicSync?.kind === 'music_invite') {
         logConsole(
           'ai',
@@ -5255,7 +5725,8 @@ export function ChatRoomInner({
       } catch {
         /* ignore */
       }
-      if (job.opponentRevealFlushSync) {
+      const needsFlushReveal = job.opponentRevealFlushSync || !!job.msg.imageGenPending || !!pendingPatch?.images?.length
+      if (needsFlushReveal) {
         flushSync(() => {
           setItems((prev) => {
             const next = mergeOtherIncomingForRoom(prev, incoming)
@@ -5263,7 +5734,7 @@ export function ChatRoomInner({
             return next
           })
         })
-        emitLumiTransferChanged()
+        if (job.opponentRevealFlushSync) emitLumiTransferChanged()
       } else {
         setItems((prev) => {
           const next = mergeOtherIncomingForRoom(prev, incoming)
@@ -5280,7 +5751,7 @@ export function ChatRoomInner({
       if (shouldStickToBottom) scrollToBottomSmooth()
       else setPendingNewCount((c) => c + 1)
     },
-    [mergeOtherIncomingForRoom, scrollToBottomSmooth],
+    [mergeOtherIncomingForRoom, persistOpponentRevealJobOnly, scrollToBottomSmooth],
   )
 
   const handleOpponentQueueActive = useCallback(
@@ -5349,7 +5820,6 @@ export function ChatRoomInner({
         deferredBubbleRevealJobsRef.current.push(...stamped)
         return
       }
-      const persistOnly: OpponentRevealJob[] = []
       const forLive: OpponentRevealJob[] = []
       for (const j of stamped) {
         const jobKey = j.forConversationKey.trim()
@@ -5359,11 +5829,11 @@ export function ChatRoomInner({
         ) {
           if (jobKey !== liveConvKey) j.forConversationKey = liveConvKey
           forLive.push(j)
-        } else {
-          persistOnly.push(j)
+        } else if (jobKey) {
+          stashOpponentRevealJobs(jobKey, [j])
+          notifyWechatConversationAiPipeline()
         }
       }
-      for (const j of persistOnly) persistOpponentRevealJobOnly(j)
       if (forLive.length === 0) return
       /** 模型已返回：顶栏「等 API」态结束；逐条露出阶段由 chatOpponentRevealPending 继续显示正在输入 */
       setTypingVisible(false)
@@ -5379,29 +5849,46 @@ export function ChatRoomInner({
       assignSequentialOpponentRevealTimestamps,
       kickOpponentRevealProcessor,
       onOpponentRevealQueueActive,
-      persistOpponentRevealJobOnly,
       setTypingVisible,
       syncPendingQueueFromRef,
     ],
   )
 
+  const restoreStashedOpponentRevealQueue = useCallback(() => {
+    const ck = conversationKeyLiveRef.current.trim()
+    if (!ck) return
+    const stashed = takeStashedOpponentRevealJobs<OpponentRevealJob>(ck)
+    if (!stashed.length) return
+    assignSequentialOpponentRevealTimestamps(stashed)
+    opponentRevealJobsRef.current.push(...stashed)
+    syncPendingQueueFromRef()
+    onOpponentRevealQueueActive?.(true)
+    setBackgroundNotifyPendingWork({ wechatRevealPending: true })
+    syncAiReplyPipelineActiveRef.current(ck)
+    if (chatRouteVisibleRef.current) kickOpponentRevealProcessor()
+  }, [
+    assignSequentialOpponentRevealTimestamps,
+    kickOpponentRevealProcessor,
+    onOpponentRevealQueueActive,
+    syncPendingQueueFromRef,
+  ])
+
+  const restoreStashedOpponentRevealQueueRef = useRef(restoreStashedOpponentRevealQueue)
+  restoreStashedOpponentRevealQueueRef.current = restoreStashedOpponentRevealQueue
+
+  useEffect(() => {
+    if (!chatRouteVisible) {
+      cancelOpponentRevealTimer()
+      return
+    }
+    restoreStashedOpponentRevealQueueRef.current()
+    kickOpponentRevealProcessorRef.current()
+  }, [chatRouteVisible, cancelOpponentRevealTimer])
+
   const flushDeferredBubbleRevealJobs = useCallback(() => {
     if (!deferredBubbleRevealJobsRef.current.length) return
     const jobs = deferredBubbleRevealJobsRef.current.splice(0)
     enqueueOpponentMessagesSequential(jobs)
-  }, [enqueueOpponentMessagesSequential])
-
-  /** 气泡循环 defer 期间临时露出已排队内容（如生图成功/失败后） */
-  const flushDeferredBubbleRevealJobsBypassDefer = useCallback(() => {
-    if (!deferredBubbleRevealJobsRef.current.length) return
-    const jobs = deferredBubbleRevealJobsRef.current.splice(0)
-    const wasDefer = deferBubbleRevealEnqueueRef.current
-    deferBubbleRevealEnqueueRef.current = false
-    try {
-      enqueueOpponentMessagesSequential(jobs)
-    } finally {
-      deferBubbleRevealEnqueueRef.current = wasDefer
-    }
   }, [enqueueOpponentMessagesSequential])
 
   /** 前台聊天页：主动消息走与普通 AI 相同的逐条露出 + 顶栏「对方正在输入」 */
@@ -5429,6 +5916,11 @@ export function ChatRoomInner({
         )
         if (!planned.length) return
 
+        const imageGenSettings = await loadResolvedImageGenSettings()
+        const proactiveCharacter = payload.characterId?.trim()
+          ? await personaDb.getCharacter(payload.characterId.trim())
+          : null
+
         const jobs: OpponentRevealJob[] = planned.map((p) => {
           const incoming: ChatMsg = {
             id: p.id,
@@ -5441,6 +5933,9 @@ export function ChatRoomInner({
             senderCharacterId: payload.characterId,
             voice: p.voice,
             images: p.images,
+            imageGenPending: p.imageGenPending,
+            imageGenFailed: p.imageGenFailed,
+            imageGenPrompt: p.imageGenPrompt,
             musicSync: p.musicSync,
             locationShare: p.locationShare,
             takeoutOrder: p.takeoutOrder,
@@ -5466,12 +5961,43 @@ export function ChatRoomInner({
                   notifyPeerTitle: payload.notifyPeerTitle,
                   voice: p.voice,
                   images: p.images,
+                  imageGenPending: p.imageGenPending,
+                  imageGenFailed: p.imageGenFailed,
+                  imageGenPrompt: p.imageGenPrompt,
                   musicSync: p.musicSync,
                   locationShare: p.locationShare,
                   takeoutOrder: p.takeoutOrder,
                 })
                 .catch(() => {})
             },
+            afterReveal:
+              p.imageGenPending && p.imageGenPrompt?.trim()
+                ? () => {
+                    startWeChatCharacterImageGenInBackground({
+                      messageId: p.id,
+                      prompt: p.imageGenPrompt!.trim(),
+                      character: proactiveCharacter,
+                      settings: imageGenSettings,
+                      playerIdentityId: payload.playerIdentityId,
+                      onComplete: (result) => {
+                        if (result.ok) {
+                          patchChatMsgInListRef.current(p.id, {
+                            images: result.images,
+                            imageGenPending: false,
+                            imageGenFailed: false,
+                          })
+                          scheduleReconcilePendingImageGenBubblesRef.current()
+                          return
+                        }
+                        patchChatMsgInListRef.current(p.id, {
+                          imageGenPending: false,
+                          imageGenFailed: true,
+                        })
+                        scheduleReconcilePendingImageGenBubblesRef.current()
+                      },
+                    })
+                  }
+                : undefined,
           }
         })
         enqueueOpponentMessagesSequential(jobs)
@@ -5498,7 +6024,7 @@ export function ChatRoomInner({
     }
   }, [flushOpponentRevealQueueImmediate])
 
-  /** 仅切换 conversationKey 时执行：未露出队列落库。勿依赖「回调引用」否则会每次父组件重渲染都清空队列，导致气泡永远不显示。 */
+  /** 切换 conversationKey：未露出队列按会话暂存，回该会话后仍逐条露出（勿立刻 persist 全量） */
   useEffect(() => {
     if (conversationKeyMigrationRef.current) {
       conversationKeyMigrationRef.current = false
@@ -5512,34 +6038,22 @@ export function ChatRoomInner({
       }
       syncPendingQueueFromRefFnRef.current()
       kickOpponentRevealProcessorRef.current()
+      restoreStashedOpponentRevealQueueRef.current()
       return
     }
 
     cancelOpponentRevealTimer()
     const jobs = opponentRevealJobsRef.current.splice(0)
-    if (jobs.length === 0) return
-    setPendingQueue([])
-    let bumpTransferUi = false
-    for (const j of jobs) {
-      try {
-        j.beforeReveal?.()
-      } catch {
-        /* ignore */
-      }
-      if (j.opponentRevealFlushSync) bumpTransferUi = true
-      try {
-        j.persist()
-      } catch {
-        /* ignore */
-      }
-      j.afterReveal?.()
+    if (jobs.length > 0) {
+      setPendingQueue([])
+      stashOpponentRevealJobsByKey(jobs)
     }
-    if (bumpTransferUi) emitLumiTransferChanged()
     onOpponentRevealQueueActiveRef.current?.(false)
     syncAiReplyPipelineActiveRef.current(conversationKeyLiveRef.current.trim())
-  }, [conversationKey, cancelOpponentRevealTimer])
+    restoreStashedOpponentRevealQueueRef.current()
+  }, [conversationKey, cancelOpponentRevealTimer, stashOpponentRevealJobsByKey])
 
-  /** 离开聊天室（去发红包页等）：立即落库未露出的对方气泡，避免队列随卸载丢失；session 标记便于回聊天室恢复顶栏/底部「正在输入」直至 hydrate */
+  /** 离开聊天室（去发红包页等）：队列按会话暂存，回聊天室后续跑逐条露出 */
   useEffect(() => {
     return () => {
       cancelOpponentRevealTimer()
@@ -5549,36 +6063,17 @@ export function ChatRoomInner({
         onOpponentRevealQueueActiveRef.current?.(false)
         return
       }
-      let bumpTransferUiUnmount = false
-      for (const j of jobs) {
-        try {
-          j.beforeReveal?.()
-        } catch {
-          /* ignore */
-        }
-        if (j.opponentRevealFlushSync) bumpTransferUiUnmount = true
-        try {
-          j.persist()
-        } catch {
-          /* ignore */
-        }
-        try {
-          j.afterReveal?.()
-        } catch {
-          /* ignore */
-        }
-      }
-      if (bumpTransferUiUnmount) emitLumiTransferChanged()
+      setPendingQueue([])
+      stashOpponentRevealJobsByKey(jobs)
       opponentRevealJobsRef.current = []
       onOpponentRevealQueueActiveRef.current?.(false)
       if (ck) {
         persistChatAwaitingAiTyping(ck, true)
         persistTypingInterruptRecover(ck, true)
-        if (jobs.length > 0) setWechatAiReplyPipelineActive(ck, true)
+        setWechatAiReplyPipelineActive(ck, true)
       }
-      emitWeChatStorageChanged()
     }
-  }, [cancelOpponentRevealTimer])
+  }, [cancelOpponentRevealTimer, stashOpponentRevealJobsByKey])
 
   const onActionPanelAction = useCallback(
     async (id: WeChatMessageActionId) => {
@@ -6292,12 +6787,36 @@ export function ChatRoomInner({
   )
 
   const sendQueueRef = useRef<Array<{ text: string; triggerAi: boolean }>>([])
-  const processingSendRef = useRef(false)
+  const processingSendKeyRef = useRef('')
+  const processingSendRef = {
+    get current(): boolean {
+      const k = processingSendKeyRef.current || conversationKeyLiveRef.current.trim()
+      return k ? isConversationProcessingSend(k) : false
+    },
+    set current(v: boolean) {
+      const k = processingSendKeyRef.current || conversationKeyLiveRef.current.trim()
+      if (k) setConversationProcessingSend(k, v)
+    },
+  } as { current: boolean }
   const lastSendFingerprintRef = useRef<{ text: string; at: number } | null>(null)
 
-  const [flushUiBusy, setFlushUiBusy] = useState(false)
-  const [awaitingAiKick, setAwaitingAiKick] = useState(false)
-  const pendingAiRepliesRef = useRef(0)
+  const pendingAiRepliesKeyRef = useRef('')
+  const pendingAiRepliesRef = {
+    get current(): number {
+      const k = pendingAiRepliesKeyRef.current || conversationKeyLiveRef.current.trim()
+      return k ? getConversationPendingAiReplies(k) : 0
+    },
+    set current(v: number) {
+      const k = pendingAiRepliesKeyRef.current || conversationKeyLiveRef.current.trim()
+      if (k) setConversationPendingAiReplies(k, v)
+    },
+  } as { current: number }
+
+  const [pipelineTick, setPipelineTick] = useState(0)
+  useEffect(() => subscribeWechatConversationAiPipeline(() => setPipelineTick((t) => t + 1)), [])
+  const flushUiBusy = getConversationPipelineFlags(conversationKey).flushUiBusy
+  const awaitingAiKick = getConversationPipelineFlags(conversationKey).awaitingAiKick
+  void pipelineTick
 
   const syncAiReplyPipelineActive = useCallback(
     (ck?: string) => {
@@ -6329,9 +6848,11 @@ export function ChatRoomInner({
     sync()
     const unsubPipeline = subscribeWechatAiReplyPipelineActive(sync)
     const unsubProactive = subscribeProactiveMessageInFlight(sync)
+    const unsubConvPipeline = subscribeWechatConversationAiPipeline(sync)
     return () => {
       unsubPipeline()
       unsubProactive()
+      unsubConvPipeline()
     }
   }, [conversationKey, isConversationAiPipelineBusy])
 
@@ -6340,7 +6861,11 @@ export function ChatRoomInner({
     (conversationKey.trim() !== '' &&
       (typingVisible ||
         pendingQueue.length > 0 ||
-        isConversationAiPipelineBusy(conversationKey)))
+        isConversationPeerReplyingVisible(conversationKey) ||
+        opponentRevealJobsRef.current.some((j) =>
+          conversationKeysMatch(j.forConversationKey, conversationKey),
+        ) ||
+        isProactiveMessageInFlight(conversationKey.trim())))
 
   const onOtherTypingChangeRef = useRef(onOtherTypingChange)
   onOtherTypingChangeRef.current = onOtherTypingChange
@@ -6354,14 +6879,21 @@ export function ChatRoomInner({
   useEffect(() => {
     const ck = conversationKey.trim()
     if (!ck) return
+    setConversationHeaderTyping(ck, peerTypingForHeader)
+    setConversationPendingQueueCount(ck, pendingQueue.length)
+  }, [conversationKey, peerTypingForHeader, pendingQueue.length])
+
+  useEffect(() => {
+    const ck = conversationKey.trim()
+    if (!ck) return
     persistChatAwaitingAiTyping(ck, peerTypingForHeader)
   }, [conversationKey, peerTypingForHeader])
 
   useEffect(() => {
     setBackgroundNotifyPendingWork({
-      wechatTyping: peerTypingForHeader || awaitingAiKick,
+      wechatTyping: isAnyConversationPeerTypingForNotify(),
     })
-  }, [peerTypingForHeader, awaitingAiKick])
+  }, [peerTypingForHeader, awaitingAiKick, pipelineTick])
 
   const skipBusyBypassRef = useRef(false)
   const skipBusyLastTriggerMsRef = useRef(0)
@@ -6960,66 +7492,101 @@ export function ChatRoomInner({
     }
   }, [conversationCharacterId, personaCharacterId, peerNotifyTitle, playerIdentityId, psycheRadarOpen, roomType])
 
-  const flushAiReplies = useCallback(async () => {
-    if (isSelfMemoChat) {
-      pendingAiRepliesRef.current = 0
-      setAwaitingAiKick(false)
-      setTypingVisible(false)
+  const flushAiReplies = useCallback(async (forConversationKey?: string) => {
+    const flushConversationKey = (forConversationKey ?? pendingAiRepliesKeyRef.current ?? conversationKey).trim()
+    if (!flushConversationKey) return
+    pendingAiRepliesKeyRef.current = flushConversationKey
+
+    const getFlushPending = () => getConversationPendingAiReplies(flushConversationKey)
+    const setFlushPending = (n: number) => setConversationPendingAiReplies(flushConversationKey, n)
+    const isFlushQueueStopped = () => isConversationOpponentQueueStopped(flushConversationKey)
+    const clearFlushQueueStop = () => setConversationOpponentQueueStop(flushConversationKey, false)
+    const flushIsLive = () => conversationKeyLiveRef.current.trim() === flushConversationKey
+    const setTypingIfLive = (v: boolean) => {
+      if (flushIsLive()) setTypingVisible(v)
+    }
+
+    const flushIsSelfMemo =
+      getConversationFlushContext(flushConversationKey)?.isSelfMemoChat ?? isSelfMemoChat
+    if (flushIsSelfMemo) {
+      setFlushPending(0)
+      setConversationAwaitingAiKick(flushConversationKey, false)
+      setTypingIfLive(false)
       return
     }
     const nowGate = Date.now()
     if (nowGate < aiFailureCooldownUntilRef.current) {
-      pendingAiRepliesRef.current = 0
-      setAwaitingAiKick(false)
-      setTypingVisible(false)
-      const ckCooldown = conversationKeyLiveRef.current.trim()
-      if (ckCooldown && conversationKeysMatch(aiPipelineOwnerKeyRef.current ?? '', ckCooldown)) {
+      setFlushPending(0)
+      setConversationAwaitingAiKick(flushConversationKey, false)
+      setTypingIfLive(false)
+      if (conversationKeysMatch(aiPipelineOwnerKeyRef.current ?? '', flushConversationKey)) {
         aiPipelineOwnerKeyRef.current = null
-        aiCallingRef.current = false
+        setConversationAiCalling(flushConversationKey, false)
       }
-      syncAiReplyPipelineActive(ckCooldown)
+      syncAiReplyPipelineActive(flushConversationKey)
       return
     }
-    if (flushAiRepliesBusyRef.current) {
+    if (isConversationFlushAiRepliesBusy(flushConversationKey)) {
       // 另一次 flush 正跑：pending 已由 bump 写入，本轮 finally 会 queueMicrotask 再调 flush。
       // 若不解除 awaitingAiKick，用户首条发出后会长期像「卡住」且无法点输入条旁重试。
-      setAwaitingAiKick(false)
+      setConversationAwaitingAiKick(flushConversationKey, false)
       return
     }
-    const flushConversationKey = conversationKey.trim()
-    flushAiRepliesBusyRef.current = true
+    setConversationFlushAiRepliesBusy(flushConversationKey, true)
     aiPipelineOwnerKeyRef.current = flushConversationKey
-    aiCallingRef.current = true
+    setConversationAiCalling(flushConversationKey, true)
     markProactiveMessageConversationAiBusy(flushConversationKey, true)
-    setAwaitingAiKick(false)
-    setFlushUiBusy(true)
-    setTypingVisible(true)
+    setConversationAwaitingAiKick(flushConversationKey, false)
+    setConversationFlushUiBusy(flushConversationKey, true)
+    setTypingIfLive(true)
     syncAiReplyPipelineActive(flushConversationKey)
-    if (roomType === 'group' && groupId?.trim() && pendingAiRepliesRef.current > 1) {
-      pendingAiRepliesRef.current = 1
+    const storedFlushCtx = getConversationFlushContext(flushConversationKey)
+    const liveFlushSnapshot = {
+      conversationKey: conversationKey.trim(),
+      conversationCharacterId,
+      personaCharacterId: personaCharacterId?.trim() ?? '',
+      roomType,
+      groupId: groupId?.trim() || null,
+      playerIdentityId,
+      peerNotifyTitle,
+      useLumiProjectAssistantPrompt,
+      isSelfMemoChat,
+    }
+    const flushCtx = resolveBoundConversationFlushContext(
+      flushConversationKey,
+      storedFlushCtx,
+      liveFlushSnapshot,
+      flushIsLive(),
+    )
+    const fxRoomType = flushCtx.roomType
+    const fxGroupId = flushCtx.groupId
+    const fxPersonaCharacterId = flushCtx.personaCharacterId
+    const fxConversationCharacterId = flushCtx.conversationCharacterId
+    const fxPeerNotifyTitle = flushCtx.peerNotifyTitle
+    const fxUseLumi = flushCtx.useLumiProjectAssistantPrompt
+    const fxPlayerIdentityId = flushCtx.playerIdentityId
+    if (fxRoomType === 'group' && fxGroupId && getFlushPending() > 1) {
+      setFlushPending(1)
     }
     const peerName = playerDisplayName.trim() || state.profile.displayName.trim() || '朋友'
+    flushOpponentRevealConvKeyRef.current = flushConversationKey
     try {
-      while (pendingAiRepliesRef.current > 0) {
-        if (conversationKeyLiveRef.current.trim() !== flushConversationKey) {
-          pendingAiRepliesRef.current = 0
-          opponentQueueStopRef.current = true
-          break
-        }
+      while (getFlushPending() > 0) {
+        const revealConvKey = flushConversationKey
         if (manualAiPauseRef.current) {
-          pendingAiRepliesRef.current = 0
+          setFlushPending(0)
           break
         }
-        pendingAiRepliesRef.current -= 1
-        opponentQueueStopRef.current = false
+        setFlushPending(getFlushPending() - 1)
+        clearFlushQueueStop()
         pendingWorldBookRevertByCharRef.current = new Map()
 
         let danmakuConfigForRound: RoundDanmakuInlineConfig | undefined
         let danmakuApiForRound: ApiConfig | null = null
         let danmakuSplitAttemptedForRound = false
 
-        let persistCharacterId = conversationCharacterId
-        let notifyPeerRound = peerNotifyTitle.trim() || '对方'
+        let persistCharacterId = fxConversationCharacterId
+        let notifyPeerRound = fxPeerNotifyTitle.trim() || '对方'
         let memoryRound = ''
         let memoryMomentImagesRound: string[] = []
         let unsPrivateRound = ''
@@ -7036,18 +7603,20 @@ export function ChatRoomInner({
         let dedupeOfflineRecentOmittedRound = false
         let dedupeMeetRecentOmittedRound = false
         let recentGroupChatsReference =
-          roomType !== 'group' && !useLumiProjectAssistantPrompt
+          fxRoomType !== 'group' && !fxUseLumi
             ? (await loadPrivateGroupChatsRecentReference()).trim()
             : ''
 
-        if (roomType === 'group' && groupId?.trim()) {
-          const gid = groupId.trim()
+        let groupDocForFlush = groupDocRef.current
+        if (fxRoomType === 'group' && fxGroupId) {
+          const gid = fxGroupId
           const gFresh = await personaDb.getGroupChat(gid)
-          groupDocRef.current = gFresh
+          groupDocForFlush = gFresh
+          if (flushIsLive()) groupDocRef.current = gFresh
           const npcs = pickGroupNpcMembersForAiTurn(gFresh, getCurrentTimeMs())
           const firstNpc = npcs[0]?.charId?.trim() || ''
           if (!firstNpc) {
-            setTypingVisible(false)
+            setTypingIfLive(false)
             continue
           }
           persistCharacterId = firstNpc
@@ -7059,32 +7628,35 @@ export function ChatRoomInner({
         }
 
         const transcriptSpeakerOpts =
-          roomType === 'group'
+          fxRoomType === 'group'
             ? {
                 groupSpeakerLabel: (msg: ChatMsg) => {
                   if (msg.from === 'self') return undefined
                   const sid = msg.senderCharacterId?.trim()
                   if (!sid) return notifyPeerRound
                   if (sid === WECHAT_GROUP_BOT_CHARACTER_ID) return '群管家'
-                  const gr = groupDocRef.current
+                  const gr = groupDocForFlush
                   return gr ? findGroupMember(gr, sid)?.groupNickname : undefined
                 },
               }
             : undefined
-        let transcript = itemsToTranscript(buildChatItemsForAiTranscript(), transcriptSpeakerOpts)
+        const transcriptItems = flushIsLive()
+          ? buildChatItemsForAiTranscript()
+          : await buildChatItemsForAiTranscriptForKey(flushConversationKey, flushCtx)
+        let transcript = itemsToTranscript(transcriptItems, transcriptSpeakerOpts)
         const roundReplyBias = retryReplyBiasRef.current.trim()
         retryReplyBiasRef.current = ''
 
-        setTypingVisible(true)
-        if (opponentQueueStopRef.current) {
-          setTypingVisible(false)
+        setTypingIfLive(true)
+        if (isFlushQueueStopped()) {
+          setTypingIfLive(false)
           continue
         }
 
         let character: Character | null = null
         let worldBackgroundPrompt: string | undefined
-        const cid = roomType === 'group' ? persistCharacterId : personaCharacterId?.trim()
-        const lumiAssistantChat = useLumiProjectAssistantPrompt
+        const cid = fxRoomType === 'group' ? persistCharacterId : fxPersonaCharacterId?.trim()
+        const lumiAssistantChat = fxUseLumi
         if (!lumiAssistantChat && cid) {
           try {
             character = await personaDb.getCharacter(cid)
@@ -7106,7 +7678,7 @@ export function ChatRoomInner({
         let meetWechatContinuityBlockForAi = ''
         let wechatHomeProfileForAi: { displayName: string; signature: string } | null = null
         const isMeetPrivateChat =
-          roomType !== 'group' &&
+          fxRoomType !== 'group' &&
           !lumiAssistantChat &&
           !!character &&
           isMeetSyncedCharacter(character.id, character.worldBooks ?? [])
@@ -7121,7 +7693,7 @@ export function ChatRoomInner({
               (await shouldTreatWechatLineAsStrangerContact(currentAccountId)) ||
               (await shouldUseWechatHomeProfileOnlyForPrivateChat({
                 character: character!,
-                sessionPlayerIdentityId: playerIdentityId.trim(),
+                sessionPlayerIdentityId: fxPlayerIdentityId.trim(),
                 wechatAccountId: currentAccountId,
               }))
             wechatHomeProfileForAi = wxHome
@@ -7144,9 +7716,9 @@ export function ChatRoomInner({
               }
             }
           } else {
-            const sessionId = playerIdentityId.trim()
+            const sessionId = fxPlayerIdentityId.trim()
             const homeOnly =
-              roomType !== 'group' &&
+              fxRoomType !== 'group' &&
               !!character &&
               sessionId &&
               sessionId !== '__none__' &&
@@ -7166,8 +7738,8 @@ export function ChatRoomInner({
             } else {
               let loadIdentityId = sessionId
               if (
-                roomType === 'group' &&
-                groupId?.trim() &&
+                fxRoomType === 'group' &&
+                fxGroupId?.trim() &&
                 cid?.trim() &&
                 cid.trim() !== WECHAT_GROUP_BOT_CHARACTER_ID
               ) {
@@ -7178,7 +7750,7 @@ export function ChatRoomInner({
                 } catch {
                   /* 保持 loadIdentityId */
                 }
-              } else if (roomType !== 'group') {
+              } else if (fxRoomType !== 'group') {
                 loadIdentityId = resolvePrivateChatPromptPlayerIdentityId(character, sessionId)
               }
               if (loadIdentityId && loadIdentityId !== '__none__') {
@@ -7294,13 +7866,13 @@ export function ChatRoomInner({
           if (!hasApi) {
             // 不做任何本地兜底回复：未触发模型时不应出现角色消息
             showComposerToast('未配置 AI API，无法生成对方回复')
-            pendingAiRepliesRef.current = 0
-            setTypingVisible(false)
+            setFlushPending(0)
+            setTypingIfLive(false)
             continue
           } else {
             const busyGs = await personaDb.getGlobalSettings()
-            const isGroupRoom = roomType === 'group' && !!groupId?.trim()
-            const busyConvEnabledRaw = await personaDb.getPhoneKv(`busy-conv:${conversationKey}`)
+            const isGroupRoom = fxRoomType === 'group' && !!fxGroupId
+            const busyConvEnabledRaw = await personaDb.getPhoneKv(`busy-conv:${flushConversationKey}`)
             const busyConvEnabled = typeof busyConvEnabledRaw === 'boolean' ? busyConvEnabledRaw : true
             const busySwitchEnabledRaw = isGroupRoom
               ? false
@@ -7310,14 +7882,14 @@ export function ChatRoomInner({
               skipBusyBypassRef.current = false
             }
             const busySwitchEnabled = suppressBusyDirectiveThisRound ? false : busySwitchEnabledRaw
-            const busyRow = isGroupRoom ? null : await personaDb.getCharacterBusySettings(conversationCharacterId)
+            const busyRow = isGroupRoom ? null : await personaDb.getCharacterBusySettings(fxConversationCharacterId)
             const nowTs = getCurrentTimeMs()
             const busyStillActive = !!busyRow?.isBusy && (busyRow.busyEndTime ?? 0) > nowTs
             clearBusyAfterReply = !!busySwitchEnabled && !!busyRow?.isBusy && !busyStillActive
             if (clearBusyAfterReply && busyRow) {
               // 关键：忙碌已过期时先解除 busy，避免后续 AI 失败时被“过期忙碌”反复触发重试。
               await personaDb.putCharacterBusySettings({
-                characterId: conversationCharacterId,
+                characterId: fxConversationCharacterId,
                 isBusy: false,
                 busyReason: '',
                 busyStartTime: 0,
@@ -7328,11 +7900,11 @@ export function ChatRoomInner({
               clearBusyAfterReply = false
             }
             if (busySwitchEnabled && busyStillActive && busyRow) {
-              showCenterToast(buildBusyToastText(peerNotifyTitle || '对方', busyRow.busyReason || '处理点事情', busyRow.busyEndTime ?? nowTs, nowTs))
-              pendingAiRepliesRef.current = 0
+              showCenterToast(buildBusyToastText(fxPeerNotifyTitle || '对方', busyRow.busyReason || '处理点事情', busyRow.busyEndTime ?? nowTs, nowTs))
+              setFlushPending(0)
               continue
             }
-            const reversed = [...extractMessages(buildChatItemsForAiTranscript())].reverse()
+            const reversed = [...extractMessages(transcriptItems)].reverse()
             const lastOther = reversed.find((x) => x.kind === 'msg' && x.from === 'other') as ChatMsg | undefined
             const lastSelfVoice = reversed.find((x) => x.kind === 'msg' && x.from === 'self' && !!x.voice) as ChatMsg | undefined
             const voiceEmotionBias = (() => {
@@ -7575,8 +8147,11 @@ export function ChatRoomInner({
             }
             // 发请求前再拼一次 transcript，避免重新回复/删稿与异步 flush 交错时仍带入本轮旧对方稿
             transcript = itemsToTranscript(buildChatItemsForAiTranscript(), transcriptSpeakerOpts)
-            // 线上回复思维链开关：已取消（每次回复都走好感度一致性思维链 CoT）。
-            const includeThinkingChain = true
+            // 按会话设置决定是否注入后台思维链 CoT（默认关）
+            const includeThinkingChain = thinkingChainEnabled === true
+            const includeForwardHistoryCard = forwardHistoryCardEnabled === true
+            const includeProfileImageChange = profileImageChangeEnabled === true
+            const includeInternetMemeLexicon = internetMemeLexiconEnabled === true
             const busyCfg =
               busyGs.busyMode === 'character'
                 ? {
@@ -7718,7 +8293,7 @@ export function ChatRoomInner({
                   imageRoundCountMax: roundImageCountRange.max,
                   ...(roundImageCountTarget > 0 ? { imageRoundCountTarget: roundImageCountTarget } : {}),
                   userExplicitCharacterImageRequest: roundUserExplicitImageRequest,
-                  ...(roundImageAllowed ? { imageRoundAllowed: true } : {}),
+                  ...(roomType !== 'group' ? { imageRoundAllowed: roundImageAllowed } : {}),
                 } as const)
               : {}
             let characterPersonaSelfServiceExtras: {
@@ -7785,7 +8360,7 @@ export function ChatRoomInner({
               const allowedCharIds = npcMembers.map((m) => m.charId.trim()).filter(Boolean)
               if (!allowedCharIds.length) {
                 showComposerToast('群内没有可接话的 AI 成员')
-                pendingAiRepliesRef.current = 0
+                setFlushPending(0)
                 continue
               }
               let groupUnsummarizedBlock = ''
@@ -8079,6 +8654,7 @@ export function ChatRoomInner({
                 promptMode: pm,
                 danmakuInstruction: shouldSplitDanmakuCall ? undefined : danmakuInstruction || undefined,
                 chatMemberIds: [...wbGroupIds],
+                includeThinkingChain,
               })
               const grpWbExtra = buildAggregateGroupChatAfterPatchItemsSection(groupMemberCharactersForWbPatch)
               if (grpWbExtra.trim()) systemContentFinal += `\n\n${grpWbExtra}`
@@ -8089,11 +8665,14 @@ export function ChatRoomInner({
                 systemContentFinal += `\n\n${buildCharacterImageGenPromptBlock(characterImageGenStyleHint, {
                   hasAppearanceReference: characterHasAppearanceReference(character),
                   appearanceHint: resolveCharacterImageGenPromptAppearanceHint(character),
+                  userExplicitCharacterImageRequest: roundUserExplicitImageRequest,
+                  chatContextTail: buildChatContextTailFromTranscript(transcript),
+                  characterGender: character?.gender,
+                  playerGender: identityForGroupPrompt?.gender ?? playerIdentity?.gender,
                   injectCompositionLifeFeelCot: shouldInjectImageGenCompositionLifeFeelCot({
                     characterImageGenEnabled,
                     userExplicitCharacterImageRequest: roundUserExplicitImageRequest,
                     imageRoundCountTarget: roundImageCountTarget,
-                    imageRoundAllowed: roundImageAllowed,
                   }),
                 })}`
               }
@@ -8182,6 +8761,9 @@ export function ChatRoomInner({
                 replyBias: traceReplyBias || undefined,
                 busyContext,
                 includeThinkingChain,
+                includeForwardHistoryCard,
+                includeProfileImageChange,
+                includeInternetMemeLexicon,
                 currentTimeMs: getCurrentTimeMs(),
                 timePerceptionEnabled: roomType === 'private' ? timePerceptionEnabled : true,
                 danmakuConfig: shouldSplitDanmakuCall ? undefined : danmakuConfig,
@@ -8229,6 +8811,9 @@ export function ChatRoomInner({
                   replyBias: traceReplyBias || undefined,
                   busyContext,
                   includeThinkingChain,
+                  includeForwardHistoryCard,
+                  includeProfileImageChange,
+                  includeInternetMemeLexicon,
                   currentTimeMs: getCurrentTimeMs(),
                   timePerceptionEnabled: roomType === 'private' ? timePerceptionEnabled : true,
                   danmakuConfig: shouldSplitDanmakuCall ? undefined : danmakuConfig,
@@ -8284,6 +8869,9 @@ export function ChatRoomInner({
                 replyBias: traceReplyBias || undefined,
                 busyContext,
                 includeThinkingChain,
+                includeForwardHistoryCard,
+                includeProfileImageChange,
+                includeInternetMemeLexicon,
                 currentTimeMs: getCurrentTimeMs(),
                 timePerceptionEnabled: roomType === 'private' ? timePerceptionEnabled : true,
                 danmakuConfig: shouldSplitDanmakuCall ? undefined : danmakuConfig,
@@ -8334,13 +8922,13 @@ export function ChatRoomInner({
           aiRequestFailed = true
           logger.log('error', `AI请求失败: ${msg}`)
           aiFailureCooldownUntilRef.current = Date.now() + 8000
-          pendingAiRepliesRef.current = 0
+          setFlushPending(0)
           aiCallingRef.current = false
           if (aiPipelineOwnerKeyRef.current?.trim() === flushConversationKey) {
             aiPipelineOwnerKeyRef.current = null
           }
-          setAwaitingAiKick(false)
-          setTypingVisible(false)
+          setConversationAwaitingAiKick(flushConversationKey, false)
+          setTypingIfLive(false)
           syncAiReplyPipelineActive(flushConversationKey)
           const nowToast = Date.now()
           if (nowToast - aiLastErrorToastMsRef.current > 3000) {
@@ -8349,12 +8937,8 @@ export function ChatRoomInner({
           }
         }
 
-        if (opponentQueueStopRef.current) continue
+        if (isFlushQueueStopped()) continue
         if (aiRequestFailed) continue
-        if (conversationKeyLiveRef.current.trim() !== flushConversationKey) {
-          opponentQueueStopRef.current = true
-          continue
-        }
 
         let worldBookAfterUpdated = false
         let worldBookAfterAppliedPatchCount = 0
@@ -8530,7 +9114,7 @@ export function ChatRoomInner({
         } else if (modelImageLineCount > 0 && !honorModelImageLines) {
           logConsole(
             'ai',
-            `模型输出了 ${modelImageLineCount} 条 [图片] 行，但发图概率=${convMediaFreqRef.current.image ?? 0}% 且非用户明确要求，将剔除`,
+            `模型输出了 ${modelImageLineCount} 条 [图片] 行，但发图概率=0% 且非用户明确要求，将剔除`,
           )
         }
 
@@ -8652,7 +9236,7 @@ export function ChatRoomInner({
             const publishResult = await applyCharacterMomentPublishDirectives({
               accountId: currentAccountId,
               characterId: character.id,
-              playerIdentityId,
+              playerIdentityId: fxPlayerIdentityId,
               playerDisplayName,
               apiConfig,
               directives: publishFiltered.directives,
@@ -8680,7 +9264,7 @@ export function ChatRoomInner({
             const songShareResult = await applyCharacterMomentSongShareDirectives({
               accountId: currentAccountId,
               characterId: character.id,
-              playerIdentityId,
+              playerIdentityId: fxPlayerIdentityId,
               playerDisplayName,
               apiConfig,
               directives: songShareFiltered.directives,
@@ -8837,7 +9421,7 @@ export function ChatRoomInner({
               hasProactiveMessageScheduleSaved(convSettings)
             ) {
               await personaDb.upsertChatConversationSettings({
-                conversationKey,
+                conversationKey: revealConvKey,
                 peerCharacterId: convSettings.peerCharacterId,
                 playerIdentityId: convSettings.playerIdentityId,
                 proactiveMessageNextIntervalSeconds: drawProactiveVariableIntervalSeconds(true, convSettings),
@@ -8880,7 +9464,7 @@ export function ChatRoomInner({
             dedupePrivateRecentOmitted: dedupePrivateRecentOmittedRound,
             dedupeOfflineRecentOmitted: dedupeOfflineRecentOmittedRound,
             dedupeMeetRecentOmitted: dedupeMeetRecentOmittedRound,
-            conversationKey,
+            conversationKey: revealConvKey,
             recentGroupChatsReference,
             chatMemberIds: loreSceneMemberIds,
             globalWechatPlate: traceGlobalPlate,
@@ -8998,7 +9582,7 @@ export function ChatRoomInner({
             if (groupId?.trim()) {
               await applyWeChatGroupMetaFromModel({
                 groupId: groupId.trim(),
-                playerIdentityId,
+                playerIdentityId: fxPlayerIdentityId,
                 action: br.action,
                 onGroupUpdated: (g) => {
                   groupDocRef.current = g
@@ -9006,11 +9590,11 @@ export function ChatRoomInner({
                 },
               })
             }
-            if (opponentQueueStopRef.current) break bubbleRunLoop
+            if (isFlushQueueStopped()) break bubbleRunLoop
             continue
           }
           if (br.kind === 'forward_history') {
-            if (opponentQueueStopRef.current) break bubbleRunLoop
+            if (isFlushQueueStopped()) break bubbleRunLoop
             persistCharacterId = br.characterId
             notifyPeerRound = br.notifyTitle
             if (!forwardHistoryEmittedThisRound && br.payload?.messages?.length) {
@@ -9026,20 +9610,20 @@ export function ChatRoomInner({
               const historyRow: WeChatChatMessage = {
                 id: historyId,
                 characterId: persistCharacterId,
-                playerIdentityId,
+                playerIdentityId: fxPlayerIdentityId,
                 type: 'character',
                 content: '[聊天记录]',
                 chatHistory: historyPayload,
                 timestamp: ts,
                 isRead: true,
-                conversationKey,
+                conversationKey: revealConvKey,
               }
               const mappedHistory = mapWeChatMessagesToChatItems([historyRow])[0]
               if (mappedHistory) {
                 setTypingVisible(false)
                 enqueueOpponentMessagesSequential([
                   {
-                    forConversationKey: conversationKey,
+                    forConversationKey: revealConvKey,
                     msg: { ...mappedHistory, otherAnimated: true },
                     persist: () => {
                       void personaDb.appendWeChatChatMessage(historyRow).catch(() => {})
@@ -9055,7 +9639,7 @@ export function ChatRoomInner({
           persistCharacterId = br.characterId
           notifyPeerRound = br.notifyTitle
           let bubbles = [...br.bubbles]
-          if (opponentQueueStopRef.current) break bubbleRunLoop
+          if (isFlushQueueStopped()) break bubbleRunLoop
 
         let pendingCharacterMusicSyncInvites = pendingMusicSyncInvitesThisRound
         let pendingCharacterMusicSyncSeeks = pendingMusicSyncSeeksThisRound
@@ -9181,7 +9765,7 @@ export function ChatRoomInner({
                 const enriched = await ensureGomokuSessionOnInvitePayload(invite, {
                   api: apiConfig,
                   characterId: persistCharacterId,
-                  conversationKey,
+                  conversationKey: revealConvKey,
                   peerDisplayName: notifyPeerRound,
                   lineScope: normalizeMemoryPromptLineScope(currentAccountId, playerIdentityId),
                 })
@@ -9307,7 +9891,7 @@ export function ChatRoomInner({
         const enqueueMusicSyncRoundCompletionJob = () => {
           enqueueOpponentMessagesSequential([
             {
-              forConversationKey: conversationKey,
+              forConversationKey: revealConvKey,
               msg: {
                 id: `wxm-${getCurrentTimeMs()}-music-sync-tail`,
                 kind: 'msg',
@@ -9374,7 +9958,7 @@ export function ChatRoomInner({
           const row: WeChatChatMessage = {
             id,
             characterId: WECHAT_GROUP_BOT_CHARACTER_ID,
-            playerIdentityId,
+            playerIdentityId: fxPlayerIdentityId,
             type: 'character',
             content: `${nick}因被禁言已自动隐藏这条消息`,
             ext: {
@@ -9384,7 +9968,7 @@ export function ChatRoomInner({
             },
             timestamp: ts,
             isRead: true,
-            conversationKey,
+            conversationKey: revealConvKey,
             quiet: true,
           }
           const mappedRows = mapWeChatMessagesToChatItems([row])
@@ -9562,21 +10146,21 @@ export function ChatRoomInner({
               let opponentJobs: OpponentRevealJob[] = newMsgs.map((m, j) => {
                 const p = plans[j]!
                 return {
-                  forConversationKey: conversationKey,
+                  forConversationKey: revealConvKey,
                   msg: m,
                   persist: () => {
                     void personaDb
                       .appendWeChatChatMessage({
                         id: m.id,
                         characterId: p.charId,
-                        playerIdentityId,
+                        playerIdentityId: fxPlayerIdentityId,
                         type: 'character',
                         content: m.text,
                         thinking: j === 0 ? thinkingRow : undefined,
                         replyTo: m.replyTo ?? undefined,
                         timestamp: m.timestamp,
                         isRead: true,
-                        conversationKey,
+                        conversationKey: revealConvKey,
                         notifyPeerTitle:
                           p.charId === WECHAT_GROUP_BOT_CHARACTER_ID ? '群管家' : notifyTitle,
                       })
@@ -9607,7 +10191,7 @@ export function ChatRoomInner({
         try {
         for (let i = 0; i < bubbles.length; i += 1) {
           try {
-            if (opponentQueueStopRef.current) break bubbleRunLoop
+            if (isFlushQueueStopped()) break bubbleRunLoop
             const rawLine = String(bubbles[i] ?? '').trim()
             const normalizedRawLine = rawLine.replace(/\\n/g, '\n').trim()
             const expandedLines = normalizedRawLine
@@ -9736,14 +10320,14 @@ export function ChatRoomInner({
                   {
                     id: oidM,
                     characterId: persistCharacterId,
-                    playerIdentityId,
+                    playerIdentityId: fxPlayerIdentityId,
                     type: 'character' as const,
                     content: seg || '[语音]',
                     thinking: thinkingVoiceM,
                     replyTo: replyToMetaM ?? undefined,
                     timestamp: tsM,
                     isRead: true,
-                    conversationKey,
+                    conversationKey: revealConvKey,
                     voice: voiceM,
                     ext: { mutedMessageVisibleToModeratorsOnly: true },
                   },
@@ -9755,21 +10339,21 @@ export function ChatRoomInner({
                   const queuedVoiceMuted = { ...uiVoice, otherAnimated: true as const }
                   enqueueOpponentMessagesSequential([
                     {
-                      forConversationKey: conversationKey,
+                      forConversationKey: revealConvKey,
                       msg: queuedVoiceMuted,
                       persist: () => {
                         void personaDb
                           .appendWeChatChatMessage({
                             id: oidM,
                             characterId: persistCharacterId,
-                            playerIdentityId,
+                            playerIdentityId: fxPlayerIdentityId,
                             type: 'character',
                             content: seg || '[语音]',
                             thinking: thinkingVoiceM,
                             replyTo: replyToMetaM ?? undefined,
                             timestamp: queuedVoiceMuted.timestamp,
                             isRead: true,
-                            conversationKey,
+                            conversationKey: revealConvKey,
                             notifyPeerTitle: notifyPeerRound.trim() || undefined,
                             voice: voiceM,
                             ext: { mutedMessageVisibleToModeratorsOnly: true },
@@ -9788,7 +10372,7 @@ export function ChatRoomInner({
                 continue
               }
               const estimatedVoiceSec = Math.max(1, Math.min(30, Math.round(seg.length / 6)))
-              if (opponentQueueStopRef.current) break bubbleRunLoop
+              if (isFlushQueueStopped()) break bubbleRunLoop
               const ts = getCurrentTimeMs()
               const oid = `wxm-${ts}-ov-${i}-${Math.random().toString(36).slice(2, 6)}`
               const replyToMeta = pendingReplyMessageId ? await buildReplyMetaById(pendingReplyMessageId) : null
@@ -9834,21 +10418,21 @@ export function ChatRoomInner({
                   : undefined
               let voiceJobs: OpponentRevealJob[] = [
                 {
-                  forConversationKey: conversationKey,
+                  forConversationKey: revealConvKey,
                   msg: incoming,
                   persist: () => {
                     void personaDb
                       .appendWeChatChatMessage({
                         id: oid,
                         characterId: persistCharacterId,
-                        playerIdentityId,
+                        playerIdentityId: fxPlayerIdentityId,
                         type: 'character',
                         content: seg || '[语音]',
                         thinking: thinkingVoice,
                         replyTo: replyToMeta ?? undefined,
                         timestamp: incoming.timestamp,
                         isRead: true,
-                        conversationKey,
+                        conversationKey: revealConvKey,
                         notifyPeerTitle: notifyPeerRound.trim() || undefined,
                         voice,
                       })
@@ -9877,14 +10461,14 @@ export function ChatRoomInner({
                 {
                   id: oidT,
                   characterId: persistCharacterId,
-                  playerIdentityId,
+                  playerIdentityId: fxPlayerIdentityId,
                   type: 'character' as const,
                   content: hidden,
                   thinking: thinkingTxtM,
                   replyTo: replyToMetaT ?? undefined,
                   timestamp: tsT,
                   isRead: true,
-                  conversationKey,
+                  conversationKey: revealConvKey,
                   ext: { mutedMessageVisibleToModeratorsOnly: true },
                 },
               ])
@@ -9895,21 +10479,21 @@ export function ChatRoomInner({
                 const queuedTxtMuted = { ...uiTxt, otherAnimated: true as const }
                 enqueueOpponentMessagesSequential([
                   {
-                    forConversationKey: conversationKey,
+                    forConversationKey: revealConvKey,
                     msg: queuedTxtMuted,
                     persist: () => {
                       void personaDb
                         .appendWeChatChatMessage({
                           id: oidT,
                           characterId: persistCharacterId,
-                          playerIdentityId,
+                          playerIdentityId: fxPlayerIdentityId,
                           type: 'character',
                           content: hidden,
                           thinking: thinkingTxtM,
                           replyTo: replyToMetaT ?? undefined,
                           timestamp: queuedTxtMuted.timestamp,
                           isRead: true,
-                          conversationKey,
+                          conversationKey: revealConvKey,
                           notifyPeerTitle: notifyPeerRound.trim() || undefined,
                           ext: { mutedMessageVisibleToModeratorsOnly: true },
                         })
@@ -9939,7 +10523,7 @@ export function ChatRoomInner({
                 const misTid = resolveTransferIdFromMisplacedRedPacketOpen({
                   messageIdHint: rpOpen.messageId,
                   msgs: extractMessages(itemsRef.current),
-                  conversationKey,
+                  conversationKey: revealConvKey,
                   characterId: cid,
                   playerIdentityId: pid,
                   getCurrentTime: getCurrentTimeMs,
@@ -9966,7 +10550,7 @@ export function ChatRoomInner({
                 const tid = resolveIncomingTransferForCharacter({
                   messageIdHint: incomingTfAct.messageId,
                   msgs: extractMessages(itemsRef.current),
-                  conversationKey,
+                  conversationKey: revealConvKey,
                   characterId: cid,
                   playerIdentityId: pid,
                   getCurrentTime: getCurrentTimeMs,
@@ -10152,20 +10736,20 @@ export function ChatRoomInner({
                 const locStep = markEmittedThisRound(mid, ts, seg)
                 enqueueOpponentMessagesSequential([
                   {
-                    forConversationKey: conversationKey,
+                    forConversationKey: revealConvKey,
                     msg: incoming,
                     persist: () => {
                       void personaDb
                         .appendWeChatChatMessage({
                           id: mid,
                           characterId: persistCharacterId,
-                          playerIdentityId,
+                          playerIdentityId: fxPlayerIdentityId,
                           type: 'character',
                           content: seg,
                           thinking: thinkingLoc,
                           timestamp: incoming.timestamp,
                           isRead: true,
-                          conversationKey,
+                          conversationKey: revealConvKey,
                           notifyPeerTitle: notifyPeerRound.trim() || undefined,
                           locationShare: payload,
                         })
@@ -10208,20 +10792,20 @@ export function ChatRoomInner({
                 const takeoutStep = markEmittedThisRound(mid, ts, seg)
                 enqueueOpponentMessagesSequential([
                   {
-                    forConversationKey: conversationKey,
+                    forConversationKey: revealConvKey,
                     msg: incoming,
                     persist: () => {
                       void personaDb
                         .appendWeChatChatMessage({
                           id: mid,
                           characterId: persistCharacterId,
-                          playerIdentityId,
+                          playerIdentityId: fxPlayerIdentityId,
                           type: 'character',
                           content: seg,
                           thinking: thinkingTakeout,
                           timestamp: incoming.timestamp,
                           isRead: true,
-                          conversationKey,
+                          conversationKey: revealConvKey,
                           notifyPeerTitle: notifyPeerRound.trim() || undefined,
                           takeoutOrder: bundle.card,
                         })
@@ -10265,20 +10849,20 @@ export function ChatRoomInner({
                 const rpStep = markEmittedThisRound(mid, ts, seg)
                 enqueueOpponentMessagesSequential([
                   {
-                    forConversationKey: conversationKey,
+                    forConversationKey: revealConvKey,
                     msg: incoming,
                     persist: () => {
                       void personaDb
                         .appendWeChatChatMessage({
                           id: mid,
                           characterId: persistCharacterId,
-                          playerIdentityId,
+                          playerIdentityId: fxPlayerIdentityId,
                           type: 'character',
                           content: seg,
                           thinking: thinkingRp,
                           timestamp: incoming.timestamp,
                           isRead: true,
-                          conversationKey,
+                          conversationKey: revealConvKey,
                           notifyPeerTitle: notifyPeerRound.trim() || undefined,
                           redPacket: { packetId, amountYuan: rpDirective.amountYuan, remark: rpDirective.remark, opened: false },
                         })
@@ -10305,7 +10889,7 @@ export function ChatRoomInner({
                   status: 'pending',
                   createdAt: ts,
                   expiresAt,
-                  conversationKey,
+                  conversationKey: revealConvKey,
                   messageId: transferId,
                 })
                 const thinkingTf = !thinkingAttached && thinking ? thinking : undefined
@@ -10324,20 +10908,20 @@ export function ChatRoomInner({
                 const tfStep = markEmittedThisRound(mid, ts, seg)
                 enqueueOpponentMessagesSequential([
                   {
-                    forConversationKey: conversationKey,
+                    forConversationKey: revealConvKey,
                     msg: incoming,
                     persist: () => {
                       void personaDb
                         .appendWeChatChatMessage({
                           id: mid,
                           characterId: persistCharacterId,
-                          playerIdentityId,
+                          playerIdentityId: fxPlayerIdentityId,
                           type: 'character',
                           content: seg,
                           thinking: thinkingTf,
                           timestamp: incoming.timestamp,
                           isRead: true,
-                          conversationKey,
+                          conversationKey: revealConvKey,
                           notifyPeerTitle: notifyPeerRound.trim() || undefined,
                           transfer: { transferId },
                         })
@@ -10397,7 +10981,7 @@ export function ChatRoomInner({
               const dedupeSticker = `sticker:${url}`
               if (emittedThisRound.has(dedupeSticker)) continue
               emittedThisRound.add(dedupeSticker)
-              if (opponentQueueStopRef.current) break bubbleRunLoop
+              if (isFlushQueueStopped()) break bubbleRunLoop
               const replyToSticker = pendingReplyMessageId ? await buildReplyMetaById(pendingReplyMessageId) : null
               pendingReplyMessageId = undefined
               const tsSticker = getCurrentTimeMs()
@@ -10440,14 +11024,14 @@ export function ChatRoomInner({
                     : undefined
                 enqueueOpponentMessagesSequential([
                   {
-                    forConversationKey: conversationKey,
+                    forConversationKey: revealConvKey,
                     msg: incomingSticker,
                     persist: () => {
                       void personaDb
                         .appendWeChatChatMessage({
                           id: oidSticker,
                           characterId: stickerEmitId,
-                          playerIdentityId,
+                          playerIdentityId: fxPlayerIdentityId,
                           type: 'character',
                           content: formatStickerTranscriptLine(stickerRef),
                           stickerRef,
@@ -10455,7 +11039,7 @@ export function ChatRoomInner({
                           replyTo: replyToSticker ?? undefined,
                           timestamp: incomingSticker.timestamp,
                           isRead: true,
-                          conversationKey,
+                          conversationKey: revealConvKey,
                           notifyPeerTitle: stickerNotify.trim() || undefined,
                           images: [{ base64: payloadSticker.base64, type: payloadSticker.mime }],
                         })
@@ -10522,88 +11106,97 @@ export function ChatRoomInner({
                 continue
               }
               emittedThisRound.add(dedupeImageGen)
-              if (opponentQueueStopRef.current) break bubbleRunLoop
+              if (isFlushQueueStopped()) break bubbleRunLoop
               const replyToImage = pendingReplyMessageId ? await buildReplyMetaById(pendingReplyMessageId) : null
               pendingReplyMessageId = undefined
               const tsImage = getCurrentTimeMs()
               const oidImage = `wxm-${tsImage}-oimg-${i}-${Math.random().toString(36).slice(2, 6)}`
               roundImagesEmittedCount += 1
-              try {
-                logConsole(
-                  'ai',
-                  `[imagegen] 开始生图：${charImageGen.prompt.slice(0, 160)}${charImageGen.prompt.length > 160 ? '…' : ''}`,
-                )
-                const dataUrl = await generateMomentsImage(
-                  buildCharacterMediaImageGenParams({
-                    prompt: charImageGen.prompt,
-                    settings: resolvedImageGenSettings,
-                    character,
-                  }),
-                )
-                const payloadImage = imageGenDataUrlToPayload(dataUrl)
-                logConsole('ai', `[imagegen] 生图成功，准备插入图片气泡 id=${oidImage}`)
-                const thinkingForImage = !thinkingAttached && thinking ? thinking : undefined
-                if (thinkingForImage) thinkingAttached = true
-                const incomingImage: ChatMsg = {
-                  id: oidImage,
-                  kind: 'msg',
-                  from: 'other',
-                  senderCharacterId: persistCharacterId,
-                  text: '',
-                  thinking: thinkingForImage,
-                  timestamp: tsImage,
-                  replyTo: replyToImage ?? undefined,
-                  images: [{ base64: payloadImage.base64, type: payloadImage.mime }],
-                  otherAnimated: true,
-                }
-                const imageStep = markEmittedThisRound(oidImage, tsImage, '（发送了一张图片）')
-                enqueueOpponentMessagesSequential([
-                  {
-                    forConversationKey: conversationKey,
-                    msg: incomingImage,
-                    persist: () => {
-                      void personaDb
-                        .appendWeChatChatMessage({
-                          id: oidImage,
-                          characterId: persistCharacterId,
-                          playerIdentityId,
-                          type: 'character',
-                          content: '',
-                          thinking: thinkingForImage,
-                          timestamp: incomingImage.timestamp,
-                          isRead: true,
-                          conversationKey,
-                          notifyPeerTitle: notifyPeerRound.trim() || undefined,
-                          images: [{ base64: payloadImage.base64, type: payloadImage.mime }],
-                        })
-                        .catch((e) => {
-                          logger.log('error', `角色 AI 配图落库失败: ${e instanceof Error ? e.message : String(e)}`)
-                        })
-                    },
-                    afterReveal: withMusicSyncFlushOnBubbleRevealed(imageStep),
-                  },
-                ])
-                flushDeferredBubbleRevealJobsBypassDefer()
-              } catch (e) {
-                const msg = e instanceof Error ? e.message : String(e)
-                logger.log('error', `角色 AI 配图发送失败: ${msg}`)
-                logConsole('ai', `[imagegen] 生图失败：${msg}`)
-                if (isImageGenRateLimitError(e)) {
-                  markImageGenQuotaOrRateLimitBlocked(e)
-                  roundImageGenRateLimited = true
-                  const quotaLike = /额度|quota|配额/i.test(msg)
-                  showCenterToast(
-                    quotaLike
-                      ? '生图额度已用尽，已暂停配图（请充值或更换模型）'
-                      : '生图请求过于频繁，已跳过本轮其余配图',
-                  )
-                } else if (/安全审核|content policy|safety|审核未通过|sexual/i.test(msg)) {
-                  showCenterToast('配图未通过内容安全审核，已跳过该图')
-                } else {
-                  showCenterToast('配图生成失败，已跳过该图')
-                }
-                flushDeferredBubbleRevealJobsBypassDefer()
+              logConsole('ai', `[imagegen] 排队生图 id=${oidImage}`)
+              const thinkingForImage = !thinkingAttached && thinking ? thinking : undefined
+              if (thinkingForImage) thinkingAttached = true
+              const incomingImage: ChatMsg = {
+                id: oidImage,
+                kind: 'msg',
+                from: 'other',
+                senderCharacterId: persistCharacterId,
+                text: '',
+                thinking: thinkingForImage,
+                timestamp: tsImage,
+                replyTo: replyToImage ?? undefined,
+                imageGenPending: true,
+                imageGenPrompt: charImageGen.prompt,
+                otherAnimated: true,
               }
+              const imageStep = markEmittedThisRound(oidImage, tsImage, '（发送了一张图片）')
+              enqueueOpponentMessagesSequential([
+                {
+                  forConversationKey: revealConvKey,
+                  msg: incomingImage,
+                  persist: () => {
+                    void personaDb
+                      .appendWeChatChatMessage({
+                        id: oidImage,
+                        characterId: persistCharacterId,
+                        playerIdentityId: fxPlayerIdentityId,
+                        type: 'character',
+                        content: '',
+                        thinking: thinkingForImage,
+                        timestamp: incomingImage.timestamp,
+                        isRead: true,
+                        conversationKey: revealConvKey,
+                        notifyPeerTitle: notifyPeerRound.trim() || undefined,
+                        imageGenPending: true,
+                        imageGenPrompt: charImageGen.prompt,
+                      })
+                      .catch((e) => {
+                        logger.log('error', `角色 AI 配图占位落库失败: ${e instanceof Error ? e.message : String(e)}`)
+                      })
+                  },
+                  afterReveal: withMusicSyncFlushOnBubbleRevealed(imageStep, () => {
+                    startWeChatCharacterImageGenInBackground({
+                      messageId: oidImage,
+                      prompt: charImageGen.prompt,
+                      character,
+                      settings: resolvedImageGenSettings,
+                      playerIdentityId: fxPlayerIdentityId,
+                      onComplete: (result) => {
+                        if (result.ok) {
+                          logConsole('ai', `[imagegen] 生图成功 id=${oidImage}`)
+                          patchChatMsgInList(oidImage, {
+                            images: result.images,
+                            imageGenPending: false,
+                            imageGenFailed: false,
+                          })
+                          scheduleReconcilePendingImageGenBubblesRef.current()
+                          return
+                        }
+                        const { failure } = result
+                        patchChatMsgInList(oidImage, {
+                          imageGenPending: false,
+                          imageGenFailed: true,
+                        })
+                        scheduleReconcilePendingImageGenBubblesRef.current()
+                        logger.log('error', `角色 AI 配图发送失败: ${failure.message}`)
+                        logConsole('ai', `[imagegen] 生图失败：${failure.message}`)
+                        if (failure.kind === 'rate_limit') {
+                          roundImageGenRateLimited = true
+                          const quotaLike = /额度|quota|配额/i.test(failure.message)
+                          showCenterToast(
+                            quotaLike
+                              ? '生图额度已用尽，已暂停配图（请充值或更换模型）'
+                              : '生图请求过于频繁，已跳过本轮其余配图',
+                          )
+                        } else if (failure.kind === 'safety') {
+                          showCenterToast('配图未通过内容安全审核，已跳过该图')
+                        } else {
+                          showCenterToast('配图生成失败，已跳过该图')
+                        }
+                      },
+                    })
+                  }),
+                },
+              ])
               continue
             }
 
@@ -10630,7 +11223,7 @@ export function ChatRoomInner({
             if (isCharacterMiniGameInviteDirectiveArtifactLine(String(segForStore))) continue
             if (isLocationShareDirectiveArtifactLine(String(segForStore))) continue
             characterPlainTextsThisRound.push(String(segForStore).trim())
-            if (opponentQueueStopRef.current) break bubbleRunLoop
+            if (isFlushQueueStopped()) break bubbleRunLoop
 
             const replyToMeta = pendingReplyMessageId ? await buildReplyMetaById(pendingReplyMessageId) : null
             pendingReplyMessageId = undefined
@@ -10660,8 +11253,8 @@ export function ChatRoomInner({
                     group: g0,
                     offenderCharId: emitCharacterId,
                     offenderNickname: nick,
-                    conversationKey,
-                    playerIdentityId,
+                    conversationKey: revealConvKey,
+                    playerIdentityId: fxPlayerIdentityId,
                     nowMs: ts,
                     shieldedPlainText: seg,
                   })
@@ -10677,7 +11270,7 @@ export function ChatRoomInner({
                     }
                     enqueueOpponentMessagesSequential(
                       queuedUi.map((msg, idx) => ({
-                        forConversationKey: conversationKey,
+                        forConversationKey: revealConvKey,
                         msg,
                         persist: () => {
                           const row = messages[idx]
@@ -10727,7 +11320,7 @@ export function ChatRoomInner({
                 : undefined
             let plainJobs: OpponentRevealJob[] = [
               {
-                forConversationKey: conversationKey,
+                forConversationKey: revealConvKey,
                 msg: incoming,
                 persist: () => {
                   void personaDb
@@ -10736,14 +11329,14 @@ export function ChatRoomInner({
                         {
                           id: oid,
                           characterId: emitCharacterId,
-                          playerIdentityId,
+                          playerIdentityId: fxPlayerIdentityId,
                           type: 'character',
                           content: segForStore,
                           thinking: thinkingForRow,
                           replyTo: replyToMeta ?? undefined,
                           timestamp: incoming.timestamp,
                           isRead: true,
-                          conversationKey,
+                          conversationKey: revealConvKey,
                         },
                         pendingWorldBookRevertByCharRef.current,
                       ),
@@ -10898,14 +11491,14 @@ export function ChatRoomInner({
             if (roomType === 'group' && groupId?.trim()) {
               await runGroupChatMemorySummaryAfterThreshold({
                 apiConfig,
-                conversationKey,
+                conversationKey: revealConvKey,
                 groupId: groupId.trim(),
-                playerIdentityId,
+                playerIdentityId: fxPlayerIdentityId,
               })
             } else {
               await runUnifiedAutoMemorySummaryAfterThreshold({
                 apiConfig,
-                conversationKey,
+                conversationKey: revealConvKey,
                 characterId: persistCharacterId,
                 characterRealName: notifyPeerRound.trim() || peerNotifyTitle.trim() || '对方',
                 sessionPlayerIdentityId: playerIdentityId,
@@ -10922,7 +11515,7 @@ export function ChatRoomInner({
                 await notifyMemorySummaryAttempt({
                   ok: false,
                   primaryWritten: false,
-                  conversationKey,
+                  conversationKey: revealConvKey,
                   characterId: groupId.trim(),
                   displayName: peerNotifyTitle.trim() || '群聊',
                   kind: 'group',
@@ -10935,7 +11528,7 @@ export function ChatRoomInner({
                 await notifyMemorySummaryAttempt({
                   ok: false,
                   primaryWritten: false,
-                  conversationKey,
+                  conversationKey: revealConvKey,
                   characterId: persistCharacterId,
                   displayName: notifyPeerRound.trim() || peerNotifyTitle.trim() || '对方',
                   kind: 'private',
@@ -10950,29 +11543,28 @@ export function ChatRoomInner({
         })()
       }
     } finally {
-      flushAiRepliesBusyRef.current = false
+      flushOpponentRevealConvKeyRef.current = null
+      setConversationFlushAiRepliesBusy(flushConversationKey, false)
       markProactiveMessageConversationAiBusy(flushConversationKey, false)
-      setFlushUiBusy(false)
-      const stillThisConversation = conversationKeyLiveRef.current.trim() === flushConversationKey
-      aiCallingRef.current = stillThisConversation && pendingAiRepliesRef.current > 0
+      setConversationFlushUiBusy(flushConversationKey, false)
+      const pendingLeft = getConversationPendingAiReplies(flushConversationKey)
+      setConversationAiCalling(flushConversationKey, pendingLeft > 0)
       if (
-        !aiCallingRef.current &&
-        pendingAiRepliesRef.current <= 0 &&
+        pendingLeft <= 0 &&
         aiPipelineOwnerKeyRef.current?.trim() === flushConversationKey
       ) {
         aiPipelineOwnerKeyRef.current = null
+        clearConversationFlushContext(flushConversationKey)
       }
-      setAwaitingAiKick(false)
+      setConversationAwaitingAiKick(flushConversationKey, false)
       const pipelineStillActive = syncAiReplyPipelineActive(flushConversationKey)
-      if (stillThisConversation && !pipelineStillActive) {
+      if (flushIsLive() && !pipelineStillActive) {
         setTypingVisible(false)
       }
-      if (pendingAiRepliesRef.current > 0 && stillThisConversation) {
+      if (pendingLeft > 0) {
         queueMicrotask(() => {
-          void flushAiReplies()
+          void flushAiReplies(flushConversationKey)
         })
-      } else if (!stillThisConversation) {
-        pendingAiRepliesRef.current = 0
       }
     }
   }, [
@@ -11010,6 +11602,7 @@ export function ChatRoomInner({
     groupAvatarByCharId,
     peerAvatarResolved,
     buildChatItemsForAiTranscript,
+    buildChatItemsForAiTranscriptForKey,
     enqueueOpponentMessagesSequential,
     createPeerClaimedSelfRedPacketStripRevealJob,
     createCharacterTransferAcceptedAckRevealJob,
@@ -11024,13 +11617,44 @@ export function ChatRoomInner({
   ])
 
   /** 群聊主回复（含 <<GROUP_SET_…>> 等）单次 completion：pending 恒为 1，避免连发/重叠触发多次模型调用。 */
+  const snapshotFlushContextForKey = useCallback(
+    (ck: string) => {
+      const key = ck.trim()
+      if (!key) return
+      setConversationFlushContext({
+        conversationKey: key,
+        conversationCharacterId,
+        personaCharacterId: personaCharacterId?.trim() ?? '',
+        roomType,
+        groupId: groupId?.trim() || null,
+        playerIdentityId,
+        peerNotifyTitle,
+        useLumiProjectAssistantPrompt,
+        isSelfMemoChat,
+      })
+    },
+    [
+      conversationCharacterId,
+      personaCharacterId,
+      roomType,
+      groupId,
+      playerIdentityId,
+      peerNotifyTitle,
+      useLumiProjectAssistantPrompt,
+      isSelfMemoChat,
+    ],
+  )
+
   const bumpPendingAiRepliesForReply = useCallback(() => {
+    const ck = conversationKey.trim()
+    pendingAiRepliesKeyRef.current = ck
+    snapshotFlushContextForKey(ck)
     if (roomType === 'group' && groupId?.trim()) {
       pendingAiRepliesRef.current = 1
     } else {
       pendingAiRepliesRef.current += 1
     }
-  }, [roomType, groupId])
+  }, [roomType, groupId, snapshotFlushContextForKey, conversationKey])
 
   const deferResetProactiveMessageCountdown = useCallback(() => {
     if (!proactiveCountdownEnabled) return
@@ -11047,7 +11671,7 @@ export function ChatRoomInner({
     deferResetProactiveMessageCountdown()
     bumpPendingAiRepliesForReply()
     syncAiReplyPipelineActive(ck)
-    void flushAiReplies()
+                void flushAiReplies(conversationKey.trim())
   }, [
     conversationKey,
     deferResetProactiveMessageCountdown,
@@ -11131,14 +11755,15 @@ export function ChatRoomInner({
     }
     const end = peerBusyRow.busyEndTime
     const ms = Math.max(0, end - getCurrentTimeMs())
+    const ck = conversationKey.trim()
     const t = window.setTimeout(() => {
       if (busyExpireHandledEndRef.current === end) return
       busyExpireHandledEndRef.current = end
       bumpPendingAiRepliesForReply()
-      void flushAiReplies()
+      void flushAiReplies(ck)
     }, ms + 30)
     return () => window.clearTimeout(t)
-  }, [globalDm?.busyEnabled, globalDm?.busyMode, peerBusyRow?.isBusy, peerBusyRow?.busyEndTime, peerBusyRow?.enabled, globalModeBusyEnabled, flushAiReplies, getCurrentTimeMs, bumpPendingAiRepliesForReply])
+  }, [globalDm?.busyEnabled, globalDm?.busyMode, peerBusyRow?.isBusy, peerBusyRow?.busyEndTime, peerBusyRow?.enabled, globalModeBusyEnabled, flushAiReplies, getCurrentTimeMs, bumpPendingAiRepliesForReply, conversationKey])
 
   useEffect(() => {
     if (!peerBusyRow?.isBusy || peerBusyRow.busyEndTime <= 0) {
@@ -11147,15 +11772,16 @@ export function ChatRoomInner({
     }
     const end = peerBusyRow.busyEndTime
     const ms = Math.max(0, end - getCurrentTimeMs())
+    const ck = conversationKey.trim()
     const t = window.setTimeout(() => {
       if (getCurrentTimeMs() < end) return
       if (busyExpireHandledEndRef.current === end) return
       busyExpireHandledEndRef.current = end
       bumpPendingAiRepliesForReply()
-      void flushAiReplies()
+      void flushAiReplies(ck)
     }, ms + 30)
     return () => window.clearTimeout(t)
-  }, [peerBusyRow?.isBusy, peerBusyRow?.busyEndTime, flushAiReplies, getCurrentTimeMs, bumpPendingAiRepliesForReply])
+  }, [peerBusyRow?.isBusy, peerBusyRow?.busyEndTime, flushAiReplies, getCurrentTimeMs, bumpPendingAiRepliesForReply, conversationKey])
 
   useEffect(() => {
     if (!skipBusySignal) return
@@ -11164,13 +11790,9 @@ export function ChatRoomInner({
     skipBusyLastTriggerMsRef.current = now
     skipBusyBypassRef.current = true
     deferResetProactiveMessageCountdown()
-    if (roomType === 'group' && groupId?.trim()) {
-      pendingAiRepliesRef.current = 1
-    } else {
-      pendingAiRepliesRef.current = Math.max(1, pendingAiRepliesRef.current)
-    }
-    void flushAiReplies()
-  }, [skipBusySignal, flushAiReplies, roomType, groupId, deferResetProactiveMessageCountdown])
+    bumpPendingAiRepliesForReply()
+    void flushAiReplies(conversationKey.trim())
+  }, [skipBusySignal, flushAiReplies, conversationKey, deferResetProactiveMessageCountdown, bumpPendingAiRepliesForReply])
 
   const commitSendRef = useRef<(raw: string, triggerAi: boolean) => void>(() => {})
 
@@ -11219,7 +11841,9 @@ export function ChatRoomInner({
         return
       }
       /** 须在 processingSend 判定之后：若仅入队就 return，异步 finally 不会跑，不能把 opponentQueueStopRef 置 true，否则会永久卡住对方回复落库流程 */
-      opponentQueueStopRef.current = true
+      const sendCk = conversationKeyLiveRef.current.trim()
+      processingSendKeyRef.current = sendCk
+      if (sendCk) setConversationOpponentQueueStop(sendCk, true)
       flushOpponentRevealQueueImmediate()
       setTypingVisible(false)
       processingSendRef.current = true
@@ -11419,7 +12043,7 @@ export function ChatRoomInner({
           window.setTimeout(() => {
             setSendBusy(false)
             processingSendRef.current = false
-            opponentQueueStopRef.current = false
+            if (sendCk) setConversationOpponentQueueStop(sendCk, false)
             const next = sendQueueRef.current.shift()
             if (next?.text.trim()) {
               window.setTimeout(() => void commitSendRef.current(next.text, next.triggerAi), 0)
@@ -11427,14 +12051,14 @@ export function ChatRoomInner({
           }, 260)
         }
         if (triggerAi && !userMutedNoSend && !isSelfMemoChat) {
-          aiPipelineOwnerKeyRef.current = conversationKey.trim()
+          aiPipelineOwnerKeyRef.current = sendCk
           aiCallingRef.current = true
           lastUserAiTriggerTsRef.current = ts
-          setAwaitingAiKick(true)
-          syncAiReplyPipelineActive(conversationKey)
+          setConversationAwaitingAiKick(sendCk, true)
+          syncAiReplyPipelineActive(sendCk)
           queueMicrotask(() => {
             void (async () => {
-              opponentQueueStopRef.current = false
+              if (sendCk) setConversationOpponentQueueStop(sendCk, false)
               if (roomType === 'group' && groupId?.trim()) {
                 const g = await personaDb.getGroupChat(groupId.trim())
                 groupDocRef.current = g
@@ -11491,7 +12115,7 @@ export function ChatRoomInner({
               bumpPendingAiRepliesForReply()
               await appendGroupSmartBotMentionReply()
               try {
-                await flushAiReplies()
+                await flushAiReplies(sendCk)
               } catch (err) {
                 logger.log(
                   'error',
@@ -11717,7 +12341,7 @@ export function ChatRoomInner({
       const isCurrentChat = targetId === conversationCharacterId.trim()
       if (isCurrentChat && roomType === 'private') {
         manualAiPauseRef.current = false
-        opponentQueueStopRef.current = true
+        if (conversationKey.trim()) setConversationOpponentQueueStop(conversationKey.trim(), true)
         setTypingVisible(false)
         const stored = await personaDb.getWeChatChatMessageById(result.messageId)
         const ts = stored?.timestamp ?? Date.now()
@@ -11747,24 +12371,24 @@ export function ChatRoomInner({
           const ck = conversationKey.trim()
           if (ck && isConversationAiPipelineBusy(ck)) {
             showComposerToast('对方正在回复，请稍候')
-            opponentQueueStopRef.current = false
+            if (conversationKey.trim()) setConversationOpponentQueueStop(conversationKey.trim(), false)
             return
           }
           aiPipelineOwnerKeyRef.current = conversationKey.trim()
           aiCallingRef.current = true
           lastUserAiTriggerTsRef.current = ts
-          setAwaitingAiKick(true)
+          setConversationAwaitingAiKick(conversationKey.trim(), true)
           syncAiReplyPipelineActive(conversationKey)
           queueMicrotask(() => {
             void (async () => {
-              opponentQueueStopRef.current = false
+              if (conversationKey.trim()) setConversationOpponentQueueStop(conversationKey.trim(), false)
               deferResetProactiveMessageCountdown()
               bumpPendingAiRepliesForReply()
-              void flushAiReplies()
+              void flushAiReplies(conversationKey.trim())
             })()
           })
         } else {
-          opponentQueueStopRef.current = false
+              if (conversationKey.trim()) setConversationOpponentQueueStop(conversationKey.trim(), false)
         }
       } else {
         setLocationSpoofOpen(false)
@@ -11804,7 +12428,7 @@ export function ChatRoomInner({
         showComposerToast('位置发送失败，请重试')
       } finally {
         setLocationSending(false)
-        opponentQueueStopRef.current = false
+              if (conversationKey.trim()) setConversationOpponentQueueStop(conversationKey.trim(), false)
       }
     },
     [
@@ -11837,7 +12461,7 @@ export function ChatRoomInner({
         }
       }
       manualAiPauseRef.current = false
-      opponentQueueStopRef.current = true
+      if (conversationKey.trim()) setConversationOpponentQueueStop(conversationKey.trim(), true)
       setTypingVisible(false)
       setDraft('')
       const replyTo = replyingToRef.current ?? undefined
@@ -11909,24 +12533,24 @@ export function ChatRoomInner({
       window.setTimeout(() => {
         setSendBusy(false)
         processingSendRef.current = false
-        opponentQueueStopRef.current = false
+              if (conversationKey.trim()) setConversationOpponentQueueStop(conversationKey.trim(), false)
       }, 260)
       if (triggerAi && !isSelfMemoChat) {
         aiPipelineOwnerKeyRef.current = conversationKey.trim()
         aiCallingRef.current = true
         lastUserAiTriggerTsRef.current = ts
-        setAwaitingAiKick(true)
+        setConversationAwaitingAiKick(conversationKey.trim(), true)
         syncAiReplyPipelineActive(conversationKey)
         queueMicrotask(() => {
           void (async () => {
-            opponentQueueStopRef.current = false
+            if (conversationKey.trim()) setConversationOpponentQueueStop(conversationKey.trim(), false)
             deferResetProactiveMessageCountdown()
             if (roomType === 'group' && groupId?.trim()) {
               const g = await personaDb.getGroupChat(groupId.trim())
               groupDocRef.current = g
             }
             bumpPendingAiRepliesForReply()
-            void flushAiReplies()
+            void flushAiReplies(conversationKey.trim())
           })()
         })
       }
@@ -11974,7 +12598,7 @@ export function ChatRoomInner({
       }
 
       manualAiPauseRef.current = false
-      opponentQueueStopRef.current = true
+      if (conversationKey.trim()) setConversationOpponentQueueStop(conversationKey.trim(), true)
       setTypingVisible(false)
       setDraft('')
       const replyTo = replyingToRef.current ?? undefined
@@ -12037,24 +12661,24 @@ export function ChatRoomInner({
       window.setTimeout(() => {
         setSendBusy(false)
         processingSendRef.current = false
-        opponentQueueStopRef.current = false
+              if (conversationKey.trim()) setConversationOpponentQueueStop(conversationKey.trim(), false)
       }, 260)
       if (triggerAi && !isSelfMemoChat) {
         aiPipelineOwnerKeyRef.current = conversationKey.trim()
         aiCallingRef.current = true
         lastUserAiTriggerTsRef.current = tsBase
-        setAwaitingAiKick(true)
+        setConversationAwaitingAiKick(conversationKey.trim(), true)
         syncAiReplyPipelineActive(conversationKey)
         queueMicrotask(() => {
           void (async () => {
-            opponentQueueStopRef.current = false
+            if (conversationKey.trim()) setConversationOpponentQueueStop(conversationKey.trim(), false)
             deferResetProactiveMessageCountdown()
             if (roomType === 'group' && groupId?.trim()) {
               const g = await personaDb.getGroupChat(groupId.trim())
               groupDocRef.current = g
             }
             bumpPendingAiRepliesForReply()
-            void flushAiReplies()
+            void flushAiReplies(conversationKey.trim())
           })()
         })
       }
@@ -12094,19 +12718,17 @@ export function ChatRoomInner({
     // aiReplyPipelineActive / pendingQueue 参与依赖，避免仅 ref 变化时 memo 不刷新
     void aiReplyPipelineActive
     void pendingQueue.length
+    void pipelineTick
     return (
-      awaitingAiKick ||
-      flushUiBusy ||
-      isConversationAiPipelineBusy(ck) ||
-      isWechatAiReplyPipelineActive(ck)
+      isConversationAiPipelineBlockingSend(ck) ||
+      opponentRevealJobsRef.current.some((j) => conversationKeysMatch(j.forConversationKey, ck))
     )
   }, [
-    awaitingAiKick,
-    flushUiBusy,
     conversationKey,
-    isConversationAiPipelineBusy,
+    conversationKeysMatch,
     aiReplyPipelineActive,
     pendingQueue.length,
+    pipelineTick,
   ])
 
   const normalizedDraft = useMemo(() => normalizeWeChatComposerDraftText(draft), [draft])
@@ -12351,7 +12973,7 @@ export function ChatRoomInner({
   const runRetryReply = useCallback(
     async (biasRaw: string) => {
       const bias = biasRaw.trim()
-      opponentQueueStopRef.current = true
+      if (conversationKey.trim()) setConversationOpponentQueueStop(conversationKey.trim(), true)
       cancelOpponentRevealTimer()
       opponentRevealJobsRef.current = []
       setPendingQueue([])
@@ -12447,7 +13069,7 @@ export function ChatRoomInner({
         }
       }
 
-      opponentQueueStopRef.current = true
+      if (conversationKey.trim()) setConversationOpponentQueueStop(conversationKey.trim(), true)
       setTypingVisible(false)
       pendingAiRepliesRef.current = 0
       manualAiPauseRef.current = false
@@ -12493,12 +13115,12 @@ export function ChatRoomInner({
         .join('\n\n')
       skipMemoryRoundBumpRef.current = true
       window.setTimeout(() => {
-        opponentQueueStopRef.current = false
+              if (conversationKey.trim()) setConversationOpponentQueueStop(conversationKey.trim(), false)
         deferResetProactiveMessageCountdown()
         pendingAiRepliesRef.current = 1
         void (async () => {
           try {
-            await flushAiReplies()
+            await flushAiReplies(conversationKey.trim())
           } finally {
             if (!tailSelfToRestore.length) return
             try {
@@ -12622,14 +13244,14 @@ export function ChatRoomInner({
           break
         case 'read_ignore':
           manualAiPauseRef.current = true
-          opponentQueueStopRef.current = true
+          if (conversationKey.trim()) setConversationOpponentQueueStop(conversationKey.trim(), true)
           setTypingVisible(false)
           pendingAiRepliesRef.current = 0
           showComposerToast('已读不回：已暂停对方回复；发送消息或点「继续回复」可恢复')
           break
         case 'busy':
           manualAiPauseRef.current = true
-          opponentQueueStopRef.current = true
+          if (conversationKey.trim()) setConversationOpponentQueueStop(conversationKey.trim(), true)
           setTypingVisible(false)
           pendingAiRepliesRef.current = 0
           showComposerToast('忙碌：已暂停对方回复')
@@ -12639,7 +13261,7 @@ export function ChatRoomInner({
           setRetryReplyPromptOpen(true)
           break
         case 'continue_reply':
-          opponentQueueStopRef.current = false
+              if (conversationKey.trim()) setConversationOpponentQueueStop(conversationKey.trim(), false)
           triggerManualCharacterReply()
           showComposerToast('已继续回复')
           break
@@ -13040,15 +13662,24 @@ export function ChatRoomInner({
     setExpandedThinkingIds(new Set())
   }, [conversationKey])
 
+  /** 渲染兜底：生图完成后即使 items state 未及时合并，也从全局 patch 直接展示（同生图预览 setState） */
+  const itemsForDisplay = useMemo(() => {
+    const patchMap = mergeImageGenUiPatchMaps(pendingImageGenUiPatchesRef.current)
+    if (patchMap.size === 0) return items
+    return items.map((it) =>
+      it.kind === 'msg' ? applyImageGenUiPatchToChatMsgIfAny(it, patchMap) : it,
+    )
+  }, [items, imageGenPatchVersion])
+
   /** 列表展示用：会话设置「仅 UI 清空」时屏蔽截止时间前的气泡（与回收站快照同源）；查找锚点定位期间临时展示全量。 */
   const itemsAfterUiOnlyHide = useMemo(() => {
     const cut = uiOnlyHiddenCutForView
-    if (cut == null || scrollToMessageId?.trim()) return items
-    return items.filter((it) => {
+    if (cut == null || scrollToMessageId?.trim()) return itemsForDisplay
+    return itemsForDisplay.filter((it) => {
       if (it.kind !== 'msg') return true
       return (it.timestamp ?? 0) > cut
     })
-  }, [items, uiOnlyHiddenCutForView, scrollToMessageId])
+  }, [itemsForDisplay, uiOnlyHiddenCutForView, scrollToMessageId])
 
   /** hydrate 已修旧 cut；此处兜底：内存里仍有消息但 cut 把它们全藏了（只剩时间条）时立刻撤销隐藏 */
   useEffect(() => {
@@ -13610,6 +14241,9 @@ export function ChatRoomInner({
                     isRecalled: m.isRecalled,
                     otherAnimated: m.otherAnimated,
                     selfAnimated: m.selfAnimated,
+                    imageGenPending: m.imageGenPending,
+                    imageGenFailed: m.imageGenFailed,
+                    images: m.images,
                     miniGameInvite: m.miniGameInvite,
                   })
                 : undefined
@@ -14332,44 +14966,85 @@ export function ChatRoomInner({
       const image = m.images?.[0]
       const img = image?.base64?.trim()
       if (img) {
-        // 关键调试：若 base64 以 data: 开头，说明上游没剥离前缀，会导致 dataURL 拼接错误
         if (img.startsWith('data:')) {
           loggerRef.current.log('error', `渲染图片消息：base64 竟然包含 dataURL 前缀，len=${img.length}`)
         }
+        const isSticker = typeof m.text === 'string' && m.text.trim().startsWith('[表情包]')
         const src = `data:${image?.type ?? 'image/jpeg'};base64,${img}`
+        return wrap(
+          <WeChatChatImageBubbleRow
+            id={m.id}
+            isSelf={isSelf}
+            src={src}
+            isSticker={isSticker}
+            bubble={bubble}
+            showAvatar={effectiveShowAvatar}
+            showAvatarColumn={isSelf ? showAvatarColumnSelf : showAvatarColumnOther}
+            chatSelfAvatarUrl={sharedMsgProps.chatSelfAvatarUrl}
+            chatOtherAvatarUrl={sharedRowProps.chatOtherAvatarUrl}
+            chatOtherSenderNickname={chatOtherSenderNickname}
+            chatOtherAvatarRankBadge={chatOtherAvatarRankBadge}
+            chatSelfAvatarRankBadge={chatSelfAvatarRankBadge}
+            groupRankShowBesideNickname={sharedMsgProps.groupRankShowBesideNickname}
+            onOtherAvatarClick={sharedRowProps.onOtherAvatarClick}
+            multiSelectAvatar={msAvatar}
+            selected={actionPanelOpen && actionMessageId === m.id}
+            onLongPress={
+              isMultiSelectMode
+                ? undefined
+                : (rect) =>
+                    openActionPanelFor({
+                      id: m.id,
+                      isSelf,
+                      text: messagePlainPreview(m),
+                      ts: m.timestamp,
+                      anchorRect: rect,
+                    })
+            }
+          />,
+          renderDetachedReply(m, isSelf),
+        )
+      }
+
+      if (m.imageGenPending || m.imageGenFailed) {
         const isSticker = typeof m.text === 'string' && m.text.trim().startsWith('[表情包]')
         return wrap(
-              <WeChatChatImageBubbleRow
-              id={m.id}
-              isSelf={isSelf}
-              src={src}
-              isSticker={isSticker}
-              bubble={bubble}
-              showAvatar={effectiveShowAvatar}
-              showAvatarColumn={isSelf ? showAvatarColumnSelf : showAvatarColumnOther}
-              chatSelfAvatarUrl={sharedMsgProps.chatSelfAvatarUrl}
-              chatOtherAvatarUrl={sharedRowProps.chatOtherAvatarUrl}
-              chatOtherSenderNickname={chatOtherSenderNickname}
-              chatOtherAvatarRankBadge={chatOtherAvatarRankBadge}
-              chatSelfAvatarRankBadge={chatSelfAvatarRankBadge}
-              groupRankShowBesideNickname={sharedMsgProps.groupRankShowBesideNickname}
-              onOtherAvatarClick={sharedRowProps.onOtherAvatarClick}
-              multiSelectAvatar={msAvatar}
-              selected={actionPanelOpen && actionMessageId === m.id}
-              onLongPress={
-                isMultiSelectMode
-                  ? undefined
-                  : (rect) =>
-                      openActionPanelFor({
-                        id: m.id,
-                        isSelf,
-                        text: messagePlainPreview(m),
-                        ts: m.timestamp,
-                        anchorRect: rect,
-                      })
-              }
-            />
-          ,
+          <WeChatChatImageBubbleRow
+            id={m.id}
+            isSelf={isSelf}
+            generating={!!m.imageGenPending && !m.imageGenFailed}
+            genFailed={!!m.imageGenFailed}
+            onRetry={
+              !isSelf && m.imageGenFailed
+                ? () => handleRetryCharacterImageGen(m)
+                : undefined
+            }
+            isSticker={isSticker}
+            bubble={bubble}
+            showAvatar={effectiveShowAvatar}
+            showAvatarColumn={isSelf ? showAvatarColumnSelf : showAvatarColumnOther}
+            chatSelfAvatarUrl={sharedMsgProps.chatSelfAvatarUrl}
+            chatOtherAvatarUrl={sharedRowProps.chatOtherAvatarUrl}
+            chatOtherSenderNickname={chatOtherSenderNickname}
+            chatOtherAvatarRankBadge={chatOtherAvatarRankBadge}
+            chatSelfAvatarRankBadge={chatSelfAvatarRankBadge}
+            groupRankShowBesideNickname={sharedMsgProps.groupRankShowBesideNickname}
+            onOtherAvatarClick={sharedRowProps.onOtherAvatarClick}
+            multiSelectAvatar={msAvatar}
+            selected={actionPanelOpen && actionMessageId === m.id}
+            onLongPress={
+              isMultiSelectMode
+                ? undefined
+                : (rect) =>
+                    openActionPanelFor({
+                      id: m.id,
+                      isSelf,
+                      text: messagePlainPreview(m),
+                      ts: m.timestamp,
+                      anchorRect: rect,
+                    })
+            }
+          />,
           renderDetachedReply(m, isSelf),
         )
       }
@@ -14464,6 +15139,7 @@ export function ChatRoomInner({
     groupAvatarByCharId,
     showGroupMemberNicknameInChat,
     showGroupRankBadgesInChat,
+    imageGenPatchVersion,
   ])
 
   const pendingRevealAvatarUrl = useMemo(() => {
@@ -14523,22 +15199,23 @@ export function ChatRoomInner({
   }, [])
 
   const bgUrl = chatBackgroundUrl?.trim()
+  const resolvedBgUrl = bgUrl ? resolvePublicImageUrl(bgUrl) : ''
   const defaultRoomBgStyle = useMemo(
     () => wechatChatRoomBgToStyle(chatRoomDefaultBg, resolvePublicImageUrl),
     [chatRoomDefaultBg],
   )
   const scrollPaneBgStyle = useMemo(() => {
-    if (bgUrl) {
+    if (resolvedBgUrl) {
       return {
         backgroundColor: chatScrollThemeFallback,
-        backgroundImage: `url(${bgUrl})`,
+        backgroundImage: `url(${resolvedBgUrl})`,
         backgroundSize: 'cover',
         backgroundPosition: 'center',
         backgroundAttachment: 'scroll',
       } as CSSProperties
     }
     return defaultRoomBgStyle
-  }, [bgUrl, chatScrollThemeFallback, defaultRoomBgStyle])
+  }, [resolvedBgUrl, chatScrollThemeFallback, defaultRoomBgStyle])
 
   const showDmOverlay = danmakuEnabled && !(effectiveDm?.skipCharacter)
   const dmZoneStyle = useMemo((): CSSProperties => {
@@ -15086,7 +15763,7 @@ export function ChatRoomInner({
                   '- 禁止输出协议标签或 JSON，按正常微信聊天口吻分行回复。',
                 ].join('\n')
                 bumpPendingAiRepliesForReply()
-                void flushAiReplies()
+                void flushAiReplies(conversationKey.trim())
               }
             })()
             setActiveCallInitiator(null)

@@ -1566,6 +1566,18 @@ function normalizeWeChatChatMessage(input: unknown): WeChatChatMessage | null {
       ? recalledByRaw
       : undefined
   const quiet = typeof (m as { quiet?: unknown }).quiet === 'boolean' ? !!(m as { quiet?: boolean }).quiet : undefined
+  const imageGenPending =
+    typeof (m as { imageGenPending?: unknown }).imageGenPending === 'boolean'
+      ? !!(m as { imageGenPending?: boolean }).imageGenPending
+      : undefined
+  const imageGenFailed =
+    typeof (m as { imageGenFailed?: unknown }).imageGenFailed === 'boolean'
+      ? !!(m as { imageGenFailed?: boolean }).imageGenFailed
+      : undefined
+  const imageGenPrompt =
+    typeof (m as { imageGenPrompt?: unknown }).imageGenPrompt === 'string'
+      ? String((m as { imageGenPrompt?: unknown }).imageGenPrompt).trim().slice(0, 4000) || undefined
+      : undefined
   const rawExt = (m as { ext?: unknown }).ext
   let ext: WeChatChatMessage['ext']
   if (rawExt && typeof rawExt === 'object') {
@@ -1611,6 +1623,9 @@ function normalizeWeChatChatMessage(input: unknown): WeChatChatMessage | null {
     sharedRecord,
     chatHistory,
     images: images.length ? images : undefined,
+    ...(imageGenPending ? { imageGenPending: true } : {}),
+    ...(imageGenFailed ? { imageGenFailed: true } : {}),
+    ...(imageGenPrompt ? { imageGenPrompt } : {}),
     ...(stickerRef ? { stickerRef } : {}),
     isFavorite,
     replyTo,
@@ -1714,6 +1729,18 @@ function normalizeChatConversationSettingsRow(input: unknown): ChatConversationS
     showThinkingChain: typeof (r as { showThinkingChain?: unknown }).showThinkingChain === 'boolean'
       ? !!(r as { showThinkingChain?: unknown }).showThinkingChain
       : false,
+    forwardHistoryCardEnabled:
+      typeof (r as { forwardHistoryCardEnabled?: unknown }).forwardHistoryCardEnabled === 'boolean'
+        ? !!(r as { forwardHistoryCardEnabled?: unknown }).forwardHistoryCardEnabled
+        : false,
+    profileImageChangeEnabled:
+      typeof (r as { profileImageChangeEnabled?: unknown }).profileImageChangeEnabled === 'boolean'
+        ? !!(r as { profileImageChangeEnabled?: unknown }).profileImageChangeEnabled
+        : false,
+    internetMemeLexiconEnabled:
+      typeof (r as { internetMemeLexiconEnabled?: unknown }).internetMemeLexiconEnabled === 'boolean'
+        ? !!(r as { internetMemeLexiconEnabled?: unknown }).internetMemeLexiconEnabled
+        : false,
     isDanmakuMode: typeof r.isDanmakuMode === 'boolean' ? r.isDanmakuMode : false,
     showGroupMemberNicknameInChat:
       typeof (r as { showGroupMemberNicknameInChat?: unknown }).showGroupMemberNicknameInChat === 'boolean'
@@ -2718,6 +2745,12 @@ function normalizeMemorySettingsRow(input: unknown): MemorySettingsRow {
         failedAt,
         ...(item.failureReason?.trim()
           ? { failureReason: String(item.failureReason).trim().slice(0, 240) }
+          : {}),
+        ...(item.modelOutput?.trim()
+          ? { modelOutput: String(item.modelOutput).trim().slice(0, 12000) }
+          : {}),
+        ...(item.parsedPreview?.trim()
+          ? { parsedPreview: String(item.parsedPreview).trim().slice(0, 12000) }
           : {}),
       })
     }
@@ -5044,7 +5077,17 @@ export class PersonaDb {
     patch: Partial<
       Pick<
         WeChatChatMessage,
-      'content' | 'replyTo' | 'images' | 'isRead' | 'originalContent' | 'isRecalled' | 'recallTimestamp' | 'recalledBy'
+      | 'content'
+      | 'replyTo'
+      | 'images'
+      | 'imageGenPending'
+      | 'imageGenFailed'
+      | 'imageGenPrompt'
+      | 'isRead'
+      | 'originalContent'
+      | 'isRecalled'
+      | 'recallTimestamp'
+      | 'recalledBy'
       >
     > & {
       redPacket?: Partial<WeChatRedPacketPayload>
@@ -5085,6 +5128,9 @@ export class PersonaDb {
             : (patch.miniGameInvite as WeChatMiniGamePayload)
           : existing.miniGameInvite,
     }
+    if (patch.imageGenPending === false) delete merged.imageGenPending
+    if (patch.imageGenFailed === false) delete merged.imageGenFailed
+    if (patch.imageGenPrompt === '') delete merged.imageGenPrompt
     const normalized = normalizeWeChatChatMessage(merged)
     if (!normalized) return
     const db = await openDb()
@@ -7011,6 +7057,10 @@ export class PersonaDb {
           : Date.now(),
       ...(item.failureReason?.trim()
         ? { failureReason: item.failureReason.trim().slice(0, 240) }
+        : {}),
+      ...(item.modelOutput?.trim() ? { modelOutput: item.modelOutput.trim().slice(0, 12000) } : {}),
+      ...(item.parsedPreview?.trim()
+        ? { parsedPreview: item.parsedPreview.trim().slice(0, 12000) }
         : {}),
     }
     const idx = queue.findIndex((q) => q.conversationKey === ck)
@@ -9072,6 +9122,9 @@ export class PersonaDb {
         | 'hiddenFromMessageList'
         | 'notifyEnabled'
         | 'showThinkingChain'
+        | 'forwardHistoryCardEnabled'
+        | 'profileImageChangeEnabled'
+        | 'internetMemeLexiconEnabled'
         | 'isDanmakuMode'
         | 'showGroupMemberNicknameInChat'
         | 'showGroupRankBadgesInChat'
@@ -9135,6 +9188,12 @@ export class PersonaDb {
       hiddenFromMessageList: params.hiddenFromMessageList ?? existing?.hiddenFromMessageList ?? false,
       notifyEnabled: params.notifyEnabled ?? existing?.notifyEnabled ?? true,
       showThinkingChain: params.showThinkingChain ?? existing?.showThinkingChain ?? false,
+      forwardHistoryCardEnabled:
+        params.forwardHistoryCardEnabled ?? existing?.forwardHistoryCardEnabled ?? false,
+      profileImageChangeEnabled:
+        params.profileImageChangeEnabled ?? existing?.profileImageChangeEnabled ?? false,
+      internetMemeLexiconEnabled:
+        params.internetMemeLexiconEnabled ?? existing?.internetMemeLexiconEnabled ?? false,
       isDanmakuMode: params.isDanmakuMode ?? existing?.isDanmakuMode ?? false,
       showGroupMemberNicknameInChat:
         params.showGroupMemberNicknameInChat ?? existing?.showGroupMemberNicknameInChat ?? true,

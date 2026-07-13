@@ -1,18 +1,14 @@
 import { AnimatePresence, motion, useScroll, useTransform } from 'framer-motion'
-import { Pencil, ShieldCheck, Sparkles, Wand2 } from 'lucide-react'
-import { useCallback, useMemo, useRef, useState } from 'react'
+import { Pencil, Sparkles } from 'lucide-react'
+import { useMemo, useRef, useState } from 'react'
 
 import { Pressable } from '../../components/Pressable'
-import { useCurrentApiConfig } from '../api/ApiSettingsContext'
 import { MediaWaterfall } from './components/MediaWaterfall'
 import { PulseFollowingList } from './components/PulseFollowingList'
 import { PulseUserProfileView } from './components/PulseUserProfileView'
 import { PostCard } from './components/PostCard'
-import { PulseProfileGenerateSheet } from './components/PulseProfileGenerateSheet'
 import { PulseNum } from './components/PulseNum'
 import { PULSE_COLORS, PULSE_DEFAULT_COVER, PULSE_SHEET_SPRING, PULSE_TAB_SPRING } from './constants'
-import { aiGeneratePulseProfileBundle } from './lumiPulseAi'
-import { loadPulseCharacterPersonaContext } from './pulseProfilePersona'
 import { PublishEditor } from './PublishEditor'
 import type { PulseFollowingUser, PulsePovOption, PulseProfileSegment, PulseProfileStats } from './pulseTypes'
 import { formatPulseCount } from './pulseTypes'
@@ -22,6 +18,7 @@ import {
   usePulseMediaPosts,
   usePulsePostsByAuthor,
 } from './pulseStoreSelectors'
+import { usePublishMentionCandidates } from './usePublishMentionCandidates'
 import { usePulseStore } from './usePulseStore'
 
 const PROFILE_TABS: { id: PulseProfileSegment; label: string }[] = [
@@ -48,12 +45,12 @@ function enrichFollowingUser(user: PulseFollowingUser, options: PulsePovOption[]
 
 function PovSwitcherSheet({
   options,
-  currentPovId,
+  currentWorldId,
   onSelect,
   onClose,
 }: {
   options: PulsePovOption[]
-  currentPovId: string
+  currentWorldId: string
   onSelect: (id: string) => void
   onClose: () => void
 }) {
@@ -80,7 +77,7 @@ function PovSwitcherSheet({
         <p className="text-[11px] uppercase tracking-[0.28em] text-neutral-400">World Switch</p>
         <h3 className="mt-1 font-serif text-[18px] text-[#1C1C1E]">切换世界</h3>
         <p className="mt-1 text-[11px] leading-relaxed text-neutral-400">
-          选择另一位主要角色，进入不同的世界观
+          切换世界观舆论场，你的微博账号保持不变
         </p>
         <div className="mt-5 space-y-2">
           {options.map((opt) => (
@@ -92,7 +89,7 @@ function PovSwitcherSheet({
                 onClose()
               }}
               className={`flex w-full items-center gap-3 rounded-2xl px-3 py-3 ${
-                opt.povId === currentPovId ? 'bg-[#FCFCFC] shadow-[0_2px_15px_rgba(0,0,0,0.03)]' : ''
+                opt.povId === currentWorldId ? 'bg-[#FCFCFC] shadow-[0_2px_15px_rgba(0,0,0,0.03)]' : ''
               }`}
             >
               {opt.avatarUrl ? (
@@ -104,7 +101,7 @@ function PovSwitcherSheet({
                 <span className="block text-[14px] font-medium text-[#1C1C1E]">{opt.label}</span>
                 <span className="mt-0.5 block truncate text-[11px] text-neutral-400">{opt.worldName}</span>
               </div>
-              {opt.povId === currentPovId ? (
+              {opt.povId === currentWorldId ? (
                 <span className="ml-auto shrink-0 text-[10px] tracking-wide" style={{ color: PULSE_COLORS.dustyRose }}>
                   当前
                 </span>
@@ -121,45 +118,40 @@ export function PulseProfile({
   displayName,
   avatarUrl,
   stats,
-  currentPovId,
-  characterId,
-  worldName,
+  currentPlayerPovId,
+  currentWorldId,
   povOptions,
-  onSwitchPov,
+  onSwitchWorld,
   onOpenPost,
   onRepostPost,
-  onToast,
+  onToast: _onToast,
 }: {
   displayName: string
   avatarUrl?: string
   stats: PulseProfileStats
-  currentPovId: string
-  characterId: string
-  worldName: string
+  currentPlayerPovId: string
+  currentWorldId: string
   povOptions: PulsePovOption[]
-  onSwitchPov: (povId: string) => void
+  onSwitchWorld: (povId: string) => void
   onOpenPost: (postId: string) => void
   onRepostPost: (postId: string) => void
   onToast: (msg: string) => void
 }) {
-  const apiConfig = useCurrentApiConfig('chatCard')
   const [tab, setTab] = useState<PulseProfileSegment>('posts')
   const [editorOpen, setEditorOpen] = useState(false)
   const [povOpen, setPovOpen] = useState(false)
-  const [generateOpen, setGenerateOpen] = useState(false)
-  const [generating, setGenerating] = useState(false)
   const [overlay, setOverlay] = useState<ProfileOverlay | null>(null)
   const scrollRef = useRef<HTMLDivElement>(null)
   const toggleLike = usePulseStore((s) => s.toggleLike)
-  const applyGeneratedProfileBundle = usePulseStore((s) => s.applyGeneratedProfileBundle)
 
   const { scrollY } = useScroll({ container: scrollRef })
   const coverY = useTransform(scrollY, [0, 180], [0, 48])
 
-  const myPosts = usePulsePostsByAuthor(currentPovId)
-  const mediaPosts = usePulseMediaPosts(currentPovId)
-  const likedPosts = usePulseLikedPosts(currentPovId)
-  const followingList = usePulseFollowingList(currentPovId)
+  const myPosts = usePulsePostsByAuthor(currentPlayerPovId)
+  const mediaPosts = usePulseMediaPosts(currentPlayerPovId)
+  const likedPosts = usePulseLikedPosts(currentPlayerPovId)
+  const followingList = usePulseFollowingList(currentPlayerPovId)
+  const mentionCandidates = usePublishMentionCandidates(currentPlayerPovId, povOptions)
 
   const likesReceived = useMemo(() => {
     const postSum = myPosts.reduce((sum, p) => sum + p.likeCount, 0)
@@ -168,45 +160,6 @@ export function PulseProfile({
   }, [myPosts, stats.likesReceived])
 
   const listPosts = tab === 'posts' ? myPosts : tab === 'media' ? mediaPosts : likedPosts
-
-  const handleGenerateProfile = useCallback(
-    async (postCount: number) => {
-      setGenerating(true)
-      try {
-        const { personaSummary } = await loadPulseCharacterPersonaContext(characterId)
-        const bundle = await aiGeneratePulseProfileBundle({
-          apiConfig,
-          characterName: displayName,
-          worldName,
-          personaSummary,
-          postCount,
-        })
-        applyGeneratedProfileBundle({
-          povId: currentPovId,
-          authorName: displayName,
-          authorAvatarUrl: avatarUrl,
-          bundle,
-        })
-        setGenerateOpen(false)
-        setTab('posts')
-        onToast(`已生成 ${bundle.posts.length} 条动态与主页数据`)
-      } catch (e) {
-        onToast(e instanceof Error ? e.message : '生成失败')
-      } finally {
-        setGenerating(false)
-      }
-    },
-    [
-      apiConfig,
-      applyGeneratedProfileBundle,
-      avatarUrl,
-      characterId,
-      currentPovId,
-      displayName,
-      onToast,
-      worldName,
-    ],
-  )
 
   return (
     <>
@@ -253,7 +206,6 @@ export function PulseProfile({
 
           <div className="-mt-2 flex items-center gap-1">
             <h1 className="text-[20px] font-semibold text-[#1C1C1E]">{displayName}</h1>
-            <ShieldCheck className="size-4" style={{ color: PULSE_COLORS.lightGold }} strokeWidth={1.5} />
           </div>
 
           <div className="mt-3 flex flex-wrap items-center gap-x-3 gap-y-1 text-[13px] text-neutral-600">
@@ -285,16 +237,6 @@ export function PulseProfile({
             </p>
             <Pencil className="mt-0.5 size-3.5 shrink-0 text-neutral-300" strokeWidth={1.3} />
           </div>
-
-          <Pressable
-            type="button"
-            onClick={() => setGenerateOpen(true)}
-            disabled={generating}
-            className="mt-4 flex w-full items-center justify-center gap-2 rounded-2xl border border-black/[0.04] bg-white py-3 text-[13px] font-medium text-[#1C1C1E] shadow-[0_2px_15px_rgba(0,0,0,0.03)] disabled:opacity-50"
-          >
-            <Wand2 className="size-4" strokeWidth={1.35} style={{ color: PULSE_COLORS.lightGold }} />
-            {generating ? '正在按人设生成…' : '按人设生成主页'}
-          </Pressable>
 
           <div className="mt-5 flex shadow-[0_2px_15px_rgba(0,0,0,0.03)]">
             {PROFILE_TABS.map(({ id, label }) => {
@@ -343,7 +285,7 @@ export function PulseProfile({
                       <PostCard
                         key={post.id}
                         post={post}
-                        currentPovId={currentPovId}
+                        currentPovId={currentPlayerPovId}
                         onOpen={() => onOpenPost(post.id)}
                         onLike={() => toggleLike(post.id)}
                         onRepost={() => onRepostPost(post.id)}
@@ -373,9 +315,10 @@ export function PulseProfile({
       <AnimatePresence>
         {editorOpen ? (
           <PublishEditor
-            authorPovId={currentPovId}
+            authorPovId={currentPlayerPovId}
             authorName={displayName}
             authorAvatarUrl={avatarUrl}
+            mentionCandidates={mentionCandidates}
             onClose={() => setEditorOpen(false)}
             onPublished={() => setEditorOpen(false)}
           />
@@ -386,27 +329,15 @@ export function PulseProfile({
         {povOpen ? (
           <PovSwitcherSheet
             options={povOptions}
-            currentPovId={currentPovId}
-            onSelect={onSwitchPov}
+            currentWorldId={currentWorldId}
+            onSelect={onSwitchWorld}
             onClose={() => setPovOpen(false)}
           />
         ) : null}
       </AnimatePresence>
 
       <AnimatePresence>
-        {generateOpen ? (
-          <PulseProfileGenerateSheet
-            characterName={displayName}
-            worldName={worldName}
-            generating={generating}
-            onClose={() => setGenerateOpen(false)}
-            onGenerate={(count) => void handleGenerateProfile(count)}
-          />
-        ) : null}
-      </AnimatePresence>
-
-      <AnimatePresence>
-        {overlay && (overlay.kind === 'following' || overlay.kind === 'user') ? (
+        {overlay && overlay.kind === 'following' ? (
           <PulseFollowingList
             ownerName={displayName}
             following={followingList.map((u) => enrichFollowingUser(u, povOptions))}
@@ -422,7 +353,7 @@ export function PulseProfile({
         {overlay?.kind === 'user' ? (
           <PulseUserProfileView
             user={overlay.user}
-            currentPovId={currentPovId}
+            currentPlayerPovId={currentPlayerPovId}
             onBack={() => setOverlay({ kind: 'following' })}
             onOpenPost={onOpenPost}
             onRepostPost={onRepostPost}

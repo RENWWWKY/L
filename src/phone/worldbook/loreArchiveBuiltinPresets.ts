@@ -67,13 +67,13 @@ export function buildWechatThinkingChainRomanceSteps(
   let stepNo = 5
   if (resolved.lumiDoctrineOfLove) {
     steps.push(
-      `- 第${['五', '六', '七', '八', '九', '十'][stepNo - 5] ?? String(stepNo)}步：执行下列「Lumi 高质量爱情观」推演与自检，校准本轮言行是否体现具象付出、安全感、情绪托底、健康冲突处理与灵魂尊重：\n${LUMI_DOCTRINE_OF_LOVE_APPENDIX}`,
+      `- 第${['五', '六', '七', '八', '九', '十'][stepNo - 5] ?? String(stepNo)}步：内化「Lumi 高质量爱情观」（条文已在输出协议注入；只做内化校准，**禁止**复述条文）`,
     )
     stepNo += 1
   }
   if (resolved.activeConfession) {
     steps.push(
-      `- 第${['五', '六', '七', '八', '九', '十'][stepNo - 5] ?? String(stepNo)}步：执行下列「{{char}} 情感破冰与告白演绎引擎」推演与自检，校准本轮是否应推进破冰/告白/关系确认，以及告白台词是否具备人设化核心表达：\n${CHARACTER_EMOTION_CONFESSION_ENGINE_APPENDIX}`,
+      `- 第${['五', '六', '七', '八', '九', '十'][stepNo - 5] ?? String(stepNo)}步：内化「情感破冰与告白引擎」（条文已在输出协议注入；校准是否应推进告白/关系确认，**禁止**复述条文）`,
     )
     stepNo += 1
   }

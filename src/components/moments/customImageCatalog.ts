@@ -7,7 +7,7 @@ export const DEFAULT_CUSTOM_IMAGE_MODEL_ID = 'custom:'
 
 /** 模型 id 上明显是文生图 */
 const IMAGE_MODEL_ID_RE =
-  /gpt-image|dall-?e|kolors|flux|stable[\s-]?diffusion|seedream|seedance|txt2img|text-to-image|imagen|wanx|ernie-image|z-image|midjourney|sdxl|sd3|playground|cogview|hunyuan-image|pixart|realvis|dreamshaper|ideogram|black-forest|bfl-|qwen-image|gemini-.*image|image-generation|image_generation/i
+  /gpt-image|dall-?e|kolors|flux|stable[\s-]?diffusion|seedream|seedance|txt2img|text-to-image|imagen|wanx|ernie-image|z-image|midjourney|sdxl|sd3|playground|cogview|hunyuan-image|pixart|realvis|dreamshaper|ideogram|black-forest|bfl-|qwen-image|gemini-.*image|image-generation|image_generation|nai-diffusion|novelai/i
 
 const NON_IMAGE_MODEL_ID_RE =
   /embed|embedding|whisper|tts|audio|transcrib|speech|rerank|moderation/i

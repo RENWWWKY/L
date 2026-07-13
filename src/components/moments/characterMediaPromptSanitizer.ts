@@ -1,9 +1,18 @@
 import { normalizeCharacterImageGenPromptForApi } from './momentCharacterImageRules'
 import {
+  CHARACTER_MEDIA_SELFIE_PREFIX_RE,
+  hasCharacterMediaSelfiePrefix,
+  stripCharacterMediaSelfiePrefix,
+} from './characterMediaSelfiePrefix'
+import {
   isCharacterMediaDualHandHoldingPrompt,
+  isCharacterMediaDualPersonIntimatePrompt,
   isCharacterMediaFingerInterlockPrompt,
+  isCharacterMediaFirstPersonBodyPrompt,
   isCharacterMediaFrontCameraSelfiePrompt,
   isCharacterMediaMirrorSelfiePrompt,
+  isCharacterMediaPhotographingOthersPrompt,
+  isCharacterMediaSelfiePrompt,
 } from './momentsImagePromptEnhancer'
 
 const PROMPT_PART_BAN_RE =
@@ -42,6 +51,10 @@ const FRONT_SELFIE_MIRROR_CUE_PART_RE =
 const FRONT_SELFIE_PHONE_VISIBLE_PART_RE =
   /举着?手机|举手机|拿着手机|手机入镜|手机在镜|手机对准|一手举手机|phone visible|holding smartphone|holding phone toward/i
 
+/** 后置/第一视角拍他人时：手机、取景框、双手举机等「正在拍摄」元构图 */
+const REAR_POV_PHONE_META_PART_RE =
+  /举着?手机|拿着手机|手机入镜|手机在画|手机对准|双手|两手|phone screen|viewfinder|camera app|camera interface|shutter button|smartphone in foreground|hands holding phone|holding smartphone|phone visible|taking photo|photographing|正在拍|拍照中|取景框|相机界面/i
+
 const FRONT_SELFIE_PHONE_VISIBLE_INLINE_RE =
   /另一只手(?:正|在|别扭地)?(?:举着?|拿着)?手机(?:拍(?:照|相)?)?/g
 
@@ -75,8 +88,50 @@ function dropFrontSelfiePhoneVisibleParts(parts: string[], original: string): st
   return parts.filter((part) => !FRONT_SELFIE_PHONE_VISIBLE_PART_RE.test(part))
 }
 
+const AUTO_INJECTED_POV_OR_PHONE_PART_RE =
+  /first[- ]person POV|first person POV|POV lens(?: shot)?|front[- ]facing|front camera(?: selfie)?|smartphone POV|smartphone selfie|smartphone lens|phone camera|rear camera|handheld snapshot|viewer IS the|authentic first-person|natural eye-level smartphone|immersive handheld|viewfinder|camera UI|shutter button|phone screen|phone visible|smartphone visible|smartphone in (?:frame|foreground|hand)|holding smartphone|holding phone toward|picture-in-picture|画中画|手机框|取景框|前置摄像头|第一人称|第一视角|后置摄像头|随手拍/i
+/** 后置/自拍：剔除 POV/机位/手机镜头 meta tag（客户端不再自动补全，LLM 误写也去掉） */
+const REAR_CAMERA_POV_META_PART_RE =
+  /^(?:first[- ]person POV|first person POV|eye level|rear camera|POV lens(?: shot)?|handheld snapshot|smartphone POV|authentic first-person|natural eye-level|looking down|looking up|high angle looking down|low angle looking up|slight high angle(?: looking down)?|第一人称(?:视角)?|第一视角|平视|俯视|仰视|后置摄像头|随手拍)$/i
+
+function shouldDropDirectScenePovMeta(original: string): boolean {
+  if (isCharacterMediaFrontCameraSelfiePrompt(original) || isCharacterMediaMirrorSelfiePrompt(original)) {
+    return false
+  }
+  if (hasCharacterMediaSelfiePrefix(original)) return false
+  if (isCharacterMediaPhotographingOthersPrompt(original)) return true
+  if (isCharacterMediaFirstPersonBodyPrompt(original)) return false
+  return /风景|街景|窗外|夜景|城市|landscape|scenery|street|horizon|sunset|海|湖|山|路|公园|雨后|霓虹|空镜|no human body parts/i.test(
+    original,
+  )
+}
+
+function dropDirectScenePovMetaParts(parts: string[], original: string): string[] {
+  if (!shouldDropDirectScenePovMeta(original)) return parts
+  return parts.filter((part) => !REAR_CAMERA_POV_META_PART_RE.test(part.trim()))
+}
+
+function dropRearPovPhoneMetaParts(parts: string[], original: string): string[] {
+  if (isCharacterMediaFrontCameraSelfiePrompt(original) || isCharacterMediaMirrorSelfiePrompt(original)) {
+    return parts
+  }
+  if (!FIRST_PERSON_POV_RE.test(original) && !isCharacterMediaPhotographingOthersPrompt(original)) {
+    return parts
+  }
+  return parts.filter((part) => !REAR_POV_PHONE_META_PART_RE.test(part))
+}
+
+function dropAutoInjectedPovOrPhoneParts(parts: string[]): string[] {
+  return parts.filter((part) => !AUTO_INJECTED_POV_OR_PHONE_PART_RE.test(part.trim()))
+}
+
+function ensurePhotographOthersDirectViewParts(parts: string[], _original: string): string[] {
+  return parts
+}
+
 /** 英文 prompt：剔除前置摄像头自拍中的 mirror/phone-visible 误导词 */
 export function stripFrontSelfieMirrorCueEnglish(prompt: string, inferencePrompt: string): string {
+  if (hasCharacterMediaSelfiePrefix(inferencePrompt)) return prompt.trim()
   if (!isCharacterMediaFrontCameraSelfiePrompt(inferencePrompt)) return prompt
   let s = prompt
   const englishPatterns: RegExp[] = [
@@ -103,6 +158,22 @@ export function stripFrontSelfieMirrorCueEnglish(prompt: string, inferencePrompt
   ]
   for (const re of englishPatterns) {
     s = s.replace(re, '')
+  }
+  if (FIRST_PERSON_POV_RE.test(inferencePrompt) && !isCharacterMediaMirrorSelfiePrompt(inferencePrompt)) {
+    const rearMetaPatterns: RegExp[] = [
+      /\bhands holding (?:a )?smartphone\b/gi,
+      /\btwo hands holding phone\b/gi,
+      /\bphone screen showing\b/gi,
+      /\bcamera app interface\b/gi,
+      /\bviewfinder overlay\b/gi,
+      /\bshutter button\b/gi,
+      /\btaking (?:a )?photo of\b/gi,
+      /\bphotographing with smartphone\b/gi,
+      /\bsmartphone in foreground\b/gi,
+    ]
+    for (const re of rearMetaPatterns) {
+      s = s.replace(re, '')
+    }
   }
   return s.replace(/,\s*,/g, ',').replace(/^\s*,\s*|\s*,\s*$/g, '').replace(/\s+/g, ' ').trim()
 }
@@ -190,6 +261,59 @@ const DUAL_HAND_CLARITY_TAGS = [
   'NOT single body with two different arms',
 ] as const
 
+function dropMisleadingCloseUpForDualIntimate(parts: string[], original: string): string[] {
+  if (!isCharacterMediaDualPersonIntimatePrompt(original) || hasCharacterMediaSelfiePrefix(original)) {
+    return parts
+  }
+  return parts.filter(
+    (part) => !/\bclose-up\b|特写|怼脸|face fills (?:most of )?frame|extreme close-up|headshot|portrait only/i.test(part.trim()),
+  )
+}
+
+const SELFIE_FACE_VISIBLE_RE =
+  /\b(?:face|lips|eyes|cheeks|blush|gaze|smile|grin|pout|looking at camera|parted lips|averted gaze|eyebrows|chin|nose|forehead|collarbone in frame)\b|露脸|面部|脸颊|嘴唇|眼神|微嘟|抿嘴/i
+
+const SELFIE_EXPLICIT_CLOSEUP_INTENT_RE =
+  /\b(?:extreme close-up|face fills (?:most of )?frame|怼脸|极近(?:距离)?|贴近镜头|想(?:要)?(?:拍)?特写|这个部位|部位特写)\b|特写(?:脸|面部|这个|某部位|某处|下面|那里)/i
+
+const SELFIE_CLOSEUP_TAG_RE =
+  /\bclose-up\b|特写|怼脸|extreme close-up|face fills (?:most of )?frame|facial close-up|medium close-up|\bclose-up on\b/i
+
+const SELFIE_FACE_CLOSEUP_TAG_RE =
+  /\bclose-up\s+face\b|extreme close-up(?:\s+face)?|facial close-up|face fills (?:most of )?frame|怼脸|极近距离/i
+
+const SELFIE_BODY_CLOSEUP_TAG_RE =
+  /\bclose-up\s+(?:abs|ab|chest|torso|genitals|crotch|nipples|waist|hips|butt|ass|thighs|legs|feet|hands|midriff|belly|stomach)\b|\bclose-up on\b/i
+
+/** 自拍：默认常规距离；仅保留角色明确要特写的 tag；露脸时剔除部位特写避免冲突 */
+function sanitizeSelfieCloseUpParts(parts: string[], original: string): string[] {
+  const isSelfie =
+    hasCharacterMediaSelfiePrefix(original) ||
+    isCharacterMediaSelfiePrompt(original) ||
+    isCharacterMediaMirrorSelfiePrompt(original)
+  if (!isSelfie) return parts
+
+  const explicitIntent = SELFIE_EXPLICIT_CLOSEUP_INTENT_RE.test(original)
+  const hasFaceVisible = SELFIE_FACE_VISIBLE_RE.test(original)
+
+  return parts
+    .map((part) => {
+      let t = part.trim()
+      if (!t) return t
+      if (!SELFIE_CLOSEUP_TAG_RE.test(t)) return t
+      if (hasFaceVisible && SELFIE_BODY_CLOSEUP_TAG_RE.test(t)) return ''
+      if (SELFIE_FACE_CLOSEUP_TAG_RE.test(t) && !explicitIntent) return ''
+      if (SELFIE_BODY_CLOSEUP_TAG_RE.test(t) && !explicitIntent && hasFaceVisible) return ''
+      if (/^(?:close-up|close up|特写)$/i.test(t) && !explicitIntent) return ''
+      if (/\bclose-up\b|特写|怼脸|extreme close-up|facial close-up|medium close-up/i.test(t) && !explicitIntent) {
+        if (SELFIE_BODY_CLOSEUP_TAG_RE.test(t) && !hasFaceVisible) return t
+        return ''
+      }
+      return t
+    })
+    .filter(Boolean)
+}
+
 function ensureDualHandHoldingClarity(parts: string[], original: string): string[] {
   if (!FIRST_PERSON_POV_RE.test(original) || !isCharacterMediaDualHandHoldingPrompt(original)) {
     return parts
@@ -202,10 +326,38 @@ function ensureDualHandHoldingClarity(parts: string[], original: string): string
   return merged
 }
 
+function sanitizeCharacterMediaImagePromptParts(parts: string[], original: string): string[] {
+  let cleaned = parts
+  cleaned = stripGenericLightingTemplate(cleaned)
+  cleaned = dropAbstractPsychologyParts(cleaned)
+  cleaned = dropDistantScenicPartsForDownwardPov(cleaned, original)
+  cleaned = dropGroundPartsForUpwardPov(cleaned, original)
+  cleaned = dropMisleadingCloseUpForDualIntimate(cleaned, original)
+  cleaned = sanitizeSelfieCloseUpParts(cleaned, original)
+  cleaned = ensureDualHandHoldingClarity(cleaned, original)
+  cleaned = fixFingerInterlockPromptParts(cleaned, original)
+  cleaned = dropFrontSelfiePhoneVisibleParts(cleaned, original)
+  cleaned = dropRearPovPhoneMetaParts(cleaned, original)
+  cleaned = dropAutoInjectedPovOrPhoneParts(cleaned)
+  cleaned = dropDirectScenePovMetaParts(cleaned, original)
+  cleaned = dropFrontSelfieMirrorCueParts(cleaned, original)
+  cleaned = ensurePhotographOthersDirectViewParts(cleaned, original)
+  return cleaned
+}
+
 /** 发往生图 API 前：清洗 `[图片]` 行噪声 tag */
 export function sanitizeCharacterMediaImagePrompt(prompt: string): string {
   let s = normalizeCharacterImageGenPromptForApi(prompt)
   if (!s) return s
+
+  let selfiePrefix = ''
+  if (hasCharacterMediaSelfiePrefix(s)) {
+    const prefixMatch = CHARACTER_MEDIA_SELFIE_PREFIX_RE.exec(s)
+    selfiePrefix = prefixMatch?.[0]?.trim() ?? ''
+    s = stripCharacterMediaSelfiePrefix(s)
+  }
+
+  s = stripCharacterMediaAppearanceBlockFromPrompt(s)
   s = s.replace(/十指相扣|十指交扣|指缝相扣/g, 'fingers interlaced, interlocked fingers, finger gaps visible between hands')
   s = fixFirstPersonPovHandOwnership(s)
   s = stripFrontSelfieMirrorCuePhrases(s)
@@ -217,15 +369,87 @@ export function sanitizeCharacterMediaImagePrompt(prompt: string): string {
     .map((part) => part.replace(PROMPT_PART_TRIM_RE, '').trim())
     .filter((part) => part && !PROMPT_PART_BAN_RE.test(part))
 
-  parts = stripGenericLightingTemplate(parts)
-  parts = dropAbstractPsychologyParts(parts)
-  parts = dropDistantScenicPartsForDownwardPov(parts, s)
-  parts = dropGroundPartsForUpwardPov(parts, s)
-  parts = ensureDualHandHoldingClarity(parts, s)
-  parts = fixFingerInterlockPromptParts(parts, s)
-  parts = dropFrontSelfiePhoneVisibleParts(parts, s)
-  parts = dropFrontSelfieMirrorCueParts(parts, s)
+  parts = sanitizeCharacterMediaImagePromptParts(parts, s)
 
   s = parts.join(', ')
-  return s.replace(/\s+/g, ' ').replace(/,{2,}/g, ',').trim()
+  s = s.replace(/\s+/g, ' ').replace(/,{2,}/g, ',').trim()
+
+  if (selfiePrefix) return `${selfiePrefix} ${s}`.trim()
+  return s
+}
+
+const APPEARANCE_BLOCK_RE = /\s*The character appearance\s*:[\s\S]*$/i
+const WECHAT_IMAGE_GEN_LINE_RE = /^\[图片\]\s*(.+)$/i
+
+/** 模型误把外貌块单独成行（非 `[图片]` 行） */
+export function isCharacterMediaOrphanAppearanceLine(line: string): boolean {
+  const t = String(line ?? '').trim()
+  if (!t || WECHAT_IMAGE_GEN_LINE_RE.test(t)) return false
+  return /^The character appearance\s*:/i.test(t)
+}
+
+/** 从生图 prompt 去掉 LLM 误写的外貌块（客户端会静默注入） */
+export function stripCharacterMediaAppearanceBlockFromPrompt(prompt: string): string {
+  let s = String(prompt ?? '').trim()
+  if (!s) return s
+  s = s.replace(APPEARANCE_BLOCK_RE, '')
+  return s.replace(/\s+/g, ' ').trim()
+}
+
+/** 清洗单条气泡：丢弃 orphan 外貌块；`[图片]` 行去掉末尾外貌块 */
+export function sanitizeCharacterMediaImageGenBubbleText(text: string): string | null {
+  const t = String(text ?? '').trim()
+  if (!t) return null
+  if (isCharacterMediaOrphanAppearanceLine(t)) return null
+  const m = WECHAT_IMAGE_GEN_LINE_RE.exec(t)
+  if (m) {
+    const scene = stripCharacterMediaAppearanceBlockFromPrompt(m[1]!.trim())
+    return scene ? `[图片]${scene}` : null
+  }
+  return t
+}
+
+export function sanitizeCharacterMediaImageGenBubbles(bubbles: string[]): string[] {
+  return bubbles
+    .map((b) => sanitizeCharacterMediaImageGenBubbleText(String(b ?? '')))
+    .filter((t): t is string => Boolean(t))
+}
+const APPEARANCE_INJECTION_RES: RegExp[] = [
+  /,\s*character appearance traits\s*:[\s\S]*$/i,
+  /,\s*mandatory character identity traits from user reference notes[\s\S]*$/i,
+  /,\s*character design traits from reference notes for visible parts only\s*:[\s\S]*$/i,
+  /,\s*consistent character appearance\s*:[\s\S]*$/i,
+  /,\s*subject must be (?:male|female)[\s\S]*$/i,
+]
+
+/** 控制台/调试：仅展示英文场景 prompt，隐藏外貌块与后台注入 tag */
+export function formatCharacterMediaImagePromptForConsoleLog(prompt: string): string {
+  let s = String(prompt ?? '').trim()
+  if (!s) return s
+  if (hasCharacterMediaSelfiePrefix(s)) s = stripCharacterMediaSelfiePrefix(s)
+  s = s.replace(APPEARANCE_BLOCK_RE, '')
+  for (const re of APPEARANCE_INJECTION_RES) {
+    s = s.replace(re, '')
+  }
+  s = s.replace(/[\u4e00-\u9fff\u3400-\u4dbf\uf900-\ufaff]+/g, '')
+  s = s.replace(/\*\s*\*\*[^*]*\*\*\s*:/g, '')
+  s = s.replace(/\s+/g, ' ').replace(/,\s*,/g, ',').replace(/^,\s*|\s*,$/g, '').trim()
+  return s
+}
+
+/** 控制台：格式化气泡；隐藏 orphan 外貌块与 `[图片]` 内外貌特征 */
+export function formatWeChatBubbleForAiConsoleLog(line: string): string {
+  const trimmed = String(line ?? '').trim()
+  if (!trimmed) return trimmed
+  if (isCharacterMediaOrphanAppearanceLine(trimmed)) return '(hidden appearance)'
+  return formatCharacterImageGenLineForConsoleLog(trimmed)
+}
+
+/** 控制台：格式化整条 `[图片]` 行（保留前缀，隐藏外貌特征） */
+export function formatCharacterImageGenLineForConsoleLog(line: string): string {
+  const trimmed = String(line ?? '').trim()
+  const m = /^\[图片\]\s*(.+)$/.exec(trimmed)
+  if (!m) return trimmed
+  const scene = formatCharacterMediaImagePromptForConsoleLog(m[1]!.trim())
+  return scene ? `[图片] ${scene}` : '[图片]'
 }

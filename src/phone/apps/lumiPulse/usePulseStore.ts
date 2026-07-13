@@ -17,18 +17,21 @@ import type {
   PulseTrendingTopic,
   PulseWorldData,
 } from './pulseTypes'
-import { defaultProfileStats, emptyPulseAccountData, isPulseWorldPovId } from './pulseTypes'
+import { defaultProfileStats, emptyPulseAccountData, emptyPulseWorldData, isPulseWorldPovId, toPlayerPovId } from './pulseTypes'
 import {
   absorbLegacyWorldIntoPov,
   getWorldSlice,
   migratePulseRoot,
 } from './pulseWorldData'
+import { findAccountById, loadAccountsBundle, resolveAccountSessionIdentityId } from '../wechat/wechatAccountPersistence'
 
 type PulseStore = {
   hydrated: boolean
   currentAccountId: string | null
-  /** 当前进入的世界锚点（主要角色 char:）— 所有读写必须依赖此字段 */
+  /** 当前浏览的世界锚点（主要角色 char:）— 决定动态流 / 热搜等内容域 */
   currentPOVId: PulsePovId | null
+  /** 当前登录的微博账号（玩家 player:）— 发帖 / 点赞 / 个人主页 / 消息 */
+  currentPlayerPovId: PulsePovId | null
   root: PulsePersistedRoot
 
   bindAccount: (accountId: string | null | undefined) => Promise<void>
@@ -52,6 +55,7 @@ type PulseStore = {
     isAiGenerated?: boolean
     verified?: boolean
     imageUrls?: string[]
+    locationLabel?: string
   }) => string
   toggleLike: (postId: string) => void
   addComment: (input: {
@@ -126,7 +130,7 @@ function patchWorld(
   recipe: (draft: PulseWorldData) => PulseWorldData,
 ): PulsePersistedRoot {
   return patchAccount(root, accountId, (draft) => {
-    const prev = getWorldSlice(draft, povId)
+    const prev = draft.worldByPov[povId] ?? emptyPulseWorldData()
     return {
       ...draft,
       worldByPov: {
@@ -137,21 +141,48 @@ function patchWorld(
   })
 }
 
+function requirePulseSession(): {
+  worldId: PulsePovId
+  playerPovId: PulsePovId
+  accountId: string
+  root: PulsePersistedRoot
+} | null {
+  const { currentPOVId, currentPlayerPovId, currentAccountId, root } = usePulseStore.getState()
+  if (!currentAccountId || !currentPOVId || !currentPlayerPovId || !isPulseWorldPovId(currentPOVId)) {
+    return null
+  }
+  return { worldId: currentPOVId, playerPovId: currentPlayerPovId, accountId: currentAccountId, root }
+}
+
+/** @deprecated 使用 requirePulseSession */
 function requireWorldPov(): { pov: PulsePovId; accountId: string; root: PulsePersistedRoot } | null {
-  const { currentPOVId, currentAccountId, root } = usePulseStore.getState()
-  if (!currentAccountId || !currentPOVId || !isPulseWorldPovId(currentPOVId)) return null
-  return { pov: currentPOVId, accountId: currentAccountId, root }
+  const session = requirePulseSession()
+  if (!session) return null
+  return { pov: session.worldId, accountId: session.accountId, root: session.root }
 }
 
 export const usePulseStore = create<PulseStore>((set, get) => ({
   hydrated: false,
   currentAccountId: null,
   currentPOVId: null,
+  currentPlayerPovId: null,
   root: DEFAULT_PULSE_ROOT,
 
   async bindAccount(accountId) {
     const acc = accountId?.trim() || null
     if (acc === get().currentAccountId && get().hydrated) return
+
+    let playerPovId: PulsePovId | null = null
+    if (acc) {
+      const bundle = await loadAccountsBundle()
+      const account = bundle ? findAccountById(bundle, acc) : null
+      if (account) {
+        const rawId = resolveAccountSessionIdentityId(account).trim()
+        if (rawId && rawId !== '__none__') {
+          playerPovId = toPlayerPovId(rawId)
+        }
+      }
+    }
 
     let root: PulsePersistedRoot = DEFAULT_PULSE_ROOT
     let shouldPersistMigration = false
@@ -190,6 +221,7 @@ export const usePulseStore = create<PulseStore>((set, get) => ({
       currentAccountId: acc,
       root,
       currentPOVId: lastPov,
+      currentPlayerPovId: playerPovId,
     })
 
     if (shouldPersistMigration) {
@@ -233,7 +265,7 @@ export const usePulseStore = create<PulseStore>((set, get) => ({
   },
 
   getProfileStats(povId) {
-    const id = povId ?? get().currentPOVId
+    const id = povId ?? get().currentPlayerPovId ?? get().currentPOVId
     if (!id) return defaultProfileStats()
     const data = get().getAccountData()
     return data.profileStatsByPov[id] ?? defaultProfileStats()
@@ -261,16 +293,16 @@ export const usePulseStore = create<PulseStore>((set, get) => ({
   },
 
   getInteractions() {
-    const pov = get().currentPOVId
-    if (!pov) return []
-    const rows = get().getAccountData().interactionsByPov[pov] ?? []
+    const player = get().currentPlayerPovId
+    if (!player) return []
+    const rows = get().getAccountData().interactionsByPov[player] ?? []
     return [...rows].sort((a, b) => b.createdAt - a.createdAt)
   },
 
   getDmThreads() {
-    const pov = get().currentPOVId
-    if (!pov) return []
-    const rows = get().getAccountData().dmThreadsByPov[pov] ?? []
+    const player = get().currentPlayerPovId
+    if (!player) return []
+    const rows = get().getAccountData().dmThreadsByPov[player] ?? []
     return [...rows].sort((a, b) => b.lastAt - a.lastAt)
   },
 
@@ -298,6 +330,7 @@ export const usePulseStore = create<PulseStore>((set, get) => ({
       trendingTopicId: input.trendingTopicId,
       verified: input.verified ?? input.authorPovId.startsWith('char:'),
       imageUrls: input.imageUrls?.length ? input.imageUrls : undefined,
+      locationLabel: input.locationLabel?.trim() || undefined,
     }
     const nextRoot = patchWorld(ctx.root, ctx.accountId, ctx.pov, (draft) => ({
       ...draft,
@@ -309,16 +342,16 @@ export const usePulseStore = create<PulseStore>((set, get) => ({
   },
 
   toggleLike(postId) {
-    const ctx = requireWorldPov()
+    const ctx = requirePulseSession()
     if (!ctx) return
-    const nextRoot = patchWorld(ctx.root, ctx.accountId, ctx.pov, (draft) => ({
+    const nextRoot = patchWorld(ctx.root, ctx.accountId, ctx.worldId, (draft) => ({
       ...draft,
       posts: draft.posts.map((p) => {
         if (p.id !== postId) return p
-        const liked = p.likedByPovIds.includes(ctx.pov)
+        const liked = p.likedByPovIds.includes(ctx.playerPovId)
         const likedByPovIds = liked
-          ? p.likedByPovIds.filter((x) => x !== ctx.pov)
-          : [...p.likedByPovIds, ctx.pov]
+          ? p.likedByPovIds.filter((x) => x !== ctx.playerPovId)
+          : [...p.likedByPovIds, ctx.playerPovId]
         return {
           ...p,
           likedByPovIds,
@@ -421,16 +454,16 @@ export const usePulseStore = create<PulseStore>((set, get) => ({
   },
 
   markDmThreadRead(threadId) {
-    const pov = get().currentPOVId
+    const player = get().currentPlayerPovId
     const { currentAccountId, root } = get()
-    if (!pov || !currentAccountId) return
+    if (!player || !currentAccountId) return
     const nextRoot = patchAccount(root, currentAccountId, (draft) => {
-      const list = draft.dmThreadsByPov[pov] ?? []
+      const list = draft.dmThreadsByPov[player] ?? []
       return {
         ...draft,
         dmThreadsByPov: {
           ...draft.dmThreadsByPov,
-          [pov]: list.map((t) => (t.id === threadId ? { ...t, unread: 0 } : t)),
+          [player]: list.map((t) => (t.id === threadId ? { ...t, unread: 0 } : t)),
         },
       }
     })
@@ -439,16 +472,16 @@ export const usePulseStore = create<PulseStore>((set, get) => ({
   },
 
   markInteractionsRead() {
-    const pov = get().currentPOVId
+    const player = get().currentPlayerPovId
     const { currentAccountId, root } = get()
-    if (!pov || !currentAccountId) return
+    if (!player || !currentAccountId) return
     const nextRoot = patchAccount(root, currentAccountId, (draft) => {
-      const list = draft.interactionsByPov[pov] ?? []
+      const list = draft.interactionsByPov[player] ?? []
       return {
         ...draft,
         interactionsByPov: {
           ...draft.interactionsByPov,
-          [pov]: list.map((it) => ({ ...it, read: true })),
+          [player]: list.map((it) => ({ ...it, read: true })),
         },
       }
     })
@@ -457,16 +490,16 @@ export const usePulseStore = create<PulseStore>((set, get) => ({
   },
 
   markInteractionsReadByType(type) {
-    const pov = get().currentPOVId
+    const player = get().currentPlayerPovId
     const { currentAccountId, root } = get()
-    if (!pov || !currentAccountId) return
+    if (!player || !currentAccountId) return
     const nextRoot = patchAccount(root, currentAccountId, (draft) => {
-      const list = draft.interactionsByPov[pov] ?? []
+      const list = draft.interactionsByPov[player] ?? []
       return {
         ...draft,
         interactionsByPov: {
           ...draft.interactionsByPov,
-          [pov]: list.map((it) => (it.type === type ? { ...it, read: true } : it)),
+          [player]: list.map((it) => (it.type === type ? { ...it, read: true } : it)),
         },
       }
     })

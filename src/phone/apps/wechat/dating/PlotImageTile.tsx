@@ -81,7 +81,7 @@ export function PlotImageTile({
         className={
           isMagazine
             ? `cursor-zoom-in overflow-hidden rounded-lg border border-stone-200/90 bg-stone-50/80 shadow-[0_2px_10px_rgba(0,0,0,0.04)] transition-[transform,opacity] duration-150 ease-out select-none ${floatCls} mb-2 mt-0.5 w-[38%] max-w-[132px]`
-            : 'cursor-zoom-in overflow-hidden rounded-xl border border-stone-200/80 bg-stone-50 transition-[transform,opacity] duration-150 ease-out select-none'
+            : 'my-1 w-full cursor-zoom-in overflow-hidden rounded-xl border border-stone-200/80 bg-stone-50 transition-[transform,opacity] duration-150 ease-out select-none'
         }
         style={{
           transform: pressing ? 'scale(0.98)' : 'scale(1)',
@@ -122,8 +122,8 @@ export function PlotImageTile({
           alt=""
           className={
             isMagazine
-              ? 'aspect-[3/4] w-full object-cover select-none'
-              : 'max-h-[220px] max-w-full object-cover select-none'
+              ? 'aspect-[3/4] w-full object-contain select-none'
+              : 'block h-auto w-full max-w-full select-none'
           }
           loading="lazy"
           draggable={false}

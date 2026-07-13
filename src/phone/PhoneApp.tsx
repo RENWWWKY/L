@@ -44,7 +44,7 @@ import { WeChatApp } from './apps/wechat/WeChatApp'
 import { LumiMeetApp } from './apps/lumiMeet/LumiMeetApp'
 import { SandboxApp } from './apps/sandbox/SandboxApp'
 import { LumiTasteApp } from './apps/takeout/LumiTasteApp'
-import { LumiPulseApp } from './apps/lumiPulse/LumiPulseApp'
+import { LUMI_PULSE_NAVIGATE_EVENT } from './apps/lumiPulse/lumiPulseNavigation'
 import { TasteFeastCeremonyHost } from './apps/takeout/TasteFeastCeremonyHost'
 import { LumiMeetProvider } from './apps/lumiMeet/LumiMeetStore'
 import { WorldbookLoreProvider } from './worldbook/worldbookLoreStore'
@@ -167,6 +167,12 @@ export function PhoneApp() {
 
   const openApp = useCallback((id: AppSlot['id']) => {
     if (id === 'wechat') setWechatKeepAlive(true)
+    if (id === 'weibo') {
+      setWechatKeepAlive(true)
+      setRoute({ name: 'app', id: 'wechat' })
+      window.dispatchEvent(new CustomEvent(LUMI_PULSE_NAVIGATE_EVENT))
+      return
+    }
     if (id === 'appearance') {
       setRoute({ name: 'customize' })
       return
@@ -510,8 +516,6 @@ export function PhoneApp() {
                   <SandboxApp onBack={goHome} />
                 ) : route.id === 'takeout' ? (
                   <LumiTasteApp onBack={goHome} />
-                ) : route.id === 'weibo' ? (
-                  <LumiPulseApp onBack={goHome} />
                 ) : (
                   <AppPlaceholderScreen appId={route.id} onBack={goHome} />
                 )}

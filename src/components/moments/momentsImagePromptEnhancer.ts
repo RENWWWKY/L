@@ -1,5 +1,8 @@
 import { getPollinationsStylePreset, resolveStylePrefix } from './pollinationsPresets'
+import { resolveCommonExtraPositivePrompt, resolveProviderPromptSettings } from './imageGenProviderPromptSettings'
 import type { MomentsImageGenSettings } from './useMomentsSettingsStore'
+import { modelSupportsReferenceImageUploadFromSettings } from './imageGenModelCapabilities'
+import { hasCharacterMediaSelfiePrefix } from './characterMediaSelfiePrefix'
 
 const PERSON_HINT =
   /\b(person|people|portrait|face|selfie|girl|boy|man|woman|character|human|male|female|student|boyfriend|girlfriend|couple)\b/i
@@ -8,6 +11,10 @@ const ANIME_STYLE_HINT = /\banime\b|illustration|2d|cel shading|二次元/i
 
 function isAnimeStyle(settings: MomentsImageGenSettings, combinedPrompt: string): boolean {
   if (ANIME_STYLE_HINT.test(combinedPrompt)) return true
+  const extraPositive = resolveCommonExtraPositivePrompt(
+    resolveProviderPromptSettings(settings).common,
+  )
+  if (extraPositive && ANIME_STYLE_HINT.test(extraPositive)) return true
   if (settings.stylePrefixMode === 'preset') {
     const preset = getPollinationsStylePreset(settings.stylePresetId)
     if (preset?.id === 'anime') return true
@@ -32,10 +39,10 @@ const ANIME_ANTI_REALISTIC =
   'NOT photorealistic, NOT realistic photo, NOT DSLR, NOT 3d render, NOT hyperrealistic'
 
 const SELFIE_HINT =
-  /\b(selfie|self[\s-]?portrait|mirror selfie|front camera)\b|自拍|对镜|前置摄像头|镜面自拍/i
+  /\b(?:selfie shot|mirror selfie shot|selfie|self[\s-]?portrait|mirror selfie|front camera)\b|\[wx-selfie\||\[SUBJECT:PERSON_ACTION|自拍|对镜|前置摄像头|镜面自拍/i
 
 const MIRROR_SELFIE_HINT =
-  /\b(mirror selfie|mirror shot|in front of (?:a )?mirror|bathroom mirror|reflection in mirror|mirror reflection)\b|对镜|镜面|镜子前|浴室镜|全身镜|镜中|镜面反射|镜子里/i
+  /\b(?:mirror selfie shot|mirror selfie|mirror shot|in front of (?:a )?mirror|bathroom mirror|reflection in mirror|mirror reflection)\b|对镜|镜面|镜子前|浴室镜|全身镜|镜中|镜面反射|镜子里/i
 
 /** 角色私聊/群聊/朋友圈：模型描述是否为自拍（含人物正脸/对镜） */
 export function isCharacterMediaSelfiePrompt(prompt: string): boolean {
@@ -51,7 +58,9 @@ export function isCharacterMediaMirrorSelfiePrompt(prompt: string): boolean {
 export function isCharacterMediaFrontCameraSelfiePrompt(prompt: string): boolean {
   if (!isCharacterMediaSelfiePrompt(prompt)) return false
   if (isCharacterMediaMirrorSelfiePrompt(prompt)) return false
-  return /前置摄像头自拍|前置自拍|前置摄像头|front[-\s]?facing|front camera/i.test(prompt.trim())
+  const p = prompt.trim()
+  if (hasCharacterMediaSelfiePrefix(p) && /\bselfie shot\b/i.test(p)) return true
+  return /前置摄像头自拍|前置自拍|前置摄像头|front[-\s]?facing|front camera/i.test(p)
 }
 
 /** 第一视角随手拍（后置摄像头·非前置摄像头自拍/对镜）——非自拍 prompt 的默认路径 */
@@ -59,6 +68,22 @@ export function isCharacterMediaHandheldFirstPersonPrompt(prompt: string): boole
   const p = prompt.trim()
   if (!p) return false
   return !isCharacterMediaSelfiePrompt(p) && !isCharacterMediaMirrorSelfiePrompt(p)
+}
+
+const OTHER_PERSON_SUBJECT_RE =
+  /\b(?:young woman|young man|1girl|1boy|woman|man|girl|boy|female|male|stranger|passerby|friend|partner|colleague|woman in|man in|sitting on|standing on|leaning on|swimsuit|bikini|one-piece|dress)\b|女生|男生|女人|男人|少女|青年女|青年男|陌生人|朋友|对方|泳衣|比基尼/i
+
+/** 第一视角 rear camera 拍他人/他物主体（成品照视角，非「正在举机拍摄」） */
+export function isCharacterMediaPhotographingOthersPrompt(prompt: string): boolean {
+  const p = prompt.trim()
+  if (!p) return false
+  if (isCharacterMediaSelfiePrompt(p)) return false
+  if (isCharacterMediaMirrorSelfiePrompt(p)) return false
+  if (isCharacterMediaFirstPersonBodyPrompt(p)) return false
+  if (!OTHER_PERSON_SUBJECT_RE.test(p)) return false
+  if (SCENIC_ONLY_HINT.test(p) && isCharacterMediaFirstPersonBodyPrompt(p)) return false
+  if (SCENIC_ONLY_HINT.test(p) && !OTHER_PERSON_SUBJECT_RE.test(p)) return false
+  return true
 }
 
 const SCENIC_ONLY_HINT =
@@ -84,6 +109,26 @@ export function isCharacterMediaAppearanceLockPrompt(prompt: string): boolean {
   return isCharacterMediaSelfiePrompt(prompt) || isCharacterMediaFirstPersonBodyPrompt(prompt)
 }
 
+/** 画面需呈现该角色自身形象（注入形象特征补充 / 外貌 tag） */
+export function isCharacterMediaCharacterAppearanceNeededPrompt(prompt: string): boolean {
+  const p = prompt.trim()
+  if (!p) return false
+  if (isCharacterMediaPhotographingOthersPrompt(p)) return false
+  if (isCharacterMediaAppearanceLockPrompt(p)) return true
+  if (isCharacterMediaMirrorSelfiePrompt(p)) return true
+  if (/\breference character\b/i.test(p)) return true
+  if (/The character appearance:/i.test(p)) return true
+  if (hasCharacterMediaSelfiePrefix(p)) return true
+  if (
+    isCharacterMediaHandheldFirstPersonPrompt(p) &&
+    SCENIC_ONLY_HINT.test(p) &&
+    !isCharacterMediaFirstPersonBodyPrompt(p)
+  ) {
+    return false
+  }
+  return false
+}
+
 /** 是否应把形象参考图送进 img2img/edits（自拍锁脸；非自拍仅锁画风见 referenceStyleOnly） */
 export function isCharacterMediaReferenceImagePrompt(prompt: string): boolean {
   return isCharacterMediaSelfiePrompt(prompt) || isCharacterMediaMirrorSelfiePrompt(prompt)
@@ -91,108 +136,6 @@ export function isCharacterMediaReferenceImagePrompt(prompt: string): boolean {
 
 /** @deprecated 使用 isCharacterMediaSelfiePrompt */
 export const isCharacterChatSelfiePrompt = isCharacterMediaSelfiePrompt
-
-const CHARACTER_MEDIA_POV_LANDSCAPE_SUFFIX =
-  'authentic first-person smartphone POV from photographer standing or sitting height, camera tilt matches subject (horizontal eye-level for landscapes and street views, upward for sky and tall architecture, downward only for ground-level subjects), immersive handheld snapshot, photographer body parts are optional and only when the scene naturally includes them (feet or pant cuffs at bottom edge when looking down, hand or fingers at frame edge for peace sign or wave gesture, otherwise pure scenic view with no visible limbs), NOT third-person view, NOT aerial drone shot, NOT surveillance CCTV angle, NOT studio backdrop'
-
-const CHARACTER_MEDIA_FRONT_SELFIE_SUFFIX =
-  'front-facing smartphone selfie POV lens shot, viewer IS the phone front camera lens POV looking at subject face, subjective POV camera angle, subject looking directly into camera lens, smartphone body NOT visible in frame, direct face-to-lens only, NOT mirror selfie, NOT mirror reflection, NOT any mirror in scene, NOT reflective glass, NOT third-person shot of character holding phone toward mirror, NOT studio headshot'
-
-const CHARACTER_MEDIA_FRONT_SELFIE_ANTI_MIRROR_SUFFIX =
-  'NO mirror of any kind, NO wall mirror, NO bathroom mirror, NO vanity mirror, NO makeup mirror, NO dressing mirror, NO full-length mirror, NO mirror reflection, NO reflected duplicate face, NO glossy wall mirror reflection, NO reflective tile wall selfie, NO glass reflection showing character holding phone, NO phone visible in composition, NO character holding smartphone toward reflective surface, matte non-reflective background only, direct front-camera lens POV only'
-
-function inferFrontSelfieDistanceSuffix(prompt: string): string {
-  const p = prompt.trim()
-  if (/怼脸|极近|贴近镜头|脸部占满|face fill|extreme close|close-up face|超近距离/i.test(p)) {
-    return 'extreme close-up front camera selfie, face fills most of frame, neckline collar hood hat headband or head accessories still visible at bottom or side edges of frame, outfit and head decoration must be described, phone very close to face, slight wide-angle front camera distortion acceptable'
-  }
-  if (/一臂距离|arm-length|arm length|上半身|半身|胸像|medium close/i.test(p)) {
-    return 'arm-length front camera selfie at maximum distance, upper body and face together in frame, natural handheld angle'
-  }
-  return 'front camera selfie at natural handheld distance between close-up and arm-length, face clearly visible'
-}
-
-function inferFrontSelfieMotionSuffix(prompt: string): string {
-  const p = prompt.trim()
-  if (/认真|刻意|摆拍|稳定|清晰|仔细地|精心|正式/i.test(p)) {
-    return 'sharp focus, stable handheld, NO motion blur, intentional clean selfie'
-  }
-  if (/手抖|不小心|动态模糊|镜头晃|晃了一下|motion blur|camera shake|shake blur|模糊感|拍糊/i.test(p)) {
-    return 'slight motion blur from accidental phone shake, candid unstable handheld feel, soft directional blur on face or background edges, imperfect snap'
-  }
-  return ''
-}
-
-const CHARACTER_MEDIA_MIRROR_SELFIE_SUFFIX =
-  'mirror reflection composition, third-person view of character standing before mirror, character holding smartphone toward mirror with phone visible in reflection, upper body and face together in mirror frame, natural mirror selfie, NOT front camera arm-length POV, NOT outstretched arm reaching toward viewer, NOT hand entering frame from bottom corner, NOT first-person handheld selfie perspective, NOT selfie stick angle, NOT fish-eye distortion'
-
-const CHARACTER_MEDIA_FIRST_PERSON_BODY_SUFFIX =
-  'strict subjective first-person POV smartphone rear camera, character holding phone and photographing from their own viewpoint, viewer IS the character NOT an external photographer, own body parts visible exactly as phone angle dictates (hands arms shoulders thighs legs feet may enter frame), NO third-person external observer camera, NO full-body portrait composed by outside photographer, NOT mirror reflection, NOT front-facing selfie arm-length face camera, NOT studio photoshoot, NOT CCTV NOT drone establishing shot, immersive handheld POV snapshot'
-
-function inferCharacterMediaFirstPersonBodyTiltSuffix(prompt: string): string {
-  const p = prompt.trim()
-  if (
-    /holding hand|intertwined|fingers intertwined|握(?:着|住).*手|牵(?:着|住).*手|十指|partner.{0,16}hand|own (?:left |right )?hand/i.test(
-      p,
-    )
-  ) {
-    if (/looking down|high angle looking down|slight high angle|俯视|低头|略俯视/i.test(p)) {
-      if (isCharacterMediaFingerInterlockPrompt(p)) {
-        return 'high-angle first-person POV looking straight down at two interlaced hands with fingers woven together at center, finger gaps and knuckles clearly visible, wet sand or floor tiles directly beneath hands, warm light on ground surface, NO horizon, NO distant sea waves, NO skyline, NOT palm clasp'
-      }
-      return 'high-angle first-person POV looking straight down at two people holding hands at center, wet sand or floor tiles directly beneath hands, warm light on ground surface, NO horizon, NO distant sea waves, NO skyline'
-    }
-    return 'first-person POV with own hand and partner hand visible in lower or center frame, scenic background only at eye level not when looking down, NOT third-person full body shot'
-  }
-  if (
-    /腰部以下|腰部|裤裆|裆部|裆|大腿|腹股沟|略俯视|低头|卧床|躺在床上|床面|lap|crotch|groin|waist|below waist|thighs|bulge|own body/i.test(
-      p,
-    )
-  ) {
-    return 'phone camera tilted downward looking at own lap thighs and lower torso from above, high-angle first-person POV, own hands arms gripping fabric at thigh may enter frame, shoulders may edge into top of frame if phone held close, messy bedsheets around legs, face usually out of frame when looking down unless prompt asks for chin, NO third-person front-facing seated portrait, NO external camera showing full head-to-toe body'
-  }
-  if (/比耶|耶|peace sign|剪刀手|手势|手指.*(?:入镜|边缘|抓|握)/.test(p)) {
-    return 'first-person smartphone POV with own hand or fingers entering frame edge, scenic or body background beyond hand, NOT third-person portrait, NOT full-body external shot'
-  }
-  return inferCharacterMediaPovTiltSuffix(p)
-}
-
-function inferCharacterMediaPovTiltSuffix(prompt: string): string {
-  const p = prompt.trim()
-  const lower = p.toLowerCase()
-
-  if (/比耶|耶|peace sign|v sign|v-sign|剪刀手|手势|招手|waving hand|hand gesture|手指.*(?:入镜|边缘|画[面框])|举.*手/.test(p)) {
-    return 'first-person smartphone POV with photographer own hand or fingers entering frame edge making casual peace sign or wave gesture, scenic background beyond hand, NOT third-person portrait, NOT full-body shot'
-  }
-
-  if (
-    /脚下|地面|低头|俯拍|俯视|floor|ground|at (my )?feet|pavement|sidewalk|looking down|below|裤脚|裤腿|鞋尖|裙角|台阶/.test(p) ||
-    /(?:脚边|脚下|地面).{0,8}(?:猫|狗)/.test(p)
-  ) {
-    if (/裤脚|裤腿|鞋尖|球鞋|拖鞋|sneaker|toes|pant legs|cuffs|skirt hem|我的.*(?:鞋|裤|裙)/.test(p)) {
-      return 'downward tilted phone camera toward ground-level subject, photographer own shoes or pant cuffs visible at bottom edge as in casual over-the-feet phone snap'
-    }
-    return 'downward tilted phone camera toward ground-level subject, natural downward phone tilt, no forced feet or legs unless prompt explicitly mentions them'
-  }
-
-  if (/天空|抬头|仰视|sky|ceiling|looking up|building top|树梢|树冠|高楼|招牌|clouds|sunset sky|星空|星轨|月亮/.test(lower)) {
-    return 'upward tilted phone camera from standing height, sky architecture or canopy fills frame, no feet legs or hands in frame, immersive looking-up snapshot'
-  }
-
-  if (/桌面|桌|咖啡|键盘|书|饭|餐|手边|lap|膝盖|食物|奶茶|杯/.test(p)) {
-    return 'slightly downward seated or standing phone POV toward table-level subject, hands or sleeves may optionally edge into frame'
-  }
-
-  if (
-    /风景|街景|窗外|夜景|城市|lake|mountain|landscape|scenery|street|horizon|sunset|海|湖|山|路|林荫|建筑|天际线|江|河|公园|雪|雨/.test(
-      p,
-    )
-  ) {
-    return 'natural eye-level smartphone POV, scenery fills frame horizontally, no visible photographer body parts, handheld snapshot realism, NOT drone NOT CCTV NOT third-person'
-  }
-
-  return 'natural eye-level or context-appropriate first-person smartphone POV from standing or sitting height, body parts only when scene naturally includes them, NOT third-person NOT drone'
-}
 
 const REFERENCE_MATCH_STYLE_SUFFIX =
   'match the exact art style, rendering technique, line quality, color palette and illustration medium of the reference image, consistent character design language, same level of stylization as reference, preserve reference outfit and accessories unless scene explicitly changes clothes, do NOT switch to photorealistic or CGI if reference is illustrated, do NOT use a different art style from reference'
@@ -206,11 +149,21 @@ const DATING_PLOT_CINEMATIC_SUFFIX =
 const DATING_PLOT_REFERENCE_COMPOSITION_GUARD =
   'preserve third-person cinematic staging with character visible in scene, match reference character identity and art style, do NOT convert to first-person POV or smartphone snapshot'
 
-const CHARACTER_MEDIA_DUAL_HAND_HOLDING_SUFFIX =
-  'two separate people holding hands, photographer own hand and forearm enter from lower-left bottom of frame, partner separate human hand and forearm reach from upper-right across center, both hands meet at center, clearly two different individuals, NOT one person holding own hands, NOT single body with prosthetic arm and human arm on same torso, NOT both arms attached to same pair of legs at bottom, only photographer legs or feet visible at bottom edge, partner body out of frame except hand and partial forearm'
+const CHARACTER_MEDIA_DUAL_PERSON_INTIMATE_RE =
+  /\b(?:1girl,\s*1boy|1boy,\s*1girl|2girls?|2boys?|two people|couple|both (?:faces|people)|partner(?:'s|s)? (?:face|body|hand|head)|between (?:her|his) legs|on top of (?:her|him)|missionary|cowgirl|doggy|fellatio|cunnilingus|handjob|sex\b|making out)\b|两人|双人|同框|两位|对方.{0,12}(?:脸|身体|手|头)|腿间|身上|骑在|面对面/i
 
-const CHARACTER_MEDIA_FINGER_INTERLOCK_SUFFIX =
-  'fingers interlaced with partner fingers, interlocked fingers woven between each other, each finger visible in gaps between partner fingers, finger-lock grip with knuckles aligned, close-up detail on interlaced finger slots, NOT palm-over-palm clasp, NOT one hand gripping on top of the other hand, NOT loose hand hold without finger weave, NOT fingers merely touching side by side'
+/** 亲密双人同框（须全景/中景，禁单人特写） */
+export function isCharacterMediaDualPersonIntimatePrompt(prompt: string): boolean {
+  const p = prompt.trim()
+  if (!p) return false
+  if (isCharacterMediaDualHandHoldingPrompt(p)) return true
+  if (!CHARACTER_MEDIA_DUAL_PERSON_INTIMATE_RE.test(p)) return false
+  const soloOnly =
+    /\b(?:solo|masturbat|only (?:her|him|one person)|selfie shot|mirror selfie shot)\b|单人|独自|自慰|只有(?:她|他)/i.test(
+      p,
+    )
+  return !soloOnly
+}
 
 /** 十指相扣 / 手指交叉扣入（区别于普通搭握牵手） */
 export function isCharacterMediaFingerInterlockPrompt(prompt: string): boolean {
@@ -247,14 +200,27 @@ function appendCharacterMediaReferenceStyleParts(
   }
 }
 
-/** 自拍有参考图时自动跟随参考图画风；也可在设置里显式选「跟随参考形象图」 */
-export function isReferenceMatchStyle(settings: MomentsImageGenSettings, hasReferenceImage?: boolean): boolean {
-  if (hasReferenceImage) return true
+/** 自拍有参考图且模型支持传图时自动跟随参考图画风；也可在设置里显式选「跟随参考形象图」 */
+export function isReferenceMatchStyle(
+  settings: MomentsImageGenSettings,
+  hasReferenceImage?: boolean,
+): boolean {
+  const refUploadSupported = modelSupportsReferenceImageUploadFromSettings(settings)
+  if (hasReferenceImage && refUploadSupported) return true
   return settings.stylePrefixMode === 'preset' && settings.stylePresetId === 'reference_match'
 }
 
 function inferCharacterMediaShotScaleSuffix(prompt: string): string {
   const p = prompt.trim()
+  if (isCharacterMediaDualPersonIntimatePrompt(p) && !isCharacterMediaSelfiePrompt(p)) {
+    if (/全景|wide shot|远景|panoramic|full scene/i.test(p)) {
+      return 'wide shot, both people and environment visible in frame, subjects proportionally smaller, no extreme facial micro-detail, NOT single person portrait'
+    }
+    if (/特写|close[\s-]?up|face fill|怼脸/i.test(p)) {
+      return 'medium shot, both people or POV subject and partner body visible together, upper body to full body framing, NOT single face close-up, NOT one person headshot'
+    }
+    return 'medium shot, intimate two-person framing with clear subject separation, upper body or three-quarter body visible, NOT single person close-up portrait'
+  }
   if (/特写|面部特写|close[\s-]?up|face focus|怼脸/i.test(p)) {
     return 'close-up shot, face and upper chest fill frame, shallow depth of field, minimal background detail, no full body'
   }
@@ -273,7 +239,28 @@ function inferCharacterMediaShotScaleSuffix(prompt: string): string {
   return ''
 }
 
-/** 角色私聊/群聊/朋友圈：①第一视角随手拍（默认）②前置摄像头自拍 ③对镜自拍 */
+const CHARACTER_MEDIA_DUAL_INTIMATE_COMPOSITION_GUARD =
+  'medium shot, two people visible together in frame, full body or three-quarter body framing, both characters visible, NOT single person close-up, NOT one face filling entire frame'
+
+function appendCharacterMediaDualIntimateCompositionGuard(
+  parts: string[],
+  inferFrom: string,
+): void {
+  if (!isCharacterMediaDualPersonIntimatePrompt(inferFrom) || isCharacterMediaSelfiePrompt(inferFrom)) {
+    return
+  }
+  const blob = parts.join(', ').toLowerCase()
+  if (
+    /wide shot|medium shot|full body|two people visible|both (?:people|characters) visible|three-quarter body/i.test(
+      blob,
+    )
+  ) {
+    return
+  }
+  parts.push(CHARACTER_MEDIA_DUAL_INTIMATE_COMPOSITION_GUARD)
+}
+
+/** 角色私聊/群聊/朋友圈：仅拼接风格前缀 + 模型/用户 tag；不再自动注入 POV/机位/手机镜头后缀 */
 export function buildCharacterMediaImagePrompt(
   prompt: string,
   settings: MomentsImageGenSettings,
@@ -289,68 +276,9 @@ export function buildCharacterMediaImagePrompt(
   const withStyle = stylePrefix ? `${stylePrefix}${trimmed}`.trim() : trimmed
   const anime = !useReferenceStyle && isAnimeStyle(settings, withStyle)
 
-  if (isCharacterMediaSelfiePrompt(inferFrom)) {
-    if (isCharacterMediaMirrorSelfiePrompt(inferFrom)) {
-      const parts = [withStyle, CHARACTER_MEDIA_MIRROR_SELFIE_SUFFIX]
-      const shotSuffix = inferCharacterMediaShotScaleSuffix(inferFrom)
-      if (shotSuffix) parts.push(shotSuffix)
-      if (useReferenceStyle) parts.push(REFERENCE_MATCH_STYLE_SUFFIX)
-      else if (anime && !/not photorealistic/i.test(withStyle)) parts.push(ANIME_ANTI_REALISTIC)
-      if (!hasReference) parts.push(anime ? ANIME_FACE_SUFFIX : REALISTIC_FACE_SUFFIX)
-      return parts.join(', ')
-    }
-    const parts = [
-      withStyle,
-      CHARACTER_MEDIA_FRONT_SELFIE_SUFFIX,
-      CHARACTER_MEDIA_FRONT_SELFIE_ANTI_MIRROR_SUFFIX,
-      inferFrontSelfieDistanceSuffix(inferFrom),
-    ]
-    const motionSuffix = inferFrontSelfieMotionSuffix(inferFrom)
-    if (motionSuffix) parts.push(motionSuffix)
-    const shotSuffix = inferCharacterMediaShotScaleSuffix(inferFrom)
-    if (shotSuffix) parts.push(shotSuffix)
-    appendCharacterMediaReferenceStyleParts(parts, useReferenceStyle, hasReference, inferFrom)
-    if (!useReferenceStyle || !hasReference) {
-      if (anime && !/not photorealistic/i.test(withStyle)) {
-        parts.push(ANIME_ANTI_REALISTIC)
-      }
-      if (!hasReference) {
-        parts.push(anime ? ANIME_FACE_SUFFIX : REALISTIC_FACE_SUFFIX)
-      }
-    }
-    return parts.join(', ')
-  }
-
-  if (isCharacterMediaFirstPersonBodyPrompt(inferFrom)) {
-    const parts = [
-      withStyle,
-      CHARACTER_MEDIA_FIRST_PERSON_BODY_SUFFIX,
-      inferCharacterMediaFirstPersonBodyTiltSuffix(inferFrom),
-    ]
-    if (isCharacterMediaDualHandHoldingPrompt(inferFrom)) {
-      parts.push(CHARACTER_MEDIA_DUAL_HAND_HOLDING_SUFFIX)
-      if (isCharacterMediaFingerInterlockPrompt(inferFrom)) {
-        parts.push(CHARACTER_MEDIA_FINGER_INTERLOCK_SUFFIX)
-      }
-    }
-    const shotSuffix = inferCharacterMediaShotScaleSuffix(inferFrom)
-    if (shotSuffix) parts.push(shotSuffix)
-    appendCharacterMediaReferenceStyleParts(parts, useReferenceStyle, hasReference, inferFrom)
-    if (!useReferenceStyle || !hasReference) {
-      if (anime && !/not photorealistic/i.test(withStyle)) {
-        parts.push(ANIME_ANTI_REALISTIC)
-      }
-      if (!hasReference && /脸|面部|眼神|唇|五官|face|eyes|lips/i.test(inferFrom)) {
-        parts.push(anime ? ANIME_FACE_SUFFIX : REALISTIC_FACE_SUFFIX)
-      }
-    }
-    return parts.join(', ')
-  }
-
-  const parts = [withStyle, CHARACTER_MEDIA_POV_LANDSCAPE_SUFFIX, inferCharacterMediaPovTiltSuffix(inferFrom)]
-  const shotSuffix = inferCharacterMediaShotScaleSuffix(inferFrom)
-  if (shotSuffix) parts.push(shotSuffix)
+  const parts = [withStyle]
   appendCharacterMediaReferenceStyleParts(parts, useReferenceStyle, hasReference, inferFrom)
+  appendCharacterMediaDualIntimateCompositionGuard(parts, inferFrom)
   if (!useReferenceStyle || !hasReference) {
     if (anime && !/not photorealistic/i.test(withStyle)) {
       parts.push(ANIME_ANTI_REALISTIC)
@@ -401,6 +329,12 @@ export function buildDatingPlotImagePrompt(
 export const buildCharacterChatImagePrompt = buildCharacterMediaImagePrompt
 
 export function resolveImageStyleHint(settings: MomentsImageGenSettings): string {
+  const extraPositive = resolveCommonExtraPositivePrompt(
+    resolveProviderPromptSettings(settings).common,
+  ).trim()
+  if (extraPositive) {
+    return `正面提示词（${extraPositive.slice(0, 48)}${extraPositive.length > 48 ? '…' : ''}）`
+  }
   if (settings.stylePrefixMode === 'custom') {
     const custom = settings.customStylePrefix.trim()
     return custom ? `自定义（${custom.slice(0, 48)}）` : '自定义'
@@ -408,12 +342,18 @@ export function resolveImageStyleHint(settings: MomentsImageGenSettings): string
   return getPollinationsStylePreset(settings.stylePresetId)?.labelZh ?? '写实摄影'
 }
 
-/** 角色配图（私聊/群聊/朋友圈）：有形象参考图时告知模型画风由参考图决定 */
+/** 角色配图（私聊/群聊/朋友圈）：有形象参考图且模型支持传图时告知画风由参考图决定 */
 export function resolveCharacterMediaImageStyleHint(
   settings: MomentsImageGenSettings,
   hasAppearanceReference?: boolean,
 ): string {
-  if (hasAppearanceReference) return '跟随参考形象图（有参考图时自动生效）'
+  const refSupported = modelSupportsReferenceImageUploadFromSettings(settings)
+  if (hasAppearanceReference && refSupported) {
+    return '跟随参考形象图（当前模型支持传参考图）'
+  }
+  if (hasAppearanceReference && !refSupported) {
+    return `${resolveImageStyleHint(settings)}（参考图不会传至当前模型，仅作档案）`
+  }
   return resolveImageStyleHint(settings)
 }
 

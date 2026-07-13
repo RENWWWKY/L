@@ -2,7 +2,6 @@ import { useMemo } from 'react'
 
 import type { PulseComment, PulseDmThread, PulseFollowingUser, PulseInteraction, PulsePost, PulseProfileStats, PulseTrendingTopic } from './pulseTypes'
 import { defaultProfileStats } from './pulseTypes'
-import { getWorldSlice } from './pulseWorldData'
 import { usePulseStore } from './usePulseStore'
 
 const EMPTY_POSTS: PulsePost[] = []
@@ -64,9 +63,7 @@ export function usePulsePostComments(postId: string): PulseComment[] {
     const acc = s.currentAccountId
     const pov = s.currentPOVId
     if (!acc || !pov) return EMPTY_COMMENTS
-    const account = s.root.byAccount[acc]
-    if (!account) return EMPTY_COMMENTS
-    return getWorldSlice(account, pov).commentsByPostId[postId] ?? EMPTY_COMMENTS
+    return s.root.byAccount[acc]?.worldByPov[pov]?.commentsByPostId[postId] ?? EMPTY_COMMENTS
   })
 }
 
@@ -76,9 +73,7 @@ export function usePulseTrendingTopics(): PulseTrendingTopic[] {
     const acc = s.currentAccountId
     const pov = s.currentPOVId
     if (!acc || !pov) return EMPTY_TRENDING
-    const account = s.root.byAccount[acc]
-    if (!account) return EMPTY_TRENDING
-    return getWorldSlice(account, pov).trending
+    return s.root.byAccount[acc]?.worldByPov[pov]?.trending ?? EMPTY_TRENDING
   })
   return useMemo(() => [...trending].sort((a, b) => a.rank - b.rank), [trending])
 }
@@ -86,9 +81,9 @@ export function usePulseTrendingTopics(): PulseTrendingTopic[] {
 export function usePulseInteractions(): PulseInteraction[] {
   const rows = usePulseStore((s) => {
     const acc = s.currentAccountId
-    const pov = s.currentPOVId
-    if (!acc || !pov) return EMPTY_INTERACTIONS
-    return s.root.byAccount[acc]?.interactionsByPov[pov] ?? EMPTY_INTERACTIONS
+    const player = s.currentPlayerPovId
+    if (!acc || !player) return EMPTY_INTERACTIONS
+    return s.root.byAccount[acc]?.interactionsByPov[player] ?? EMPTY_INTERACTIONS
   })
   return useMemo(() => [...rows].sort((a, b) => b.createdAt - a.createdAt), [rows])
 }
@@ -96,9 +91,9 @@ export function usePulseInteractions(): PulseInteraction[] {
 export function usePulseDmThreads(): PulseDmThread[] {
   const rows = usePulseStore((s) => {
     const acc = s.currentAccountId
-    const pov = s.currentPOVId
-    if (!acc || !pov) return EMPTY_DM_THREADS
-    return s.root.byAccount[acc]?.dmThreadsByPov[pov] ?? EMPTY_DM_THREADS
+    const player = s.currentPlayerPovId
+    if (!acc || !player) return EMPTY_DM_THREADS
+    return s.root.byAccount[acc]?.dmThreadsByPov[player] ?? EMPTY_DM_THREADS
   })
   return useMemo(() => [...rows].sort((a, b) => b.lastAt - a.lastAt), [rows])
 }
@@ -106,7 +101,7 @@ export function usePulseDmThreads(): PulseDmThread[] {
 export function usePulseProfileStats(povId: string | null | undefined): PulseProfileStats {
   return usePulseStore((s) => {
     const acc = s.currentAccountId
-    const id = povId ?? s.currentPOVId
+    const id = povId ?? s.currentPlayerPovId
     if (!acc || !id) return DEFAULT_PROFILE_STATS
     return s.root.byAccount[acc]?.profileStatsByPov[id] ?? DEFAULT_PROFILE_STATS
   })
@@ -114,10 +109,10 @@ export function usePulseProfileStats(povId: string | null | undefined): PulsePro
 
 /** 当前 POV 的关注列表；无持久化数据时从动态作者推导 */
 export function usePulseFollowingList(povId: string | null | undefined): PulseFollowingUser[] {
-  const resolvedPovId = povId ?? usePulseStore((s) => s.currentPOVId)
+  const resolvedPovId = povId ?? usePulseStore((s) => s.currentPlayerPovId)
   const stored = usePulseStore((s) => {
     const acc = s.currentAccountId
-    const id = povId ?? s.currentPOVId
+    const id = povId ?? s.currentPlayerPovId
     if (!acc || !id) return EMPTY_FOLLOWING
     return s.root.byAccount[acc]?.followingByPov[id] ?? EMPTY_FOLLOWING
   })

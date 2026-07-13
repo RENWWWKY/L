@@ -6,6 +6,9 @@ import {
   runUnifiedAutoMemorySummaryAfterThreshold,
 } from '../unifiedMemoryAutoSummary'
 import {
+  clampMemorySummaryDebugOutput,
+} from './memorySummaryDebug'
+import {
   dispatchWechatMemorySummaryResult,
   memorySummaryRetryKindLabel,
 } from './wechatMemorySummaryResultEvents'
@@ -26,6 +29,8 @@ export async function notifyMemorySummaryAttempt(
     ok: boolean
     primaryWritten: boolean
     failureReason?: string
+    modelOutput?: string
+    parsedPreview?: string
     suppressNotify?: boolean
   },
 ): Promise<void> {
@@ -47,6 +52,8 @@ export async function notifyMemorySummaryAttempt(
   const reason =
     params.failureReason?.trim() ||
     (params.primaryWritten ? '总结未完整写入' : '总结未写入长期记忆')
+  const modelOutput = clampMemorySummaryDebugOutput(params.modelOutput)
+  const parsedPreview = clampMemorySummaryDebugOutput(params.parsedPreview)
 
   await personaDb.enqueueMemorySummaryRetry({
     conversationKey: ck,
@@ -58,6 +65,8 @@ export async function notifyMemorySummaryAttempt(
     wechatAccountId: params.wechatAccountId,
     datingAiPlotId: params.datingAiPlotId,
     failureReason: reason,
+    modelOutput,
+    parsedPreview,
   })
 
   dispatchWechatMemorySummaryResult({
@@ -65,6 +74,8 @@ export async function notifyMemorySummaryAttempt(
     displayName,
     kind: params.kind,
     failureReason: reason,
+    modelOutput,
+    parsedPreview,
   })
 }
 
@@ -98,6 +109,7 @@ export async function retryMemorySummaryItem(
     aiRoundCountChannel: item.kind === 'meet' ? 'meet' : 'wechat',
     summaryNotifyKind: item.kind,
     isManualRetry: true,
+    ...(item.kind === 'private' && !item.datingAiPlotId?.trim() ? { onlineOnly: true } : {}),
   })
   return { ok: result.ok, primaryWritten: result.primaryWritten }
 }

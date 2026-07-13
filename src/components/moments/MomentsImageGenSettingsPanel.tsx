@@ -23,12 +23,21 @@ import {
   pickDefaultImageSize,
   type MomentsImageSizeOption,
 } from './momentsImageSizePresets'
-import { POLLINATIONS_STYLE_PRESETS, resolveStylePrefix } from './pollinationsPresets'
+import { ImageGenStyleTabSection } from './ImageGenStyleTabSection'
+import {
+  buildAugmentedPositivePromptParts,
+  resolveEffectiveNegativePrompt,
+} from './imageGenProviderPromptSettings'
+import { buildMomentsImagePrompt } from './momentsImagePromptEnhancer'
 import {
   isVolcengineModelNotActivatedError,
   VOLCENGINE_ARK_OPEN_MANAGEMENT_URL,
 } from './volcengineImageCatalog'
 import type { MomentsImageGenSettings } from './useMomentsSettingsStore'
+import { ImageGenPromptSettingsSection } from './ImageGenPromptSettingsSection'
+import { ImageGenSizeSettingsSection } from './ImageGenSizeSettingsSection'
+import { modelSupportsReferenceImageUploadFromSettings } from './imageGenModelCapabilities'
+import { resolveImageGenDimensions } from './resolveImageGenDimensions'
 import {
   buildFetchCatalogOptions,
   getImageGenApiKey,
@@ -39,11 +48,12 @@ import {
 
 const DEFAULT_PREVIEW_PROMPT = '夕阳下的湖边小路，宁静治愈'
 
-type ImageGenTab = 'model' | 'prefix' | 'preview'
+type ImageGenTab = 'model' | 'prefix' | 'prompt' | 'preview'
 
 const IMAGE_GEN_TABS: { id: ImageGenTab; label: string }[] = [
   { id: 'model', label: '模型' },
   { id: 'prefix', label: '风格' },
+  { id: 'prompt', label: '提示词' },
   { id: 'preview', label: '生图预览' },
 ]
 
@@ -311,13 +321,22 @@ export function MomentsImageGenSettingsPanel({
     })
   }, [modelSearch, models])
 
-  const activeStylePrefix = useMemo(() => resolveStylePrefix(imageGen), [imageGen])
-
   const fullPreviewPrompt = useMemo(() => {
     const body = previewPrompt.trim()
-    if (!body) return activeStylePrefix.trim()
-    return `${activeStylePrefix}${body}`.trim()
-  }, [activeStylePrefix, previewPrompt])
+    if (!body) return ''
+    const scene = buildMomentsImagePrompt(body, imageGen)
+    const { modelName } = parseMomentsImageModelId(imageGen.modelId)
+    return buildAugmentedPositivePromptParts(scene, imageGen, provider, modelName).final
+  }, [imageGen, previewPrompt, provider])
+
+  const refUploadSupported = useMemo(
+    () => modelSupportsReferenceImageUploadFromSettings(imageGen),
+    [imageGen],
+  )
+  const previewEffectiveNegative = useMemo(
+    () => resolveEffectiveNegativePrompt(imageGen, provider, selected?.modelName),
+    [imageGen, provider, selected?.modelName],
+  )
 
   const supportedPreviewSizes = useMemo(() => {
     if (!selected) return []
@@ -349,20 +368,23 @@ export function MomentsImageGenSettingsPanel({
       setPreviewError('请先输入预览提示词')
       return
     }
-    if (!previewSize) {
-      setPreviewError('请先在「模型」Tab 选择生图模型')
-      return
-    }
 
     setPreviewBusy(true)
     setPreviewError(null)
     try {
+      const dims = previewSize
+        ? {
+            width: previewSize.width,
+            height: previewSize.height,
+            imageSize: previewSize.apiSize,
+          }
+        : resolveImageGenDimensions(imageGen)
       const dataUrl = await generateMomentsImage({
         prompt,
         settings: imageGen,
-        width: previewSize.width,
-        height: previewSize.height,
-        imageSize: previewSize.apiSize,
+        width: dims.width,
+        height: dims.height,
+        imageSize: dims.imageSize,
       })
       setPreviewImage(dataUrl)
     } catch (e) {
@@ -807,6 +829,8 @@ export function MomentsImageGenSettingsPanel({
                   ) : null}
                 </div>
               ) : null}
+
+              {selected ? <ImageGenSizeSettingsSection imageGen={imageGen} onPatch={onPatch} /> : null}
             </motion.div>
           ) : null}
 
@@ -817,93 +841,29 @@ export function MomentsImageGenSettingsPanel({
               animate={{ opacity: 1, y: 0 }}
               exit={{ opacity: 0, y: -4 }}
               transition={{ duration: 0.18 }}
-              className="space-y-3"
             >
-              <p className="text-[12px] leading-relaxed text-[#6B7280]">
-                {settingsContext === 'api'
-                  ? '生图风格由客户端自动拼接。角色私聊/群聊/朋友圈配图：非自拍写第一人称视角（平视/仰视/俯视按场景，肢体仅必要时入镜；比耶可写手入镜）；仅自拍才描述人像五官。'
-                  : '生图风格由本页配置自动拼接。角色配图：非自拍为第一人称视角随手拍（非每张都露脚）；自拍才写五官外貌。预览样张可自由试词。'}
-              </p>
+              <ImageGenStyleTabSection
+                imageGen={imageGen}
+                onPatch={onPatch}
+                refUploadSupported={refUploadSupported}
+                intro={
+                  settingsContext === 'api'
+                    ? '生图风格由客户端自动拼接。角色私聊/群聊/朋友圈配图：非自拍只写画面内容（主体、环境、光线）；自拍写 selfie shot / mirror selfie shot + 可见 tag。客户端不再自动注入 POV/机位/手机框。'
+                    : '生图风格由本页配置自动拼接。角色配图：非自拍直接描述画面；自拍写 selfie shot / mirror selfie shot。客户端不再自动注入 POV/机位/手机框。预览样张可自由试词。'
+                }
+              />
+            </motion.div>
+          ) : null}
 
-              <div className="inline-flex rounded-full bg-white p-1 shadow-sm">
-                {(
-                  [
-                    { id: 'preset', label: '预设风格' },
-                    { id: 'custom', label: '自定义' },
-                  ] as const
-                ).map((opt) => (
-                  <button
-                    key={opt.id}
-                    type="button"
-                    onClick={() => onPatch({ stylePrefixMode: opt.id })}
-                    className={`rounded-full px-4 py-1.5 text-[13px] transition-colors ${
-                      imageGen.stylePrefixMode === opt.id
-                        ? 'bg-[#111827] text-white'
-                        : 'text-[#9CA3AF] hover:text-[#6B7280]'
-                    }`}
-                  >
-                    {opt.label}
-                  </button>
-                ))}
-              </div>
-
-              {imageGen.stylePrefixMode === 'preset' ? (
-                <div className="grid grid-cols-2 gap-2">
-                  {POLLINATIONS_STYLE_PRESETS.map((style) => {
-                    const active = imageGen.stylePresetId === style.id
-                    return (
-                      <button
-                        key={style.id}
-                        type="button"
-                        onClick={() => onPatch({ stylePresetId: style.id })}
-                        className={`rounded-xl border px-3 py-3 text-left transition-all ${
-                          active
-                            ? 'border-[#111827] bg-white shadow-[0_4px_16px_rgba(0,0,0,0.06)]'
-                            : 'border-transparent bg-white/70 hover:bg-white'
-                        }`}
-                      >
-                        <div className="flex items-center justify-between gap-2">
-                          <span className="text-[13px] font-medium text-[#111827]">{style.labelZh}</span>
-                          {active ? <Check className="size-3.5 text-[#111827]" strokeWidth={2.5} /> : null}
-                        </div>
-                        <span className="mt-1 block text-[10px] uppercase tracking-[0.14em] text-[#9CA3AF]">
-                          {style.labelEn}
-                        </span>
-                      </button>
-                    )
-                  })}
-                </div>
-              ) : (
-                <div>
-                  <textarea
-                    value={imageGen.customStylePrefix}
-                    onChange={(e) => onPatch({ customStylePrefix: e.target.value })}
-                    placeholder="例如：soft lighting, detailed background, warm color palette,"
-                    rows={4}
-                    className="w-full resize-none rounded-xl border border-white bg-white px-4 py-3 text-[14px] text-[#111827] outline-none transition-colors focus:ring-2 focus:ring-[#111827]/10"
-                  />
-                  <p className="mt-1.5 text-[11px] text-[#9CA3AF]">
-                    自定义英文风格提示词，建议以逗号结尾；仅拼接到 API 请求，不会写入模型输出的 `[图片]` 行。
-                  </p>
-                </div>
-              )}
-
-              {activeStylePrefix ? (
-                <div className="rounded-xl bg-white px-3 py-2.5">
-                  <p className="text-[10px] font-medium uppercase tracking-[0.14em] text-[#9CA3AF]">
-                    当前风格提示词（API 自动拼接）
-                  </p>
-                  <p className="mt-1 text-[11px] leading-relaxed text-[#6B7280]">{activeStylePrefix}</p>
-                </div>
-              ) : imageGen.stylePrefixMode === 'preset' && imageGen.stylePresetId === 'reference_match' ? (
-                <p className="rounded-xl bg-white px-3 py-2.5 text-[11px] leading-relaxed text-[#6B7280]">
-                  已选「跟随参考形象图」：角色自拍且配置了形象参考时，API 会匹配参考图的画风与线条，不再叠加写实/二次元等预设前缀。
-                </p>
-              ) : (
-                <p className="rounded-xl bg-white px-3 py-2.5 text-[11px] text-[#9CA3AF]">
-                  当前为「无风格」，API 请求仅使用画面内容描述（含客户端人像增强词）。
-                </p>
-              )}
+          {activeTab === 'prompt' ? (
+            <motion.div
+              key="prompt"
+              initial={{ opacity: 0, y: 6 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -4 }}
+              transition={{ duration: 0.18 }}
+            >
+              <ImageGenPromptSettingsSection imageGen={imageGen} onPatch={onPatch} />
             </motion.div>
           ) : null}
 
@@ -920,16 +880,22 @@ export function MomentsImageGenSettingsPanel({
                 使用「模型」与「风格」Tab 中的当前配置生成样张。预览提示词只需写画面内容，风格由上方配置自动拼接。
               </p>
 
-              {activeStylePrefix ? (
+              {fullPreviewPrompt ? (
                 <div className="rounded-xl bg-white px-3 py-2.5">
                   <p className="text-[10px] font-medium uppercase tracking-[0.14em] text-[#9CA3AF]">
-                    已引用风格提示词
+                    已引用风格 / 提示词（含下方预览词时将一并拼接）
                   </p>
-                  <p className="mt-1 text-[11px] leading-relaxed text-[#6B7280]">{activeStylePrefix}</p>
+                  <p className="mt-1 text-[11px] leading-relaxed text-[#6B7280]">
+                    {previewPrompt.trim()
+                      ? '输入预览词后，下方「完整正面提示词」将展示最终 API 请求内容。'
+                      : fullPreviewPrompt}
+                  </p>
                 </div>
               ) : imageGen.stylePrefixMode === 'preset' && imageGen.stylePresetId === 'reference_match' ? (
                 <p className="rounded-xl bg-white px-3 py-2.5 text-[11px] leading-relaxed text-[#6B7280]">
-                  已选「跟随参考形象图」：预览不含额外风格前缀；角色自拍锁脸时会匹配参考图画风。
+                  {refUploadSupported
+                    ? '已选「跟随参考形象图」：预览不含额外风格前缀；角色参考图会送入支持传图的模型。'
+                    : '当前模型不支持传参考图；预览将使用其他可用风格来源（预设/提示词 Tab）。'}
                 </p>
               ) : (
                 <p className="rounded-xl bg-white px-3 py-2.5 text-[11px] text-[#9CA3AF]">
@@ -974,9 +940,21 @@ export function MomentsImageGenSettingsPanel({
               {fullPreviewPrompt ? (
                 <div className="rounded-xl border border-dashed border-[#E5E7EB] bg-white/60 px-3 py-2.5">
                   <p className="text-[10px] font-medium uppercase tracking-[0.14em] text-[#9CA3AF]">
-                    完整提示词
+                    完整正面提示词
                   </p>
                   <p className="mt-1 text-[11px] leading-relaxed text-[#6B7280]">{fullPreviewPrompt}</p>
+                  <p className="mt-1.5 text-[10px] text-[#9CA3AF]">
+                    含风格前缀与「提示词」Tab 正面附加词；不含负面词
+                  </p>
+                </div>
+              ) : null}
+
+              {previewEffectiveNegative ? (
+                <div className="rounded-xl border border-dashed border-[#E5E7EB] bg-white/60 px-3 py-2.5">
+                  <p className="text-[10px] font-medium uppercase tracking-[0.14em] text-[#9CA3AF]">
+                    生效负面提示词（生图时注入）
+                  </p>
+                  <p className="mt-1 text-[11px] leading-relaxed text-[#6B7280]">{previewEffectiveNegative}</p>
                 </div>
               ) : null}
 

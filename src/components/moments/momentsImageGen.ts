@@ -7,13 +7,32 @@ import { isQianfanMuseSteamerModel } from './qianfanImageCatalog'
 import {
   GEMINI_API_BASE_URL,
   isGeminiImagenModel,
-  isGeminiNativeImageModel,
+  isGeminiImageRouteCandidate,
   resolveImagenAspectRatio,
 } from './geminiImageCatalog'
+import {
+  mergeGeminiImageRouteErrors,
+  shouldRetryGeminiImageViaGenerateContent,
+  shouldRetryGeminiImageViaGenerations,
+} from './geminiImageRouteCompat'
 import { extractPngDataUrlFromBuffer } from './momentsImageGenBinary'
 import {
-  isNovelaiV4Model,
+  buildAugmentedPositivePromptParts,
+  formatImageGenApiPromptForConsole,
+  resolveImageGenModelPromptKind,
+  resolveImageGenProvider,
+  resolveNovelaiGenerationParams,
+  resolveProviderPromptSettings,
+} from './imageGenProviderPromptSettings'
+import { logConsole } from '../../phone/apps/wechat/consoleLogger'
+import { resolveImageGenDimensions } from './resolveImageGenDimensions'
+import {
+  applyNovelaiSizeFieldsToRequestBody,
+  buildNovelaiImageRequestBody,
+  buildNovelaiRelayEndpointCandidates,
+  isNovelaiImageModelName,
   NOVELAI_IMAGE_API_URL,
+  shouldPreferNovelaiCustomGenerationsRoute,
   snapNovelaiDimension,
 } from './novelaiImageCatalog'
 import {
@@ -22,7 +41,12 @@ import {
   isGptImageModel,
   resolveOpenaiImageSize,
 } from './openaiImageCatalog'
-import { buildOpenAiChatCompletionsEndpoint, buildOpenAiImagesGenerationsEndpoint, buildGeminiGenerateContentEndpoint, buildOpenAiImagesEditsEndpoint } from '../../phone/apps/api/openAiCompatibleEndpoints'
+import {
+  buildOpenAiChatCompletionsEndpoint,
+  buildOpenAiImagesGenerationsEndpoint,
+  buildGeminiGenerateContentEndpointCandidates,
+  buildOpenAiImagesEditsEndpoint,
+} from '../../phone/apps/api/openAiCompatibleEndpoints'
 import {
   KOLORS_IMAGE_SIZES,
   QIANFAN_IMAGE_SIZES,
@@ -30,9 +54,10 @@ import {
 } from './momentsImageSizePresets'
 import { resolveVolcengineImageSize, VOLCENGINE_IMAGE_API_URL } from './volcengineImageCatalog'
 import { localizeMomentsImageGenError } from './momentsImageGenErrorZh'
-import { buildCharacterMediaImagePrompt, buildDatingPlotImagePrompt, buildMomentsImagePrompt, isCharacterMediaAppearanceLockPrompt, isCharacterMediaSelfiePrompt } from './momentsImagePromptEnhancer'
+import { buildCharacterMediaImagePrompt, buildDatingPlotImagePrompt, buildMomentsImagePrompt, isCharacterMediaCharacterAppearanceNeededPrompt, isCharacterMediaSelfiePrompt } from './momentsImagePromptEnhancer'
 import { buildDatingPlotGenderLockSuffix } from '../../phone/apps/wechat/dating/datingPlotImagePromptGenderEnforcer'
 import { sanitizeCharacterMediaImagePrompt, stripFrontSelfieMirrorCueEnglish } from './characterMediaPromptSanitizer'
+import { hasCharacterMediaSelfiePrefix } from './characterMediaSelfiePrefix'
 import { resolveCharacterMediaPromptEnglish } from './characterMediaPromptTranslator'
 import { applyCharacterSelfieMirrorFlip } from './characterSelfieMirrorFlip'
 import type { MomentsImageGenSettings } from './useMomentsSettingsStore'
@@ -129,22 +154,25 @@ function buildFullPrompt(params: MomentsImageGenParams): string {
     const hasReference = resolveReferenceUrlsFromParams(params).length > 0
     const inferencePrompt =
       params.characterMediaPromptForInference?.trim() || params.prompt.trim()
-    const cleanedPrompt = stripFrontSelfieMirrorCueEnglish(
-      sanitizeCharacterMediaImagePrompt(params.prompt),
-      inferencePrompt,
-    )
+    const isSubjectSelfie = hasCharacterMediaSelfiePrefix(inferencePrompt)
+    const cleanedPrompt = isSubjectSelfie
+      ? sanitizeCharacterMediaImagePrompt(params.prompt)
+      : stripFrontSelfieMirrorCueEnglish(
+          sanitizeCharacterMediaImagePrompt(params.prompt),
+          inferencePrompt,
+        )
     let built = buildCharacterMediaImagePrompt(cleanedPrompt, params.settings, {
       hasReferenceImage: hasReference,
       inferencePrompt,
     })
     const hint = params.characterAppearanceHint?.trim()
-    if (hint && !hasReference) {
+    if (hint && !hasReference && !isSubjectSelfie) {
       built += `, consistent character appearance: ${hint}`
     }
     const refNote = params.characterAppearanceRefNote?.trim()
     const isSelfie = isCharacterMediaSelfiePrompt(inferencePrompt)
-    const isAppearanceLock = isCharacterMediaAppearanceLockPrompt(inferencePrompt)
-    if (refNote && (isSelfie || isAppearanceLock || params.referenceStyleOnly)) {
+    const characterAppearanceNeeded = isCharacterMediaCharacterAppearanceNeededPrompt(inferencePrompt)
+    if (refNote && characterAppearanceNeeded) {
       built += hasReference
         ? params.referenceStyleOnly
           ? `, character design traits from reference notes for visible parts only: ${refNote}`
@@ -158,6 +186,35 @@ function buildFullPrompt(params: MomentsImageGenParams): string {
     return built
   }
   return buildMomentsImagePrompt(params.prompt, params.settings)
+}
+
+function buildProviderPrompt(params: MomentsImageGenParams): string {
+  const base = buildFullPrompt(params)
+  if (!base) return ''
+  const provider = resolveImageGenProvider(params.settings)
+  const { modelName } = parseMomentsImageModelId(params.settings.modelId)
+  const parts = buildAugmentedPositivePromptParts(base, params.settings, provider, modelName)
+  const sizeLabel =
+    params.width && params.height
+      ? `${params.width}×${params.height}${params.imageSize ? ` (${params.imageSize})` : ''}`
+      : undefined
+  logConsole('ai', formatImageGenApiPromptForConsole(parts, { label: '生图', sizeLabel }))
+  return parts.final
+}
+
+/** 供聊天室排队日志等场景预览最终 API 正面提示词（不触发实际生图） */
+export function previewImageGenApiPromptForConsole(
+  prompt: string,
+  settings: MomentsImageGenSettings,
+  opts?: { messageId?: string; label?: string },
+): string {
+  const trimmed = prompt.trim()
+  if (!trimmed) return ''
+  const provider = resolveImageGenProvider(settings)
+  const { modelName } = parseMomentsImageModelId(settings.modelId)
+  const scene = buildMomentsImagePrompt(trimmed, settings)
+  const parts = buildAugmentedPositivePromptParts(scene, settings, provider, modelName)
+  return formatImageGenApiPromptForConsole(parts, opts)
 }
 
 function buildDatingPlotReferenceIdentityLockPrompt(
@@ -215,9 +272,7 @@ function buildReferenceStyleOnlyLockPrompt(
       ? `You are given ${refCount} reference images. Match ONLY their shared art style, line quality, color palette, rendering medium and character design language. `
       : 'Match ONLY the reference image art style, line quality, color palette, rendering medium and character design language. '
   return (
-    `${notePart}${refPart}The requested scene is a subjective first-person smartphone POV snapshot. ` +
-    `Do NOT copy reference third-person composition, standing pose, full-body portrait, or mirror framing. ` +
-    `If visible body parts appear (hands, feet, sleeves), render them consistent with reference design (e.g. mechanical prosthetic arm style). ` +
+    `${notePart}${refPart}Match reference art style only; do NOT copy reference third-person composition unless the scene prompt asks for it. ` +
     `If reference is 2D anime/illustration, output MUST stay 2D illustrated — NOT photorealistic. Scene request: ${scenePrompt}`
   )
 }
@@ -345,7 +400,7 @@ async function generateSiliconFlowImage(params: MomentsImageGenParams): Promise<
   const apiKey = params.settings.siliconflowApiKey?.trim()
   if (!apiKey) throw new Error('请先填写硅基流动 API Key')
 
-  const prompt = buildFullPrompt(params)
+  const prompt = buildProviderPrompt(params)
   if (!prompt) throw new Error('请先输入配图描述或朋友圈文字')
 
   const { modelName } = parseMomentsImageModelId(
@@ -353,21 +408,25 @@ async function generateSiliconFlowImage(params: MomentsImageGenParams): Promise<
   )
   const width = params.width ?? 512
   const height = params.height ?? 512
+  const sfParams = resolveProviderPromptSettings(params.settings, 'siliconflow').siliconflow
+  const kind = resolveImageGenModelPromptKind('siliconflow', modelName)
 
   const body: Record<string, unknown> = {
     model: modelName,
     prompt,
     image_size: resolveSiliconFlowImageSize(modelName, width, height, params.imageSize),
-    num_inference_steps: 20,
+    num_inference_steps: sfParams.steps,
   }
 
-  if (/Qwen\/Qwen-Image/i.test(modelName) && !/Edit/i.test(modelName)) {
-    body.cfg = 4
+  if (kind === 'siliconflow-qwen') {
+    body.cfg = sfParams.cfg
   }
-  if (/Kolors/i.test(modelName)) {
-    body.guidance_scale = 7.5
+  if (kind === 'siliconflow-kolors') {
+    body.guidance_scale = sfParams.guidanceScale
     body.batch_size = 1
   }
+  const negative = sfParams.negativePrompt.trim()
+  if (negative) body.negative_prompt = negative
 
   const res = await fetch(SILICONFLOW_IMAGE_URL, {
     method: 'POST',
@@ -398,7 +457,7 @@ async function generateQianfanImage(params: MomentsImageGenParams): Promise<stri
   const apiKey = params.settings.qianfanApiKey?.trim()
   if (!apiKey) throw new Error('请先填写百度千帆 API Key')
 
-  const prompt = buildFullPrompt(params)
+  const prompt = buildProviderPrompt(params)
   if (!prompt) throw new Error('请先输入配图描述或朋友圈文字')
 
   const { modelName } = parseMomentsImageModelId(
@@ -413,6 +472,9 @@ async function generateQianfanImage(params: MomentsImageGenParams): Promise<stri
   const body: Record<string, unknown> = isMuseSteamer
     ? { model: modelName, prompt, size }
     : { model: modelName, prompt, n: 1, size }
+
+  const negative = resolveProviderPromptSettings(params.settings, 'qianfan').qianfan.negativePrompt.trim()
+  if (negative) body.negative_prompt = negative
 
   const res = await fetch(url, {
     method: 'POST',
@@ -443,7 +505,7 @@ async function generateVolcengineImage(params: MomentsImageGenParams): Promise<s
   const apiKey = params.settings.volcengineApiKey?.trim()
   if (!apiKey) throw new Error('请先填写火山方舟 API Key')
 
-  const prompt = buildFullPrompt(params)
+  const prompt = buildProviderPrompt(params)
   if (!prompt) throw new Error('请先输入配图描述或朋友圈文字')
 
   const { modelName } = parseMomentsImageModelId(
@@ -493,11 +555,16 @@ async function generateVolcengineImage(params: MomentsImageGenParams): Promise<s
   throw new Error('火山方舟未返回图片')
 }
 
+function logImageGenApiRequestSize(route: string, width: number, height: number, sizeLabel?: string): void {
+  const extra = sizeLabel?.trim() ? ` (${sizeLabel.trim()})` : ''
+  logConsole('ai', `[imagegen] API 请求 ${route} · ${width}×${height}${extra}`)
+}
+
 async function generateNovelaiImage(params: MomentsImageGenParams): Promise<string> {
   const apiKey = params.settings.novelaiApiKey?.trim()
   if (!apiKey) throw new Error('请先填写 NovelAI API Key')
 
-  const prompt = buildFullPrompt(params)
+  const prompt = buildProviderPrompt(params)
   if (!prompt) throw new Error('请先输入配图描述或朋友圈文字')
 
   const { modelName } = parseMomentsImageModelId(
@@ -506,48 +573,20 @@ async function generateNovelaiImage(params: MomentsImageGenParams): Promise<stri
   const width = snapNovelaiDimension(params.width ?? 832)
   const height = snapNovelaiDimension(params.height ?? 1216)
 
-  const negativeBase =
-    'blurry, lowres, error, film grain, scan artifacts, worst quality, bad quality, jpeg artifacts, very displeasing, chromatic aberration, logo, text, watermark, signature'
+  const naiParams = resolveNovelaiGenerationParams(params.settings, modelName)
 
-  const body: Record<string, unknown> = isNovelaiV4Model(modelName)
-    ? {
-        input: prompt,
-        model: modelName,
-        action: 'generate',
-        parameters: {
-          params_version: 3,
-          width,
-          height,
-          scale: 5,
-          sampler: 'k_euler_ancestral',
-          steps: 28,
-          n_samples: 1,
-          ucPreset: 0,
-          qualityToggle: true,
-          v4_prompt: {
-            caption: { base_caption: prompt, char_captions: [] },
-            use_coords: false,
-            use_order: true,
-          },
-          v4_negative_prompt: {
-            caption: { base_caption: negativeBase },
-          },
-        },
-      }
-    : {
-        input: prompt,
-        model: modelName,
-        action: 'generate',
-        parameters: {
-          width,
-          height,
-          scale: 6,
-          sampler: 'k_euler_ancestral',
-          steps: 28,
-          n_samples: 1,
-          uc: 'lowres, bad anatomy, bad hands, text, error, missing fingers, cropped, worst quality, low quality, jpeg artifacts, signature, watermark, username, blurry',
-        },
-      }
+  const body = buildNovelaiImageRequestBody({
+    prompt,
+    modelName,
+    width,
+    height,
+    steps: naiParams.steps,
+    cfg: naiParams.cfg,
+    sampler: naiParams.sampler,
+    negativePrompt: naiParams.negativePrompt,
+  })
+  applyNovelaiSizeFieldsToRequestBody(body, width, height, params.imageSize)
+  logImageGenApiRequestSize('NovelAI 官方', width, height, params.imageSize)
 
   const res = await fetch(NOVELAI_IMAGE_API_URL, {
     method: 'POST',
@@ -564,6 +603,61 @@ async function generateNovelaiImage(params: MomentsImageGenParams): Promise<stri
   }
 
   return extractPngDataUrlFromBuffer(await res.arrayBuffer())
+}
+
+async function generateNovelaiRelayImage(
+  params: MomentsImageGenParams,
+  apiUrl: string,
+  apiKey: string,
+  modelName: string,
+  prompt: string,
+): Promise<string> {
+  if (!prompt) throw new Error('请先输入配图描述或朋友圈文字')
+
+  const width = snapNovelaiDimension(params.width ?? 832)
+  const height = snapNovelaiDimension(params.height ?? 1216)
+  const naiParams = resolveNovelaiGenerationParams(params.settings, modelName)
+  const body = buildNovelaiImageRequestBody({
+    prompt,
+    modelName,
+    width,
+    height,
+    steps: naiParams.steps,
+    cfg: naiParams.cfg,
+    sampler: naiParams.sampler,
+    negativePrompt: naiParams.negativePrompt,
+  })
+  const applied = applyNovelaiSizeFieldsToRequestBody(body, width, height, params.imageSize)
+  logImageGenApiRequestSize('NovelAI 中转 /ai/generate-image', applied.width, applied.height, applied.size)
+
+  const endpoints = buildNovelaiRelayEndpointCandidates(apiUrl)
+  let lastErr: unknown = null
+  for (const endpoint of endpoints) {
+    try {
+      const res = await fetch(endpoint, {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${apiKey}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(body),
+      })
+      if (!res.ok) {
+        const text = await res.text()
+        throw new Error(localizeMomentsImageGenError('custom', res.status, text))
+      }
+      const contentType = res.headers.get('content-type') ?? ''
+      if (/image\/png/i.test(contentType) || /application\/octet-stream/i.test(contentType)) {
+        return extractPngDataUrlFromBuffer(await res.arrayBuffer())
+      }
+      const data = await res.json()
+      const openAiRef = parseOpenAiImageResponse(data, 'custom', res.status)
+      return ensureMomentsImageDataUrl(openAiRef)
+    } catch (err) {
+      lastErr = err
+    }
+  }
+  throw lastErr instanceof Error ? lastErr : new Error('NAI 中转生图失败')
 }
 
 type GeminiGenerateContentAuth = 'bearer' | 'query'
@@ -918,6 +1012,7 @@ async function generateCustomImageViaGenerations(params: {
   height: number
   imageSize?: string
   errorProvider: MomentsImageProvider
+  settings?: MomentsImageGenParams['settings']
 }): Promise<string> {
   const body: Record<string, unknown> = { model: params.modelName, prompt: params.prompt }
 
@@ -927,13 +1022,71 @@ async function generateCustomImageViaGenerations(params: {
     body.response_format = 'b64_json'
     if (params.modelName === 'gpt-image-1') body.quality = 'medium'
     else if (params.modelName === 'dall-e-3') body.quality = 'standard'
+    logImageGenApiRequestSize('自定义 /images/generations · OpenAI', params.width, params.height, String(body.size ?? ''))
   } else {
-    body.image_size = resolveSiliconFlowImageSize(params.modelName, params.width, params.height, params.imageSize)
-    body.num_inference_steps = 20
-    if (/Qwen\/Qwen-Image/i.test(params.modelName) && !/Edit/i.test(params.modelName)) body.cfg = 4
-    if (/Kolors/i.test(params.modelName)) {
-      body.guidance_scale = 7.5
-      body.batch_size = 1
+    const settings = params.settings
+    const kind = settings
+      ? resolveImageGenModelPromptKind('custom', params.modelName)
+      : 'custom-diffusion'
+
+    if (isNovelaiImageModelName(params.modelName) && settings) {
+      const width = snapNovelaiDimension(params.width)
+      const height = snapNovelaiDimension(params.height)
+      const naiParams = resolveNovelaiGenerationParams(settings, params.modelName)
+      const naiBody = buildNovelaiImageRequestBody({
+        prompt: params.prompt,
+        modelName: params.modelName,
+        width,
+        height,
+        steps: naiParams.steps,
+        cfg: naiParams.cfg,
+        sampler: naiParams.sampler,
+        negativePrompt: naiParams.negativePrompt,
+      })
+      Object.assign(body, naiBody)
+      const applied = applyNovelaiSizeFieldsToRequestBody(body, width, height, params.imageSize)
+      body.steps = naiParams.steps
+      body.scale = naiParams.cfg
+      body.cfg_scale = naiParams.cfg
+      body.sampler = naiParams.sampler
+      if (naiParams.negativePrompt) {
+        body.negative_prompt = naiParams.negativePrompt
+        body.uc = naiParams.negativePrompt
+      }
+      logImageGenApiRequestSize('自定义 /images/generations · NAI', applied.width, applied.height, applied.size)
+    } else {
+      const sfParams =
+        kind === 'siliconflow-qwen' || kind === 'siliconflow-kolors' || kind === 'siliconflow-diffusion'
+          ? settings
+            ? resolveProviderPromptSettings(settings, 'custom').siliconflow
+            : null
+          : null
+      const customParams = settings ? resolveProviderPromptSettings(settings, 'custom').custom : null
+
+      body.image_size = resolveSiliconFlowImageSize(
+        params.modelName,
+        params.width,
+        params.height,
+        params.imageSize,
+      )
+      logImageGenApiRequestSize(
+        '自定义 /images/generations',
+        params.width,
+        params.height,
+        String(body.image_size ?? params.imageSize ?? ''),
+      )
+      body.num_inference_steps = sfParams?.steps ?? customParams?.steps ?? 20
+
+      if (/Qwen\/Qwen-Image/i.test(params.modelName) && !/Edit/i.test(params.modelName)) {
+        body.cfg = sfParams?.cfg ?? customParams?.cfg ?? 4
+      }
+      if (/Kolors/i.test(params.modelName)) {
+        body.guidance_scale = sfParams?.guidanceScale ?? customParams?.guidanceScale ?? 7.5
+        body.batch_size = 1
+      }
+
+      const negative = (sfParams?.negativePrompt ?? customParams?.negativePrompt ?? '').trim()
+      if (negative) body.negative_prompt = negative
     }
   }
 
@@ -1026,7 +1179,7 @@ async function generateGeminiImage(params: MomentsImageGenParams): Promise<strin
   const apiKey = params.settings.geminiApiKey?.trim()
   if (!apiKey) throw new Error('请先填写 Gemini API Key')
 
-  const prompt = buildFullPrompt(params)
+  const prompt = buildProviderPrompt(params)
   if (!prompt) throw new Error('请先输入配图描述或朋友圈文字')
 
   const { modelName } = parseMomentsImageModelId(
@@ -1086,7 +1239,7 @@ async function generateOpenaiImage(params: MomentsImageGenParams): Promise<strin
   const apiKey = params.settings.openaiApiKey?.trim()
   if (!apiKey) throw new Error('请先填写 OpenAI API Key')
 
-  const prompt = buildFullPrompt(params)
+  const prompt = buildProviderPrompt(params)
   if (!prompt) throw new Error('请先输入配图描述或朋友圈文字')
 
   const { modelName } = parseMomentsImageModelId(
@@ -1187,19 +1340,18 @@ async function generateCustomGeminiNativeImage(
   apiKey: string,
   modelName: string,
 ): Promise<string> {
-  const prompt = buildFullPrompt(params)
+  const prompt = buildProviderPrompt(params)
   if (!prompt) throw new Error('请先输入配图描述或朋友圈文字')
 
-  const endpoint = buildGeminiGenerateContentEndpoint(apiUrl, modelName)
-  if (!endpoint) throw new Error('自定义接口 API URL 无效')
+  const endpoints = buildGeminiGenerateContentEndpointCandidates(apiUrl, modelName)
+  if (!endpoints.length) throw new Error('自定义接口 API URL 无效')
 
   const referenceImageDataUrls = await resolveReferenceImageDataUrls(params)
-  return requestGeminiGenerateContentImage({
-    endpoint,
+  const requestParams = {
     apiKey,
     prompt,
-    auth: 'bearer',
-    errorProvider: 'custom',
+    auth: 'bearer' as const,
+    errorProvider: 'custom' as const,
     referenceImageDataUrls,
     referenceImageKinds: params.referenceImageKinds,
     characterGenderHint: params.characterGenderHint,
@@ -1208,7 +1360,61 @@ async function generateCustomGeminiNativeImage(
     promptContext: params.promptContext,
     datingPlotCharacterRefCount: params.datingPlotCharacterRefCount,
     datingPlotPlayerGenderHint: params.datingPlotPlayerGenderHint,
-  })
+  }
+
+  let lastErr: unknown = null
+  for (const endpoint of endpoints) {
+    try {
+      return await requestGeminiGenerateContentImage({ ...requestParams, endpoint })
+    } catch (err) {
+      lastErr = err
+      const msg = err instanceof Error ? err.message : String(err)
+      const hasNext = endpoints.indexOf(endpoint) < endpoints.length - 1
+      if (!hasNext || !shouldRetryGeminiImageViaGenerations(msg)) break
+    }
+  }
+  throw lastErr instanceof Error ? lastErr : new Error(String(lastErr ?? 'Gemini 生图失败'))
+}
+
+async function generateCustomImageWithGeminiRouteFallback(
+  params: MomentsImageGenParams,
+  apiUrl: string,
+  apiKey: string,
+  modelName: string,
+): Promise<string> {
+  const prompt = buildProviderPrompt(params)
+  if (!prompt) throw new Error('请先输入配图描述或朋友圈文字')
+
+  const width = params.width ?? 1024
+  const height = params.height ?? 1024
+  const genEndpoint = buildOpenAiImagesGenerationsEndpoint(apiUrl)
+  const genParams = {
+    endpoint: genEndpoint,
+    apiKey,
+    modelName,
+    prompt,
+    width,
+    height,
+    imageSize: params.imageSize,
+    errorProvider: 'custom' as const,
+    settings: params.settings,
+  }
+
+  let generateContentErr: unknown = null
+  try {
+    return await generateCustomGeminiNativeImage(params, apiUrl, apiKey, modelName)
+  } catch (err) {
+    generateContentErr = err
+    const msg = err instanceof Error ? err.message : String(err)
+    if (!genEndpoint || !shouldRetryGeminiImageViaGenerations(msg)) throw err
+  }
+
+  try {
+    const dataUrl = await generateCustomImageViaGenerations(genParams)
+    return ensureMomentsImageDataUrl(dataUrl)
+  } catch (generationsErr) {
+    throw mergeGeminiImageRouteErrors(generateContentErr, generationsErr)
+  }
 }
 
 async function generateCustomImage(params: MomentsImageGenParams): Promise<string> {
@@ -1217,7 +1423,7 @@ async function generateCustomImage(params: MomentsImageGenParams): Promise<strin
   if (!apiUrl) throw new Error('请先填写自定义接口 API URL')
   if (!apiKey) throw new Error('请先填写自定义接口 API Key')
 
-  const prompt = buildFullPrompt(params)
+  const prompt = buildProviderPrompt(params)
   if (!prompt) throw new Error('请先输入配图描述或朋友圈文字')
 
   const { modelName } = parseMomentsImageModelId(
@@ -1225,8 +1431,18 @@ async function generateCustomImage(params: MomentsImageGenParams): Promise<strin
   )
   if (!modelName) throw new Error('请先拉取并选择生图模型')
 
-  if (isGeminiNativeImageModel(modelName)) {
-    return generateCustomGeminiNativeImage(params, apiUrl, apiKey, modelName)
+  if (isNovelaiImageModelName(modelName)) {
+    if (!shouldPreferNovelaiCustomGenerationsRoute(apiUrl)) {
+      try {
+        return await generateNovelaiRelayImage(params, apiUrl, apiKey, modelName, prompt)
+      } catch {
+        // 部分中转仅支持 OpenAI 兼容 /images/generations，继续走下方通用逻辑
+      }
+    }
+  }
+
+  if (isGeminiImageRouteCandidate(modelName)) {
+    return generateCustomImageWithGeminiRouteFallback(params, apiUrl, apiKey, modelName)
   }
 
   const width = params.width ?? 1024
@@ -1290,6 +1506,7 @@ async function generateCustomImage(params: MomentsImageGenParams): Promise<strin
     height,
     imageSize: params.imageSize,
     errorProvider: 'custom' as const,
+    settings: params.settings,
   }
 
   if (isGptImageModel(modelName)) {
@@ -1316,8 +1533,20 @@ async function generateCustomImage(params: MomentsImageGenParams): Promise<strin
     }
   }
 
-  const dataUrl = await generateCustomImageViaGenerations(genParams)
-  return ensureMomentsImageDataUrl(dataUrl)
+  try {
+    const dataUrl = await generateCustomImageViaGenerations(genParams)
+    return ensureMomentsImageDataUrl(dataUrl)
+  } catch (generationsErr) {
+    const msg = generationsErr instanceof Error ? generationsErr.message : String(generationsErr)
+    if (shouldRetryGeminiImageViaGenerateContent(msg)) {
+      try {
+        return await generateCustomGeminiNativeImage(params, apiUrl, apiKey, modelName)
+      } catch (generateContentErr) {
+        throw mergeGeminiImageRouteErrors(generationsErr, generateContentErr)
+      }
+    }
+    throw generationsErr
+  }
 }
 
 function resolveProvider(settings: MomentsImageGenSettings): MomentsImageProvider {
@@ -1326,11 +1555,29 @@ function resolveProvider(settings: MomentsImageGenSettings): MomentsImageProvide
 
 export async function generateMomentsImage(params: MomentsImageGenParams): Promise<string> {
   let effectiveParams = params
-  if (params.promptContext === 'character_media') {
-    const sanitized = sanitizeCharacterMediaImagePrompt(params.prompt)
+  const dimPrompt =
+    params.characterMediaPromptForInference?.trim() || params.prompt?.trim() || undefined
+  const dimOptions =
+    params.settings.imageSizeMode === 'fixed'
+      ? undefined
+      : {
+          prompt: dimPrompt,
+          context: params.promptContext,
+        }
+  if (params.width == null || params.height == null || !params.imageSize) {
+    const dims = resolveImageGenDimensions(params.settings, dimOptions)
+    effectiveParams = {
+      ...effectiveParams,
+      width: params.width ?? dims.width,
+      height: params.height ?? dims.height,
+      imageSize: params.imageSize ?? dims.imageSize,
+    }
+  }
+  if (effectiveParams.promptContext === 'character_media') {
+    const sanitized = sanitizeCharacterMediaImagePrompt(effectiveParams.prompt)
     const englishPrompt = await resolveCharacterMediaPromptEnglish(sanitized)
     effectiveParams = {
-      ...params,
+      ...effectiveParams,
       prompt: englishPrompt,
       characterMediaPromptForInference: sanitized,
     }

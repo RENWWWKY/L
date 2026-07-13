@@ -80,6 +80,9 @@ export function absorbLegacyWorldIntoPov(
   }
 }
 
+/** 只读占位：selector 缺省回退须稳定引用，避免 useSyncExternalStore 死循环 */
+const EMPTY_WORLD_READ_FALLBACK: PulseWorldData = emptyPulseWorldData()
+
 export function getWorldSlice(acc: PulseAccountData, povId: string): PulseWorldData {
-  return acc.worldByPov[povId] ?? emptyPulseWorldData()
+  return acc.worldByPov[povId] ?? EMPTY_WORLD_READ_FALLBACK
 }

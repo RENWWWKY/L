@@ -45,6 +45,8 @@ import {
   type ChatEmojiProbabilityPatch,
 } from './ChatEmojiProbabilitySettingsScreen'
 import { CreateGroupPickContactsSheet, type CreateGroupContactPick } from '../group/CreateGroupPickContactsSheet'
+import { ChatBackgroundPresetGrid } from './ChatBackgroundPresetGrid'
+import { resolvePublicImageUrl } from '../../../../publicAssetUrl'
 
 function WxSwitch({ on, onToggle }: { on: boolean; onToggle: () => void }) {
   return (
@@ -270,6 +272,9 @@ export function ChatSettingsScreen({
       hiddenFromMessageList: false,
       notifyEnabled: true,
       showThinkingChain: false,
+      forwardHistoryCardEnabled: false,
+      profileImageChangeEnabled: false,
+      internetMemeLexiconEnabled: false,
       isDanmakuMode: false,
       showGroupMemberNicknameInChat: true,
       showGroupRankBadgesInChat: false,
@@ -337,6 +342,10 @@ export function ChatSettingsScreen({
           ChatConversationSettingsRow,
           | 'isPinned'
           | 'isDanmakuMode'
+          | 'showThinkingChain'
+          | 'forwardHistoryCardEnabled'
+          | 'profileImageChangeEnabled'
+          | 'internetMemeLexiconEnabled'
           | 'chatBackground'
           | 'stickerRoundTriggerPercent'
           | 'stickerTargetedModeEnabled'
@@ -517,6 +526,7 @@ export function ChatSettingsScreen({
     const currentTrimmed = (effective.chatBackground ?? '').trim()
     const canApply = draftTrimmed.length > 0 && draftTrimmed !== currentTrimmed
     const canReset = currentTrimmed.length > 0
+    const previewBgUrl = draftTrimmed ? resolvePublicImageUrl(draftTrimmed) : ''
     return (
       <div className="flex h-full min-h-0 flex-col bg-[#ededed]">
         <header
@@ -546,11 +556,15 @@ export function ChatSettingsScreen({
               className="mt-2 h-11 w-full rounded-[10px] border border-[#e5e5e5] bg-white px-3 text-[13px] text-black outline-none"
             />
             <p className="mt-2 text-[12px] text-[#8e8e8e]">
-              支持 URL 与本地上传二选一；本地上传会进入 9:16 裁剪后应用到当前聊天。
+              支持 URL、内置背景与本地上传；本地上传会进入 9:16 裁剪后应用到当前聊天。
             </p>
+            <ChatBackgroundPresetGrid
+              selectedDraft={chatBgDraft}
+              onSelect={(storagePath) => setChatBgDraft(storagePath)}
+            />
             <div className="mt-3 overflow-hidden rounded-[10px] border border-[#e5e5e5] bg-[#f7f7f7]" style={{ aspectRatio: '9 / 16' }}>
-              {draftTrimmed ? (
-                <img src={draftTrimmed} alt="" className="h-full w-full object-cover" />
+              {previewBgUrl ? (
+                <img src={previewBgUrl} alt="" className="h-full w-full object-cover" />
               ) : (
                 <div className="flex h-full w-full items-center justify-center text-[12px] text-[#8e8e8e]">当前使用默认聊天背景</div>
               )}
@@ -807,6 +821,54 @@ export function ChatSettingsScreen({
             <WxSwitch
               on={effective.isDanmakuMode}
               onToggle={() => void patch({ isDanmakuMode: !effective.isDanmakuMode })}
+            />
+          </ListRow>
+          <ListRow borderBottom>
+            <div className="min-w-0 flex-1">
+              <span className="text-[16px] text-black">回复思维链（CoT）</span>
+              <p className="mt-1 text-[12px] leading-relaxed text-[#8e8e8e]">
+                开启后为本会话注入后台推演步骤，回复更细致但更耗 token；关闭仍保留换行分条、语音与表情包等输出格式。
+              </p>
+            </div>
+            <WxSwitch
+              on={effective.showThinkingChain}
+              onToggle={() => void patch({ showThinkingChain: !effective.showThinkingChain })}
+            />
+          </ListRow>
+          <ListRow borderBottom>
+            <div className="min-w-0 flex-1">
+              <span className="text-[16px] text-black">转发聊天记录卡片</span>
+              <p className="mt-1 text-[12px] leading-relaxed text-[#8e8e8e]">
+                开启后角色可在剧情需要时输出伪造私聊记录卡片（举证/吃瓜等）；日常闲聊默认不必开。
+              </p>
+            </div>
+            <WxSwitch
+              on={effective.forwardHistoryCardEnabled}
+              onToggle={() => void patch({ forwardHistoryCardEnabled: !effective.forwardHistoryCardEnabled })}
+            />
+          </ListRow>
+          <ListRow borderBottom>
+            <div className="min-w-0 flex-1">
+              <span className="text-[16px] text-black">换头像 / 朋友圈背景</span>
+              <p className="mt-1 text-[12px] leading-relaxed text-[#8e8e8e]">
+                开启后允许角色响应用户发图，输出 <span className="font-mono text-[11px]">[换头像]</span> 等指令；关闭则不注入相关协议。
+              </p>
+            </div>
+            <WxSwitch
+              on={effective.profileImageChangeEnabled}
+              onToggle={() => void patch({ profileImageChangeEnabled: !effective.profileImageChangeEnabled })}
+            />
+          </ListRow>
+          <ListRow borderBottom>
+            <div className="min-w-0 flex-1">
+              <span className="text-[16px] text-black">网络玩梗词库</span>
+              <p className="mt-1 text-[12px] leading-relaxed text-[#8e8e8e]">
+                开启后注入轻量玩梗句式灵感，角色可自然接梗、吐槽；默认关。对方难过或认真倾诉时自动收梗，仍服从人设与世界书。
+              </p>
+            </div>
+            <WxSwitch
+              on={effective.internetMemeLexiconEnabled}
+              onToggle={() => void patch({ internetMemeLexiconEnabled: !effective.internetMemeLexiconEnabled })}
             />
           </ListRow>
           <ListRow onClick={() => setTimeSettingsOpen(true)} borderBottom>

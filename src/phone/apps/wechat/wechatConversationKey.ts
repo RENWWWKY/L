@@ -233,7 +233,7 @@ type WeChatStorageConversationIdentity =
   | { kind: 'private'; characterId: string; sessionPlayerId: string }
   | { kind: 'group'; groupId: string; sessionPlayerId: string }
 
-function resolveWeChatStorageConversationIdentity(conversationKey: string): WeChatStorageConversationIdentity | null {
+export function resolveWeChatStorageConversationIdentity(conversationKey: string): WeChatStorageConversationIdentity | null {
   const k = conversationKey.trim()
   if (!k) return null
 

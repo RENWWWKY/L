@@ -2,6 +2,7 @@ import {
   BookOpen,
   Camera,
   ChevronRight,
+  Globe2,
   Headphones,
   MessageCircleQuestionMark,
   ScrollText,
@@ -18,6 +19,8 @@ import { DiscoverListenTogetherApp } from './discoverListen/DiscoverListenTogeth
 import { LISTEN_TOGETHER_NAVIGATE_EVENT } from './discoverListen/listenTogetherNavigation'
 import { LISTEN_TOGETHER_SHARE_TO_MOMENTS_EVENT } from './discoverListen/listenTogetherMomentShareNavigation'
 import { JubenshaHallApp } from './jubensha'
+import { LUMI_PULSE_NAVIGATE_EVENT } from '../phone/apps/lumiPulse/lumiPulseNavigation'
+import { WeChatDiscoverLumiPulseApp } from '../phone/apps/lumiPulse/WeChatDiscoverLumiPulseApp'
 import { useMomentsInteractionUnreadCount } from './moments/MomentsNoticeRuntime'
 import { MomentsSerifNumericText } from './moments/ArchiveTimelineDateColumn'
 import type { OnOpenMomentParticipantProfile } from './moments/momentProfileNavigation'
@@ -28,6 +31,7 @@ type DiscoverActionId =
   | 'moments'
   | 'anonymous-qa'
   | 'listen-together'
+  | 'weibo'
   | 'subconscious-archives'
   | 'jubensha'
   | 'shop'
@@ -65,6 +69,7 @@ const DISCOVER_ACTIONS: DiscoverAction[] = [
   { id: 'moments', label: '朋友圈', icon: Camera },
   { id: 'listen-together', label: '听一听', icon: Headphones },
   { id: 'anonymous-qa', label: '匿问我答', icon: MessageCircleQuestionMark },
+  { id: 'weibo', label: '微博广场', icon: Globe2 },
   { id: 'subconscious-archives', label: '私语档案', icon: ScrollText },
   { id: 'jubensha', label: '剧本杀馆', icon: BookOpen },
   { id: 'shop', label: '小店', icon: Store },
@@ -90,7 +95,7 @@ export function WeChatDiscoverInstagram({
   const momentContacts = mockContactsToMomentRefs(qnaContacts ?? [])
   const momentsUnreadCount = useMomentsInteractionUnreadCount()
   const [activeView, setActiveView] = useState<
-    'list' | 'moments' | 'listen-together' | 'anonymous-qa' | 'subconscious-archives' | 'jubensha'
+    'list' | 'moments' | 'listen-together' | 'anonymous-qa' | 'weibo' | 'subconscious-archives' | 'jubensha'
   >('list')
   useEffect(() => {
     onImmersiveViewChange?.(activeView !== 'list')
@@ -104,6 +109,11 @@ export function WeChatDiscoverInstagram({
     const onNavigate = () => setActiveView('listen-together')
     window.addEventListener(LISTEN_TOGETHER_NAVIGATE_EVENT, onNavigate)
     return () => window.removeEventListener(LISTEN_TOGETHER_NAVIGATE_EVENT, onNavigate)
+  }, [])
+  useEffect(() => {
+    const onNavigateWeibo = () => setActiveView('weibo')
+    window.addEventListener(LUMI_PULSE_NAVIGATE_EVENT, onNavigateWeibo)
+    return () => window.removeEventListener(LUMI_PULSE_NAVIGATE_EVENT, onNavigateWeibo)
   }, [])
   useEffect(() => {
     const onShareToMoments = () => setActiveView('moments')
@@ -153,6 +163,14 @@ export function WeChatDiscoverInstagram({
       </div>
     )
   }
+  if (activeView === 'weibo') {
+    return (
+      <WeChatDiscoverLumiPulseApp
+        className={`h-full min-h-0 ${className}`}
+        onBack={() => setActiveView('list')}
+      />
+    )
+  }
   if (activeView === 'subconscious-archives') {
     return (
       <SubconsciousArchivesApp
@@ -195,6 +213,7 @@ export function WeChatDiscoverInstagram({
                       if (item.id === 'moments') setActiveView('moments')
                       if (item.id === 'listen-together') setActiveView('listen-together')
                       if (item.id === 'anonymous-qa') setActiveView('anonymous-qa')
+                      if (item.id === 'weibo') setActiveView('weibo')
                       if (item.id === 'subconscious-archives') setActiveView('subconscious-archives')
                       if (item.id === 'jubensha') setActiveView('jubensha')
                     }}

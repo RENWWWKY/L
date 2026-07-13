@@ -8,6 +8,8 @@ export type WechatMemorySummaryResultDetail = {
   displayName: string
   kind: MemorySummaryRetryKind
   failureReason?: string
+  modelOutput?: string
+  parsedPreview?: string
 }
 
 export function dispatchWechatMemorySummaryResult(detail: WechatMemorySummaryResultDetail) {
@@ -20,6 +22,8 @@ export function dispatchWechatMemorySummaryResult(detail: WechatMemorySummaryRes
         displayName,
         kind: detail.kind,
         failureReason: detail.failureReason?.trim() || undefined,
+        modelOutput: detail.modelOutput?.trim() || undefined,
+        parsedPreview: detail.parsedPreview?.trim() || undefined,
       },
     }),
   )

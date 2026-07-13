@@ -35,6 +35,10 @@ import {
   rollbackMemoryAiRoundCountForChannel,
 } from '../lumiMeet/meetMemorySummarySettings'
 import { notifyMemorySummaryAttempt } from './memory/memorySummaryRetry'
+import {
+  formatLinkedMemorySummaryParsedPreview,
+  formatMemorySummaryParsedPreview,
+} from './memory/memorySummaryDebug'
 import type { MemorySummaryRetryKind } from './newFriendsPersona/types'
 import {
   parseUnifiedMemorySummaryWithLinkedModelOutput,
@@ -44,6 +48,7 @@ import {
   buildDatingCombinedMemoryUserAppendix,
   splitDatingAiResponseAndUnifiedMemoryJson,
   requestUnifiedMemorySummaryWithLinked,
+  requestUnifiedMemorySummary,
   requestSimpleOnlineMemorySummary,
   type ChatTranscriptTurn,
   type UnifiedMemorySummaryWithLinkedResult,
@@ -668,6 +673,17 @@ function shouldUseSimpleOnlineMemorySummary(
   return params.onlineOnly === true || gather.hadOnline || gather.hadMeet
 }
 
+/** 线上 + 线下合并、但无人脉 linked 摘录：走 prose 三行结构，不走 primary+linked JSON。 */
+function shouldUseUnifiedProseWithoutLinked(
+  gather: UnifiedMemoryGatherResult,
+  params: { onlineOnly?: boolean; datingAiPlotId?: string | null },
+): boolean {
+  if (params.datingAiPlotId?.trim()) return false
+  if (params.onlineOnly === true) return false
+  if (String(gather.npcLinked.block || '').trim()) return false
+  return gather.hadOfflinePrior && (gather.hadOnline || gather.hadMeet)
+}
+
 export function buildTimelineFallbackParamsFromGather(
   gather: UnifiedMemoryGatherResult,
   chatFallback: ApiConfig | null,
@@ -736,13 +752,11 @@ export async function applyUnifiedMemoryFromParsedSummary(
   const roundChannel: MemoryAiRoundCountChannel = opts.aiRoundCountChannel ?? 'wechat'
   const defer = opts.deferPrimaryAndUnifiedCursors === true
   const memSettingsRow = await personaDb.getMemorySettings()
-  /** 线下约会每轮摘要表；微信私聊/群聊/遇见的 prose 总结不受此项影响（见 memoryRowPerRoundMode）。 */
+  /** 线下约会「每轮 AI 剧情」摘要表模式；间隔触发的 prose 合并不走此项（即使存在未总结线下 backlog）。 */
   const rowPerRoundMode =
     isOfflineDatingRowPerRoundMode(memSettingsRow) &&
     opts.onlineOnly !== true &&
-    (gather.hadOfflinePrior ||
-      opts.tagOfflineIncludesNewAiTurn === true ||
-      !!opts.datingAiPlotId?.trim())
+    (opts.tagOfflineIncludesNewAiTurn === true || !!opts.datingAiPlotId?.trim())
   const cid = gather.characterId
   const ck = gather.conversationKey
   const linkedOwnerId = gather.npcLinked.linkedArchiveOwnerId.trim() || gather.plotsArchiveId
@@ -756,6 +770,7 @@ export async function applyUnifiedMemoryFromParsedSummary(
   })
 
   let primaryBody = summary.primary.content.trim().slice(0, 2000)
+  const primaryBodyRaw = primaryBody
   let primaryUserBindings: WorldBookUserPlaceholderBinding[] = []
   const sharedOriginIds = collectSharedRecordOriginCharacterIds(gather.chunkMessages)
   const { allIds: networkEligibleIdSet, all: networkEligibleRows, boundProtagonists } =
@@ -786,6 +801,9 @@ export async function applyUnifiedMemoryFromParsedSummary(
     } catch {
       /* 保持原文，避免总结整体失败 */
     }
+  }
+  if (!primaryBody.trim() && primaryBodyRaw.trim()) {
+    primaryBody = primaryBodyRaw.trim().slice(0, 2000)
   }
   if (primaryBody) {
     const resolvedRowKeywords = resolveMemorySummaryRowKeywordsFromParsed({
@@ -1390,34 +1408,61 @@ export async function runUnifiedAutoMemorySummaryAfterThreshold(params: {
   }
 
   const summary = shouldUseSimpleOnlineMemorySummary(gather, params)
-    ? {
-        primary: await requestSimpleOnlineMemorySummary({
+    ? await (async () => {
+        const attempt = await requestSimpleOnlineMemorySummary({
           apiConfig: summaryApi,
           onlineTranscript: gather.onlineTranscript,
           meetTranscript:
             params.onlineOnly || !gather.hadMeet ? [] : gather.meetTranscript,
           peerFallback: gather.characterRealName,
           peerCharacterId: gather.characterId,
-        }),
-        linked: [],
-      }
-    : await requestUnifiedMemorySummaryWithLinked({
-        apiConfig: summaryApi,
-        onlineTranscript: gather.onlineTranscript,
-        meetTranscript: params.onlineOnly ? [] : gather.hadMeet ? gather.meetTranscript : [],
-        offlineTextBlock: params.onlineOnly ? '' : gather.hadOfflinePrior ? gather.offlineBlock : '',
-        npcLinkedExcerptsBlock: params.onlineOnly ? '' : gather.npcLinked.block,
-        peerFallback: gather.characterRealName,
-        peerCharacterId: gather.characterId,
-        primaryIdRoster: await buildMemorySummaryPrimaryIdRoster({
-          archiveRootId: gather.plotsArchiveId,
-          peerCharacterId: gather.characterId,
-          extraCharacterIds: collectSharedRecordOriginCharacterIds(gather.chunkMessages),
-        }),
-        priorOpenAnchorsBlock: await loadStoryTimelineOpenAnchorsBlockForSummary(gather.characterId),
-      })
+        })
+        return {
+          bundle: { primary: attempt.summary, linked: [] as UnifiedMemorySummaryWithLinkedResult['linked'] },
+          modelOutput: attempt.rawModelOutput,
+          parsedPreview: formatMemorySummaryParsedPreview(attempt.summary),
+        }
+      })()
+    : shouldUseUnifiedProseWithoutLinked(gather, params)
+      ? await (async () => {
+          const attempt = await requestUnifiedMemorySummary({
+            apiConfig: summaryApi,
+            onlineTranscript: gather.onlineTranscript,
+            offlineTextBlock: gather.offlineBlock,
+          })
+          return {
+            bundle: { primary: attempt.summary, linked: [] as UnifiedMemorySummaryWithLinkedResult['linked'] },
+            modelOutput: attempt.rawModelOutput,
+            parsedPreview: formatMemorySummaryParsedPreview(attempt.summary),
+          }
+        })()
+      : await (async () => {
+          const attempt = await requestUnifiedMemorySummaryWithLinked({
+            apiConfig: summaryApi,
+            onlineTranscript: gather.onlineTranscript,
+            meetTranscript: params.onlineOnly ? [] : gather.hadMeet ? gather.meetTranscript : [],
+            offlineTextBlock: params.onlineOnly ? '' : gather.hadOfflinePrior ? gather.offlineBlock : '',
+            npcLinkedExcerptsBlock: params.onlineOnly ? '' : gather.npcLinked.block,
+            peerFallback: gather.characterRealName,
+            peerCharacterId: gather.characterId,
+            primaryIdRoster: await buildMemorySummaryPrimaryIdRoster({
+              archiveRootId: gather.plotsArchiveId,
+              peerCharacterId: gather.characterId,
+              extraCharacterIds: collectSharedRecordOriginCharacterIds(gather.chunkMessages),
+            }),
+            priorOpenAnchorsBlock: await loadStoryTimelineOpenAnchorsBlockForSummary(gather.characterId),
+          })
+          return {
+            bundle: attempt.result,
+            modelOutput: attempt.rawModelOutput,
+            parsedPreview: formatLinkedMemorySummaryParsedPreview({
+              ...attempt.result.primary,
+              linked: attempt.result.linked,
+            }),
+          }
+        })()
 
-  const applied = await applyUnifiedMemoryFromParsedSummary(summary, gather, {
+  const applied = await applyUnifiedMemoryFromParsedSummary(summary.bundle, gather, {
     offlinePlotsForCursorAdvance: params.onlineOnly ? [] : gather.offlinePlotsPrior,
     tagOfflineIncludesNewAiTurn: false,
     skipConversationRoundBump: skipBump,
@@ -1440,7 +1485,11 @@ export async function runUnifiedAutoMemorySummaryAfterThreshold(params: {
   })
 
   const primaryWritten = applied.primaryWritten
-  const failureReason = primaryWritten ? undefined : '总结未写入长期记忆'
+  const failureReason = primaryWritten
+    ? undefined
+    : summary.bundle.primary.content.trim()
+      ? '总结正文未通过入库校验'
+      : '总结模型返回空正文'
 
   if (primaryWritten) {
     await resetMemoryAiRoundCountForChannel(ck, roundChannel)
@@ -1478,7 +1527,7 @@ export async function runUnifiedAutoMemorySummaryAfterThreshold(params: {
             .join('\n\n')
       const latestReplyHint =
         [...gather.onlineTranscript].reverse().find((t) => t.from === 'other')?.text?.trim() ||
-        summary.primary.content.trim() ||
+        summary.bundle.primary.content.trim() ||
         recentTranscript.split('\n').pop()?.trim() ||
         ''
       await finalizeWorldBookAfterAutoSummaryPhase({
@@ -1517,6 +1566,8 @@ export async function runUnifiedAutoMemorySummaryAfterThreshold(params: {
       wechatAccountId: params.wechatAccountId ?? undefined,
       datingAiPlotId: params.datingAiPlotId ?? undefined,
       failureReason,
+      modelOutput: summary.modelOutput,
+      parsedPreview: summary.parsedPreview,
       suppressNotify: params.suppressSummaryNotify,
     })
   }
@@ -1690,12 +1741,15 @@ export async function runGroupChatMemorySummaryAfterThreshold(params: {
     return { ok: false, primaryWritten: false, failureReason }
   }
 
-  const summary = await requestGroupChatMemorySummary({
+  const summaryAttempt = await requestGroupChatMemorySummary({
     apiConfig: summaryApi,
     onlineTranscript,
     groupArchiveBlock: hadArchive ? archiveBlock : '',
     group,
   })
+  const summary = summaryAttempt.summary
+  const groupModelOutput = summaryAttempt.rawModelOutput
+  const groupParsedPreview = formatMemorySummaryParsedPreview(summary)
 
   const grpSource = parseWechatAccountGroupConversationKey(ck)
   const groupUserBindCtx = await resolveMemoryUserInsertContextFromSource(
@@ -1727,6 +1781,8 @@ export async function runGroupChatMemorySummaryAfterThreshold(params: {
         groupId: gid,
         sessionPlayerIdentityId: pid,
         failureReason,
+        modelOutput: groupModelOutput,
+        parsedPreview: groupParsedPreview,
       })
     }
     return { ok: false, primaryWritten: false, failureReason }
@@ -1830,6 +1886,8 @@ export async function runGroupChatMemorySummaryAfterThreshold(params: {
       sessionPlayerIdentityId: pid,
       wechatAccountId: grpSource?.wechatAccountId,
       failureReason,
+      modelOutput: primaryWritten ? undefined : groupModelOutput,
+      parsedPreview: primaryWritten ? undefined : groupParsedPreview,
     })
   }
 

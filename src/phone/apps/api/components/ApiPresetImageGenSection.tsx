@@ -125,7 +125,7 @@ export function ApiPresetImageGenSection({ imageGen, onPatch }: Props) {
           </div>
         ) : (
           <p className="p-5 text-[13px]" style={{ color: apiTheme.subText, fontWeight: 300 }}>
-            开启「启用生图」后可配置引擎、模型、生图风格与预览。
+            开启「启用生图」后可配置引擎、模型、风格、提示词与预览。
           </p>
         )}
       </div>

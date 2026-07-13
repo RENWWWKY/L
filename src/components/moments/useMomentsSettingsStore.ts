@@ -13,7 +13,13 @@ import {
   type MomentsImageProvider,
 } from './momentsImageModelCatalog'
 import { isMomentsImageProvider } from './momentsImageProviderRegistry'
+import {
+  DEFAULT_IMAGE_GEN_PROVIDER_PROMPT_SETTINGS,
+  normalizeImageGenProviderPromptSettings,
+  type ImageGenProviderPromptSettings,
+} from './imageGenProviderPromptSettings'
 import { DEFAULT_STYLE_PRESET_ID } from './pollinationsPresets'
+import { normalizeImageGenStyleMode, type ImageGenStyleMode } from './imageGenStyleMode'
 import {
   DEFAULT_PROACTIVE_CHARACTER_MOMENTS_SETTINGS,
   DEFAULT_PROACTIVE_CHARACTER_MOMENT_SCHEDULE,
@@ -26,6 +32,10 @@ import {
   normalizeUserMomentEngagementRules,
   type UserMomentEngagementRulesSettings,
 } from './userMomentEngagementRules'
+import {
+  migrateLegacyImageGenPromptPresets,
+  type UserImageGenPromptPreset,
+} from './userImageGenPromptPresets'
 
 export interface MomentsImageGenSettings {
   /** 是否启用朋友圈 AI 配图（全局预设侧：关闭后朋友圈与聊天室均不调用生图） */
@@ -59,9 +69,19 @@ export interface MomentsImageGenSettings {
   /** 各引擎拉取的模型列表（持久化到 localStorage，再次拉取会覆盖对应引擎缓存） */
   cachedModelsByProvider: MomentsImageModelCacheByProvider
   modelsFetchedAtByProvider: MomentsImageModelsFetchedAtByProvider
-  stylePrefixMode: 'preset' | 'custom'
+  stylePrefixMode: ImageGenStyleMode
   stylePresetId: string
   customStylePrefix: string
+  /** 各生图引擎的提示词与采样参数 */
+  providerPromptSettings: ImageGenProviderPromptSettings
+  /** 用户自保存的正/负面提示词预设（仅本机） */
+  savedImageGenPromptPresets?: UserImageGenPromptPreset[]
+  /** 默认生图尺寸：scene 按场景竖横方 / fixed 固定 / random 从池随机（角色发图、朋友圈配图等） */
+  imageSizeMode?: 'fixed' | 'random' | 'scene'
+  /** fixed 模式使用的尺寸 id（见 getSupportedImageSizes） */
+  imageSizeId?: string
+  /** random 模式候选尺寸 id；空表示当前模型支持的全部尺寸 */
+  imageSizePoolIds?: string[]
 }
 
 /** @deprecated 兼容旧字段名，新代码请用 MomentsImageGenSettings */
@@ -103,6 +123,11 @@ export const DEFAULT_MOMENTS_SETTINGS: MomentsSettings = {
     stylePrefixMode: 'preset',
     stylePresetId: DEFAULT_STYLE_PRESET_ID,
     customStylePrefix: '',
+    providerPromptSettings: { ...DEFAULT_IMAGE_GEN_PROVIDER_PROMPT_SETTINGS },
+    savedImageGenPromptPresets: [],
+    imageSizeMode: 'scene',
+    imageSizeId: '',
+    imageSizePoolIds: [],
   },
 }
 
@@ -287,9 +312,7 @@ function normalizeImageGen(raw: Record<string, unknown>): MomentsImageGenSetting
     cachedModelsByProvider: normalizeModelCacheByProvider(raw),
     modelsFetchedAtByProvider: normalizeModelsFetchedAtByProvider(raw, provider),
     stylePrefixMode:
-      raw.stylePrefixMode === 'custom' || raw.stylePrefixMode === 'preset'
-        ? raw.stylePrefixMode
-        : DEFAULT_MOMENTS_SETTINGS.imageGen.stylePrefixMode,
+      normalizeImageGenStyleMode(raw.stylePrefixMode),
     stylePresetId:
       typeof raw.stylePresetId === 'string' && raw.stylePresetId.trim()
         ? raw.stylePresetId.trim()
@@ -298,6 +321,22 @@ function normalizeImageGen(raw: Record<string, unknown>): MomentsImageGenSetting
       typeof raw.customStylePrefix === 'string'
         ? raw.customStylePrefix
         : DEFAULT_MOMENTS_SETTINGS.imageGen.customStylePrefix,
+    providerPromptSettings: normalizeImageGenProviderPromptSettings(raw.providerPromptSettings),
+    savedImageGenPromptPresets: migrateLegacyImageGenPromptPresets({
+      savedImageGenPromptPresets: raw.savedImageGenPromptPresets,
+      savedArtistStringPresets: raw.savedArtistStringPresets,
+      savedExtraPositivePromptPresets: raw.savedExtraPositivePromptPresets,
+    }),
+    imageSizeMode:
+      raw.imageSizeMode === 'random'
+        ? 'random'
+        : raw.imageSizeMode === 'fixed'
+          ? 'fixed'
+          : 'scene',
+    imageSizeId: typeof raw.imageSizeId === 'string' ? raw.imageSizeId : '',
+    imageSizePoolIds: Array.isArray(raw.imageSizePoolIds)
+      ? raw.imageSizePoolIds.filter((id): id is string => typeof id === 'string')
+      : [],
   }
 }
 

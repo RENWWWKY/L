@@ -68,7 +68,7 @@ function matchesCategory(it: PulseInteraction, cat: InboxCategory): boolean {
   return it.type === cat
 }
 
-export function PulseInbox({ povName, currentPovId }: { povName: string; currentPovId: string }) {
+export function PulseInbox({ povName, currentPlayerPovId }: { povName: string; currentPlayerPovId: string }) {
   const apiConfig = useCurrentApiConfig('chatCard')
   const interactions = usePulseInteractions()
   const dmThreads = usePulseDmThreads()
@@ -98,13 +98,13 @@ export function PulseInbox({ povName, currentPovId }: { povName: string; current
     setGenDm(true)
     try {
       const rows = await aiGeneratePulseDmThreads({ apiConfig, povName, threadCount: 4 })
-      replaceDmThreads(flatToDmThreads(rows), currentPovId)
+      replaceDmThreads(flatToDmThreads(rows), currentPlayerPovId)
     } catch (e) {
       window.alert(e instanceof Error ? e.message : '生成失败')
     } finally {
       setGenDm(false)
     }
-  }, [apiConfig, currentPovId, povName, replaceDmThreads])
+  }, [apiConfig, currentPlayerPovId, povName, replaceDmThreads])
 
   const pickCategory = (cat: InboxCategory) => {
     setCategory(cat)

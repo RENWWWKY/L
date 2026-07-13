@@ -1,5 +1,5 @@
 import { motion } from 'framer-motion'
-import { Heart, MessageCircle, Repeat2, ShieldCheck } from 'lucide-react'
+import { Heart, MapPin, MessageCircle, Repeat2, ShieldCheck } from 'lucide-react'
 import { useMemo, useState } from 'react'
 
 import { Pressable } from '../../../components/Pressable'
@@ -147,6 +147,13 @@ export function PostCard({
         </div>
 
         {post.imageUrls?.length ? <PostImageGrid urls={post.imageUrls} /> : null}
+
+        {post.locationLabel ? (
+          <div className="mt-2.5 flex items-center gap-1 text-[11px] text-neutral-400">
+            <MapPin className="size-3 shrink-0" strokeWidth={1.5} />
+            <span>{post.locationLabel}</span>
+          </div>
+        ) : null}
       </Pressable>
 
       <div className="mt-4 flex items-center justify-between px-1 text-neutral-400">

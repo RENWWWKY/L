@@ -21,6 +21,8 @@ import { GroupManagementScreen } from './GroupManagementScreen'
 import { CreateGroupPickContactsSheet, type CreateGroupContactPick } from './CreateGroupPickContactsSheet'
 import { GroupMemberAvatarWithRanks } from './GroupMemberAvatarWithRanks'
 import { compressAvatarDataUrl, MAX_AVATAR_DATA_URL_LEN } from '../avatarCompress'
+import { ChatBackgroundPresetGrid } from '../chatSettings/ChatBackgroundPresetGrid'
+import { resolvePublicImageUrl } from '../../../../publicAssetUrl'
 
 function Cell({
   label,
@@ -409,6 +411,7 @@ export function GroupInfoScreen({
     const currentTrimmed = (convSettings?.chatBackground ?? '').trim()
     const canApply = draftTrimmed.length > 0 && draftTrimmed !== currentTrimmed
     const canReset = currentTrimmed.length > 0
+    const previewBgUrl = draftTrimmed ? resolvePublicImageUrl(draftTrimmed) : ''
     return wrapWithPermPortal(
       <div className="flex h-full min-h-0 flex-col bg-[#F3F4F6]">
         <header
@@ -438,11 +441,16 @@ export function GroupInfoScreen({
               className="mt-2 h-11 w-full rounded-[10px] border border-[#E5E7EB] bg-[#F9FAFB] px-3 text-[13px] text-[#111827] outline-none focus:border-[#111827]"
             />
             <p className="mt-2 text-[12px] text-[#9CA3AF]">
-              支持 URL 与本地上传二选一；本地上传会进入 9:16 裁剪后应用到当前群聊。
+              支持 URL、内置背景与本地上传；本地上传会进入 9:16 裁剪后应用到当前群聊。
             </p>
+            <ChatBackgroundPresetGrid
+              selectedDraft={chatBgDraft}
+              onSelect={(storagePath) => setChatBgDraft(storagePath)}
+              variant="group"
+            />
             <div className="mt-3 overflow-hidden rounded-[10px] border border-[#E5E7EB] bg-[#F9FAFB]" style={{ aspectRatio: '9 / 16' }}>
-              {draftTrimmed ? (
-                <img src={draftTrimmed} alt="" className="h-full w-full object-cover" />
+              {previewBgUrl ? (
+                <img src={previewBgUrl} alt="" className="h-full w-full object-cover" />
               ) : (
                 <div className="flex h-full w-full items-center justify-center text-[12px] text-[#9CA3AF]">当前使用默认聊天背景</div>
               )}

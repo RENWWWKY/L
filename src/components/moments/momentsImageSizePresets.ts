@@ -1,4 +1,5 @@
 import type { MomentsImageProvider } from './momentsImageModelCatalog'
+import { isNovelaiImageModelName } from './novelaiImageCatalog'
 import { getOpenaiImageSizes } from './openaiImageCatalog'
 
 export type MomentsImageSizeOption = {
@@ -124,7 +125,11 @@ export function getSupportedImageSizes(
   if (provider === 'gemini') return GEMINI_IMAGE_SIZES
   if (provider === 'openai') return getOpenaiImageSizes(modelName)
   if (provider === 'custom') {
+    if (isNovelaiImageModelName(modelName)) return NOVELAI_IMAGE_SIZES
     if (/gpt-image/i.test(modelName) || /dall-?e/i.test(modelName)) return getOpenaiImageSizes(modelName)
+    if (/Qwen\/Qwen-Image/i.test(modelName) && !/Edit/i.test(modelName)) return QWEN_IMAGE_SIZES
+    if (/Kolors/i.test(modelName)) return KOLORS_IMAGE_SIZES
+    if (/seedream|doubao-seedream/i.test(modelName)) return getVolcengineImageSizes(modelName)
     return GENERIC_SILICONFLOW_IMAGE_SIZES
   }
   if (/Kolors/i.test(modelName)) return KOLORS_IMAGE_SIZES

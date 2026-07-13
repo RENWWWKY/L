@@ -3,6 +3,7 @@ export type IndexedTrashKind =
   | 'wechat-message'
   | 'wechat-conversation'
   | 'character-memory'
+  | 'story-timeline-archive'
   | 'friend-request'
   | 'phone-kv'
   | 'world-background'

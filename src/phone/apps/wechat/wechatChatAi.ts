@@ -23,6 +23,11 @@ import {
 } from './memory/memorySummaryContentNormalize'
 import { normalizeMemoryIdPlaceholderSyntax } from './memory/memoryIdPlaceholderNormalize'
 import {
+  buildFlatMemorySummaryProseOutputRule,
+  parseFlatMemorySummaryProseOutput,
+  stripFlatMemorySummaryStorageMarkers,
+} from './memory/memorySummaryProseFormat'
+import {
   STORY_TIMELINE_SUMMARY_JSON_FIELDS,
   hasTimelineDeltaContent,
   normalizeStoryTimelineRowKeyword,
@@ -71,7 +76,14 @@ import {
   resolveStickerCatalogPromptBlockForSession,
 } from './wechatMediaSendFrequency'
 import { buildCharacterImageGenPromptBlock } from './wechatCharacterImageGen'
+import { buildChatContextTailFromTranscript } from './nsfwPoseLibrary/buildWeChatNsfwPoseLibraryPromptBlock'
 import { shouldInjectImageGenCompositionLifeFeelCot } from '../../../components/moments/imageGenCompositionLifeFeelCot'
+import {
+  formatCharacterMediaImagePromptForConsoleLog,
+  formatWeChatBubbleForAiConsoleLog,
+  sanitizeCharacterMediaImageGenBubbles,
+  sanitizeCharacterMediaImageGenBubbleText,
+} from '../../../components/moments/characterMediaPromptSanitizer'
 import { characterHasAppearanceReference, resolveCharacterImageGenPromptAppearanceHint } from './characterAppearanceImageGen'
 import {
   WECHAT_CHARACTER_PROFILE_IMAGE_APPLY_APPENDIX,
@@ -84,6 +96,7 @@ import {
 import { WECHAT_CHARACTER_MOMENT_PIN_APPENDIX } from './wechatCharacterMomentPinApply'
 import { WECHAT_CHARACTER_MOMENT_PUBLISH_APPENDIX } from './wechatCharacterMomentPublishApply'
 import { WECHAT_CHARACTER_MOMENT_SONG_SHARE_APPENDIX } from './wechatCharacterMomentSongShareApply'
+import { WECHAT_INTERNET_MEME_LEXICON_APPENDIX } from './wechatInternetMemeLexicon'
 import { WECHAT_HEART_WHISPER_SYSTEM_PROMPT } from './wechatHeartWhisperPrompt'
 import { WECHAT_CHARACTER_PSYCHE_SYSTEM_PROMPT } from './wechatCharacterPsychePrompt'
 import type { CharacterPsychePageSummaries } from './characterPsyche/characterPsycheSummaries'
@@ -1026,8 +1039,19 @@ function logWeChatAiReplyDebug(
   const compactRaw = String(raw ?? '')
     .replace(/\r/g, '\\r')
     .replace(/\n/g, '\\n')
+    .replace(/(\[图片\]\s*)([^\n\\]*)/g, (_, prefix: string, body: string) => {
+      const scene = formatCharacterMediaImagePromptForConsoleLog(body.trim())
+      return `${prefix}${scene || '(scene)'}`
+    })
+    .replace(/(?:^|\\n)The character appearance\s*:[^\n\\]*/gi, (match) =>
+      match.startsWith('\\n') ? '\\n(hidden appearance)' : '(hidden appearance)',
+    )
   const previewRaw = compactRaw.length > 1200 ? `${compactRaw.slice(0, 1200)}...<truncated>` : compactRaw
-  const lines = bubbles.map((b, i) => `${i + 1}. ${b}`).join(' | ')
+  const lines = bubbles
+    .map((b) => formatWeChatBubbleForAiConsoleLog(b))
+    .filter((formatted) => formatted !== '(hidden appearance)' && formatted.trim())
+    .map((formatted, i) => `${i + 1}. ${formatted}`)
+    .join(' | ')
   const fh =
     forwardHistory?.messages?.length
       ? `title=${forwardHistory.title ?? ''} lines=${forwardHistory.messages.length}`
@@ -1150,9 +1174,18 @@ export function parseWeChatPeerReplyWithThinking(raw: string): WeChatPeerReplyRe
     return { bubbles: [], thinking, danmakuLines: danmakuMerged, worldBookPatches, orderedSegments }
   }
 
+  const sanitizedBubbles = sanitizeCharacterMediaImageGenBubbles(bubbles)
+  const sanitizedSegments = orderedSegments
+    .map((seg) => {
+      if (seg.kind !== 'bubble') return seg
+      const text = sanitizeCharacterMediaImageGenBubbleText(seg.text)
+      return text ? { kind: 'bubble' as const, text } : null
+    })
+    .filter((seg): seg is WeChatPeerReplyOrderedSegment => seg != null)
+
   return {
-    bubbles,
-    orderedSegments,
+    bubbles: sanitizedBubbles,
+    orderedSegments: sanitizedSegments,
     thinking,
     danmakuLines: danmakuMerged,
     worldBookPatches,
@@ -1218,9 +1251,11 @@ function expandRecallProtocolLine(line: string): string[] {
 /** @deprecated 请使用 `parseWeChatPeerPlainReply` */
 export const parsePersonaWeChatPlainReply = parseWeChatPeerPlainReply
 
-function buildWechatOutputProtocolAppendix(): string {
+function buildWechatOutputProtocolAppendix(includeThinkingChain?: boolean): string {
   const toggles = getLoreArchiveBuiltinPresetTogglesSnapshot()
-  return `${buildWechatReplyOutputAppendix(toggles)}\n\n${buildWechatThinkingChainAppendix(toggles)}`
+  const output = buildWechatReplyOutputAppendix(toggles)
+  if (!includeThinkingChain) return output
+  return `${output}\n\n${buildWechatThinkingChainAppendix(toggles)}`
 }
 
 function appendWorldBookAfterPatchOutputRules(
@@ -1237,14 +1272,31 @@ function buildPersonaPrivateChatSelfServiceAppendix(params: {
   characterWechatProfileBlock?: string
   characterMomentsPinCatalog?: string
   userMomentsViewerCatalog?: string
+  includeThinkingChain?: boolean
+  includeForwardHistoryCard?: boolean
+  includeProfileImageChange?: boolean
+  includeInternetMemeLexicon?: boolean
 }): string {
   const profileBlock = params.characterWechatProfileBlock?.trim()
   const pinCatalog = params.characterMomentsPinCatalog?.trim()
   const userMomentsCatalog = params.userMomentsViewerCatalog?.trim()
+  const toggles = getLoreArchiveBuiltinPresetTogglesSnapshot()
+  const thinkingBlock = params.includeThinkingChain
+    ? `\n\n${buildWechatThinkingChainAppendix(toggles)}`
+    : ''
+  const forwardBlock = params.includeForwardHistoryCard
+    ? `\n\n${WECHAT_FORWARD_HISTORY_FORGER_APPENDIX}`
+    : ''
+  const profileImageBlock = params.includeProfileImageChange
+    ? `\n\n${WECHAT_CHARACTER_PROFILE_IMAGE_APPLY_APPENDIX}${profileBlock ? `\n\n${profileBlock}` : ''}`
+    : ''
+  const memeLexiconBlock = params.includeInternetMemeLexicon
+    ? `\n\n${WECHAT_INTERNET_MEME_LEXICON_APPENDIX}`
+    : ''
   return appendWorldBookAfterPatchOutputRules(
     params.character,
     false,
-    `${buildWechatReplyOutputAppendix(getLoreArchiveBuiltinPresetTogglesSnapshot())}\n\n${WECHAT_FORWARD_HISTORY_FORGER_APPENDIX}\n\n${buildWechatThinkingChainAppendix(getLoreArchiveBuiltinPresetTogglesSnapshot())}\n\n${WECHAT_CHARACTER_PROFILE_IMAGE_APPLY_APPENDIX}${profileBlock ? `\n\n${profileBlock}` : ''}\n\n${WECHAT_CHARACTER_PROFILE_UPDATE_APPENDIX}${pinCatalog ? `\n\n${pinCatalog}` : ''}${userMomentsCatalog ? `\n\n${userMomentsCatalog}` : ''}\n\n${WECHAT_CHARACTER_MOMENT_PUBLISH_APPENDIX}\n\n${WECHAT_CHARACTER_MOMENT_SONG_SHARE_APPENDIX}\n\n${WECHAT_CHARACTER_MOMENT_PIN_APPENDIX}`,
+    `${buildWechatReplyOutputAppendix(toggles)}${forwardBlock}${thinkingBlock}${profileImageBlock}${memeLexiconBlock}\n\n${WECHAT_CHARACTER_PROFILE_UPDATE_APPENDIX}${pinCatalog ? `\n\n${pinCatalog}` : ''}${userMomentsCatalog ? `\n\n${userMomentsCatalog}` : ''}\n\n${WECHAT_CHARACTER_MOMENT_PUBLISH_APPENDIX}\n\n${WECHAT_CHARACTER_MOMENT_SONG_SHARE_APPENDIX}\n\n${WECHAT_CHARACTER_MOMENT_PIN_APPENDIX}`,
   )
 }
 
@@ -1368,6 +1420,9 @@ export async function requestWeChatPeerReplyBubbles(params: {
   replyBias?: string
   busyContext?: BusyRuntimeContext
   includeThinkingChain?: boolean
+  includeForwardHistoryCard?: boolean
+  includeProfileImageChange?: boolean
+  includeInternetMemeLexicon?: boolean
   currentTimeMs?: number
   timePerceptionEnabled?: boolean
   danmakuConfig?: WeChatDanmakuInlineConfig
@@ -1389,7 +1444,7 @@ export async function requestWeChatPeerReplyBubbles(params: {
   stickerTargetedEntries?: import('./wechatMediaSendFrequency').StickerTargetedEntryMap
   stickerBannedRefs?: string[]
   classicEmojiRoundTriggerPercent?: number
-  /** 私聊：未存储时仍按默认 30% 注入黄脸频率与目录规则 */
+  /** 私聊：未存储时仍按默认 0% 注入黄脸频率与目录规则 */
   applyClassicEmojiDefault?: boolean
   classicEmojiBannedNames?: string[]
   voiceRoundTriggerPercent?: number
@@ -1444,6 +1499,7 @@ export async function requestWeChatPeerReplyBubbles(params: {
           imageRoundCountMax: params.imageRoundCountMax,
           imageRoundCountTarget: params.imageRoundCountTarget,
           userExplicitCharacterImageRequest: params.userExplicitCharacterImageRequest,
+          imageRoundAllowed: params.imageRoundAllowed,
         }
       : {}),
   })
@@ -1513,6 +1569,11 @@ export async function requestWeChatPeerReplyBubbles(params: {
         appearanceHint: resolveCharacterImageGenPromptAppearanceHint(params.character),
         scope: params.groupChatTranscript ? 'default' : 'private_chat',
         injectCompositionLifeFeelCot,
+        imageRoundAllowed: params.imageRoundAllowed,
+        userExplicitCharacterImageRequest: params.userExplicitCharacterImageRequest,
+        chatContextTail: buildChatContextTailFromTranscript(params.transcript),
+        characterGender: params.character?.gender,
+        playerGender: params.playerIdentity?.gender,
       })
     : ''
   const danmakuInstruction = buildDanmakuInlineInstruction({
@@ -1540,6 +1601,10 @@ export async function requestWeChatPeerReplyBubbles(params: {
           characterWechatProfileBlock: params.characterWechatProfileBlock,
           characterMomentsPinCatalog: params.characterMomentsPinCatalog,
           userMomentsViewerCatalog: params.userMomentsViewerCatalog,
+          includeThinkingChain: params.includeThinkingChain === true,
+          includeForwardHistoryCard: params.includeForwardHistoryCard === true,
+          includeProfileImageChange: params.includeProfileImageChange === true,
+          includeInternetMemeLexicon: params.includeInternetMemeLexicon === true,
         })
   const memoryMomentImages = (params.longTermMemoryMomentImages ?? [])
     .map((u) => u.trim())
@@ -1835,6 +1900,9 @@ export async function requestWeChatPeerReplyBubblesWithImage(params: {
   replyBias?: string
   busyContext?: BusyRuntimeContext
   includeThinkingChain?: boolean
+  includeForwardHistoryCard?: boolean
+  includeProfileImageChange?: boolean
+  includeInternetMemeLexicon?: boolean
   currentTimeMs?: number
   timePerceptionEnabled?: boolean
   danmakuConfig?: WeChatDanmakuInlineConfig
@@ -1851,7 +1919,7 @@ export async function requestWeChatPeerReplyBubblesWithImage(params: {
   stickerTargetedEntries?: import('./wechatMediaSendFrequency').StickerTargetedEntryMap
   stickerBannedRefs?: string[]
   classicEmojiRoundTriggerPercent?: number
-  /** 私聊：未存储时仍按默认 30% 注入黄脸频率与目录规则 */
+  /** 私聊：未存储时仍按默认 0% 注入黄脸频率与目录规则 */
   applyClassicEmojiDefault?: boolean
   classicEmojiBannedNames?: string[]
   voiceRoundTriggerPercent?: number
@@ -1892,6 +1960,7 @@ export async function requestWeChatPeerReplyBubblesWithImage(params: {
           imageRoundCountMax: params.imageRoundCountMax,
           imageRoundCountTarget: params.imageRoundCountTarget,
           userExplicitCharacterImageRequest: params.userExplicitCharacterImageRequest,
+          imageRoundAllowed: params.imageRoundAllowed,
         }
       : {}),
   })
@@ -1934,7 +2003,9 @@ export async function requestWeChatPeerReplyBubblesWithImage(params: {
   const imgRules = (
     isLumi
       ? imgRulesBase
-      : `${imgRulesBase}\n\n${WECHAT_CHARACTER_PROFILE_IMAGE_APPLY_IMAGE_ROUND_HINT}`
+      : params.includeProfileImageChange === true
+        ? `${imgRulesBase}\n\n${WECHAT_CHARACTER_PROFILE_IMAGE_APPLY_IMAGE_ROUND_HINT}`
+        : imgRulesBase
   ).replace(/\[角色姓名\]/g, roleName)
   const busyPrefix = buildBusyPrefix(params.busyContext)
   const classicEmojiForCatalog =
@@ -1967,6 +2038,11 @@ export async function requestWeChatPeerReplyBubblesWithImage(params: {
         appearanceHint: resolveCharacterImageGenPromptAppearanceHint(params.character),
         scope: params.groupChatTranscript ? 'default' : 'private_chat',
         injectCompositionLifeFeelCot,
+        imageRoundAllowed: params.imageRoundAllowed,
+        userExplicitCharacterImageRequest: params.userExplicitCharacterImageRequest,
+        chatContextTail: buildChatContextTailFromTranscript(params.transcript),
+        characterGender: params.character?.gender,
+        playerGender: params.playerIdentity?.gender,
       })
     : ''
   const danmakuInstruction = buildDanmakuInlineInstruction({
@@ -1990,6 +2066,10 @@ export async function requestWeChatPeerReplyBubblesWithImage(params: {
         characterWechatProfileBlock: params.characterWechatProfileBlock,
         characterMomentsPinCatalog: params.characterMomentsPinCatalog,
         userMomentsViewerCatalog: params.userMomentsViewerCatalog,
+        includeThinkingChain: params.includeThinkingChain === true,
+        includeForwardHistoryCard: params.includeForwardHistoryCard === true,
+        includeProfileImageChange: params.includeProfileImageChange === true,
+        includeInternetMemeLexicon: params.includeInternetMemeLexicon === true,
       })
   const memoryMomentImages = (params.longTermMemoryMomentImages ?? [])
     .map((u) => u.trim())
@@ -2802,33 +2882,19 @@ const MEMORY_BODY_PLACEHOLDER_INSTRUCTION = `
 （说明：category / precise / emotion_need / extra_keywords 仍可从材料提炼**场景、物品、事件**类钩子词便于搜索；尽量不要把人物全名塞进触发维。）
 `.trim()
 
-const MEMORY_JSON_OUTPUT_RULE = `
-【输出格式】只输出一个 JSON 对象，禁止 markdown 代码围栏，禁止 JSON 前后任何解释文字。字段如下：
-- "content": string，**第三人称**长期记忆备忘（档案口吻，非对话复述）；**必须**用 {{user}} 指玩家、{{char}} 指当前私聊对象；**禁止**第一人称「我」；遵守下方【记忆正文·指称铁律】。
-- "category": string，大分类触发词，**不超过 5 个汉字**（如「工作」「吵架」「约会」）。
-- "precise": string，精准匹配词，**不超过 10 个汉字**，须是**完整可读**的钩子（专名片段、场景简称、约定代称），如「校庆后台」「司予吉他」；**禁止**输出半句叙事或长到会被截断的从句；须与材料可核对。
-- "emotion_need": string[]，情绪/需求侧触发词，**3～5 个**短词（每个建议 2～8 个汉字），如「委屈」「道歉」「追问」。
-- "extra_keywords": string[]，**尽量 2 个**补充触发短语（每个建议 4～16 个汉字），与 category / precise / emotion_need 角度不同：用来兜住本条记忆里**最要点名、但前三维不易单独覆盖**的钩子（如关键物名、数字、独特说法、约定简称），须可在材料中核对；与前四维用词尽量不重复。实在只能想到 1 个时也可只输出 1 项。
-触发词须从材料提炼；无把握宁可少写；禁止编造材料未出现的专名。
-${STORY_TIMELINE_SUMMARY_JSON_FIELDS}
-${MEMORY_BODY_PLACEHOLDER_INSTRUCTION}`.trim()
-
-/** 微信线上总结：扁平 JSON，与线下摘要表同构（标题 + 关键词 + 正文），不含 timeline / primary / linked。 */
-const ONLINE_WECHAT_MEMORY_JSON_OUTPUT_RULE = `
-【输出格式】只输出**一个扁平** JSON 对象（禁止 primary/linked 嵌套；禁止 markdown 围栏；禁止 JSON 前后任何解释、分析、思维链或英文段落）。字段如下：
-- "row_title": string，摘要短标题（**4～10 字**；概括本轮聊天主题或情绪转折）
-- "row_keywords": string[]，**必填 3～5 个**检索词（每条 **≤5 个汉字**；如「表白」「定位」「微信」）
-- "content": string，**第三人称**备忘正文（**60～200 字**）；玩家 **{{user}}**、对方 **{{char}}**；**禁止**第一人称「我」；遵守【记忆正文·指称铁律】
-${MEMORY_BODY_PLACEHOLDER_INSTRUCTION}`.trim()
+/** 微信线上总结：纯文本三行结构（标题 + 关键词 + 正文），与入库格式一致。 */
+const ONLINE_WECHAT_MEMORY_PROSE_OUTPUT_RULE = buildFlatMemorySummaryProseOutputRule(
+  MEMORY_BODY_PLACEHOLDER_INSTRUCTION,
+)
 
 const ONLINE_WECHAT_MEMORY_SUMMARY_SYSTEM = `
 你是「微信线上总结」助手。用户会给出尚未总结的聊天摘录（可能含私聊与/或遇见会话），请写成一条可长期沿用的备忘。
 要求：
-- **只输出 JSON**，禁止思维链、禁止英文分析、禁止复述字段说明。
+- **只输出三行结构**（见下方格式），禁止 JSON、禁止思维链、禁止英文分析。
 - **全文第三人称**；只总结材料中可直接核对的事实（谁说了什么、确认/约定了什么、结果怎样）。
 - 禁止心理臆测、文学修辞、分析报告口吻；不要写「用户说」「对方说」等元话语。
-- row_title / row_keywords 须从材料提炼，便于日后检索。
-${ONLINE_WECHAT_MEMORY_JSON_OUTPUT_RULE}
+- 标题与关键词须从材料提炼，便于日后检索。
+${ONLINE_WECHAT_MEMORY_PROSE_OUTPUT_RULE}
 `.trim()
 
 export type MemoryAutoSummaryResult = {
@@ -2846,8 +2912,15 @@ export type MemoryAutoSummaryResult = {
   timeline?: StoryTimelineSummaryDelta
 }
 
+/** 单次总结模型调用：解析结果 + 原始输出（失败排查用）。 */
+export type MemoryAutoSummaryAttempt = {
+  summary: MemoryAutoSummaryResult
+  rawModelOutput: string
+}
+
 function finalizeMemorySummaryContent(raw: string): string {
-  const repaired = repairMemorySummaryBodyFromModel(raw)
+  const normalized = stripFlatMemorySummaryStorageMarkers(String(raw ?? ''))
+  const repaired = repairMemorySummaryBodyFromModel(normalized)
   if (!repaired.trim()) return ''
   if (looksLikeMemoryJsonSchemaLeak(repaired)) return ''
   return repaired.trim()
@@ -2890,8 +2963,17 @@ function clampMemorySummaryTriggers(o: MemoryAutoSummaryResult): MemoryAutoSumma
   }
 }
 
-/** 解析自动总结模型输出（JSON 优先；失败时拒收英文分析/字段泄漏，尽量抽出 content）。 */
+/** 解析自动总结模型输出（纯文本三行结构优先；兼容旧版 JSON）。 */
 export function parseMemoryAutoSummaryModelOutput(raw: string): MemoryAutoSummaryResult {
+  const prose = parseFlatMemorySummaryProseOutput(raw)
+  if (prose?.content.trim()) {
+    return clampMemorySummaryTriggers({
+      content: prose.content,
+      ...(prose.rowTitle ? { rowTitle: prose.rowTitle } : {}),
+      ...(prose.rowKeywords?.length ? { rowKeywords: prose.rowKeywords } : {}),
+    })
+  }
+
   const stripped = stripAssistantFence(String(raw ?? '')).trim()
   const start = stripped.indexOf('{')
   const end = stripped.lastIndexOf('}')
@@ -2981,15 +3063,16 @@ export async function requestWeChatMemorySummary(params: {
   /** 当前私聊对象人设 id，用于性别指代附录 */
   peerCharacterId?: string
 }): Promise<MemoryAutoSummaryResult> {
-  return requestSimpleOnlineMemorySummary({
+  const attempt = await requestSimpleOnlineMemorySummary({
     apiConfig: params.apiConfig,
     onlineTranscript: params.transcript,
     peerCharacterId: params.peerCharacterId,
   })
+  return attempt.summary
 }
 
 /**
- * 纯线上（微信私聊 / 遇见，无线下约会）自动总结：单次调用、扁平 JSON，不走 primary+linked 合并链路。
+ * 纯线上（微信私聊 / 遇见，无线下约会）自动总结：单次调用、纯文本三行结构，不走 primary+linked 合并链路。
  */
 export async function requestSimpleOnlineMemorySummary(params: {
   apiConfig: ApiConfig | null
@@ -2997,7 +3080,7 @@ export async function requestSimpleOnlineMemorySummary(params: {
   meetTranscript?: ChatTranscriptTurn[]
   peerFallback?: string
   peerCharacterId?: string
-}): Promise<MemoryAutoSummaryResult> {
+}): Promise<MemoryAutoSummaryAttempt> {
   const cfg = params.apiConfig
   if (!cfg?.apiUrl?.trim() || !cfg.apiKey?.trim() || !cfg.modelId?.trim()) {
     throw new Error('未配置 AI API')
@@ -3018,17 +3101,16 @@ export async function requestSimpleOnlineMemorySummary(params: {
     {
       role: 'user',
       content:
-        `以下是尚未总结的线上聊天材料，请**仅**基于下列内容输出扁平 JSON（row_title、row_keywords、content）：\n\n` +
+        `以下是尚未总结的线上聊天材料，请**仅**基于下列内容输出三行结构（【摘要标题】【摘要关键词】【摘要正文】）：\n\n` +
         `${materialParts.join('\n\n')}\n\n` +
-        `【指称】摘录标签「我」=玩家、「对方」= {{char}}；content 须第三人称：玩家只许 {{user}}，对方只许 {{char}}，禁止第一人称「我」及真名/昵称汉字。${genderAppendix}`,
+        `【指称】摘录标签「我」=玩家、「对方」= {{char}}；正文须第三人称：玩家只许 {{user}}，对方只许 {{char}}，禁止第一人称「我」及真名/昵称汉字。${genderAppendix}`,
     },
   ]
   const text = await openAiCompatibleChat(cfg, messages, {
     temperature: 0.35,
     max_tokens: 900,
-    response_format: 'json_object',
   })
-  return parseMemoryAutoSummaryModelOutput(text)
+  return { summary: parseMemoryAutoSummaryModelOutput(text), rawModelOutput: text }
 }
 
 const MEET_MEMORY_SUMMARY_SYSTEM = MEET_ENCOUNTER_MEMORY_SUMMARY_SYSTEM
@@ -3054,8 +3136,8 @@ export async function requestMeetEncounterMemorySummary(params: {
     {
       role: 'user',
       content:
-        `以下是「遇见」App 临时邂逅会话摘录${nick ? `（对方网名：${nick}，正文指代仍用 {{char}}）` : ''}，请生成长期记忆 JSON：\n\n${userBlock}\n\n` +
-        `【指称】摘录中的显示名不得写入 content；全文第三人称；指对方人设只许 {{char}}，指玩家只许 {{user}}；禁止第一人称「我」。`,
+        `以下是「遇见」App 临时邂逅会话摘录${nick ? `（对方网名：${nick}，正文指代仍用 {{char}}）` : ''}，请输出三行结构（【摘要标题】【摘要关键词】【摘要正文】）：\n\n${userBlock}\n\n` +
+        `【指称】摘录中的显示名不得写入正文；全文第三人称；指对方人设只许 {{char}}，指玩家只许 {{user}}；禁止第一人称「我」。`,
     },
   ]
   const text = await openAiCompatibleChat(cfg, messages, {
@@ -3076,16 +3158,21 @@ function sanitizeMeetMemorySummaryPlainContent(raw: string): string {
     .trim()
 }
 
+const UNIFIED_MEMORY_SUMMARY_PROSE_OUTPUT_RULE = buildFlatMemorySummaryProseOutputRule(
+  MEMORY_BODY_PLACEHOLDER_INSTRUCTION,
+)
+
 const UNIFIED_MEMORY_SUMMARY_SYSTEM = `
 你是「长期记忆」提取助手。用户会提供两段材料：「线上聊天摘录」与「线下约会剧情摘录」，任一段可能为「（无）」。
 要求：
+- **只输出三行结构**（见下方格式），禁止 JSON。
 - **全文第三人称**；把线上与线下里**实际发生**的信息合成一条连贯备忘；玩家用 **{{user}}**，对方用 **{{char}}**；**禁止**「我」；线下主角用 {{archive_char}}，其他人设用 {{id:UUID}}（遵守【记忆正文·指称铁律】）。
 - 只总结本次材料中可直接核对的事实：谁说了什么、做了什么、约定了什么、场景与结果；禁止混入材料外的剧情。
 - 禁止写“我怎么想/我觉得/我感到”等主观心理；禁止推断角色未说出口的心理。
 - 若某一栏为「（无）」，不要编造该栏内容；另一栏有内容则正常总结。
 - 口语化、具体、可回忆；正文长度以 60～200 字为宜（信息很少时可更短）。
-- 不要在正文 JSON 的 content 字段里自行添加「[线上]」「[线下]」等来源标签（程序会统一加前缀）。
-${MEMORY_JSON_OUTPUT_RULE}
+- 不要在正文里自行添加「[线上]」「[线下]」等来源标签（程序会统一加前缀）。
+${UNIFIED_MEMORY_SUMMARY_PROSE_OUTPUT_RULE}
 `.trim()
 
 /**
@@ -3095,7 +3182,7 @@ export async function requestUnifiedMemorySummary(params: {
   apiConfig: ApiConfig | null
   onlineTranscript: ChatTranscriptTurn[]
   offlineTextBlock: string
-}): Promise<MemoryAutoSummaryResult> {
+}): Promise<MemoryAutoSummaryAttempt> {
   const cfg = params.apiConfig
   if (!cfg?.apiUrl?.trim() || !cfg.apiKey?.trim() || !cfg.modelId?.trim()) {
     throw new Error('未配置 AI API')
@@ -3109,10 +3196,10 @@ export async function requestUnifiedMemorySummary(params: {
     {
       role: 'user',
       content:
-        `以下是「尚未总结」的材料，请仅基于这些内容生成长期记忆 JSON：\n\n` +
+        `以下是「尚未总结」的材料，请仅基于这些内容输出三行结构（【摘要标题】【摘要关键词】【摘要正文】）：\n\n` +
         `【线上聊天摘录】\n${onlineBlock}\n\n` +
         `【线下约会剧情摘录】\n${offlineBlock}\n\n` +
-        `【指称】材料里的人名、昵称、显示名标签**不得**原样写入 content；须占位符（与系统提示【记忆正文·指称铁律】一致）。`,
+        `【指称】材料里的人名、昵称、显示名标签**不得**原样写入正文；须占位符（与系统提示【记忆正文·指称铁律】一致）。`,
     },
   ]
   const text = await openAiCompatibleChat(cfg, messages, {
@@ -3121,8 +3208,11 @@ export async function requestUnifiedMemorySummary(params: {
   })
   const parsed = parseMemoryAutoSummaryModelOutput(text)
   return {
-    ...parsed,
-    content: sanitizeUnifiedMemorySummaryPlainContent(parsed.content),
+    summary: {
+      ...parsed,
+      content: sanitizeUnifiedMemorySummaryPlainContent(parsed.content),
+    },
+    rawModelOutput: text,
   }
 }
 
@@ -3319,6 +3409,12 @@ export type UnifiedMemorySummaryWithLinkedResult = {
   linked: LinkedMemoryAutoSummaryEntry[]
   /** 自动总结 Phase B：尾声延展补丁（可选） */
   epiloguePatches?: WorldBookAfterPatch[]
+}
+
+/** 合并总结（primary + linked）单次模型调用：解析结果 + 原始输出。 */
+export type MemoryAutoSummaryWithLinkedAttempt = {
+  result: UnifiedMemorySummaryWithLinkedResult
+  rawModelOutput: string
 }
 
 function parseLinkedMemoryRowFromJsonObject(o: Record<string, unknown>): LinkedMemoryAutoSummaryEntry | null {
@@ -3539,7 +3635,7 @@ export async function requestUnifiedMemorySummaryWithLinked(params: {
   epilogueSnapshotBlock?: string
   /** 系统内仍 open 的动机伏笔 / 待办（须对照材料输出 resolved） */
   priorOpenAnchorsBlock?: string
-}): Promise<UnifiedMemorySummaryWithLinkedResult> {
+}): Promise<MemoryAutoSummaryWithLinkedAttempt> {
   const cfg = params.apiConfig
   if (!cfg?.apiUrl?.trim() || !cfg.apiKey?.trim() || !cfg.modelId?.trim()) {
     throw new Error('未配置 AI API')
@@ -3598,22 +3694,30 @@ export async function requestUnifiedMemorySummaryWithLinked(params: {
   if (!text.trim()) {
     throw new Error('合并记忆总结：模型返回为空或无法解析')
   }
-  return parseUnifiedMemorySummaryWithLinkedModelOutput(text)
+  return {
+    result: parseUnifiedMemorySummaryWithLinkedModelOutput(text),
+    rawModelOutput: text,
+  }
 }
+
+const GROUP_CHAT_MEMORY_SUMMARY_PROSE_OUTPUT_RULE = buildFlatMemorySummaryProseOutputRule(
+  MEMORY_BODY_PLACEHOLDER_INSTRUCTION,
+)
 
 const GROUP_CHAT_MEMORY_SUMMARY_SYSTEM = `
 你是「长期记忆」提取助手。用户会提供两段材料：「线上群聊摘录」与「群成员与群状态快照」，任一段可能为「（无）」。
 要求：
-- **全文第三人称**；把两段里**实际发生**的信息合成一条连贯备忘；**禁止**在 content 里写群成员真名或完整档案昵称，也**禁止**把材料里的称呼汉字原样抄入正文（他人一律 {{id:UUID}} 或泛称）。
+- **只输出三行结构**（见下方格式），禁止 JSON。
+- **全文第三人称**；把两段里**实际发生**的信息合成一条连贯备忘；**禁止**在正文里写群成员真名或完整档案昵称，也**禁止**把材料里的称呼汉字原样抄入正文（他人一律 {{id:UUID}} 或泛称）。
 - 玩家**只许** {{user}}，**禁止**「我」；提及其他群成员时，**必须**使用用户消息末尾【群成员 character_id 对照】中的 {{id:UUID}} 形式（与 UUID 完全一致），不要用群昵称替代；无对照条的成员用泛称。
 - 必须覆盖：谁在群里、谁发了什么要点、角色之间有无互相接话；若有群状态快照中的**群主/管理员/禁言**等，也要如实写入（仅基于快照，勿编造未写明的操作）。
 - 只总结本次材料中可直接核对的事实；禁止混入材料外的剧情。
 - 禁止写“我怎么想/我觉得/我感到”等主观心理；禁止推断角色未说出口的心理。
 - 若某一栏为「（无）」，不要编造该栏内容；另一栏有内容则正常总结。
 - 口语化、具体、可回忆；正文长度以 80～220 字为宜（信息很少时可更短）。
-- 不要在正文 JSON 的 content 字段里自行添加「[线上]」「[群聊]」等来源标签（程序会统一加前缀）。
+- 不要在正文里自行添加「[线上]」「[群聊]」等来源标签（程序会统一加前缀）。
 - 若摘录里仅有「消息被自动屏蔽」「禁言无法显示」等系统提示、**未出现**被拦下的具体原话，总结中**禁止**编造该原话；普通成员视角下可写「有人被屏了/不知道发了啥」等事实层面表述即可。
-${MEMORY_JSON_OUTPUT_RULE}
+${GROUP_CHAT_MEMORY_SUMMARY_PROSE_OUTPUT_RULE}
 `.trim()
 
 /** 群聊自动总结：供模型写 \\`{{id:…}}\\` 时对照（勿在正文写群昵称代替 id）。 */
@@ -3638,7 +3742,7 @@ export async function requestGroupChatMemorySummary(params: {
   groupArchiveBlock: string
   /** 用于正文 \\`{{id:…}}\\`；与群成员一致 */
   group?: GroupChatRow | null
-}): Promise<MemoryAutoSummaryResult> {
+}): Promise<MemoryAutoSummaryAttempt> {
   const cfg = params.apiConfig
   if (!cfg?.apiUrl?.trim() || !cfg.apiKey?.trim() || !cfg.modelId?.trim()) {
     throw new Error('未配置 AI API')
@@ -3653,11 +3757,11 @@ export async function requestGroupChatMemorySummary(params: {
     {
       role: 'user',
       content:
-        `以下是「尚未总结」的材料，请仅基于这些内容生成长期记忆 JSON：\n\n` +
+        `以下是「尚未总结」的材料，请仅基于这些内容输出三行结构（【摘要标题】【摘要关键词】【摘要正文】）：\n\n` +
         `【线上群聊摘录】\n${onlineBlock}\n\n` +
         `【群成员与群状态快照】\n${archive}\n\n` +
         `【群成员 character_id 对照】\n${idRoster}\n\n` +
-        `【指称】content 中提及其他成员须用 {{id:…}}，**禁止**把上文快照或气泡里的群昵称、真名原样写入正文。`,
+        `【指称】正文中提及其他成员须用 {{id:…}}，**禁止**把上文快照或气泡里的群昵称、真名原样写入正文。`,
     },
   ]
   const text = await openAiCompatibleChat(cfg, messages, {
@@ -3666,11 +3770,14 @@ export async function requestGroupChatMemorySummary(params: {
   })
   const parsed = parseMemoryAutoSummaryModelOutput(text)
   return {
-    ...parsed,
-    content: parsed.content
-      .replace(/^\s*【[^】]+】\s*/g, '')
-      .replace(/^\s*(\[私聊\]|\[线上\]|\[线下\]|\[群聊\])+\s*/g, '')
-      .trim(),
+    summary: {
+      ...parsed,
+      content: parsed.content
+        .replace(/^\s*【[^】]+】\s*/g, '')
+        .replace(/^\s*(\[私聊\]|\[线上\]|\[线下\]|\[群聊\])+\s*/g, '')
+        .trim(),
+    },
+    rawModelOutput: text,
   }
 }
 
@@ -4120,6 +4227,8 @@ export function buildWeChatGroupMultiSpeakerSystem(params: {
   chatMemberIds?: string[]
   /** 当前会话玩家身份日程表 */
   playerSchedule?: ScheduleTable | null
+  /** 是否注入后台思维链 CoT 附录（默认关） */
+  includeThinkingChain?: boolean
 }): string {
   const isLumi = params.promptMode === 'lumi-assistant'
   const archiveInject = resolveWorldbookLoreInjection({
@@ -4195,7 +4304,7 @@ export function buildWeChatGroupMultiSpeakerSystem(params: {
     : WECHAT_CHARACTER_RECALL_GUIDE
   const outputAppendix = isLumi
     ? WECHAT_LUMI_ASSISTANT_OUTPUT_APPENDIX
-    : buildWechatOutputProtocolAppendix()
+    : buildWechatOutputProtocolAppendix(params.includeThinkingChain === true)
 
   if (isLumi) {
     return `${LUMI_ASSISTANT_SYSTEM_PROMPT}\n\n${loreLead}${core}${groupUnsum}${offline}${bias}${time}${playerScheduleBlock}\n${params.playerSection}${recallGuide ? `\n\n${recallGuide}` : ''}\n\n${outputAppendix}${danmakuInstr ? `\n\n${danmakuInstr}` : ''}\n\n${stickerCat}`

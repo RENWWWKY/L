@@ -78,7 +78,7 @@ export type EncounterNPC = {
    */
   mutualSpark?: boolean
   /**
-   * 邂逅生成来源：`api` = 模型 JSON；`offline` = 本地兜底（未配置 API 或请求/解析失败）。
+   * 邂逅生成来源：`api` = 模型 prose 标记输出；`offline` = 本地兜底（历史字段，当前未配置 API 时直接报错）。
    * 重逢捞出旧卡时通常无此字段。
    */
   generationSource?: 'offline' | 'api'

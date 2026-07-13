@@ -66,12 +66,26 @@ export function isGeminiImagenModel(modelName: string): boolean {
   return modelName.replace(/^\[[^\]]+\]/, '').trim().startsWith('imagen-')
 }
 
-/** Gemini 原生多模态生图（generateContent），含中转站前缀如 [官]gemini-2.5-flash-image */
-export function isGeminiNativeImageModel(modelName: string): boolean {
+function geminiModelCore(modelName: string): string {
+  return modelName.trim().replace(/^(?:\[[^\]]+\]|Pro\/)+/gi, '').trim()
+}
+
+/** 自定义中转：疑似 Gemini 生图模型（用于路径自动兼容） */
+export function isGeminiImageRouteCandidate(modelName: string): boolean {
   const id = modelName.trim()
   if (!id || isGeminiImagenModel(id)) return false
-  const core = id.replace(/^\[[^\]]+\]/, '').trim()
-  return /^gemini-/i.test(core) && /image/i.test(id)
+  const core = geminiModelCore(id)
+  if (!/^gemini-/i.test(core)) return false
+  return (
+    /image/i.test(id) ||
+    /image/i.test(core) ||
+    /preview-image|image-preview|image-generation|image_generation/i.test(core)
+  )
+}
+
+/** Gemini 原生多模态生图（generateContent），含中转站前缀如 [官]gemini-2.5-flash-image */
+export function isGeminiNativeImageModel(modelName: string): boolean {
+  return isGeminiImageRouteCandidate(modelName)
 }
 
 export async function fetchGeminiImageModelCatalog(apiKey: string): Promise<MomentsImageModelOption[]> {

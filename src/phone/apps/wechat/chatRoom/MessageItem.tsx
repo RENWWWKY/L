@@ -93,6 +93,9 @@ export function chatMsgRenderFingerprint(m: {
   isRecalled?: boolean
   otherAnimated?: boolean
   selfAnimated?: boolean
+  imageGenPending?: boolean
+  imageGenFailed?: boolean
+  images?: Array<{ base64?: string; type?: string }>
   miniGameInvite?: {
     kind?: string
     inviteId?: string
@@ -102,7 +105,14 @@ export function chatMsgRenderFingerprint(m: {
     matchResult?: string
   }
 }): string {
-  const base = `${m.id}|${m.status ?? ''}|${m.isRecalled ? 1 : 0}|${m.otherAnimated ? 1 : 0}|${m.selfAnimated ? 1 : 0}|${(m.text ?? '').length}`
+  const img0 = m.images?.[0]
+  const mediaKey = [
+    m.imageGenPending ? '1' : '0',
+    m.imageGenFailed ? '1' : '0',
+    img0?.base64?.length ?? 0,
+    img0?.type ?? '',
+  ].join(':')
+  const base = `${m.id}|${m.status ?? ''}|${m.isRecalled ? 1 : 0}|${m.otherAnimated ? 1 : 0}|${m.selfAnimated ? 1 : 0}|${(m.text ?? '').length}|${mediaKey}`
   const mg = m.miniGameInvite
   if (!mg) return base
   return `${base}|mg:${mg.kind ?? ''}:${mg.inviteId ?? ''}:${mg.charResponded ?? ''}:${mg.userResponded ?? ''}:${mg.matchResult ?? ''}:${(mg.replyText ?? '').slice(0, 48)}`

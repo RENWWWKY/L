@@ -58,20 +58,39 @@ export function buildOpenAiImagesEditsEndpoint(apiUrl: string): string {
   return buildOpenAiCompatibleEndpoint(apiUrl, 'images/edits')
 }
 
-/** 自定义中转：Gemini 原生图模走 /v1beta/models/{model}:generateContent */
-export function buildGeminiGenerateContentEndpoint(apiUrl: string, modelName: string): string {
+function buildGeminiGenerateContentEndpointWithVersion(
+  apiUrl: string,
+  modelName: string,
+  version: 'v1beta' | 'v1',
+): string {
   const base = trimApiBase(apiUrl)
   if (!base) return ''
   if (/:generateContent$/i.test(base)) return base
 
   let root = base
   if (OPENAI_API_VERSION_SUFFIX_RE.test(root)) {
-    root = root.replace(/\/v\d+$/i, '/v1beta')
-  } else if (!/\/v1beta$/i.test(root)) {
-    root = `${root}/v1beta`
+    root = root.replace(/\/v\d+$/i, `/${version}`)
+  } else if (!new RegExp(`/${version}$`, 'i').test(root)) {
+    root = `${root}/${version}`
   }
 
   return `${root}/models/${encodeURIComponent(modelName)}:generateContent`
+}
+
+/** 自定义中转：Gemini 原生图模走 /v1beta/models/{model}:generateContent */
+export function buildGeminiGenerateContentEndpoint(apiUrl: string, modelName: string): string {
+  return buildGeminiGenerateContentEndpointWithVersion(apiUrl, modelName, 'v1beta')
+}
+
+/** 部分中转站仅暴露 /v1/models/...:generateContent，与 v1beta 互为回退 */
+export function buildGeminiGenerateContentEndpointCandidates(apiUrl: string, modelName: string): string[] {
+  const base = trimApiBase(apiUrl)
+  if (!base) return []
+  if (/:generateContent$/i.test(base)) return [base]
+
+  const v1beta = buildGeminiGenerateContentEndpointWithVersion(base, modelName, 'v1beta')
+  const v1 = buildGeminiGenerateContentEndpointWithVersion(base, modelName, 'v1')
+  return Array.from(new Set([v1beta, v1].filter(Boolean)))
 }
 
 export function buildOpenAiAudioTranscriptionsEndpoint(apiUrl: string): string {

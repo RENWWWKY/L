@@ -15,6 +15,7 @@ import {
 } from 'react'
 import { useCustomization } from '../../CustomizationContext'
 import { LISTEN_TOGETHER_NAVIGATE_EVENT } from '../../../components/discoverListen/listenTogetherNavigation'
+import { LUMI_PULSE_NAVIGATE_EVENT } from '../lumiPulse/lumiPulseNavigation'
 import {
   WECHAT_FOCUS_GROUP_CHAT_EVENT,
   WECHAT_FOCUS_PERSONA_CHAT_EVENT,
@@ -114,6 +115,11 @@ import {
   wechatConversationKey,
   wechatGroupPeerCharacterId,
 } from './wechatConversationKey'
+import {
+  getConversationPipelineFlags,
+  isConversationPeerReplyingVisible,
+  subscribeWechatConversationAiPipeline,
+} from './wechatConversationAiPipeline'
 import {
   countUnreadPrivateMessagesForAccountCharacter,
   ensureAccountScopedGroupConversation,
@@ -3707,6 +3713,11 @@ function WeChatAppInner({ onBack }: Props) {
     window.addEventListener(LISTEN_TOGETHER_NAVIGATE_EVENT, onNavigateListen)
     return () => window.removeEventListener(LISTEN_TOGETHER_NAVIGATE_EVENT, onNavigateListen)
   }, [])
+  useEffect(() => {
+    const onNavigateWeibo = () => setRoute({ name: 'tabs', tab: 'discover' })
+    window.addEventListener(LUMI_PULSE_NAVIGATE_EVENT, onNavigateWeibo)
+    return () => window.removeEventListener(LUMI_PULSE_NAVIGATE_EVENT, onNavigateWeibo)
+  }, [])
 
   const openPersonaChatByCharacterId = useCallback((characterId: string) => {
     const target = resolveWeChatPrivateChatTarget(characterId)
@@ -4495,12 +4506,40 @@ function WeChatAppInner({ onBack }: Props) {
     }
   }, [wxDockChat, currentAccountId, playerIdentityId, chatRouteIdentityId, activeConversationCharacterId])
 
-  /** 切换聊天对象时先清顶栏输入态，再由当前 ChatRoom 按会话重新上报（勿绑 route.name，否则从列表返回同一会话会误清且 ChatRoom 不会重报） */
+  /** 切换聊天对象时从会话级 pipeline 恢复顶栏输入态（各会话独立，互不抢占） */
   useEffect(() => {
-    setChatOtherTyping(false)
-    setChatPendingQueueCount(0)
-    setChatOpponentRevealPending(false)
-  }, [activeConversationCharacterId, chatRouteIdentityId])
+    const ck = activeConversationKey?.trim()
+    if (!ck) {
+      setChatOtherTyping(false)
+      setChatPendingQueueCount(0)
+      setChatOpponentRevealPending(false)
+      return
+    }
+    const syncHeaderFromPipeline = () => {
+      const flags = getConversationPipelineFlags(ck)
+      const typing =
+        flags.headerTyping ||
+        isConversationPeerReplyingVisible(ck) ||
+        flags.pendingQueueCount > 0
+      setChatOtherTyping(typing)
+      setChatPendingQueueCount(flags.pendingQueueCount)
+      setChatOpponentRevealPending(flags.pendingQueueCount > 0)
+    }
+    syncHeaderFromPipeline()
+    return subscribeWechatConversationAiPipeline(syncHeaderFromPipeline)
+  }, [activeConversationCharacterId, chatRouteIdentityId, activeConversationKey])
+
+  /** 从消息列表/子页返回聊天页时，再对齐一次顶栏输入态 */
+  useEffect(() => {
+    if (route.name !== 'chat') return
+    const ck = activeConversationKey?.trim()
+    if (!ck) return
+    const flags = getConversationPipelineFlags(ck)
+    const typing = flags.headerTyping || isConversationPeerReplyingVisible(ck) || flags.pendingQueueCount > 0
+    setChatOtherTyping(typing)
+    setChatPendingQueueCount(flags.pendingQueueCount)
+    setChatOpponentRevealPending(flags.pendingQueueCount > 0)
+  }, [route.name, activeConversationKey])
 
   useEffect(() => {
     setWeChatGlobalMessageGuardState({
@@ -4761,6 +4800,10 @@ function WeChatAppInner({ onBack }: Props) {
 
   const [chatSessionPrefs, setChatSessionPrefs] = useState<{
     danmaku: boolean
+    thinkingChain: boolean
+    forwardHistoryCard: boolean
+    profileImageChange: boolean
+    internetMemeLexicon: boolean
     bg: string
     showGroupMemberNicknameInChat: boolean
     showGroupRankBadgesInChat: boolean
@@ -4789,6 +4832,10 @@ function WeChatAppInner({ onBack }: Props) {
       void personaDb.getChatConversationSettings(activeConversationKey).then((s) => {
         const next = {
           danmaku: s?.isDanmakuMode ?? false,
+          thinkingChain: s?.showThinkingChain === true,
+          forwardHistoryCard: s?.forwardHistoryCardEnabled === true,
+          profileImageChange: s?.profileImageChangeEnabled === true,
+          internetMemeLexicon: s?.internetMemeLexiconEnabled === true,
           bg: (s?.chatBackground ?? '').trim(),
           showGroupMemberNicknameInChat: s?.showGroupMemberNicknameInChat !== false,
           showGroupRankBadgesInChat: !!s?.showGroupRankBadgesInChat,
@@ -4796,6 +4843,10 @@ function WeChatAppInner({ onBack }: Props) {
         setChatSessionPrefs((prev) =>
           prev &&
           prev.danmaku === next.danmaku &&
+          prev.thinkingChain === next.thinkingChain &&
+          prev.forwardHistoryCard === next.forwardHistoryCard &&
+          prev.profileImageChange === next.profileImageChange &&
+          prev.internetMemeLexicon === next.internetMemeLexicon &&
           prev.bg === next.bg &&
           prev.showGroupMemberNicknameInChat === next.showGroupMemberNicknameInChat &&
           prev.showGroupRankBadgesInChat === next.showGroupRankBadgesInChat
@@ -5186,6 +5237,7 @@ function WeChatAppInner({ onBack }: Props) {
       const worldBookBinding = await resolveWorldBookUserBinding(character)
       const charTimeRow = await personaDb.getCharacterTimeSettings(character.id)
       const timePerceptionEnabled = isCharacterTimePerceptionEnabled(charTimeRow)
+      const convSettings = await personaDb.getChatConversationSettings(convKey)
       const ai = await requestWeChatPeerReplyBubbles({
         apiConfig,
         character,
@@ -5204,7 +5256,10 @@ function WeChatAppInner({ onBack }: Props) {
         unsummarizedPrivateNotes: pack.unsPrivate || undefined,
         unsummarizedGroupNotes: pack.unsGroup || undefined,
         replyBias: replyBiasFull,
-        includeThinkingChain: !friendRequestAdjudication,
+        includeThinkingChain: !friendRequestAdjudication && convSettings?.showThinkingChain === true,
+        includeForwardHistoryCard: convSettings?.forwardHistoryCardEnabled === true,
+        includeProfileImageChange: convSettings?.profileImageChangeEnabled === true,
+        includeInternetMemeLexicon: convSettings?.internetMemeLexiconEnabled === true,
         friendRequestAdjudication,
         altAccountProbeBlock: altAccountProbeBlock || undefined,
         currentTimeMs: getCurrentTimeMs(),
@@ -6124,6 +6179,10 @@ function WeChatAppInner({ onBack }: Props) {
                 chatBackgroundUrl={chatSessionPrefs?.bg || undefined}
                 chatRoomDefaultBg={wechatTheme.chatRoomDefaultBg}
                 danmakuEnabled={chatSessionPrefs?.danmaku ?? false}
+                thinkingChainEnabled={chatSessionPrefs?.thinkingChain ?? false}
+                forwardHistoryCardEnabled={chatSessionPrefs?.forwardHistoryCard ?? false}
+                profileImageChangeEnabled={chatSessionPrefs?.profileImageChange ?? false}
+                internetMemeLexiconEnabled={chatSessionPrefs?.internetMemeLexicon ?? false}
                 showGroupMemberNicknameInChat={chatSessionPrefs?.showGroupMemberNicknameInChat !== false}
                 showGroupRankBadgesInChat={!!chatSessionPrefs?.showGroupRankBadgesInChat}
                 useLumiProjectAssistantPrompt={wxDockChat.kind === 'lumi'}
@@ -6194,6 +6253,7 @@ function WeChatAppInner({ onBack }: Props) {
                 onPsycheRadarOpenChange={setPsycheRadarOpen}
                 onCheckPhoneOpenChange={setChatCheckPhoneOpen}
                 onMiniGameOverlayOpenChange={setChatMiniGameOverlayOpen}
+                chatRouteVisible={route.name === 'chat'}
               />
             )}
           </div>

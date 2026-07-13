@@ -1,5 +1,6 @@
 import { loadResolvedApiConfig } from '../../phone/apps/api/loadResolvedApiConfig'
 import { openAiCompatibleChatLenient } from '../../phone/apps/wechat/newFriendsPersona/ai'
+import { hasCharacterMediaSelfiePrefix } from './characterMediaSelfiePrefix'
 
 /** 是否含显著中文（需转英文再发 SD/MJ 类 API） */
 export function hasSignificantCjk(text: string): boolean {
@@ -19,12 +20,12 @@ const TAG_PHRASE_ENTRIES: ReadonlyArray<readonly [string, string]> = [
   ['裤裆', 'crotch area'],
   ['紧紧抓', 'tightly gripping'],
   ['大腿侧', 'side of thigh'],
-  ['前置摄像头', 'front camera'],
+  ['前置摄像头', 'selfie shot'],
   ['镜面反射', 'mirror reflection'],
-  ['对镜自拍', 'mirror selfie'],
-  ['前置摄像头自拍', 'front camera selfie'],
-  ['前置自拍', 'front camera selfie'],
-  ['POV镜头', 'POV lens shot'],
+  ['对镜自拍', 'mirror selfie shot'],
+  ['前置摄像头自拍', 'selfie shot'],
+  ['前置自拍', 'selfie shot'],
+  ['POV镜头', ''],
   ['帽子拉起', 'hood pulled up'],
   ['毛绒圆耳', 'fluffy round animal ears on hood'],
   ['领口', 'neckline collar'],
@@ -45,7 +46,7 @@ const TAG_PHRASE_ENTRIES: ReadonlyArray<readonly [string, string]> = [
   ['清晰稳定', 'sharp stable focus'],
   ['认真摆拍', 'intentional stable selfie'],
   ['不要大头贴', 'not extreme close-up'],
-  ['不要前置一臂距离', 'not front camera arm-length POV'],
+  ['不要前置一臂距离', 'not extreme close-up face-fill'],
   ['不要手臂伸向镜头', 'not outstretched arm toward camera'],
   ['无镜子', 'no mirror in scene'],
   ['无镜面', 'no mirror reflection'],
@@ -71,12 +72,12 @@ const TAG_PHRASE_ENTRIES: ReadonlyArray<readonly [string, string]> = [
   ['仰视', 'low angle looking up'],
   ['平视', 'eye level'],
   ['略俯视', 'slight high angle'],
-  ['第一人称视角', 'first-person POV'],
-  ['第一视角', 'first-person POV'],
-  ['随手拍', 'casual handheld snapshot'],
-  ['后置摄像头', 'rear camera'],
-  ['举机所见', 'handheld phone view'],
-  ['床上视角', 'in-bed POV'],
+  ['第一人称视角', ''],
+  ['第一视角', ''],
+  ['随手拍', ''],
+  ['后置摄像头', ''],
+  ['举机所见', ''],
+  ['床上视角', 'in bed'],
   ['卧床', 'lying in bed'],
   ['第三人称', 'third-person view'],
   ['无人物肢体入镜', 'no human body parts in frame'],
@@ -277,7 +278,12 @@ export async function translateCharacterMediaPromptToEnglishAsync(prompt: string
 
 /** 发往生图 API 前：中文 tag → 英文 tag */
 export async function resolveCharacterMediaPromptEnglish(prompt: string): Promise<string> {
-  const synced = translateCharacterMediaPromptTagsToEnglishSync(prompt.trim())
+  const trimmed = prompt.trim()
+  // wx-selfie 自拍：场景句英文 + The character appearance 中文块，整体透传
+  if (hasCharacterMediaSelfiePrefix(trimmed)) {
+    return trimmed.replace(/\s+/g, ' ').trim()
+  }
+  const synced = translateCharacterMediaPromptTagsToEnglishSync(trimmed)
   if (!hasSignificantCjk(synced)) return synced
   try {
     return await translateCharacterMediaPromptToEnglishAsync(synced)

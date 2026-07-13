@@ -438,7 +438,10 @@ async function fireProactiveMessage(row: ChatConversationSettingsRow): Promise<v
         recentMeetAiRoundsNotes: pack.recentMeetAiRounds || undefined,
         recentGroupChatsReference: pack.recentGroupChatsReference || undefined,
         replyBias,
-        includeThinkingChain: true,
+        includeThinkingChain: activeRow.showThinkingChain === true,
+        includeForwardHistoryCard: activeRow.forwardHistoryCardEnabled === true,
+        includeProfileImageChange: activeRow.profileImageChangeEnabled === true,
+        includeInternetMemeLexicon: activeRow.internetMemeLexiconEnabled === true,
         currentTimeMs: gameNowForRound,
         timePerceptionEnabled,
         chatMemberIds: [peerCharacterId],
@@ -465,7 +468,7 @@ async function fireProactiveMessage(row: ChatConversationSettingsRow): Promise<v
               imageRoundCountMin: imageCountRange.min,
               imageRoundCountMax: imageCountRange.max,
               ...(imageRoundCountTarget > 0 ? { imageRoundCountTarget: imageRoundCountTarget } : {}),
-              ...(imageRoundAllowed ? { imageRoundAllowed: true } : {}),
+              imageRoundAllowed,
             }
           : {}),
         ...(characterMomentsPinCatalog.trim()

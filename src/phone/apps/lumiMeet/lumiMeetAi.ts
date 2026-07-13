@@ -46,9 +46,10 @@ import {
 import { pickMeetAvatar, resolveMeetAvatarNpcGenderLabel, type MeetAvatarExclusion } from './meetAvatarPool'
 import {
   MEET_MBTI_SIXTEEN,
-  MEET_NINE_DIMENSION_JSON_SCHEMA,
+  MEET_NINE_DIMENSION_PERSONA_SCHEMA,
   rollMeetMbtiAnchoredByKeywords,
 } from './meetPersonaPrompt'
+import { parseMeetEncounterPersonaProseOutput } from './meetPersonaProseFormat'
 import { prepareMeetNpcReplyForParsing } from './meetEvaluationParse'
 import type { MeetReplyEvaluation } from './meetEvaluationParse'
 import {
@@ -183,6 +184,13 @@ function stripCodeFence(raw: string): string {
   return t
 }
 
+/** 优先解析 prose 标记输出；旧版 JSON 仍作回退。 */
+function parseEncounterNpcModelOutput(raw: string): Record<string, unknown> {
+  const prose = parseMeetEncounterPersonaProseOutput(raw)
+  if (prose) return prose
+  return JSON.parse(stripCodeFence(raw)) as Record<string, unknown>
+}
+
 /** 规范顶层 gender 文案，便于头像池解析 */
 function normalizeMeetAiGenderLabel(raw: string): string {
   const t = raw.trim()
@@ -203,7 +211,7 @@ export class MeetEncounterGenerationError extends Error {
     const fallback =
       code === 'api_required'
         ? '须先在 API 设置中填写请求地址与密钥后再寻觅新人。'
-        : '邂逅人设生成失败，请检查网络、密钥与模型是否支持 JSON 输出后重试。'
+        : '邂逅人设生成失败，请检查网络、密钥与模型输出格式后重试。'
     super(message?.trim() ? message : fallback)
     this.name = 'MeetEncounterGenerationError'
     this.code = code
@@ -301,10 +309,10 @@ export async function aiGenerateEncounterNpc(params: {
     throw new MeetEncounterGenerationError('api_required')
   }
 
-  const sys = `你是交友 App 遇见的九维立体人格生成引擎。写的是当代都市里**可信、三观正、行为合法**的人物：职业从 system SCHEMA 中的**八大谱系**（霸总精英、白领精英、文艺、娱乐圈、体制内、小众酷感、市井创业、合法反差）与**日常接地气工种**里择一写清，忌二游式夸张；**MBTI 与职业无任何对应关系**，禁止按类型 "配职业"，MBTI 只体现在 core 与 "工作场合习惯" 描写里。
-硬性文风：comprehensive.core.mbti 须庄重克制，**禁止** "自测闹着玩"、"闹着玩" 等消解质感的措辞；可写 "仅供参考"、"与职业无对应" 之类中性说明。
-性别一致：gender 与男/女须与 comprehensive.base 的外貌与称谓气质一致，禁止性别栏写女性却把人写成男性向外貌。
-取向叙事：顶层 orientation 与 comprehensive.psyche.orientationOrigin 必须指向同一套自我认同（由来可曲折或平淡），禁止二者互相矛盾。${MEET_NINE_DIMENSION_JSON_SCHEMA}`
+  const sys = `你是交友 App 遇见的九维立体人格生成引擎。写的是当代都市里**可信、三观正、行为合法**的人物：职业从 system SCHEMA 中的**八大谱系**（霸总精英、白领精英、文艺、娱乐圈、体制内、小众酷感、市井创业、合法反差）与**日常接地气工种**里择一写清，忌二游式夸张；**MBTI 与职业无任何对应关系**，禁止按类型 "配职业"，MBTI 只体现在 comp.core 与 "工作场合习惯" 描写里。
+硬性文风：comp.core.mbti 须庄重克制，**禁止** "自测闹着玩"、"闹着玩" 等消解质感的措辞；可写 "仅供参考"、"与职业无对应" 之类中性说明。
+性别一致：gender 与男/女须与 comp.base 的外貌与称谓气质一致，禁止性别栏写女性却把人写成男性向外貌。
+取向叙事：顶层 orientation 与 comp.psyche.orientationOrigin 必须指向同一套自我认同（由来可曲折或平淡），禁止二者互相矛盾。${MEET_NINE_DIMENSION_PERSONA_SCHEMA}`
   const userNick = resolveMeetPublicDisplayName(params.meetProfile)
   const mbtiRoll = rollMeetMbtiAnchoredByKeywords(kw)
   const user = [
@@ -312,12 +320,12 @@ export async function aiGenerateEncounterNpc(params: {
     criteriaBlock,
     `当前滑动用户展示昵称（仅供你理解语境，勿写入 comprehensive/persona 正文替代占位符）：${userNick}`,
     `用户公开资料摘要：${params.profileHint.slice(0, 520)}`,
-    `【姓名与网名】comprehensive 内第三人称档案（尤其 base.info、base.physiology）叙述本人时只用 realName 与 base.realName 的汉字全称，禁止用 nickname 作主语或当代称。`,
+    `【姓名与网名】九维档案内第三人称叙述（尤其 comp.base.info、comp.base.physiology）指本人时只用 realName 与 comp.base.realName 的汉字全称，禁止用 nickname 作主语或当代称。`,
     `口语化、具体、少抽象词；人设健康合常识。职业可从 SCHEMA 八大谱系或日常工种里选，须写具体业务细节。占位与对方规则以 system 内 SCHEMA 为准（fetish/contrast 恋爱向客观陈述勿写 {{user}}）；年龄/生日/身高体重/座右铭的硬约束以 SCHEMA 末段「与人脉 AI 基础信息对齐」小节为准。`,
-    `【本轮硬性】comprehensive.core.mbti 必须以四字母 "${mbtiRoll}" 为唯一类型标签（可紧接中文逗号+一句大白话；禁止再写另一组四字母类型；禁止把 ISTJ/INTJ 当默认值偷换）。`,
-    `【气质-MBTI 对齐】性格关键词：${kw || '（未填）'}。本轮锚定类型为 ${mbtiRoll}：core.mbti 的一句话侧写、surface、trueSelf、daily.speech 必须与 "${mbtiRoll}" 及关键词气质一致；禁止写成外向热情却套用冷淡表述，反之亦然。`,
-    `【取向叙事】comprehensive.psyche.orientationOrigin 须单独成段，写清取向认同的由来（可与顶层 orientation 简短标签呼应）；允许生来稳定、亦允许经历过错位再澄清；禁止与 orientation 矛盾。`,
-    `【匹配裁判】顶层必须输出布尔字段 mutualSpark（true/false，不要引号字符串）：在已写好人设的前提下，若用户凭上述资料向你生成的 NPC 表达心动，NPC 是否愿意正向接住、形成双向心动的起手。须与人设一致；缺该字段或类型错误视为生成失败。`,
+    `【本轮硬性】comp.core.mbti 必须以四字母 "${mbtiRoll}" 为唯一类型标签（可紧接中文逗号+一句大白话；禁止再写另一组四字母类型；禁止把 ISTJ/INTJ 当默认值偷换）。`,
+    `【气质-MBTI 对齐】性格关键词：${kw || '（未填）'}。本轮锚定类型为 ${mbtiRoll}：comp.core.mbti 的一句话侧写、surface、trueSelf、comp.daily.speech 必须与 "${mbtiRoll}" 及关键词气质一致；禁止写成外向热情却套用冷淡表述，反之亦然。`,
+    `【取向叙事】comp.psyche.orientationOrigin 须单独成段，写清取向认同的由来（可与顶层 orientation 简短标签呼应）；允许生来稳定、亦允许经历过错位再澄清；禁止与 orientation 矛盾。`,
+    `【匹配裁判】【mutualSpark】标记段须写 true 或 false（小写布尔，不要引号）：在已写好人设的前提下，若用户凭上述资料向你生成的 NPC 表达心动，NPC 是否愿意正向接住、形成双向心动的起手。须与人设一致；缺该标记或无法解析视为生成失败。`,
     params.dualPersonaDirective?.trim()
       ? `\n【用户侧双面档案 · 捏人参考】\n${params.dualPersonaDirective.trim().slice(0, 1400)}`
       : '',
@@ -331,7 +339,7 @@ export async function aiGenerateEncounterNpc(params: {
     for (let attempt = 0; attempt < maxAttempts; attempt++) {
       const retryBlock =
         attempt > 0
-          ? `\n【上轮生成已否决】${lastRejectReason}\n【必须纠正】顶层 orientation 须改为「${pickOrientationFieldExample(prefs, orientationRoundSeed + attempt)}」一类，且 comprehensive.psyche.orientationOrigin 与之同一认同；不得再输出不相容取向。`
+          ? `\n【上轮生成已否决】${lastRejectReason}\n【必须纠正】顶层 orientation 须改为「${pickOrientationFieldExample(prefs, orientationRoundSeed + attempt)}」一类，且 comp.psyche.orientationOrigin 与之同一认同；不得再输出不相容取向。`
           : ''
       const raw = await openAiCompatibleChat(
         cfg,
@@ -341,7 +349,7 @@ export async function aiGenerateEncounterNpc(params: {
         ],
         { temperature: attempt > 0 ? 0.72 : 0.86, max_tokens: 5200 },
       )
-      const j = JSON.parse(stripCodeFence(raw)) as Record<string, unknown>
+      const j = parseEncounterNpcModelOutput(raw)
     const nickname = typeof j.nickname === 'string' ? j.nickname.trim().slice(0, 8) : '未命名'
     const genderRaw = typeof j.gender === 'string' ? j.gender.trim() : '其他'
     const orientation = typeof j.orientation === 'string' ? j.orientation.trim().slice(0, 28) : '保密'

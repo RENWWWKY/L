@@ -17,6 +17,8 @@ export const PULSE_COLORS = {
   mistBlue: '#A2B2C6',
   sage: '#A3C4BC',
   lightGold: '#D4AF37',
+  /** 微博 #话题# 链接色 */
+  topicBlue: '#507DAF',
   hairline: 'rgba(0,0,0,0.04)',
 } as const
 

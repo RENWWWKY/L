@@ -10,11 +10,12 @@ import type { PulsePovOption } from './pulseTypes'
 type Props = {
   options: PulsePovOption[]
   onSelect: (povId: string) => void
-  /** 返回 Lumi 手机主屏 */
   onBack?: () => void
+  backLabel?: string
+  playerName?: string
 }
 
-export function PulseAuthGuard({ options, onSelect, onBack }: Props) {
+export function PulseAuthGuard({ options, onSelect, onBack, backLabel = '返回主页', playerName }: Props) {
   const [syncingId, setSyncingId] = useState<string | null>(null)
 
   const handlePick = (opt: PulsePovOption) => {
@@ -35,10 +36,10 @@ export function PulseAuthGuard({ options, onSelect, onBack }: Props) {
             onClick={onBack}
             disabled={!!syncingId}
             className="flex items-center gap-0.5 rounded-full py-1.5 pr-2 opacity-70 disabled:opacity-40"
-            aria-label="返回主页"
+            aria-label={backLabel}
           >
             <ChevronLeft className="size-5" strokeWidth={1.4} />
-            <span className="text-[13px] tracking-wide text-[#1C1C1E]">返回主页</span>
+            <span className="text-[13px] tracking-wide text-[#1C1C1E]">{backLabel}</span>
           </Pressable>
         </header>
       ) : null}
@@ -53,7 +54,7 @@ export function PulseAuthGuard({ options, onSelect, onBack }: Props) {
             选择世界
           </h1>
           <p className="mt-3 text-[12px] leading-relaxed text-neutral-500">
-            选择一位主要角色，进入 ta 的世界观，浏览这个世界里的微博动态。
+            以你的微博账号{playerName ? `（${playerName}）` : ''}浏览不同世界的动态。选择一位主要角色，进入 ta 的世界观舆论场。
           </p>
 
           {options.length === 0 ? (

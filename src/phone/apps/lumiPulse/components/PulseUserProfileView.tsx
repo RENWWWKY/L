@@ -14,13 +14,13 @@ import { usePulseStore } from '../usePulseStore'
 /** 他人微博主页 — 从关注列表头像进入 */
 export function PulseUserProfileView({
   user,
-  currentPovId,
+  currentPlayerPovId,
   onBack,
   onOpenPost,
   onRepostPost,
 }: {
   user: PulseFollowingUser
-  currentPovId: string
+  currentPlayerPovId: string
   onBack: () => void
   onOpenPost: (postId: string) => void
   onRepostPost: (postId: string) => void
@@ -111,7 +111,7 @@ export function PulseUserProfileView({
                 <PostCard
                   key={post.id}
                   post={post}
-                  currentPovId={currentPovId}
+                  currentPovId={currentPlayerPovId}
                   onOpen={() => onOpenPost(post.id)}
                   onLike={() => toggleLike(post.id)}
                   onRepost={() => onRepostPost(post.id)}

@@ -27,7 +27,12 @@ import {
 } from './memoryArchiveFilter'
 import type { MemoryEntry, MemoryTypeFilterId, MemoryCharacterPageMeta } from './memoryArchiveTypes'
 import { parseMemorySourcePrefix } from './memorySourceBadges'
-import { collectMemoryIdsForArchiveCharacterClear } from './collectMemoryIdsForArchiveCharacterClear'
+import {
+  clearCharacterMemoryArchive,
+  memoryArchiveClearScopeHasWork,
+  resolveMemoryArchiveClearCounts,
+  type MemoryArchiveClearScope,
+} from './clearCharacterMemoryArchive'
 import { MemoryArchiveBackToTop } from './MemoryArchiveBackToTop'
 import { MemoryArchiveHeader } from './MemoryArchiveHeader'
 import { MemoryClearAllConfirmModal } from './MemoryClearAllConfirmModal'
@@ -147,6 +152,7 @@ export function MemoryArchivePanel({
   const [timelineAlignBusy, setTimelineAlignBusy] = useState(false)
   const [timelineAlignFeedback, setTimelineAlignFeedback] = useState('')
   const [detailSourceTab, setDetailSourceTab] = useState<MemoryCharacterSourceTab>('online')
+  const [detailTimelineHasState, setDetailTimelineHasState] = useState(false)
 
   const reload = useCallback(async (opts?: { silent?: boolean }) => {
     if (!opts?.silent) setLoading(true)
@@ -420,8 +426,21 @@ export function MemoryArchivePanel({
   }, [selectedCharId, unifiedRoster])
 
   const loadTimelineDetail = useCallback(async (charId: string) => {
-    const { rows } = await loadStoryTimelineArchiveForCharacter(charId)
+    const { rows, state } = await loadStoryTimelineArchiveForCharacter(charId)
     setDetailTimelineRows(rows)
+    setDetailTimelineHasState(
+      !!(
+        state?.manualAnchorBlock?.trim() ||
+        state?.currentLocation?.trim() ||
+        state?.currentStoryDay?.trim() ||
+        state?.currentStoryTime?.trim() ||
+        state?.costumes.length ||
+        state?.items.length ||
+        state?.foreshadows.length ||
+        (state?.todos?.length ?? 0) ||
+        state?.recentEvents.length
+      ),
+    )
     const expandedRows = await Promise.all(
       rows.map(async (row) =>
         prepareStoryTimelineArchiveDisplayText(
@@ -590,14 +609,35 @@ export function MemoryArchivePanel({
     [allEntries, rawById, selectedAccountId, primaryAccountId, selectedCharId, debouncedSearch, typeFilters, archiveView],
   )
 
-  const clearAllTargetIds = useMemo(() => {
-    if (!selectedCharId) return []
-    return collectMemoryIdsForArchiveCharacterClear({
+  const clearAllCounts = useMemo(() => {
+    if (!selectedCharId) {
+      return { onlineMemoryCount: 0, offlineRowCount: 0, offlineHasState: false }
+    }
+    return resolveMemoryArchiveClearCounts({
       selectedCharId,
       allEntries,
       rawMemories: [...rawById.values()],
+      offlineRowCount: selectedUnifiedCharacter?.offlineRowCount ?? detailTimelineRows.length,
+      offlineHasState: detailTimelineHasState,
     })
-  }, [selectedCharId, allEntries, rawById])
+  }, [
+    selectedCharId,
+    allEntries,
+    rawById,
+    selectedUnifiedCharacter?.offlineRowCount,
+    detailTimelineRows.length,
+    detailTimelineHasState,
+  ])
+
+  const clearAllDefaultScope = useMemo((): MemoryArchiveClearScope => {
+    if (detailSourceTab === 'offline') return 'offline'
+    if (detailSourceTab === 'online') return 'online'
+    return 'both'
+  }, [detailSourceTab])
+
+  const clearAllDisabled =
+    clearAllBusy ||
+    !memoryArchiveClearScopeHasWork('both', clearAllCounts)
 
   useEffect(() => {
     const el = scrollerRef.current
@@ -725,15 +765,23 @@ export function MemoryArchivePanel({
     await reload({ silent: true })
   }
 
-  const handleClearAllConfirm = async () => {
-    if (!selectedCharId || clearAllBusy || clearAllTargetIds.length === 0) return
+  const handleClearAllConfirm = async (scope: MemoryArchiveClearScope) => {
+    if (!selectedCharId || clearAllBusy || !memoryArchiveClearScopeHasWork(scope, clearAllCounts)) return
     setClearAllBusy(true)
     try {
-      const ids = new Set(clearAllTargetIds)
-      for (const id of ids) {
-        await personaDb.deleteCharacterMemory(id)
-      }
-      if (editorOpen && editingEntry && ids.has(editingEntry.id)) {
+      await clearCharacterMemoryArchive({
+        selectedCharId,
+        displayName: detailCharacter?.displayName ?? selectedUnifiedCharacter?.displayName ?? '该角色',
+        scope,
+        allEntries,
+        rawMemories: [...rawById.values()],
+      })
+      if (
+        editorOpen &&
+        editingEntry &&
+        (scope === 'online' || scope === 'both') &&
+        editingEntry.charId === selectedCharId
+      ) {
         setEditorOpen(false)
         setEditingEntry(null)
         setEditingRaw(null)
@@ -741,7 +789,13 @@ export function MemoryArchivePanel({
       setClearAllConfirmOpen(false)
       setTypeFilters(new Set())
       setSearch('')
+      if (scope === 'offline' || scope === 'both') {
+        setDetailTimelineRows([])
+        setTimelineRowDisplayById(new Map())
+        setDetailTimelineHasState(false)
+      }
       await reload({ silent: true })
+      if (selectedCharId) await loadTimelineDetail(selectedCharId)
     } finally {
       setClearAllBusy(false)
     }
@@ -808,6 +862,8 @@ export function MemoryArchivePanel({
                 character={selectedUnifiedCharacter}
                 rosterIndex={selectedRosterIndex}
                 rosterTotal={unifiedRoster.length}
+                onClearAll={() => setClearAllConfirmOpen(true)}
+                clearAllDisabled={clearAllDisabled}
               />
               <div
                 className="sticky top-0 z-20 px-4 pb-2 pt-1"
@@ -869,8 +925,6 @@ export function MemoryArchivePanel({
                     : '请先在当前微信账号下选择扮演身份'
               }
               alignUserToast={alignUserToast}
-              onClearAll={() => setClearAllConfirmOpen(true)}
-              clearAllDisabled={clearAllTargetIds.length === 0 || clearAllBusy}
             >
               <MemoryList
                 entries={filtered}
@@ -895,14 +949,16 @@ export function MemoryArchivePanel({
       <MemoryClearAllConfirmModal
         open={clearAllConfirmOpen}
         characterName={detailCharacter?.displayName ?? '该角色'}
-        memoryCount={clearAllTargetIds.length}
-        visibleMemoryCount={filtered.length}
+        onlineCount={clearAllCounts.onlineMemoryCount}
+        offlineCount={clearAllCounts.offlineRowCount}
+        offlineHasState={clearAllCounts.offlineHasState}
+        defaultScope={clearAllDefaultScope}
         busy={clearAllBusy}
         onCancel={() => {
           if (clearAllBusy) return
           setClearAllConfirmOpen(false)
         }}
-        onConfirm={() => void handleClearAllConfirm()}
+        onConfirm={(scope) => void handleClearAllConfirm(scope)}
       />
 
       <MemoryTutorialModal
