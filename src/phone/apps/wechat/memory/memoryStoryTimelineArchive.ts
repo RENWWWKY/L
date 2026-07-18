@@ -1,6 +1,11 @@
 import type { WeChatContactRow } from '../../../../components/WeChatContactsInstagram'
 import { personaDb } from '../newFriendsPersona/idb'
-import type { StoryTimelineEventScope, StoryTimelinePlotRow, StoryTimelineState } from './storyTimelineTypes'
+import {
+  slimStoredStoryTimelineLegacyPartitionsForCharacter,
+  type StoryTimelineEventScope,
+  type StoryTimelinePlotRow,
+  type StoryTimelineState,
+} from './storyTimelineTypes'
 import type { MemoryCharacterRosterItem, MemorySceneTag } from './memoryArchiveTypes'
 
 export type StoryTimelineArchiveRosterItem = MemoryCharacterRosterItem & {
@@ -170,6 +175,8 @@ export async function loadStoryTimelineArchiveForCharacter(characterId: string):
 }> {
   const cid = characterId.trim()
   if (!cid) return { state: null, rows: [] }
+  // 打开档案馆时本地剥离旧分区（服装/物品/伏笔/待办），只留锚点与事件
+  await slimStoredStoryTimelineLegacyPartitionsForCharacter(cid)
   const [state, rows] = await Promise.all([
     personaDb.getStoryTimelineState(cid),
     personaDb.listStoryTimelinePlotRowsByCharacterId(cid),

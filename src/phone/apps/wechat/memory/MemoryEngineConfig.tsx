@@ -233,7 +233,6 @@ export function MemoryEngineConfig({
   const [timelineModelsPullMsg, setTimelineModelsPullMsg] = useState<{ ok: boolean; text: string } | null>(null)
   const [vectorRecallEnabled, setVectorRecallEnabled] = useState(true)
   const [embeddingProviderMode, setEmbeddingProviderMode] = useState<MemoryEmbeddingProviderMode>('auto')
-  const [contextVectorRecallEnabled, setContextVectorRecallEnabled] = useState(false)
   const [localEmbeddingModelId, setLocalEmbeddingModelId] = useState(DEFAULT_LOCAL_EMBEDDING_MODEL)
   const [localModelDownloaded, setLocalModelDownloaded] = useState(false)
   const [localModelDownloading, setLocalModelDownloading] = useState(false)
@@ -307,7 +306,6 @@ export function MemoryEngineConfig({
           ? settings.memoryEmbeddingProviderMode
           : 'auto',
       )
-      setContextVectorRecallEnabled(settings.memoryContextVectorRecallEnabled === true)
       setLocalEmbeddingModelId(
         normalizeLocalEmbeddingModelId(settings.memoryLocalEmbeddingModelId),
       )
@@ -889,13 +887,6 @@ export function MemoryEngineConfig({
     setSavedSettings(await personaDb.getMemorySettings())
   }
 
-  const toggleContextVectorRecall = async () => {
-    const next = !contextVectorRecallEnabled
-    setContextVectorRecallEnabled(next)
-    await personaDb.putMemorySettings({ memoryContextVectorRecallEnabled: next })
-    setSavedSettings(await personaDb.getMemorySettings())
-  }
-
   const chatDefaultModelHint = chatApiConfig?.modelId?.trim() || ''
 
   if (loading || !configHydrated) {
@@ -1139,8 +1130,6 @@ export function MemoryEngineConfig({
             localModelDownloadProgress={localModelDownloadProgress}
             localModelDownloadError={localModelDownloadError}
             onLocalModelDownload={(force) => void runLocalModelDownload(force)}
-            contextVectorRecallEnabled={contextVectorRecallEnabled}
-            onToggleContextVectorRecall={() => void toggleContextVectorRecall()}
             vectorDedicatedApiEnabled={vectorDedicatedApiEnabled}
             onVectorApiModeChange={(mode) => void setVectorApiMode(mode)}
             vectorConfig={vectorConfig}

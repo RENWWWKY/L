@@ -1,5 +1,4 @@
 import { loadResolvedApiConfig } from '../api/loadResolvedApiConfig'
-import { isCharacterImageGenEnabled } from '../api/imageGenPresetUtils'
 import { loadResolvedImageGenSettings } from '../api/loadResolvedImageGenSettings'
 import { resolveCharacterMediaImageStyleHint } from '../../../components/moments/momentsImagePromptEnhancer'
 import { characterHasAppearanceReference } from './characterAppearanceImageGen'
@@ -27,11 +26,10 @@ import {
   buildCharacterProfileImageCatalogBlock,
   stripAndApplyCharacterProfileImageActions,
 } from './wechatCharacterProfileImageApply'
-import { stripCharacterImageGenLinesFromBubbles, limitCharacterImageGenLinesFromBubbles } from './wechatCharacterImageGen'
+import { limitCharacterImageGenLinesFromBubbles } from './wechatCharacterImageGen'
 import {
   drawRoundImageCount,
   parseStoredImageRoundCountRange,
-  rollImageRoundTriggerAllowed,
 } from './wechatMediaSendFrequency'
 import {
   buildCharacterWechatProfileStateBlock,
@@ -309,7 +307,6 @@ async function fireProactiveMessage(row: ChatConversationSettingsRow): Promise<v
     const timeCfg = normalizeWeChatTimeConfig(charTime?.config ?? global.globalTimeConfig)
 
     const resolvedImageGenSettings = await loadResolvedImageGenSettings()
-    const characterImageGenEnabled = isCharacterImageGenEnabled(resolvedImageGenSettings)
     const characterImageGenStyleHint = resolveCharacterMediaImageStyleHint(
       resolvedImageGenSettings,
       characterHasAppearanceReference(character),
@@ -412,8 +409,7 @@ async function fireProactiveMessage(row: ChatConversationSettingsRow): Promise<v
             : undefined,
       })
 
-      const imageRoundAllowed = rollImageRoundTriggerAllowed(activeRow.imageRoundTriggerPercent)
-      const imageRoundCountTarget = imageRoundAllowed ? drawRoundImageCount(imageCountRange) : 0
+      const imageRoundCountTarget = drawRoundImageCount(imageCountRange)
 
       const ai = await requestWeChatPeerReplyBubbles({
         apiConfig,
@@ -461,17 +457,12 @@ async function fireProactiveMessage(row: ChatConversationSettingsRow): Promise<v
         ...(activeRow.classicEmojiBannedNames?.length
           ? { classicEmojiBannedNames: activeRow.classicEmojiBannedNames }
           : {}),
-        ...(characterImageGenEnabled
-          ? {
-              characterImageGenEnabled: true,
-              characterImageGenStyleHint,
-              imageRoundTriggerPercent: activeRow.imageRoundTriggerPercent,
-              imageRoundCountMin: imageCountRange.min,
-              imageRoundCountMax: imageCountRange.max,
-              ...(imageRoundCountTarget > 0 ? { imageRoundCountTarget: imageRoundCountTarget } : {}),
-              imageRoundAllowed,
-            }
-          : {}),
+        characterImageGenEnabled: true,
+        characterImageGenStyleHint,
+        imageRoundCountMin: imageCountRange.min,
+        imageRoundCountMax: imageCountRange.max,
+        ...(imageRoundCountTarget > 0 ? { imageRoundCountTarget: imageRoundCountTarget } : {}),
+        imageRoundAllowed: true,
         ...(characterMomentsPinCatalog.trim()
           ? { characterMomentsPinCatalog }
           : {}),
@@ -486,11 +477,7 @@ async function fireProactiveMessage(row: ChatConversationSettingsRow): Promise<v
       })
 
       let bubbles = (ai.bubbles ?? []).map((s) => String(s ?? '').trim()).filter(Boolean)
-      if (characterImageGenEnabled && !imageRoundAllowed) {
-        bubbles = stripCharacterImageGenLinesFromBubbles(bubbles)
-      } else if (characterImageGenEnabled && imageRoundAllowed) {
-        bubbles = limitCharacterImageGenLinesFromBubbles(bubbles, imageCountRange.max)
-      }
+      bubbles = limitCharacterImageGenLinesFromBubbles(bubbles, imageCountRange.max)
       let musicSyncInvites: WeChatMusicSyncInvitePayload[] = []
       if (wechatAccountId && characterId) {
         if (bubbles.length) {

@@ -12,7 +12,6 @@ import {
   ARCHIVE_SOFT_CHIP,
   ARCHIVE_SOFT_SECTION,
 } from './memoryArchiveTheme'
-import { MemoryTutorialButton } from './MemoryTutorialButton'
 /** 角色列表页顶栏（详情页使用 {@link MemoryCharacterDetailView}） */
 export function MemoryArchiveHeader({
   search,
@@ -27,7 +26,6 @@ export function MemoryArchiveHeader({
   onAlignUser,
   alignUserToast,
   rosterSummary,
-  onOpenTutorial,
 }: {
   search: string
   onSearchChange: (v: string) => void
@@ -41,7 +39,6 @@ export function MemoryArchiveHeader({
   onAlignUser?: () => void
   alignUserToast?: string | null
   rosterSummary?: { characterCount: number; memoryCount: number; onlineCount: number; offlineCount: number }
-  onOpenTutorial?: () => void
 }) {
   const hasStats = rosterSummary && rosterSummary.characterCount > 0
 
@@ -65,24 +62,15 @@ export function MemoryArchiveHeader({
               （约会每轮的小摘要）在这里一起看；切换上方账号后，列表会跟着变。
             </p>
           </div>
-          <div className="flex shrink-0 items-center gap-1.5">
-            {onOpenTutorial ? (
-              <MemoryTutorialButton
-                compact
-                onClick={onOpenTutorial}
-                coachTarget="memories-tab-tutorial"
-              />
-            ) : null}
-            <button
-              type="button"
-              data-memory-coach="create"
-              onClick={onCreate}
-              className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-gray-900 text-white shadow-[0_6px_20px_rgba(0,0,0,0.1)] transition-opacity active:opacity-90"
-              aria-label="新建记忆"
-            >
-              <Plus className="size-[18px]" strokeWidth={1.75} />
-            </button>
-          </div>
+          <button
+            type="button"
+            data-memory-coach="create"
+            onClick={onCreate}
+            className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-gray-900 text-white shadow-[0_6px_20px_rgba(0,0,0,0.1)] transition-opacity active:opacity-90"
+            aria-label="新建记忆"
+          >
+            <Plus className="size-[18px]" strokeWidth={1.75} />
+          </button>
         </div>
 
         <div className="mt-4 border-t border-gray-100 pt-4">

@@ -3703,6 +3703,7 @@ function WeChatAppInner({ onBack }: Props) {
   const [chatSettingsOpen, setChatSettingsOpen] = useState(false)
   const [chatCheckPhoneOpen, setChatCheckPhoneOpen] = useState(false)
   const [chatMiniGameOverlayOpen, setChatMiniGameOverlayOpen] = useState(false)
+  const [chatVoiceCallOverlayOpen, setChatVoiceCallOverlayOpen] = useState(false)
   const [psycheRadarOpen, setPsycheRadarOpen] = useState(false)
   const [messagesPlusMenuOpen, setMessagesPlusMenuOpen] = useState(false)
   const [newGroupFromMessagesOpen, setNewGroupFromMessagesOpen] = useState(false)
@@ -4889,6 +4890,10 @@ function WeChatAppInner({ onBack }: Props) {
   }, [route.name])
 
   useEffect(() => {
+    if (route.name !== 'chat') setChatVoiceCallOverlayOpen(false)
+  }, [route.name])
+
+  useEffect(() => {
     if (route.name !== 'chat') setPendingScrollToMessageId(null)
   }, [route.name])
 
@@ -5140,6 +5145,7 @@ function WeChatAppInner({ onBack }: Props) {
     (route.name === 'chat' && chatSettingsOpen) ||
     (route.name === 'chat' && chatCheckPhoneOpen) ||
     (route.name === 'chat' && chatMiniGameOverlayOpen) ||
+    (route.name === 'chat' && chatVoiceCallOverlayOpen) ||
     (route.name === 'tabs' && newGroupFromMessagesOpen)
   const activeTabBgFill = useMemo(() => {
     const byTab = wechatTheme.pageBgByTab?.[activeTab as WeChatTabId]
@@ -6335,6 +6341,7 @@ function WeChatAppInner({ onBack }: Props) {
                 onPsycheRadarOpenChange={setPsycheRadarOpen}
                 onCheckPhoneOpenChange={setChatCheckPhoneOpen}
                 onMiniGameOverlayOpenChange={setChatMiniGameOverlayOpen}
+                onVoiceCallOverlayOpenChange={setChatVoiceCallOverlayOpen}
                 chatRouteVisible={route.name === 'chat'}
               />
             )}

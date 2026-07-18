@@ -188,6 +188,10 @@ export type PlotItem = {
    * 若最近一次完成本条时模型未提交补丁，则为 undefined。
    */
   worldBookAfterRevertEntries?: WorldBookAfterRevertEntry[]
+  /**
+   * 本段落库前的待办台账快照；删除本段或重新回复时回退到此状态，再按新摘要/后续段重放。
+   */
+  todoLedgerBefore?: import('../memory/storyTimelineTypes').StoryTimelineTodoEntry[]
   /** 平行事件：与锚点同刻、异场景的切片（不影响主线 canon） */
   parallelEvent?: PlotDimensionArtifact
   /** IF 线：从锚点分歧的假设分支（不影响主线 canon） */

@@ -15,10 +15,16 @@ type Props = {
   src?: string
   /** 生图占位：正在生成 */
   generating?: boolean
+  /** 已有描述、等待用户确认后再生成 */
+  awaitingConfirm?: boolean
+  /** 画面描述（确认前展示在占位中央） */
+  description?: string
   /** 生图占位：生成失败 */
   genFailed?: boolean
-  /** 生图失败时点击重试 */
+  /** 生图失败时点击重试 / 确认生成 */
   onRetry?: () => void
+  /** 用户确认开始生成 */
+  onConfirmGenerate?: () => void
   isSticker?: boolean
   bubble: WeChatBubbleTheme
   showAvatar: boolean
@@ -41,6 +47,8 @@ export function WeChatChatImageBubbleRow({
   isSelf,
   src = '',
   generating = false,
+  awaitingConfirm = false,
+  description = '',
   genFailed = false,
   isSticker = false,
   bubble,
@@ -56,14 +64,17 @@ export function WeChatChatImageBubbleRow({
   selected = false,
   onLongPress,
   onRetry,
+  onConfirmGenerate,
   multiSelectAvatar,
 }: Props) {
   const anchorRef = useRef<HTMLDivElement>(null)
   const [lightboxOpen, setLightboxOpen] = useState(false)
   const avatarPx = 40
   const bubbleRadius = isSelf ? `${bubble.selfBubbleRadiusPx}px` : `${bubble.otherBubbleRadiusPx}px`
+  const showAwaiting = awaitingConfirm && !generating && !genFailed
   const showGenerating = generating && !genFailed
-  const showFailed = genFailed && !showGenerating
+  const showFailed = genFailed && !showGenerating && !showAwaiting
+  const descText = description.trim()
 
   const bg = isSticker ? 'transparent' : '#ffffff'
   const border = isSticker
@@ -86,6 +97,10 @@ export function WeChatChatImageBubbleRow({
     onLongPress: () => handleLongPress(),
     onTap: () => {
       if (showGenerating) return
+      if (showAwaiting) {
+        onConfirmGenerate?.()
+        return
+      }
       if (showFailed) {
         onRetry?.()
         return
@@ -102,8 +117,16 @@ export function WeChatChatImageBubbleRow({
     onTap: () => onRetry?.(),
   }).bind
 
+  const awaitingBind = useWeChatLongPress({
+    enabled: showAwaiting && !!onConfirmGenerate,
+    ms: 500,
+    moveThresholdPx: 10,
+    onLongPress: () => handleLongPress(),
+    onTap: () => onConfirmGenerate?.(),
+  }).bind
+
   const imageBlock = useMemo(() => {
-    if (showGenerating || showFailed) {
+    if (showAwaiting || showGenerating || showFailed) {
       return (
         <div
           ref={anchorRef}
@@ -113,15 +136,21 @@ export function WeChatChatImageBubbleRow({
             maxWidth: isSticker ? '46vw' : '56vw',
             minHeight: isSticker ? 120 : 160,
             borderRadius: bubbleRadius,
-            border,
+            border: showAwaiting ? '1px dashed rgba(0,0,0,0.18)' : border,
             background: '#f3f3f3',
             userSelect: 'none',
             WebkitUserSelect: 'none' as any,
             WebkitTouchCallout: 'none' as any,
           }}
-          {...(showFailed && onRetry ? failedBind : onLongPress ? bind : {})}
+          {...(showAwaiting && onConfirmGenerate
+            ? awaitingBind
+            : showFailed && onRetry
+              ? failedBind
+              : onLongPress
+                ? bind
+                : {})}
         >
-          <div className="flex flex-col items-center gap-2 px-4 py-6 text-center">
+          <div className="flex w-full flex-col items-center gap-2 px-3 py-5 text-center">
             {showGenerating ? (
               <>
                 <span
@@ -129,6 +158,17 @@ export function WeChatChatImageBubbleRow({
                   aria-hidden
                 />
                 <span className="text-[12px] leading-snug text-black/55">正在生成中…</span>
+              </>
+            ) : showAwaiting ? (
+              <>
+                {descText ? (
+                  <p className="max-h-[88px] overflow-y-auto px-1 text-left text-[11px] leading-relaxed text-black/55">
+                    {descText}
+                  </p>
+                ) : (
+                  <span className="text-[12px] leading-snug text-black/45">配图描述</span>
+                )}
+                <span className="text-[12px] font-medium leading-snug text-[#576B95]">点按生成</span>
               </>
             ) : (
               <>
@@ -192,7 +232,26 @@ export function WeChatChatImageBubbleRow({
         ) : null}
       </div>
     )
-  }, [bg, bind, border, bubbleRadius, failedBind, isSticker, onLongPress, onRetry, pressing, selected, showFailed, showGenerating, src])
+  }, [
+    awaitingBind,
+    bg,
+    bind,
+    border,
+    bubbleRadius,
+    descText,
+    failedBind,
+    isSelf,
+    isSticker,
+    onConfirmGenerate,
+    onLongPress,
+    onRetry,
+    pressing,
+    selected,
+    showAwaiting,
+    showFailed,
+    showGenerating,
+    src,
+  ])
 
   const showAvatarVisual = showAvatar && showAvatarColumn
   const reserveAvatarGutter = showAvatar
@@ -307,7 +366,7 @@ export function WeChatChatImageBubbleRow({
           <div className="ml-[24px] mr-auto min-w-0">{imageBlock}</div>
         )}
       </div>
-      {!showGenerating && !showFailed ? (
+      {!showGenerating && !showFailed && !showAwaiting ? (
         <ChatImageLightbox open={lightboxOpen} src={src} onClose={() => setLightboxOpen(false)} />
       ) : null}
       </>
@@ -397,7 +456,7 @@ export function WeChatChatImageBubbleRow({
         <div className="mr-[24px] ml-auto min-w-0">{imageBlock}</div>
       )}
       </div>
-      {!showGenerating && !showFailed ? (
+      {!showGenerating && !showFailed && !showAwaiting ? (
         <ChatImageLightbox open={lightboxOpen} src={src} onClose={() => setLightboxOpen(false)} />
       ) : null}
     </>

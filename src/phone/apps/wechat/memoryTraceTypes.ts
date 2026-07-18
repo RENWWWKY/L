@@ -103,17 +103,19 @@ export type MemoryTraceInjectionSummary = {
   keywordHitCount: number
   /** 长期记忆向量召回条数 */
   longTermVectorCount: number
-  /** 已总结片段语义召回条数 */
+  /** @deprecated 游标前原文召回已下线；恒为 0 */
   contextVectorRecallCount: number
   /** 是否注入剧情时间轴块 */
   storyTimelineInjected: boolean
+  /** 是否注入待办台账块（【待办】/【已完成事项】） */
+  todoLedgerInjected: boolean
   /** 未总结私聊是否注入 */
   unsummarizedPrivateInjected: boolean
   /** 未总结群聊是否注入 */
   unsummarizedGroupInjected: boolean
   /** 未总结线下 plot 是否注入 */
   unsummarizedOfflineInjected: boolean
-  /** 语义召回是否启用（设置项） */
+  /** @deprecated 游标前原文召回已下线；恒为 false */
   contextVectorRecallEnabled: boolean
   /** 向量 provider：api / local / auto */
   embeddingProviderMode: 'api' | 'local' | 'auto'
@@ -139,6 +141,14 @@ export type MemoryTraceStoryTimeline = {
   promptExcerpt: string
   /** 逐条摘要带来源标签（与 prompt 注入对齐） */
   rows?: MemoryTraceStoryTimelineInjectRow[]
+}
+
+/** 待办台账注入块（与【当前状态】中的【待办】同源） */
+export type MemoryTraceTodoLedger = {
+  injected: boolean
+  promptExcerpt: string
+  openCount: number
+  resolvedCount: number
 }
 
 export type MemoryTraceContextVectorRecall = {
@@ -182,6 +192,8 @@ export type MemoryTraceData = {
     }
     /** 可选：剧情时间轴（Phase 1） */
     storyTimeline?: MemoryTraceStoryTimeline | null
+    /** 可选：待办台账注入（与 prompt 【待办】同源） */
+    todoLedger?: MemoryTraceTodoLedger | null
     recentContext: {
       activeSessionMessages: number
       unsummarizedOfflinePlots: Array<{ date: string; snippet: string }>
@@ -213,7 +225,7 @@ export type MemoryTraceData = {
         lineRelation?: MemoryTraceLineRelation
         memoryBucket?: MemoryTraceMemoryBucket
       }>
-      /** 可选：已总结片段语义召回 */
+      /** @deprecated 游标前原文召回已下线；解析旧溯源时仍可读，UI 不再展示 */
       contextVectorRecalls?: MemoryTraceContextVectorRecall[]
     }
   }
@@ -481,6 +493,7 @@ export function parseMemoryTraceData(raw: unknown): MemoryTraceData | null {
       longTermVectorCount: asNum(s.longTermVectorCount, 0),
       contextVectorRecallCount: asNum(s.contextVectorRecallCount, 0),
       storyTimelineInjected: Boolean(s.storyTimelineInjected),
+      todoLedgerInjected: Boolean(s.todoLedgerInjected),
       unsummarizedPrivateInjected: Boolean(s.unsummarizedPrivateInjected),
       unsummarizedGroupInjected: Boolean(s.unsummarizedGroupInjected),
       unsummarizedOfflineInjected: Boolean(s.unsummarizedOfflineInjected),
@@ -523,6 +536,18 @@ export function parseMemoryTraceData(raw: unknown): MemoryTraceData | null {
     }
   }
 
+  let todoLedger: MemoryTraceTodoLedger | null | undefined
+  const tl = cmo.todoLedger
+  if (tl && typeof tl === 'object') {
+    const tlo = tl as Record<string, unknown>
+    todoLedger = {
+      injected: Boolean(tlo.injected),
+      promptExcerpt: asStr(tlo.promptExcerpt),
+      openCount: asNum(tlo.openCount, 0),
+      resolvedCount: asNum(tlo.resolvedCount, 0),
+    }
+  }
+
   const recentRoundRefs: MemoryTraceRecentRoundRef[] = []
   const rrr = rco.recentRoundRefs
   if (Array.isArray(rrr)) {
@@ -538,23 +563,6 @@ export function parseMemoryTraceData(raw: unknown): MemoryTraceData | null {
         injected: Boolean(r.injected),
         omittedBecauseUnsummarized: Boolean(r.omittedBecauseUnsummarized),
         snippet: asStr(r.snippet),
-      })
-    }
-  }
-
-  const contextVectorRecalls: MemoryTraceContextVectorRecall[] = []
-  const cvr = dmo.contextVectorRecalls
-  if (Array.isArray(cvr)) {
-    for (const x of cvr) {
-      if (!x || typeof x !== 'object') continue
-      const v = x as Record<string, unknown>
-      const skRaw = v.sourceKind
-      const sourceKind: MemoryTraceContextVectorRecall['sourceKind'] =
-        skRaw === 'offline_plot' || skRaw === 'meet_chat' ? skRaw : 'private_chat'
-      contextVectorRecalls.push({
-        relevanceScore: asNum(v.relevanceScore, 0),
-        content: asStr(v.content),
-        sourceKind,
       })
     }
   }
@@ -575,6 +583,7 @@ export function parseMemoryTraceData(raw: unknown): MemoryTraceData | null {
         worldbooks,
       },
       storyTimeline,
+      todoLedger,
       recentContext: {
         activeSessionMessages,
         unsummarizedOfflinePlots,
@@ -584,7 +593,6 @@ export function parseMemoryTraceData(raw: unknown): MemoryTraceData | null {
       deepMemory: {
         keywordHits,
         vectorRetrievals,
-        contextVectorRecalls: contextVectorRecalls.length ? contextVectorRecalls : undefined,
       },
     },
   }

@@ -29,8 +29,8 @@ export type WorldBookItem = {
   /** 上一次自动/补丁写库前的正文（仅保留上一版，供档案馆对照） */
   contentPrevious?: string
   /**
-   * 尾声延展「出厂稿」：条目首次落定正文时写入，之后补丁/手改不覆盖。
-   * 用于一键回到最初关系快照（重开对话前重置）。
+   * 尾声延展「出厂稿 / 定点」：条目首次落定或用户手动「标记为最初版本」时写入；
+   * 之后自动补丁不覆盖。可用于一键回到该定点关系快照。
    */
   contentInitial?: string
   collapsed?: boolean
@@ -245,12 +245,12 @@ export type ChatConversationSettingsRow = {
   classicEmojiBannedNames?: string[]
   /** 角色每轮回复是否出现语音的目标概率 0–100（门槛，非条数上限；命中后仍可多条 [语音]）；缺省 = 不覆写系统协议（约 30%） */
   voiceRoundTriggerPercent?: number
-  /** 角色每轮至少发 1 条 AI 配图（`[图片]`）的目标概率 0–100；缺省 = 0%（不发，用户直接要求除外） */
-  imageRoundTriggerPercent?: number
-  /** 每次发图最少张数 1–9；缺省 1 */
+  /** 角色每次发图张数下限 1–9；缺省 1。发图本身按语境适量，不再用概率/开关拦截 */
   imageRoundCountMin?: number
-  /** 每次发图最多张数 1–9；缺省 1 */
+  /** 角色每次发图张数上限 1–9；缺省 1 */
   imageRoundCountMax?: number
+  /** @deprecated 已取消「是否支持发图」；保留字段兼容旧存档 */
+  imageRoundTriggerPercent?: number
   /** 角色私聊：是否开启主动消息（按频率在后台也可能发来新消息） */
   proactiveMessageEnabled?: boolean
   /** 主动消息间隔（秒）；缺省 7200（2 小时）；最短 30 秒 */
@@ -683,8 +683,7 @@ export type MemorySettingsRow = {
   /** 本地向量模型（Transformers.js）；缺省 Xenova/bge-small-zh-v1.5 */
   memoryLocalEmbeddingModelId?: string
   /**
-   * 是否对游标已覆盖的私聊 / 线下 AI 剧情正文建索引并语义召回；须显式 `true` 才开启（默认关）。
-   * 不含玩家输入、不含游标后未总结原文、不含线下摘要表 rowText。剧情摘要向量召回不依赖此项。
+   * @deprecated 配置页已移除；读档恒为 false，不再注入游标前原文召回。
    */
   memoryContextVectorRecallEnabled?: boolean
   /**
@@ -1116,9 +1115,13 @@ export type WeChatChatMessage = {
   images?: { base64: string; type: WeChatImageMime }[]
   /** AI 配图异步生成中（占位气泡） */
   imageGenPending?: boolean
+  /** AI 配图：已有描述、等待用户确认后再生成 */
+  imageGenAwaitingConfirm?: boolean
   /** AI 配图生成失败（占位气泡） */
   imageGenFailed?: boolean
-  /** AI 配图原始 prompt（失败后可重试） */
+  /** 给用户看的通俗中文画面描述（占位文案；与微博 description 同层） */
+  imageDescription?: string
+  /** 英文生图提示词缓存（点生成时由中文描述推演；旧档可能直接存英文 tags） */
   imageGenPrompt?: string
   /** 是否收藏 */
   isFavorite?: boolean

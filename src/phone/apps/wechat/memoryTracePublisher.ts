@@ -35,9 +35,11 @@ import type {
   MemoryTraceWorldBookAfterInjectedEntry,
   MemoryTraceWorldBookAfterPatchRow,
 } from './memoryTraceTypes'
-import { getContextVectorRecallTraceForPromptInjection } from './memory/memoryContextVectorRecall'
-import { parseStoryTimelineInjectBodyForTrace } from './memory/storyTimelineTypes'
-import type { MemoryTraceStoryTimeline } from './memoryTraceTypes'
+import {
+  formatStoryTimelineTodoLedgerForPrompt,
+  parseStoryTimelineInjectBodyForTrace,
+} from './memory/storyTimelineTypes'
+import type { MemoryTraceStoryTimeline, MemoryTraceTodoLedger } from './memoryTraceTypes'
 import {
   hasChatAfterWorldBookItems,
   listChatAfterWorldBookItems,
@@ -65,6 +67,30 @@ function buildStoryTimelineTraceBlock(
     injected: true,
     promptExcerpt,
     ...(rows.length ? { rows } : {}),
+  }
+}
+
+async function buildTodoLedgerTraceBlock(
+  characterId: string,
+  expand: (s: string) => string,
+): Promise<MemoryTraceTodoLedger> {
+  const cid = characterId.trim()
+  if (!cid) return { injected: false, promptExcerpt: '', openCount: 0, resolvedCount: 0 }
+  try {
+    const state = await personaDb.getStoryTimelineState(cid)
+    const openCount = (state?.todos ?? []).filter((t) => t.status === 'open').length
+    const resolvedCount = (state?.todos ?? []).filter((t) => t.status === 'resolved').length
+    const raw = formatStoryTimelineTodoLedgerForPrompt(state)
+    if (!raw) return { injected: false, promptExcerpt: '', openCount, resolvedCount }
+    const expanded = await personaDb.expandStoryTimelineTextForDisplay(cid, raw)
+    return {
+      injected: true,
+      promptExcerpt: expand(expanded.trim() || raw),
+      openCount,
+      resolvedCount,
+    }
+  } catch {
+    return { injected: false, promptExcerpt: '', openCount: 0, resolvedCount: 0 }
   }
 }
 
@@ -448,18 +474,21 @@ function buildRecentRoundRefsForTrace(params: {
 function buildInjectionSummary(params: {
   keywordHitCount: number
   longTermVectorCount: number
-  contextVectorRecallCount: number
   storyTimelineInjected: boolean
+  todoLedgerInjected: boolean
   unsummarizedPrivateInjected: boolean
   unsummarizedGroupInjected: boolean
   unsummarizedOfflineInjected: boolean
-  contextVectorRecallEnabled: boolean
   embeddingProviderMode: MemoryTraceInjectionSummary['embeddingProviderMode']
   privateRecentRoundsOmitted: boolean
   offlineRecentRoundsOmitted: boolean
   meetRecentRoundsOmitted: boolean
 }): MemoryTraceInjectionSummary {
-  return { ...params }
+  return {
+    ...params,
+    contextVectorRecallCount: 0,
+    contextVectorRecallEnabled: false,
+  }
 }
 
 export async function publishWeChatPrivatePersonaMemoryTrace(params: {
@@ -520,24 +549,13 @@ export async function publishWeChatPrivatePersonaMemoryTrace(params: {
   const { getCharacterMemoryRelevanceTraceForPromptInjection } = await import(
     './memory/formatCharacterMemoriesForPromptInjection'
   )
-  const [deep, contextVectorRecalls] = await Promise.all([
-    getCharacterMemoryRelevanceTraceForPromptInjection(cid, hay, recallOpts),
-    getContextVectorRecallTraceForPromptInjection({
-      characterId: cid,
-      conversationKey: params.conversationKey,
-      relevanceText: hay,
-      settings: memSettings,
-      chatApiConfig: apiPick,
-      opts: recallOpts,
-    }),
-  ])
+  const deep = await getCharacterMemoryRelevanceTraceForPromptInjection(cid, hay, recallOpts)
   const embeddingMode =
     memSettings.memoryEmbeddingProviderMode === 'api' ||
     memSettings.memoryEmbeddingProviderMode === 'local' ||
     memSettings.memoryEmbeddingProviderMode === 'auto'
       ? memSettings.memoryEmbeddingProviderMode
       : 'auto'
-  const contextVectorEnabled = memSettings.memoryContextVectorRecallEnabled === true
 
   const personaDetail = buildFullPersonaDetailForMemoryTrace(params.character)
   const characterWorldBookRaw = (
@@ -620,6 +638,7 @@ export async function publishWeChatPrivatePersonaMemoryTrace(params: {
     ? await personaDb.expandStoryTimelineTextForDisplay(cid, params.storyTimelineNotes)
     : ''
   const storyTimeline = buildStoryTimelineTraceBlock(storyTimelineNotesExpanded, expand)
+  const todoLedger = await buildTodoLedgerTraceBlock(cid, expand)
 
   const recentRoundRefs = buildRecentRoundRefsForTrace({
     recentPrivate: params.recentPrivateAiRoundsNotes ?? '',
@@ -633,12 +652,11 @@ export async function publishWeChatPrivatePersonaMemoryTrace(params: {
   const injectionSummary = buildInjectionSummary({
     keywordHitCount: deep.keywordHits.length,
     longTermVectorCount: deep.vectorRetrievals.length,
-    contextVectorRecallCount: contextVectorRecalls.length,
     storyTimelineInjected: storyTimeline.injected,
+    todoLedgerInjected: todoLedger.injected,
     unsummarizedPrivateInjected: !!unsPrivateInjected,
     unsummarizedGroupInjected: !!params.unsGroupNotes.trim(),
     unsummarizedOfflineInjected: !!offlineCtxBody,
-    contextVectorRecallEnabled: contextVectorEnabled,
     embeddingProviderMode: embeddingMode,
     privateRecentRoundsOmitted: params.dedupePrivateRecentOmitted === true,
     offlineRecentRoundsOmitted: params.dedupeOfflineRecentOmitted === true,
@@ -702,6 +720,7 @@ export async function publishWeChatPrivatePersonaMemoryTrace(params: {
         worldbooks: [],
       },
       storyTimeline,
+      todoLedger,
       recentContext: {
         activeSessionMessages: activeSessionMessageCount(params.transcript),
         unsummarizedOfflinePlots: offlinePlotRows,
@@ -711,7 +730,6 @@ export async function publishWeChatPrivatePersonaMemoryTrace(params: {
       deepMemory: {
         keywordHits: deep.keywordHits,
         vectorRetrievals: deep.vectorRetrievals,
-        contextVectorRecalls: contextVectorRecalls.length ? contextVectorRecalls : undefined,
       },
     },
   }
@@ -872,24 +890,13 @@ export async function publishDatingOfflineMemoryTrace(params: {
     apiConfig: apiPick,
     conversationKey: params.conversationKey?.trim() || undefined,
   }
-  const [deep, contextVectorRecalls] = await Promise.all([
-    getCharacterMemoryRelevanceTraceForPromptInjection(cid, hay, recallOpts),
-    getContextVectorRecallTraceForPromptInjection({
-      characterId: cid,
-      conversationKey: params.conversationKey,
-      relevanceText: hay,
-      settings: memSettings,
-      chatApiConfig: apiPick,
-      opts: recallOpts,
-    }),
-  ])
+  const deep = await getCharacterMemoryRelevanceTraceForPromptInjection(cid, hay, recallOpts)
   const embeddingMode =
     memSettings.memoryEmbeddingProviderMode === 'api' ||
     memSettings.memoryEmbeddingProviderMode === 'local' ||
     memSettings.memoryEmbeddingProviderMode === 'auto'
       ? memSettings.memoryEmbeddingProviderMode
       : 'auto'
-  const contextVectorEnabled = memSettings.memoryContextVectorRecallEnabled === true
 
   const plate = params.isVnMode ? ('vn' as const) : ('offline_plot' as const)
   const chRow = await personaDb.getCharacter(cid)
@@ -938,6 +945,7 @@ export async function publishDatingOfflineMemoryTrace(params: {
     ? await personaDb.expandStoryTimelineTextForDisplay(datingCid, params.storyTimelineNotes)
     : ''
   const storyTimeline = buildStoryTimelineTraceBlock(storyTimelineNotesExpanded, expand)
+  const todoLedger = await buildTodoLedgerTraceBlock(datingCid, expand)
 
   const recentRoundRefs = buildRecentRoundRefsForTrace({
     recentPrivate: params.recentPrivateAiRoundsNotes ?? '',
@@ -951,12 +959,11 @@ export async function publishDatingOfflineMemoryTrace(params: {
   const injectionSummary = buildInjectionSummary({
     keywordHitCount: deep.keywordHits.length,
     longTermVectorCount: deep.vectorRetrievals.length,
-    contextVectorRecallCount: contextVectorRecalls.length,
     storyTimelineInjected: storyTimeline.injected,
+    todoLedgerInjected: todoLedger.injected,
     unsummarizedPrivateInjected: !!params.unsPrivateBlock.trim(),
     unsummarizedGroupInjected: !!params.unsGroupBlock.trim(),
     unsummarizedOfflineInjected: !!offlineCtxBody,
-    contextVectorRecallEnabled: contextVectorEnabled,
     embeddingProviderMode: embeddingMode,
     privateRecentRoundsOmitted: params.dedupePrivateRecentOmitted === true,
     offlineRecentRoundsOmitted: params.dedupeOfflineRecentOmitted === true,
@@ -978,6 +985,7 @@ export async function publishDatingOfflineMemoryTrace(params: {
         worldbooks: [],
       },
       storyTimeline,
+      todoLedger,
       recentContext: {
         activeSessionMessages: Math.min(Math.max(0, params.historyPlotCount), 32),
         unsummarizedOfflinePlots: offlinePlotRows,
@@ -987,7 +995,6 @@ export async function publishDatingOfflineMemoryTrace(params: {
       deepMemory: {
         keywordHits: deep.keywordHits,
         vectorRetrievals: deep.vectorRetrievals,
-        contextVectorRecalls: contextVectorRecalls.length ? contextVectorRecalls : undefined,
       },
     },
   }

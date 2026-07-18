@@ -6,24 +6,23 @@ export type MemoryArchiveCoachTargetId =
   | 'search'
   | 'align'
   | 'create'
-  | 'detail-source-tabs'
-  | 'type-filter'
-  | 'list'
   | 'memories-tab-tutorial'
 
 export const MEMORY_ARCHIVE_START_COACH_EVENT = 'memory-archive-start-coach'
+export const MEMORY_ARCHIVE_OPEN_TUTORIAL_EVENT = 'memory-archive-open-tutorial'
 
+/** 角色总结 · 列表主页高亮引导（不含角色详情） */
 export const MEMORY_ARCHIVE_COACH_STEPS: MemoryCoachStep[] = [
   {
     target: null,
     centered: true,
-    title: '角色总结',
-    body: '这里按角色查看已记下的内容。先认一圈这个页上的按钮；可随时跳过。',
+    title: '角色总结 · 列表',
+    body: '这里先按角色浏览记忆入口。点进某位角色后，详情页会有另一套独立引导，和本页分开。',
   },
   {
     target: 'roster',
     title: '先选一位角色',
-    body: '每个卡片是一位联系人或群聊。角标数字是记忆条数；小标签表示常见场景（私聊、遇见、线下等）。点进去看详情。',
+    body: '每个卡片是一位联系人或群聊。角标数字是记忆条数；小标签表示常见场景（私聊、遇见、线下等）。点进去看这位角色的详情。',
     cardPlacement: 'below',
   },
   {
@@ -35,7 +34,7 @@ export const MEMORY_ARCHIVE_COACH_STEPS: MemoryCoachStep[] = [
   {
     target: 'search',
     title: '搜角色',
-    body: '在列表页可以搜角色名或场景。进到某位角色里面之后，搜索框会变成搜该角色的记忆正文。',
+    body: '在列表页搜角色名或场景，快速找到要进的那一位。',
     cardPlacement: 'below',
   },
   {
@@ -47,31 +46,13 @@ export const MEMORY_ARCHIVE_COACH_STEPS: MemoryCoachStep[] = [
   {
     target: 'create',
     title: '手动加一条记忆',
-    body: '右上角加号：自己写一条长期记忆。如果已经打开了某位角色，新建时会默认记在这个人名下。',
-    cardPlacement: 'above',
-  },
-  {
-    target: 'detail-source-tabs',
-    title: '线上 / 线下分开看',
-    body: '点进角色后，在这里切换：「线上总结」是微信聊天收成的大段文字；「线下摘要」是约会每轮的一行小摘要。',
-    cardPlacement: 'below',
-  },
-  {
-    target: 'type-filter',
-    title: '按场景筛选',
-    body: '进入某位角色后可以多选：私聊、群聊、遇见、线下等。只看你关心的那几类记忆。',
-    cardPlacement: 'below',
-  },
-  {
-    target: 'list',
-    title: '记忆卡片',
-    body: '每条记忆一张卡片，点进去能改、能删。标签颜色表示来自哪种聊天或场景。',
+    body: '右上角加号：自己写一条长期记忆。若已打开某位角色，新建时会默认记在这个人名下。',
     cardPlacement: 'above',
   },
   {
     target: 'memories-tab-tutorial',
     title: '忘了再看',
-    body: '点页内「教程」打开文字说明，也可以再跑一遍本页的高亮引导。五个总标签的说明在档案馆右上角「教程」。',
+    body: '点标题栏右上角「教程」打开本页（列表）的文字说明，或再走一遍列表高亮引导。点进角色后的用法，看详情页自己的教程。',
     cardPlacement: 'below',
   },
   {
@@ -79,6 +60,6 @@ export const MEMORY_ARCHIVE_COACH_STEPS: MemoryCoachStep[] = [
     centered: true,
     isOutro: true,
     title: '好啦',
-    body: '可以开始翻记忆了。想查五个标签分别是干什么的，回到列表页点右上角「教程」。',
+    body: '可以点一位角色进去了。详情里的线上/线下/待办，会在进角色后单独教一遍。',
   },
 ]

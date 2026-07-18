@@ -25,8 +25,20 @@ export type StoryTimelineOpenAnchorEntry = {
 /** 人物动机 / 关系悬念 / 未兑现伏笔（非具体待办） */
 export type StoryTimelineForeshadowEntry = StoryTimelineOpenAnchorEntry
 
-/** 具体可执行待办 / 承诺 / 日程 */
-export type StoryTimelineTodoEntry = StoryTimelineOpenAnchorEntry
+/** 待办收束结果：已做 / 逾期未做 / 取消 */
+export type StoryTimelineTodoOutcome = 'done' | 'missed' | 'cancelled'
+
+/** 具体可执行待办 / 承诺 / 日程（resolved 保留在「已完成事项」而非删除） */
+export type StoryTimelineTodoEntry = {
+  text: string
+  status: 'open' | 'resolved'
+  /** 首次记为 open 时的剧情公历日，用于「明天/次日」等相对期限 */
+  openedStoryDay?: string
+  outcome?: StoryTimelineTodoOutcome
+  /** 结论文案，如「{{char}} 并没有在次日喝水」 */
+  resolvedNote?: string
+  resolvedAtStoryDay?: string
+}
 
 export type StoryTimelineEventEntry = {
   id: string
@@ -81,6 +93,11 @@ export type StoryTimelinePlotRow = {
   sidePerspective?: boolean
   /** 本轮在场角色占位符快照（与 summary JSON characters_present 同源） */
   charactersPresent?: string[]
+  /**
+   * 用户在档案馆手动改过正文/标题。
+   * 为 true 时，`rebuildStoryTimelineFromDatingPlots` 不得用 plot.timelineDelta 盖回旧摘要。
+   */
+  userEdited?: boolean
 }
 
 export type StoryTimelinePromptLoadOpts = {
@@ -361,6 +378,10 @@ export type StoryTimelineSummaryDelta = {
 export const STORY_TIMELINE_RECENT_EVENTS_CAP = 12
 export const STORY_TIMELINE_OPEN_FORESHADOW_CAP = 16
 export const STORY_TIMELINE_OPEN_TODO_CAP = 16
+/** 已完成待办保留条数（供【已完成事项】展示；open 另计） */
+export const STORY_TIMELINE_RESOLVED_TODO_CAP = 12
+/** 注入提示词时最多展示的已完成条数 */
+export const STORY_TIMELINE_RESOLVED_TODO_PROMPT_CAP = 6
 export const STORY_TIMELINE_COSTUMES_CAP = 24
 export const STORY_TIMELINE_ITEMS_CAP = 32
 /** 单角色服装描述上限（字）；须容纳上装/下装/外套/鞋履与可见状态 */
@@ -368,8 +389,13 @@ export const STORY_TIMELINE_COSTUME_DESC_MAX = 280
 
 /** 单条地点描述上限（字）；须容纳店名/楼层/区域等具体锚点 */
 export const STORY_TIMELINE_LOCATION_MAX = 200
-/** event_summary 入库上限（字）；模型建议写 80～100 字 */
-export const STORY_TIMELINE_EVENT_SUMMARY_MAX = 120
+/**
+ * event_summary 写作目标（软）：约 400～500 字，以保证完整可合理加长。
+ * 入库仅设防跑飞硬顶，勿按软目标截断正文。
+ */
+export const STORY_TIMELINE_EVENT_SUMMARY_SOFT_CHARS = '约 400～500 字（为保证完整可合理加长，勿为凑字数注水）'
+/** event_summary 入库硬顶（字）：防模型失控，正常完整叙述应远低于此 */
+export const STORY_TIMELINE_EVENT_SUMMARY_MAX = 1200
 /** 摘要短标题入库上限（字）；模型建议 4～10 字 */
 export const STORY_TIMELINE_ROW_TITLE_MAX = 14
 /** 单条摘要关键词字数上限 */
@@ -378,45 +404,35 @@ export const STORY_TIMELINE_ROW_KEYWORD_CHAR_MAX = 5
 export const STORY_TIMELINE_ROW_KEYWORDS_MIN = 3
 export const STORY_TIMELINE_ROW_KEYWORDS_MAX = 5
 
-/** 伏笔 / 待办：写法与结尾快照（摘要 JSON 与回收规则共用） */
+/**
+ * 本轮事件写法：把服装/物品/人物动机等**融进叙事**，禁止再单列分区字段。
+ * 待办仍由系统台账维护，摘要勿输出。
+ */
 export const STORY_TIMELINE_FORESHADOW_TODO_WRITING_RULES = `
-【伏笔 / 待办·写法铁律】
-- 二者均是**本轮剧情全文读毕后的结尾快照**：只记录正文（或材料）**读至末尾时**仍悬而未决的内容；不是段落中途的临时念头，**禁止**与结尾已交代的事实相矛盾。
-- **与结尾对齐（最高优先级）**：以正文**最后一段 / 最后几屏**为准。若结尾已写明作业写完、约定已兑现、人物已动身或问题已解决，则**禁止**再写 open 的「未完成作业」「尚未赴约」等；应**省略** todos，或对【系统已有·未收锚点】中对应项输出 status:"resolved"。
-- **foreshadows（人物动机 / 内心拉扯 / 关系悬念）**：写「为何犹豫、想要什么又怕失去什么、对谁隐瞒什么、关系里还有什么没说破」；**禁止**写成待办清单或「须做某事」句式。
-  - 合格示例：「{{char}} 想今晚把作业写完，但怕拖太晚挤占自己的休息时间，仍在纠结要不要现在开始」
-  - 不合格：「{{char}} 要写作业」（这是待办，不是动机）
-- **todos（结尾仍有效的具体事项）**：仅当**结尾事实**仍为「尚未完成且仍须处理」的可核对事项时，才写 open。
-  - 合格示例（结尾仍未开始）：「{{char}} 数学作业尚未动笔，且仍计划今晚完成」
-  - 不合格：正文末尾已写完作业，却写「{{char}} 未完成作业」
-- 本轮结尾无新动机 / 内心线则**省略** foreshadows；无未完结具体事项则**省略** todos；勿输出空数组。`.trim()
+【本轮事件·融合写法】
+- 「事件」是唯一叙事槽：写清谁做了什么、结果/情绪转折；本轮用到的**道具/服装变化/人物动机与关系悬念**都写进这段话里（例：「{{char}} 用蓝色钥匙开了天台门，仍犹豫要不要把心事说出口」）。
+- 篇幅：${STORY_TIMELINE_EVENT_SUMMARY_SOFT_CHARS}；**优先保证事实完整**，勿为卡在软目标字数而删关键经过。
+- **禁止**再单列服装 / 物品 / 伏笔 / 待办字段或数组；勿输出空分区。
+- **禁止**把事件写成待办清单（「须去做某事」）；具体未完事项由系统待办台账维护。
+- 本轮无显著事件可省略「事件」；勿为凑字段编造。
+`.trim()
 
-/** 摘要 / 同轮 JSON：未收锚点回收说明（注入「系统已有未收清单」时复用） */
+/** 摘要 / 同轮：未收动机回收说明（融入事件叙述；待办不走摘要） */
 export const STORY_TIMELINE_OPEN_ANCHORS_RECYCLE_RULES = `
-- **伏笔 foreshadows** 与 **待办 todos** 是两类字段，不可混写；须先遵守上方【伏笔 / 待办·写法铁律】中的**结尾快照**与**与结尾对齐**要求。
-- 用户若提供【系统已有·未收锚点】：对照**正文末尾**是否已兑现；已完结 / 已取消 / 已无后续者，**必须**在对应数组输出 {"text":"与已有条目一致或高度同义","status":"resolved"}，以便系统停止将其作为写作指导；仍悬而未决且无新变化时可不重复输出 open。
-- 仅当**结尾快照**下出现**新的**动机拉扯或未完结具体事项时，才追加 {"text":"…","status":"open"}。`.trim()
+- 若用户提供【系统已有·未收伏笔/动机】：对照**正文末尾**是否已收束；已完结者在「事件」里用回溯语气一笔带过即可，**勿**再输出「伏笔」分区或 foreshadows 数组。
+- 仍悬而未决的动机：写进本轮「事件」叙事（人物在想什么/怕什么），勿单列字段。
+- **勿输出 todos / 待办**：具体事项不由本摘要块维护。
+`.trim()
 
+/** @deprecated 请用 markup；保留字段说明供旧 JSON 兼容解析，新写作禁止 JSON */
 export const STORY_TIMELINE_SUMMARY_JSON_FIELDS = `
-- "timeline"（可选对象；材料中有可核对的时空、服装、物品、动机伏笔、待办或本轮关键事件时**应尽量填写**）：
-  - "row_title": string，本轮摘要短标题（建议 4～10 字，可含问号/顿号；如「温柔瞬间」「化解冲突」「没听见？是没看见」；须概括本轮情绪或转折，勿写「第 N 轮」等序号）
-  - "row_keywords": string[]，**必填 3～5 个**摘要检索词（每条 **≤5 个汉字**；写场景/人物/情绪/物品/关系等**可检索名词或短语**，如「晚自习」「误会」「牵手」「道歉」；禁止整句、禁止标点堆叠、禁止与 row_title 完全重复）
-  - "story_day": string，**含年份的公历剧情日**（本轮开始或单点时刻之日），如 "2025年10月1日"；相对进度写 relative_time，勿用「第3天」代替公历；**禁止**写生成当日/落库时刻
-  - "story_time": string，**24 小时制钟点**（本轮开始或单点时刻），如 "19:30"；材料仅有「傍晚/深夜」时须推断合理 HH:mm
-  - "story_day_end": string（可选），本轮正文**结束**时的公历日（须含年份）；仅当剧情明确跨越时段时填写
-  - "story_time_end": string（可选），本轮正文**结束**钟点（HH:mm）；与 story_day_end 或 story_day 组成时间段；单点时刻可省略 end 字段
-  - "relative_time": string，相对时间，如 "昨天"、"三天前"、"约会第 3 天"
-  - "location": string，**须写可区分的具体地点**（建议 12～80 字）：含店名/路名/楼层或区域/包厢号等可核对锚点；**禁止**仅写「饭馆、餐厅、酒店、咖啡厅、学校、公司、家里」等空泛类名；可写「城东·云隐居日式料理·二楼靠窗席」「蓝海酒店 1208 套房客厅」
-  - "characters_present": string[]，在场角色（用 {{user}} / {{char}} / {{id:UUID}}，勿写真名）
-  - "costumes": object，**仅写本轮明确变化或正文首次可核对出场**的角色服装；键为角色占位、值为**具体穿着**（建议 40～120 字，须写清可视觉核对细节，勿只写「便装/休闲装」等空泛词）：
-    - 建议结构：上装 + 下装 + 外套/叠穿（若有）+ 鞋履或赤足/拖鞋；可含 1～2 件贴身配饰（腕表、项链等）
-    - 须含：主色、材质或版型（如棉质、针织、直筒、修身）、可见状态（敞开/挽袖/沾污/湿发未擦等）
-    - 示例：{"{{char}}":"米白棉质圆领T（袖口挽至小臂）+ 深灰针织开衫未扣齐 + 黑色直筒休闲长裤；深棕皮质腕表；室内拖鞋"}
-  - "items": array，物品变更 [{ "name": string, "note"?: string, "tier"?: "normal"|"important"|"critical" }]
-  - "foreshadows": array（**可选**；仅**结尾快照**下动机/悬念有变化时填写）[{ "text": string, "status": "open"|"resolved" }]
-  - "todos": array（**可选**；仅**结尾快照**下仍有未完结具体事项时填写）[{ "text": string, "status": "open"|"resolved" }]
-  - "event_summary": string，本轮关键事件摘要（建议 80～100 字：写清谁做了什么、情绪转折或结果；无显著事件可省略）
-  - "side_perspective": boolean（可选；**侧幕叙写**轮必填 true：表示约会主角色 {{char}} **未在场**；characters_present **不得**含 {{char}}；仅记录用户与在场 NPC 的时空与事实）
+- "timeline"（可选对象；**新写作请改用 [TIMELINE] markup，禁止 JSON**。若仍输出 JSON，仅允许下列精简字段）：
+  - "row_title": string，本轮摘要短标题（建议 4～10 字）
+  - "row_keywords": string[]，**必填 3～5 个**（每条 ≤5 字）
+  - "story_day" / "story_time" / "story_day_end" / "story_time_end" / "relative_time" / "location" / "characters_present"
+  - "event_summary": string，**融合叙事**（道具、服装变化、人物动机都写进这段；${STORY_TIMELINE_EVENT_SUMMARY_SOFT_CHARS}）
+  - "side_perspective": boolean（侧幕时 true）
+  - **禁止** "costumes" / "items" / "foreshadows" / "todos"
 
 ${STORY_TIMELINE_FORESHADOW_TODO_WRITING_RULES}
 
@@ -428,6 +444,26 @@ function trimCell(raw: unknown, max = 120): string | undefined {
     .trim()
     .slice(0, max)
   return t || undefined
+}
+
+/** 事件正文：保留换行；仅触碰硬顶时尽量在句末截断，避免为凑软目标砍半句 */
+function trimEventSummary(raw: unknown, max = STORY_TIMELINE_EVENT_SUMMARY_MAX): string | undefined {
+  const t = String(raw ?? '')
+    .replace(/\r\n/g, '\n')
+    .replace(/[ \t]+\n/g, '\n')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim()
+  if (!t) return undefined
+  if (t.length <= max) return t
+  const slice = t.slice(0, max)
+  const breakAt = Math.max(
+    slice.lastIndexOf('。'),
+    slice.lastIndexOf('！'),
+    slice.lastIndexOf('？'),
+    slice.lastIndexOf('\n'),
+  )
+  if (breakAt >= Math.floor(max * 0.65)) return slice.slice(0, breakAt + 1).trim()
+  return slice.trim()
 }
 
 /** 摘要短标题：去空白并截断 */
@@ -937,7 +973,7 @@ export function parseStoryTimelineSummaryDelta(raw: unknown): StoryTimelineSumma
     if (todos.length) delta.todos = todos.slice(0, 8)
   }
 
-  const eventSummary = trimCell(o.event_summary ?? o.eventSummary, STORY_TIMELINE_EVENT_SUMMARY_MAX)
+  const eventSummary = trimEventSummary(o.event_summary ?? o.eventSummary)
   if (eventSummary) delta.event_summary = eventSummary
 
   const rowTitle = normalizeStoryTimelineRowTitle(o.row_title ?? o.rowTitle)
@@ -971,6 +1007,85 @@ function openAnchorKey(text: string): string {
   return text.trim().toLowerCase()
 }
 
+/** 锚点同义匹配：去空白/常见标点后的紧凑串 */
+function normalizeOpenAnchorMatchText(text: string): string {
+  return String(text ?? '')
+    .trim()
+    .toLowerCase()
+    .replace(/[\s\u3000]+/g, '')
+    .replace(/[，。！？、；：""''（）()【】\[\]《》<>…·\-—_~`'".,!?;:/\\]/g, '')
+}
+
+function openAnchorBigrams(compact: string): Set<string> {
+  const out = new Set<string>()
+  if (compact.length < 2) {
+    if (compact) out.add(compact)
+    return out
+  }
+  for (let i = 0; i < compact.length - 1; i++) {
+    out.add(compact.slice(i, i + 2))
+  }
+  return out
+}
+
+function openAnchorJaccard(a: Set<string>, b: Set<string>): number {
+  if (!a.size || !b.size) return 0
+  let inter = 0
+  for (const x of a) {
+    if (b.has(x)) inter++
+  }
+  const union = a.size + b.size - inter
+  return union > 0 ? inter / union : 0
+}
+
+/** resolved 同义命中：包含关系、共享≥4 字核心子串，或 bigram Jaccard≥0.55 */
+function openAnchorsAreSynonymous(a: string, b: string): boolean {
+  const ca = normalizeOpenAnchorMatchText(a)
+  const cb = normalizeOpenAnchorMatchText(b)
+  if (!ca || !cb) return false
+  if (ca === cb) return true
+  const shorter = ca.length <= cb.length ? ca : cb
+  const longer = ca.length <= cb.length ? cb : ca
+  // 过短文案不做同义删除，降低误杀
+  if (shorter.length < 6) return false
+  if (longer.includes(shorter)) return true
+  if (openAnchorJaccard(openAnchorBigrams(ca), openAnchorBigrams(cb)) >= 0.55) return true
+  // 「数学作业尚未动笔」↔「数学作业已写完」：共享实质子串
+  for (let len = Math.min(6, shorter.length); len >= 4; len--) {
+    for (let i = 0; i <= shorter.length - len; i++) {
+      if (longer.includes(shorter.slice(i, i + len))) return true
+    }
+  }
+  return false
+}
+
+/** 在 open map 中删除与 resolvedText 精确或同义的一条（取最佳 Jaccard） */
+function deleteOpenAnchorByExactOrSynonym<T extends StoryTimelineOpenAnchorEntry>(
+  map: Map<string, T>,
+  resolvedText: string,
+): boolean {
+  const exactKey = openAnchorKey(resolvedText)
+  if (map.delete(exactKey)) return true
+
+  let bestKey: string | null = null
+  let bestScore = -1
+  const resolvedCompact = normalizeOpenAnchorMatchText(resolvedText)
+  const resolvedGrams = openAnchorBigrams(resolvedCompact)
+  for (const [key, entry] of map) {
+    if (!openAnchorsAreSynonymous(resolvedText, entry.text)) continue
+    const score = openAnchorJaccard(resolvedGrams, openAnchorBigrams(normalizeOpenAnchorMatchText(entry.text)))
+    if (score > bestScore) {
+      bestScore = score
+      bestKey = key
+    }
+  }
+  if (bestKey != null) {
+    map.delete(bestKey)
+    return true
+  }
+  return false
+}
+
 function mergeOpenResolvedAnchorEntries<T extends StoryTimelineOpenAnchorEntry>(
   prevOpen: T[],
   deltaEntries: Array<{ text?: string; status?: string }> | undefined,
@@ -986,12 +1101,381 @@ function mergeOpenResolvedAnchorEntries<T extends StoryTimelineOpenAnchorEntry>(
     const status = normalizeForeshadowStatus(f.status)
     const key = openAnchorKey(text)
     if (status === 'resolved') {
-      map.delete(key)
+      deleteOpenAnchorByExactOrSynonym(map, text)
       continue
     }
     map.set(key, { text, status: 'open' } as T)
   }
   return [...map.values()].slice(-cap)
+}
+
+/** 本轮摘要是否像「事项已完成」 */
+const STORY_TIMELINE_TODO_DONE_SIGNAL_RE =
+  /写完|做完|交了|交完|已完成|完成了|搞定|办完|已赴约|赴约了|到场|解决了|已解决|兑现了|已兑现|谈妥|说开了|讲开了|结束了|收工|交差|交掉|交上|写好了|办妥|喝了|喝过/
+
+/** 本轮摘要是否像「取消 / 明确没做」 */
+const STORY_TIMELINE_TODO_CANCEL_SIGNAL_RE =
+  /取消|不去了|已取消|改期取消|错过了|作废|并没有|并未|没有去|没去|忘了|未完成/
+
+/** 从待办文案抽检索词（≥2 字片段 + bigram） */
+function extractTodoMatchTokens(text: string): Set<string> {
+  const compact = normalizeOpenAnchorMatchText(text)
+  const tokens = new Set<string>()
+  for (const m of compact.match(/[\u4e00-\u9fff]{2,6}/g) ?? []) {
+    tokens.add(m)
+  }
+  for (const g of openAnchorBigrams(compact)) {
+    if (g.length >= 2) tokens.add(g)
+  }
+  for (const noise of ['尚未', '还未', '仍须', '需要', '计划', '今晚', '今天', '明天', '准备', '次日']) {
+    tokens.delete(noise)
+  }
+  return tokens
+}
+
+function todoTokenOverlapStrong(todoText: string, haystack: string): boolean {
+  const compact = normalizeOpenAnchorMatchText(haystack)
+  if (compact.length < 4) return false
+  const hayTokens = extractTodoMatchTokens(haystack)
+  const todoTokens = extractTodoMatchTokens(todoText)
+  if (!todoTokens.size) return false
+  let hit = 0
+  for (const tok of todoTokens) {
+    if (tok.length < 2) continue
+    if (compact.includes(tok) || hayTokens.has(tok)) hit++
+  }
+  const strong = [...todoTokens].some(
+    (tok) => tok.length >= 4 && (compact.includes(tok) || hayTokens.has(tok)),
+  )
+  if (hit >= 2 || strong) return true
+  const todoCompact = normalizeOpenAnchorMatchText(todoText)
+  return todoCompact.length >= 6 && compact.includes(todoCompact)
+}
+
+function inferTodoSubject(openText: string): string {
+  if (openText.includes('{{char}}')) return '{{char}}'
+  if (openText.includes('{{user}}')) return '{{user}}'
+  return '角色'
+}
+
+/** 相对期限用语 → 展示用时间短语 */
+function inferTodoTimePhrase(openText: string): string {
+  const t = openText
+  if (/明天|明日|次日|翌日/.test(t)) return '次日'
+  if (/今晚|当天|今日|今天|当晚/.test(t)) return '当日'
+  if (/后天/.test(t)) return '后天'
+  if (/下周/.test(t)) return '下周内'
+  if (/下下周/.test(t)) return '两周内'
+  return '约定时间内'
+}
+
+/** 从待办抽出可接在「并没有在次日…」后的动作核 */
+function extractTodoActionCore(openText: string): string {
+  return openText
+    .replace(/\{\{char\}\}/g, '')
+    .replace(/\{\{user\}\}/g, '')
+    .replace(/要在|计划在|打算在|须在|需要在|准备在/g, '')
+    .replace(/明天|明日|次日|翌日|今晚|今天|今日|当天|当晚|后天|下周|下下周/g, '')
+    .replace(/要|计划|打算|尚未|还未|仍须|准备|将要|须|去/g, '')
+    .replace(/[，。！？、；：\s\u3000]+/g, '')
+    .trim()
+    .slice(0, 40)
+}
+
+function buildMissedTodoResolvedNote(openText: string): string {
+  const subject = inferTodoSubject(openText)
+  const timePhrase = inferTodoTimePhrase(openText)
+  const action = extractTodoActionCore(openText)
+  if (action.length >= 2) return `${subject} 并没有在${timePhrase}${action}`
+  return `${subject} 并未在${timePhrase}完成原定事项`
+}
+
+function buildDoneTodoResolvedNote(openText: string, hint?: string): string {
+  const subject = inferTodoSubject(openText)
+  const action = extractTodoActionCore(openText)
+  const hintTrim = String(hint ?? '').trim()
+  if (hintTrim && hintTrim !== openText.trim()) {
+    const h = hintTrim.slice(0, 80)
+    if (/并没有|并未|没有/.test(h)) return h
+    if (
+      (h.includes(subject) || h.includes('{{char}}') || h.includes('{{user}}')) &&
+      /已|完成|写完|做完|兑现/.test(h)
+    ) {
+      return h
+    }
+  }
+  if (action.length >= 2) return `${subject} 已完成${action}`
+  return `${subject} 已完成原定事项`
+}
+
+function buildCancelledTodoResolvedNote(openText: string): string {
+  const subject = inferTodoSubject(openText)
+  const action = extractTodoActionCore(openText)
+  if (action.length >= 2) return `${subject} 取消了「${action}」`
+  return `${subject} 取消了原定事项`
+}
+
+function markTodoResolved(
+  todo: StoryTimelineTodoEntry,
+  outcome: StoryTimelineTodoOutcome,
+  resolvedNote: string,
+  resolvedAtStoryDay: string | undefined,
+): StoryTimelineTodoEntry {
+  return {
+    text: todo.text,
+    status: 'resolved',
+    ...(todo.openedStoryDay ? { openedStoryDay: todo.openedStoryDay } : {}),
+    outcome,
+    resolvedNote: resolvedNote.slice(0, 160),
+    ...(resolvedAtStoryDay?.trim()
+      ? { resolvedAtStoryDay: resolvedAtStoryDay.trim().slice(0, 48) }
+      : {}),
+  }
+}
+
+function capStoryTimelineTodos(todos: StoryTimelineTodoEntry[]): StoryTimelineTodoEntry[] {
+  const open = todos.filter((t) => t.status === 'open').slice(-STORY_TIMELINE_OPEN_TODO_CAP)
+  const resolved = todos
+    .filter((t) => t.status === 'resolved')
+    .slice(-STORY_TIMELINE_RESOLVED_TODO_CAP)
+  return [...open, ...resolved]
+}
+
+function summaryImpliesTodoDone(todoText: string, summary: string): boolean {
+  if (!todoTokenOverlapStrong(todoText, summary)) return false
+  if (STORY_TIMELINE_TODO_CANCEL_SIGNAL_RE.test(summary) && /并没有|并未|没有|忘了|没去/.test(summary)) {
+    return false
+  }
+  if (STORY_TIMELINE_TODO_DONE_SIGNAL_RE.test(summary)) return true
+  // 摘要直接出现动作且无否定（如「喝了口水」）
+  const action = extractTodoActionCore(todoText)
+  if (action.length >= 2 && normalizeOpenAnchorMatchText(summary).includes(normalizeOpenAnchorMatchText(action))) {
+    return !/并没有|并未|没有|忘了|没去|未/.test(summary)
+  }
+  return false
+}
+
+/**
+ * 用本轮 event_summary 把已兑现的 open 待办转入已完成（不对伏笔做推断）。
+ */
+function autoResolveOpenTodosFromEventSummary(
+  todos: StoryTimelineTodoEntry[],
+  eventSummary: string,
+  resolvedAtStoryDay: string | undefined,
+): StoryTimelineTodoEntry[] {
+  const summary = String(eventSummary ?? '').trim()
+  if (!summary || !todos.length) return todos
+  const day = resolvedAtStoryDay?.trim() || undefined
+  return todos.map((t) => {
+    if (t.status !== 'open') return t
+    if (!summaryImpliesTodoDone(t.text, summary)) return t
+    const cancel = STORY_TIMELINE_TODO_CANCEL_SIGNAL_RE.test(summary)
+    if (cancel && todoTokenOverlapStrong(t.text, summary)) {
+      return markTodoResolved(t, 'cancelled', buildCancelledTodoResolvedNote(t.text), day)
+    }
+    return markTodoResolved(t, 'done', buildDoneTodoResolvedNote(t.text, summary), day)
+  })
+}
+
+/** 相对期限：距 openedStoryDay 的天数；无法识别则 null */
+function inferTodoRelativeDeadlineOffsetDays(text: string): number | null {
+  const t = String(text ?? '')
+  if (/今晚|今天|今日|当天|当晚/.test(t)) return 0
+  if (/明天|明日|次日|翌日/.test(t)) return 1
+  if (/后天/.test(t)) return 2
+  if (/大后天/.test(t)) return 3
+  if (/下下周/.test(t)) return 14
+  if (/下周/.test(t)) return 7
+  if (
+    storyTimelineTextLooksLikeForwardScheduleSnapshot(t) &&
+    /提醒|通知|考核|赴约|截止|提交|比赛|演出/.test(t)
+  ) {
+    return 1
+  }
+  return null
+}
+
+/** 无明确相对期限时，剧情日跨越此天数也视为节点已过 */
+const STORY_TIMELINE_TODO_LARGE_GAP_DAYS = 30
+
+/**
+ * 剧情日跨过待办相对期限（或大跨度）后：转入已完成。
+ * 摘要能证明已做 → done；否则 missed（如「并没有在次日喝水」）。
+ */
+function closeTodosPastDeadlineByTimeSkip(
+  todos: StoryTimelineTodoEntry[],
+  nextStoryDay: string | undefined,
+  eventSummary: string,
+): StoryTimelineTodoEntry[] {
+  const nextMs = nextStoryDay?.trim() ? storyCalendarDayStartMs(nextStoryDay.trim()) : null
+  if (nextMs == null) return todos
+  const summary = String(eventSummary ?? '').trim()
+  const day = nextStoryDay?.trim()
+
+  return todos.map((t) => {
+    if (t.status !== 'open') return t
+    const opened = t.openedStoryDay?.trim()
+    const openedMs = opened ? storyCalendarDayStartMs(opened) : null
+    if (openedMs == null) return t
+    const offset = inferTodoRelativeDeadlineOffsetDays(t.text)
+    const gapDays = (nextMs - openedMs) / 86_400_000
+    let pastDeadline = false
+    if (offset != null) {
+      const deadlineMs = openedMs + offset * 86_400_000
+      pastDeadline = nextMs > deadlineMs
+    } else if (gapDays >= STORY_TIMELINE_TODO_LARGE_GAP_DAYS) {
+      pastDeadline = true
+    }
+    if (!pastDeadline) return t
+    if (summaryImpliesTodoDone(t.text, summary)) {
+      return markTodoResolved(t, 'done', buildDoneTodoResolvedNote(t.text, summary), day)
+    }
+    return markTodoResolved(t, 'missed', buildMissedTodoResolvedNote(t.text), day)
+  })
+}
+
+export function cloneStoryTimelineTodos(
+  todos: StoryTimelineTodoEntry[] | null | undefined,
+): StoryTimelineTodoEntry[] {
+  return (todos ?? []).map((t) => ({ ...t }))
+}
+
+/**
+ * 按单轮 event_summary 更新待办台账（勾销 / 新提出 / 跨日收束）。
+ * 供线下「只吃本轮摘要」与删除/重生后的后续段重放使用。
+ */
+export function applyStoryTimelineTodoLedgerFromRoundSummary(
+  todos: StoryTimelineTodoEntry[],
+  eventSummary: string,
+  currentStoryDay?: string,
+): StoryTimelineTodoEntry[] {
+  const summary = String(eventSummary ?? '').trim()
+  const day = currentStoryDay?.trim() || undefined
+  let next = cloneStoryTimelineTodos(todos)
+  if (summary) {
+    next = autoResolveOpenTodosFromEventSummary(next, summary, day)
+    next = proposeNewOpenTodosFromEventSummary(next, summary, day)
+  }
+  return capStoryTimelineTodos(closeTodosPastDeadlineByTimeSkip(next, day, summary))
+}
+
+function proposeNewOpenTodosFromEventSummary(
+  todos: StoryTimelineTodoEntry[],
+  eventSummary: string,
+  openedStoryDay: string | undefined,
+): StoryTimelineTodoEntry[] {
+  const summary = String(eventSummary ?? '').trim()
+  if (summary.length < 10) return todos
+  // 已完成信号强时不再从摘要新开待办
+  if (STORY_TIMELINE_TODO_DONE_SIGNAL_RE.test(summary) && !/(?:须|需要|记得|约定|计划|尚未)/.test(summary)) {
+    return todos
+  }
+  const re =
+    /(?:\{\{char\}\}|\{\{user\}\})?[^。！？\n]{0,6}(?:须|需要|记得|约定|计划|准备|尚未|还未)(?:在)?(?:明天|次日|今晚|今天|今日|后天|下周)?[^。！？\n]{2,40}/g
+  const found: string[] = []
+  let m: RegExpExecArray | null
+  while ((m = re.exec(summary)) != null) {
+    const raw = m[0].replace(/^[，、；\s]+|[，、；\s]+$/g, '').trim()
+    if (raw.length < 6 || raw.length > 80) continue
+    if (!/(?:须|需要|记得|约定|计划|准备|尚未|还未)/.test(raw)) continue
+    found.push(raw)
+  }
+  if (!found.length) return todos
+  let next = [...todos]
+  const day = openedStoryDay?.trim()
+  for (const text of found.slice(0, 3)) {
+    const dup = next.some(
+      (t) =>
+        t.status === 'open' &&
+        (openAnchorKey(t.text) === openAnchorKey(text) || openAnchorsAreSynonymous(t.text, text)),
+    )
+    if (dup) continue
+    next.push({
+      text: text.slice(0, 160),
+      status: 'open',
+      ...(day ? { openedStoryDay: day } : {}),
+    })
+  }
+  return capStoryTimelineTodos(next)
+}
+
+function backfillTodoOpenedStoryDay(
+  todos: StoryTimelineTodoEntry[],
+  fallbackDay: string | undefined,
+): StoryTimelineTodoEntry[] {
+  const day = fallbackDay?.trim()
+  if (!day) return todos
+  return todos.map((t) =>
+    t.status === 'open' && !t.openedStoryDay?.trim() ? { ...t, openedStoryDay: day } : t,
+  )
+}
+
+/** 记忆页：将某条 open 待办标为已完成 / 逾期未做 */
+export function resolveStoryTimelineOpenTodoInState(
+  state: StoryTimelineState,
+  todoText: string,
+  outcome: StoryTimelineTodoOutcome = 'done',
+): StoryTimelineState {
+  const key = openAnchorKey(todoText)
+  const day = state.currentStoryDay?.trim()
+  const todos = (state.todos ?? []).map((t) => {
+    if (t.status !== 'open') return t
+    if (openAnchorKey(t.text) !== key && !openAnchorsAreSynonymous(t.text, todoText)) return t
+    const note =
+      outcome === 'missed'
+        ? buildMissedTodoResolvedNote(t.text)
+        : outcome === 'cancelled'
+          ? buildCancelledTodoResolvedNote(t.text)
+          : buildDoneTodoResolvedNote(t.text)
+    return markTodoResolved(t, outcome, note, day)
+  })
+  return {
+    ...state,
+    todos: capStoryTimelineTodos(todos),
+    updatedAt: Date.now(),
+  }
+}
+
+/** 记忆页：从台账移除某条（open 或 resolved） */
+export function removeStoryTimelineTodoFromState(
+  state: StoryTimelineState,
+  todoText: string,
+): StoryTimelineState {
+  const key = openAnchorKey(todoText)
+  return {
+    ...state,
+    todos: (state.todos ?? []).filter(
+      (t) => openAnchorKey(t.text) !== key && !openAnchorsAreSynonymous(t.text, todoText),
+    ),
+    updatedAt: Date.now(),
+  }
+}
+
+/** 记忆页：追加一条 open 待办 */
+export function appendStoryTimelineOpenTodoToState(
+  state: StoryTimelineState,
+  todoText: string,
+): StoryTimelineState | null {
+  const text = String(todoText ?? '').trim().slice(0, 160)
+  if (!text) return null
+  const day = state.currentStoryDay?.trim()
+  if (
+    (state.todos ?? []).some(
+      (t) =>
+        t.status === 'open' &&
+        (openAnchorKey(t.text) === openAnchorKey(text) || openAnchorsAreSynonymous(t.text, text)),
+    )
+  ) {
+    return null
+  }
+  return {
+    ...state,
+    todos: capStoryTimelineTodos([
+      ...(state.todos ?? []),
+      { text, status: 'open', ...(day ? { openedStoryDay: day } : {}) },
+    ]),
+    updatedAt: Date.now(),
+  }
 }
 
 function costumeKey(c: StoryTimelineCostumeEntry): string {
@@ -1020,12 +1504,21 @@ export function hasTimelineDeltaContent(delta: StoryTimelineSummaryDelta): boole
   )
 }
 
+export type MergeStoryTimelineStateOpts = {
+  /**
+   * 为 true 时不改动待办台账（约会重建用：待办与摘要解耦，禁止从历史 event_summary 复活）。
+   * 默认 false：本轮摘要仍可按正文自动勾销/提出待办。
+   */
+  skipTodoLedgerMutation?: boolean
+}
+
 /** 将总结增量合并进角色剧情时间轴状态 */
 export function mergeStoryTimelineState(
   prev: StoryTimelineState | null | undefined,
   characterId: string,
   delta: StoryTimelineSummaryDelta,
   scope: StoryTimelineEventScope,
+  opts?: MergeStoryTimelineStateOpts,
 ): StoryTimelineState | null {
   if (!hasTimelineDeltaContent(delta)) return prev ?? null
   const cid = characterId.trim()
@@ -1037,13 +1530,15 @@ export function mergeStoryTimelineState(
     : null
   const deltaApplied = enforceStoryTimelineDeltaChronology(delta, floorMs)
   const now = Date.now()
+  const prevStoryDay = base.currentStoryDay?.trim() || undefined
+  const skipTodos = opts?.skipTodoLedgerMutation === true
   const next: StoryTimelineState = {
     ...base,
     updatedAt: now,
     costumes: [...base.costumes],
     items: [...base.items],
     foreshadows: [...base.foreshadows],
-    todos: [...(base.todos ?? [])],
+    todos: backfillTodoOpenedStoryDay([...(base.todos ?? [])], prevStoryDay),
     recentEvents: [...base.recentEvents],
   }
 
@@ -1095,15 +1590,9 @@ export function mergeStoryTimelineState(
     )
   }
 
-  if (deltaApplied.todos?.length) {
-    next.todos = mergeOpenResolvedAnchorEntries(
-      next.todos ?? [],
-      deltaApplied.todos,
-      STORY_TIMELINE_OPEN_TODO_CAP,
-    )
-  }
-
-  if (deltaApplied.event_summary) {
+  // 待办只走台账（手动/线上同步/按近况重建）；摘要 delta.todos 一律忽略，避免旧档复活
+  const eventSummary = deltaApplied.event_summary?.trim() || ''
+  if (eventSummary) {
     const evt: StoryTimelineEventEntry = {
       id: `evt-${now}-${Math.random().toString(36).slice(2, 7)}`,
       storyDay: deltaApplied.story_day ?? next.currentStoryDay,
@@ -1111,11 +1600,30 @@ export function mergeStoryTimelineState(
       relativeTime: deltaApplied.relative_time,
       location: deltaApplied.location ?? next.currentLocation,
       charactersPresent: deltaApplied.characters_present ?? next.charactersPresent,
-      eventSummary: deltaApplied.event_summary,
+      eventSummary: deltaApplied.event_summary!,
       sourceScope: scope,
       recordedAt: now,
     }
     next.recentEvents = [...next.recentEvents, evt].slice(-STORY_TIMELINE_RECENT_EVENTS_CAP)
+    if (!skipTodos) {
+      next.todos = autoResolveOpenTodosFromEventSummary(
+        next.todos ?? [],
+        eventSummary,
+        next.currentStoryDay,
+      )
+      next.todos = proposeNewOpenTodosFromEventSummary(
+        next.todos ?? [],
+        eventSummary,
+        next.currentStoryDay ?? prevStoryDay,
+      )
+    }
+  }
+
+  if (!skipTodos) {
+    // 剧情日跨过「明天/次日」等期限 → 转入已完成（未兑现则写「并没有在…」）
+    next.todos = capStoryTimelineTodos(
+      closeTodosPastDeadlineByTimeSkip(next.todos ?? [], next.currentStoryDay, eventSummary),
+    )
   }
 
   return next
@@ -1178,7 +1686,7 @@ export function storyTimelineRowPreviewLine(displayText: string): string {
     .filter(Boolean)
   for (const line of lines) {
     if (line.startsWith('【摘要标题】') || line.startsWith('【摘要关键词】') || line.startsWith('【本轮锚点】')) continue
-    if (line.startsWith('【本轮事件】')) return line.replace(/^【本轮事件】/, '').trim().slice(0, 80)
+    if (line.startsWith('【本轮事件】')) return line.replace(/^【本轮事件】/, '').trim().slice(0, 80) || '（本轮事件）'
     return line.slice(0, 80)
   }
   return String(displayText ?? '').slice(0, 80)
@@ -1209,65 +1717,11 @@ export function formatStoryTimelineDeltaForDisplay(
   if (delta.characters_present?.length) anchor.push(`在场 ${delta.characters_present.join('、')}`)
   if (anchor.length) lines.push(`【本轮锚点】${anchor.join(' · ')}`)
 
-  if (delta.costumes && Object.keys(delta.costumes).length) {
-    lines.push(
-      '【服装变更】\n' +
-        Object.entries(delta.costumes)
-          .map(([ch, out]) => `- ${ch}：${out}`)
-          .join('\n'),
-    )
-  }
+  // 服装/物品/伏笔不再写入按轮摘要行；只保留锚点 + 本轮事件
 
-  if (delta.items?.length) {
-    lines.push(
-      '【物品变更】\n' +
-        delta.items
-          .map((it) => {
-            const name = String(it.name ?? '').trim()
-            if (!name) return ''
-            const note = String(it.note ?? '').trim()
-            const tier = String(it.tier ?? '').trim()
-            const tierTag =
-              tier === 'critical' ? '〔关键〕' : tier === 'important' ? '〔重要〕' : ''
-            return `- ${tierTag}${name}${note ? `（${note}）` : ''}`
-          })
-          .filter(Boolean)
-          .join('\n'),
-    )
-  }
-
-  if (delta.foreshadows?.length) {
-    lines.push(
-      '【伏笔·人物动机】\n' +
-        delta.foreshadows
-          .map((f) => {
-            const text = String(f.text ?? '').trim()
-            if (!text) return ''
-            const st = String(f.status ?? 'open').trim().toLowerCase()
-            return `- ${text}${st === 'resolved' ? '（已收）' : ''}`
-          })
-          .filter(Boolean)
-          .join('\n'),
-    )
-  }
-
-  if (delta.todos?.length) {
-    lines.push(
-      '【待办】\n' +
-        delta.todos
-          .map((f) => {
-            const text = String(f.text ?? '').trim()
-            if (!text) return ''
-            const st = String(f.status ?? 'open').trim().toLowerCase()
-            return `- ${text}${st === 'resolved' ? '（已完成）' : ''}`
-          })
-          .filter(Boolean)
-          .join('\n'),
-    )
-  }
-
-  if (delta.event_summary?.trim()) {
-    lines.push(`【本轮事件】${delta.event_summary.trim()}`)
+  const eventBody = delta.event_summary?.trim()
+  if (eventBody) {
+    lines.push(eventBody.includes('\n') ? `【本轮事件】\n${eventBody}` : `【本轮事件】${eventBody}`)
   }
 
   return lines.join('\n\n').trim()
@@ -1403,31 +1857,20 @@ export function hasStructuredStoryTimelineState(state: StoryTimelineState | null
   )
 }
 
-/** 供摘要 API 注入：列出系统内仍 open 的动机伏笔与待办，并要求模型输出 resolved 回收 */
+/** 供摘要 API 注入：仍 open 的旧动机（融入本轮「事件」叙述；勿再输出伏笔分区） */
 export function formatStoryTimelineOpenAnchorsForSummaryPrompt(
   state: StoryTimelineState | null | undefined,
 ): string {
   if (!state || state.manualAnchorBlock?.trim()) return ''
   const openFore = state.foreshadows.filter((f) => f.status === 'open')
-  const openTodos = (state.todos ?? []).filter((t) => t.status === 'open')
-  if (!openFore.length && !openTodos.length) return ''
+  if (!openFore.length) return ''
 
   const parts: string[] = [
-    '【系统已有·未收锚点（须对照正文**末尾**回收；已完结者勿再当作写作指导）】',
+    '【系统已有·未收动机（对照正文末尾；已收束者写入「事件」回溯带过，勿再输出伏笔分区）】',
+    '未收动机（人物内心 / 悬念；非具体待办）：\n' +
+      openFore.map((f) => `- ${f.text}`).join('\n'),
+    STORY_TIMELINE_OPEN_ANCHORS_RECYCLE_RULES,
   ]
-  if (openFore.length) {
-    parts.push(
-      '未收伏笔（人物动机 / 悬念；非具体待办）：\n' +
-        openFore.map((f) => `- ${f.text}`).join('\n'),
-    )
-  }
-  if (openTodos.length) {
-    parts.push(
-      '未完结待办（具体可执行事项）：\n' +
-        openTodos.map((t) => `- ${t.text}`).join('\n'),
-    )
-  }
-  parts.push(STORY_TIMELINE_OPEN_ANCHORS_RECYCLE_RULES)
   return parts.join('\n\n').trim()
 }
 
@@ -1561,14 +2004,11 @@ export function inferStoryTimelineSidePerspective(
   return true
 }
 
-/** 从摘要行提取【本轮事件】全文（供向量索引） */
+/** 从摘要行提取【本轮事件】全文（供向量索引；兼容同行/多行） */
 export function resolveStoryTimelineRowEventSummary(row: StoryTimelinePlotRow): string {
-  return (
-    String(row.rowText ?? '')
-      .match(/【本轮事件】([^\n]+)/)?.[1]
-      ?.trim()
-      .slice(0, STORY_TIMELINE_EVENT_SUMMARY_MAX) ?? ''
-  )
+  const text = String(row.rowText ?? '')
+  const m = text.match(/【本轮事件】\s*\n?([\s\S]*?)(?=\n【[^】]+】|$)/)
+  return trimEventSummary(m?.[1] ?? '') ?? ''
 }
 
 /** 向量语义召回索引文本：标题 + 关键词 + 本轮事件（非全文 rowText） */
@@ -1650,19 +2090,36 @@ export const STORY_TIMELINE_SIDE_PERSPECTIVE_KNOWLEDGE_RULES =
   `【侧幕摘要·信息边界】标有「${STORY_TIMELINE_SIDE_PERSPECTIVE_REDACT_TAG}」的条目：{{char}} **未亲历**该段；不得写成全知旁观或复述用户与他人私下的具体对白/协议；仅可写寻踪、时段错位感或「你去哪了」类合理追问。`.trim()
 
 const STORY_TIMELINE_ROW_OBLIGATION_SECTION_HEADERS = new Set([
+  '【服装变更】',
+  '【物品变更】',
   '【伏笔·人物动机】',
   '【待办】',
+  '【已完成事项】',
 ])
 
-/** 历史摘要行注入时剥离当轮快照里的待办/伏笔（当前义务仅以【当前状态】为准） */
-export function stripStoryTimelineRowObligationSections(rowText: string): string {
+const STORY_TIMELINE_TODO_SECTION_HEADERS = new Set(['【待办】', '【已完成事项】'])
+
+function isStoryTimelineTodoSectionHeader(header: string): boolean {
+  return header.startsWith('【待办') || header.startsWith('【已完成')
+}
+
+function stripStoryTimelineSectionsByHeaders(
+  rowText: string,
+  headers: ReadonlySet<string>,
+  opts?: { matchTodoHeaderPrefix?: boolean },
+): string {
   const lines = String(rowText ?? '').split('\n')
   const out: string[] = []
   let skipSection = false
   for (const line of lines) {
     const t = line.trim()
-    if (t.startsWith('【') && t.endsWith('】')) {
-      if (STORY_TIMELINE_ROW_OBLIGATION_SECTION_HEADERS.has(t)) {
+    // 兼容「【本轮事件】正文同在一行」：只认标题段，勿要求整行以】结尾
+    const header = t.match(/^【[^】]+】/)?.[0]
+    if (header) {
+      const hit =
+        headers.has(header) ||
+        (opts?.matchTodoHeaderPrefix === true && isStoryTimelineTodoSectionHeader(header))
+      if (hit) {
         skipSection = true
         continue
       }
@@ -1673,14 +2130,100 @@ export function stripStoryTimelineRowObligationSections(rowText: string): string
   return out.join('\n').replace(/\n{3,}/g, '\n\n').trim()
 }
 
+/** 历史摘要行：剥离服装/物品/伏笔/待办分区，只留锚点与事件等 */
+export function stripStoryTimelineRowObligationSections(rowText: string): string {
+  return stripStoryTimelineSectionsByHeaders(rowText, STORY_TIMELINE_ROW_OBLIGATION_SECTION_HEADERS, {
+    matchTodoHeaderPrefix: true,
+  })
+}
+
+/** 旧分区摘要正文（含服装/物品/伏笔/待办段） */
+export function storyTimelineRowTextLooksLegacyPartitioned(rowText: string): boolean {
+  return /【服装变更】|【物品变更】|【伏笔·人物动机】|【待办】|【已完成事项】/.test(
+    String(rowText ?? ''),
+  )
+}
+
+/**
+ * 将库内旧分区摘要行本地瘦身：去掉服装/物品/伏笔/待办，只留标题/关键词/锚点/事件。
+ * @returns 写回条数
+ */
+export async function slimStoredStoryTimelineLegacyPartitionsForCharacter(
+  characterId: string,
+): Promise<number> {
+  const cid = characterId.trim()
+  if (!cid) return 0
+  const { personaDb } = await import('../newFriendsPersona/idb')
+  const rows = await personaDb.listStoryTimelinePlotRowsByCharacterId(cid)
+  let written = 0
+  for (const row of rows) {
+    if (!storyTimelineRowTextLooksLegacyPartitioned(row.rowText)) continue
+    const next = stripStoryTimelineRowObligationSections(row.rowText)
+    if (!next || next === String(row.rowText ?? '').trim()) continue
+    await personaDb.upsertStoryTimelinePlotRow({
+      ...row,
+      rowText: next,
+      textHash: computeStoryTimelineRowTextHash(next),
+      embedding: undefined,
+      embeddingHash: undefined,
+      embeddingProvider: undefined,
+      embeddingModelId: undefined,
+    })
+    written += 1
+  }
+  return written
+}
+
+/** 从手动锚点等正文中剔除待办段（清空台账 / 注入时以 state.todos 为准） */
+export function stripStoryTimelineTodoSectionsFromText(rowText: string): string {
+  return stripStoryTimelineSectionsByHeaders(rowText, STORY_TIMELINE_TODO_SECTION_HEADERS, {
+    matchTodoHeaderPrefix: true,
+  })
+}
+
+function formatTodoLedgerSectionsFromState(
+  state: StoryTimelineState,
+  opts?: { currentStoryCalendarMs?: number | null },
+): string {
+  const lines: string[] = []
+  const openTodos = (state.todos ?? []).filter((t) => t.status === 'open')
+  const currentStoryMs =
+    opts?.currentStoryCalendarMs ??
+    (state.currentStoryDay?.trim() ? storyCalendarDayStartMs(state.currentStoryDay.trim()) : null)
+  const openTodosFiltered = openTodos.filter(
+    (t) => !isStaleOpenTodoRelativeSchedule(t.text, currentStoryMs),
+  )
+  if (openTodosFiltered.length) {
+    lines.push('【待办】\n' + openTodosFiltered.map((t) => `- ${t.text}`).join('\n'))
+  }
+
+  const resolvedTodos = (state.todos ?? [])
+    .filter((t) => t.status === 'resolved')
+    .slice(-STORY_TIMELINE_RESOLVED_TODO_PROMPT_CAP)
+  if (resolvedTodos.length) {
+    lines.push(
+      '【已完成事项】（已收束，勿再当作未完待办；含逾期未做的结论）\n' +
+        resolvedTodos
+          .map((t) => `- ${String(t.resolvedNote ?? t.text).trim() || t.text}`)
+          .join('\n'),
+    )
+  }
+  return lines.join('\n\n').trim()
+}
+
 /** 当前世界状态快照（地点/服装/物品/动机伏笔/待办；不含历史事件列表） */
 export function formatStoryTimelineCurrentStateForPrompt(
   state: StoryTimelineState | null | undefined,
   opts?: { currentStoryCalendarMs?: number | null },
 ): string {
   if (!state) return ''
+  const todoLedger = formatTodoLedgerSectionsFromState(state, opts)
   const manual = state.manualAnchorBlock?.trim()
-  if (manual) return manual
+  if (manual) {
+    // 手动锚点可保留地点/服装等，但待办必须以台账为准（避免清空后仍注入旧【待办】）
+    const cleaned = stripStoryTimelineTodoSectionsFromText(manual)
+    return [cleaned, todoLedger].filter(Boolean).join('\n\n').trim()
+  }
   const lines: string[] = []
 
   const anchor: string[] = []
@@ -1718,25 +2261,32 @@ export function formatStoryTimelineCurrentStateForPrompt(
     )
   }
 
-  const openTodos = (state.todos ?? []).filter((t) => t.status !== 'resolved')
-  const currentStoryMs =
-    opts?.currentStoryCalendarMs ??
-    (state.currentStoryDay?.trim() ? storyCalendarDayStartMs(state.currentStoryDay.trim()) : null)
-  const openTodosFiltered = openTodos.filter(
-    (t) => !isStaleOpenTodoRelativeSchedule(t.text, currentStoryMs),
-  )
-  if (openTodosFiltered.length) {
-    lines.push(
-      '【待办】\n' +
-        openTodosFiltered.map((t) => `- ${t.text}`).join('\n'),
-    )
-  }
+  if (todoLedger) lines.push(todoLedger)
 
   return lines.join('\n\n').trim()
 }
 
+/** 仅待办台账（未完 + 最近已完成），供线上同步 / 思维溯源「待办事项」板块 */
+export function formatStoryTimelineTodoLedgerForPrompt(
+  state: StoryTimelineState | null | undefined,
+  opts?: { currentStoryCalendarMs?: number | null },
+): string {
+  if (!state) return ''
+  return formatTodoLedgerSectionsFromState(state, opts)
+}
+
+/**
+ * 向量/语义召回通用硬规则（时间轴行表 + 长期记忆共用措辞）。
+ * 贴在召回块最前：已发生 ≠ 可续写场面。
+ */
+export const VECTOR_RECALL_PAST_EVENT_HARD_RULE =
+  `【向量召回·已发生硬规则】下列由向量/语义召回注入的内容**全部是已发生的历史事件**，**不是**本轮正在发生的场面，也**不是**可接着演的剧本。` +
+  `**禁止**复述、重演、展开记忆里的事情经过、对白或场景描写；` +
+  `**仅可**在相关时用回溯语气当作历史事件一笔带过（如「想起上次…」「那天之后…」），且不得覆盖【当前状态】/尚未总结末尾最新事实。`.trim()
+
 /** 供 prompt 注入：当前快照 + 近端摘要行 + 向量召回行 */
 export const STORY_TIMELINE_VECTOR_RECALL_CANON_RULES =
+  `${VECTOR_RECALL_PAST_EVENT_HARD_RULE}\n` +
   `【历史回忆·事实铁律】下列「语义召回」条目为**摘要表已记载事实**（高于写作灵感与自行发挥）。` +
   `玩家提起相关往事时：**仅可**引用各行【摘要标题】【摘要关键词】【本轮事件】等摘要字段中**已写明**的内容；` +
   `**禁止**编造摘要未出现的对白、物品、交易或情节；**禁止**把摘要当作灵感扩写成未记载细节。`
@@ -1772,6 +2322,34 @@ export function clipStoryTimelinePromptBlock(raw: string, cap: number): string {
 
 export function hasStoryTimelineVectorRecallInBlock(block: string): boolean {
   return String(block ?? '').includes('【语义召回·历史剧情摘要')
+}
+
+/**
+ * 将已格式化的剧情时间轴注入块拆成「当前状态」与「语义召回/近端摘要」，
+ * 便于 prompt 按优先级分两段注入（当前态靠前，召回垫后）。
+ */
+export function splitStoryTimelineInjectBody(block: string): {
+  currentState: string
+  recallAndNear: string
+} {
+  const t = String(block ?? '').trim()
+  if (!t) return { currentState: '', recallAndNear: '' }
+
+  const recallMarkers = ['【语义召回·历史剧情摘要', '【近端剧情摘要'] as const
+  let splitAt = -1
+  for (const m of recallMarkers) {
+    const i = t.indexOf(m)
+    if (i >= 0 && (splitAt < 0 || i < splitAt)) splitAt = i
+  }
+
+  if (splitAt < 0) {
+    // 仅有当前状态（或旧格式整块）：整块视为当前态
+    return { currentState: t, recallAndNear: '' }
+  }
+
+  const currentState = t.slice(0, splitAt).trim()
+  const recallAndNear = t.slice(splitAt).trim()
+  return { currentState, recallAndNear }
 }
 
 export function formatStoryTimelineInjectBody(params: {
@@ -1846,7 +2424,7 @@ export function formatStoryTimelineInjectBody(params: {
 
   if (!parts.length) return ''
   const footer =
-    `（剧情时间轴：当前状态 + 语义召回历史摘要 + 近端摘要；回复须与锚点、服装、物品一致；**语义召回条目须服从【历史回忆·事实铁律】**；**未收动机伏笔与未完结待办**才须承接，已完结者勿再引用；历史摘要仅补事实勿翻转情绪主客体；**描述故事内时空，与每条前缀「系统落库时刻」及【当前时间】独立，勿混用**。` +
+    `（剧情时间轴：当前状态 + 语义召回历史摘要 + 近端摘要；回复须与锚点、服装、物品一致；**语义召回须服从【向量召回·已发生硬规则】与【历史回忆·事实铁律】**（禁止复述经过，仅可历史提起）；**未收动机伏笔与未完结待办**才须承接，已完结者勿再引用；历史摘要仅补事实勿翻转情绪主客体；**描述故事内时空，与每条前缀「系统落库时刻」及【当前时间】独立，勿混用**。` +
     ` ${STORY_TIMELINE_HISTORICAL_ROW_TEMPORAL_RULES}` +
     (hasSidePerspectiveRedact ? ` ${STORY_TIMELINE_SIDE_PERSPECTIVE_KNOWLEDGE_RULES}` : '') +
     `）`

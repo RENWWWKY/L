@@ -1,5 +1,5 @@
 import { AnimatePresence, motion } from 'framer-motion'
-import { Check, Pencil, RotateCcw, Sparkles, Trash2, X } from 'lucide-react'
+import { BookmarkPlus, Check, Eye, EyeOff, Pencil, RotateCcw, Sparkles, Trash2, X } from 'lucide-react'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { isAndroidWeb, resolveAndroidKeyboardPadPx } from '../../../hooks/keyboardInset'
 import {
@@ -40,6 +40,7 @@ export function LoreEntryEditorSheet({
   onPatchItem,
   onDeleteItem,
   onResetToInitial,
+  onMarkAsInitial,
   forPlayerIdentity = false,
   networkPeersForInsert,
   canUseAi,
@@ -58,6 +59,8 @@ export function LoreEntryEditorSheet({
   onDeleteItem: (wbId: string, itemId: string) => void
   /** 尾声延展：恢复本条出厂稿 */
   onResetToInitial?: () => void
+  /** 尾声延展：把当前正文记为出厂定点 */
+  onMarkAsInitial?: () => void
   forPlayerIdentity?: boolean
   networkPeersForInsert: PeerRow[]
   canUseAi: boolean
@@ -72,6 +75,8 @@ export function LoreEntryEditorSheet({
   const [androidKbPad, setAndroidKbPad] = useState(0)
   const [bodyEditing, setBodyEditing] = useState(false)
   const [confirmResetInitial, setConfirmResetInitial] = useState(false)
+  const [confirmMarkInitial, setConfirmMarkInitial] = useState(false)
+  const [showInitialPreview, setShowInitialPreview] = useState(false)
 
   const rawBody = String(item.content ?? '')
   const initialBody = String(item.contentInitial ?? '').trim()
@@ -80,19 +85,38 @@ export function LoreEntryEditorSheet({
     Boolean(onResetToInitial) &&
     initialBody.length > 0 &&
     initialBody !== rawBody.trim()
+  const canMarkAsInitial =
+    item.priority === 'after' &&
+    Boolean(onMarkAsInitial) &&
+    rawBody.trim().length > 0 &&
+    rawBody.trim() !== initialBody
   const { expanded: expandedBody, loading: bodyPreviewLoading } = useCharacterFieldPlaceholderPreview({
     draft: rawBody,
     characterId: character.id,
     worldBookUserPlaceholderBindings: item.userPlaceholderBindings,
     enabled: open && !bodyEditing && !forPlayerIdentity && rawBody.includes('{{'),
   })
+  const { expanded: expandedInitial, loading: initialPreviewLoading } = useCharacterFieldPlaceholderPreview({
+    draft: initialBody,
+    characterId: character.id,
+    worldBookUserPlaceholderBindings: item.userPlaceholderBindings,
+    enabled:
+      open &&
+      showInitialPreview &&
+      !forPlayerIdentity &&
+      initialBody.includes('{{'),
+  })
   const viewBodyText =
     !forPlayerIdentity && rawBody.includes('{{') && expandedBody ? expandedBody : rawBody
+  const viewInitialText =
+    !forPlayerIdentity && initialBody.includes('{{') && expandedInitial ? expandedInitial : initialBody
 
   useEffect(() => {
     if (!open) {
       setBodyEditing(false)
       setConfirmResetInitial(false)
+      setConfirmMarkInitial(false)
+      setShowInitialPreview(false)
     }
   }, [open, itemId])
 
@@ -347,36 +371,114 @@ export function LoreEntryEditorSheet({
                 </div>
               </div>
 
-              {item.priority === 'after' && onResetToInitial ? (
-                <div className="mt-3">
+              {item.priority === 'after' && (onResetToInitial || onMarkAsInitial) ? (
+                <div className="mt-3 space-y-2">
                   <button
                     type="button"
-                    disabled={!canResetToInitial && !confirmResetInitial}
-                    onClick={() => {
-                      if (!canResetToInitial) return
-                      if (!confirmResetInitial) {
-                        setConfirmResetInitial(true)
-                        window.setTimeout(() => setConfirmResetInitial(false), 3600)
-                        return
-                      }
-                      setConfirmResetInitial(false)
-                      onResetToInitial()
-                    }}
+                    disabled={!initialBody}
+                    onClick={() => setShowInitialPreview((v) => !v)}
                     className={`flex w-full items-center justify-center gap-1.5 rounded-2xl border px-3 py-2.5 text-[12px] font-medium transition active:scale-[0.99] disabled:cursor-not-allowed disabled:opacity-40 ${
-                      confirmResetInitial
-                        ? 'border-amber-400/80 bg-amber-50 text-amber-900'
+                      showInitialPreview
+                        ? 'border-violet-300/90 bg-violet-50 text-violet-950'
                         : 'border-stone-200/90 bg-stone-50/90 text-stone-600 hover:bg-white'
                     }`}
                   >
-                    <RotateCcw className="size-3.5 shrink-0" strokeWidth={2} />
-                    {confirmResetInitial
-                      ? '再点确认：恢复本条最初内容'
-                      : canResetToInitial
-                        ? '恢复本条最初尾声'
-                        : initialBody
-                          ? '已是最初尾声'
-                          : '尚无出厂稿可恢复'}
+                    {showInitialPreview ? (
+                      <EyeOff className="size-3.5 shrink-0" strokeWidth={2} />
+                    ) : (
+                      <Eye className="size-3.5 shrink-0" strokeWidth={2} />
+                    )}
+                    {showInitialPreview
+                      ? '收起定点预览'
+                      : initialBody
+                        ? '预览最初尾声'
+                        : '尚无定点可预览'}
                   </button>
+                  <AnimatePresence initial={false}>
+                    {showInitialPreview && initialBody ? (
+                      <motion.div
+                        initial={{ opacity: 0, height: 0 }}
+                        animate={{ opacity: 1, height: 'auto' }}
+                        exit={{ opacity: 0, height: 0 }}
+                        transition={{ duration: 0.2 }}
+                        className="overflow-hidden"
+                      >
+                        <div className="rounded-2xl border border-violet-200/80 bg-violet-50/60 px-3.5 py-3">
+                          <p className="mb-1.5 text-[10px] font-medium uppercase tracking-wider text-violet-500/90">
+                            定点稿预览
+                            {initialBody === rawBody.trim() ? ' · 与当前正文相同' : ' · 与当前正文不同'}
+                          </p>
+                          <p className="whitespace-pre-wrap text-[13px] leading-relaxed text-stone-700">
+                            {initialPreviewLoading ? '展开占位符中…' : viewInitialText}
+                          </p>
+                        </div>
+                      </motion.div>
+                    ) : null}
+                  </AnimatePresence>
+                  {onMarkAsInitial ? (
+                    <button
+                      type="button"
+                      disabled={!canMarkAsInitial && !confirmMarkInitial}
+                      onClick={() => {
+                        if (!canMarkAsInitial) return
+                        if (!confirmMarkInitial) {
+                          setConfirmMarkInitial(true)
+                          window.setTimeout(() => setConfirmMarkInitial(false), 3600)
+                          return
+                        }
+                        setConfirmMarkInitial(false)
+                        onMarkAsInitial()
+                      }}
+                      className={`flex w-full items-center justify-center gap-1.5 rounded-2xl border px-3 py-2.5 text-[12px] font-medium transition active:scale-[0.99] disabled:cursor-not-allowed disabled:opacity-40 ${
+                        confirmMarkInitial
+                          ? 'border-sky-400/80 bg-sky-50 text-sky-950'
+                          : 'border-stone-200/90 bg-stone-50/90 text-stone-600 hover:bg-white'
+                      }`}
+                    >
+                      <BookmarkPlus className="size-3.5 shrink-0" strokeWidth={2} />
+                      {confirmMarkInitial
+                        ? initialBody
+                          ? '再点确认：用当前正文覆盖定点'
+                          : '再点确认：保存为最初版本'
+                        : canMarkAsInitial
+                          ? initialBody
+                            ? '将当前正文标为最初版本'
+                            : '保存当前为最初版本'
+                          : rawBody.trim()
+                            ? '当前已是定点稿'
+                            : '正文为空，无法定点'}
+                    </button>
+                  ) : null}
+                  {onResetToInitial ? (
+                    <button
+                      type="button"
+                      disabled={!canResetToInitial && !confirmResetInitial}
+                      onClick={() => {
+                        if (!canResetToInitial) return
+                        if (!confirmResetInitial) {
+                          setConfirmResetInitial(true)
+                          window.setTimeout(() => setConfirmResetInitial(false), 3600)
+                          return
+                        }
+                        setConfirmResetInitial(false)
+                        onResetToInitial()
+                      }}
+                      className={`flex w-full items-center justify-center gap-1.5 rounded-2xl border px-3 py-2.5 text-[12px] font-medium transition active:scale-[0.99] disabled:cursor-not-allowed disabled:opacity-40 ${
+                        confirmResetInitial
+                          ? 'border-amber-400/80 bg-amber-50 text-amber-900'
+                          : 'border-stone-200/90 bg-stone-50/90 text-stone-600 hover:bg-white'
+                      }`}
+                    >
+                      <RotateCcw className="size-3.5 shrink-0" strokeWidth={2} />
+                      {confirmResetInitial
+                        ? '再点确认：恢复本条最初内容'
+                        : canResetToInitial
+                          ? '恢复本条最初尾声'
+                          : initialBody
+                            ? '已是最初尾声'
+                            : '尚无定点可恢复'}
+                    </button>
+                  ) : null}
                 </div>
               ) : null}
 

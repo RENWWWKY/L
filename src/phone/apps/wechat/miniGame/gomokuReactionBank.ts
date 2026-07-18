@@ -365,7 +365,7 @@ export async function pregenerateGomokuSessionSetup(params: {
     ? `【世界书设定（角色背景与世界观参考）】\n${worldBookText.trim()}`
     : ''
   const memoryBlock = longTermMemoryText?.trim()
-    ? `【长期记忆（向量召回，与当前话题相关片段）】\n${longTermMemoryText.trim().slice(0, 3200)}`
+    ? `【长期记忆（向量召回，与当前话题相关片段）】\n【向量召回·已发生硬规则】下列均为已发生历史；禁止复述事情经过，仅可回溯提起。\n${longTermMemoryText.trim().slice(0, 3200)}`
     : ''
 
   const system = [

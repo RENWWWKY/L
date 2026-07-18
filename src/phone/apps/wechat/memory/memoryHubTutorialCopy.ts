@@ -9,7 +9,7 @@ export const MEMORY_HUB_TUTORIAL_SECTIONS: { title: string; body: string }[] = [
   },
   {
     title: '角色总结',
-    body: '按联系人或群聊浏览已记下的内容。「线上总结」是微信聊天收成的大段文字；「线下摘要」是约会每轮的一行小摘要。',
+    body: '按联系人或群聊浏览已记下的内容。列表页与点进角色后的详情页各有一套独立教程/高亮引导，不会混在一起。',
   },
   {
     title: '尾声延展',

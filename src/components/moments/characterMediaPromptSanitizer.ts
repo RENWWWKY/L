@@ -5,12 +5,15 @@ import {
   stripCharacterMediaSelfiePrefix,
 } from './characterMediaSelfiePrefix'
 import {
+  isCharacterMediaCharacterFaceVisiblePrompt,
   isCharacterMediaDualHandHoldingPrompt,
   isCharacterMediaDualPersonIntimatePrompt,
   isCharacterMediaFingerInterlockPrompt,
   isCharacterMediaFirstPersonBodyPrompt,
   isCharacterMediaFrontCameraSelfiePrompt,
+  isCharacterMediaHandFocusPrompt,
   isCharacterMediaMirrorSelfiePrompt,
+  isCharacterMediaPalmToPalmHoldingPrompt,
   isCharacterMediaPhotographingOthersPrompt,
   isCharacterMediaSelfiePrompt,
 } from './momentsImagePromptEnhancer'
@@ -239,6 +242,14 @@ const VAGUE_INTERLOCK_PART_RE =
 const FINGER_INTERLOCK_CANONICAL =
   'fingers interlaced, interlocked fingers, finger gaps visible between hands'
 
+/** 手心相牵（掌心相对、手指不交叉） */
+const PALM_TO_PALM_CANONICAL =
+  'palm-to-palm hold, palms pressed gently together, fingers not interlaced, thumbs resting along outer sides'
+
+/** 手指数量与手形硬规范（防缺指/多指/融指） */
+const HAND_ANATOMY_CANONICAL =
+  'each hand has exactly 5 fingers including thumb, ten distinct fingertips when both hands shown, anatomically correct human hands, correct finger count, clear finger separation, natural finger joints, no missing fingers, no extra fingers, no fused fingers, no truncated fingers, no deformed fingers'
+
 /** 十指相扣：替换模糊 intertwined/clasped，补全交叉扣入 tag */
 export function fixFingerInterlockPromptParts(parts: string[], original: string): string[] {
   if (!isCharacterMediaFingerInterlockPrompt(original)) return parts
@@ -247,10 +258,41 @@ export function fixFingerInterlockPromptParts(parts: string[], original: string)
   if (!/fingers interlaced|interlocked fingers|finger gaps visible|finger slots/i.test(blob)) {
     merged.push(FINGER_INTERLOCK_CANONICAL)
   }
-  if (!blob.includes('not palm-over-palm clasp')) {
-    merged.push('NOT palm-over-palm clasp', 'NOT one hand gripping on top')
+  if (!blob.includes('not palm-over-palm clasp') && !blob.includes('not palm-to-palm')) {
+    merged.push('NOT palm-to-palm clasp', 'NOT palm-over-palm clasp', 'NOT one hand gripping on top')
   }
   return merged
+}
+
+/** 手心相牵：补全掌心相对 tag，去掉十指交叉词 */
+export function fixPalmToPalmHoldingPromptParts(parts: string[], original: string): string[] {
+  if (!isCharacterMediaPalmToPalmHoldingPrompt(original)) return parts
+  const merged = parts.filter(
+    (part) =>
+      !/\bfingers interlaced\b|\binterlocked fingers\b|\bfinger gaps visible\b|\bfinger slots\b|\bfingers intertwined\b/i.test(
+        part,
+      ),
+  )
+  const blob = merged.join(', ').toLowerCase()
+  if (!/palm-to-palm|palms pressed|fingers not interlaced/i.test(blob)) {
+    merged.push(PALM_TO_PALM_CANONICAL)
+  }
+  if (!blob.includes('not fingers interlaced') && !/fingers not interlaced/i.test(blob)) {
+    merged.push('NOT fingers interlaced', 'NOT interlocked fingers')
+  }
+  return merged
+}
+
+/** 任意手部特写：强制手指数量与手形规范 */
+export function ensureHandAnatomyPromptParts(parts: string[], original: string): string[] {
+  if (!isCharacterMediaHandFocusPrompt(original) && !isCharacterMediaDualHandHoldingPrompt(original)) {
+    return parts
+  }
+  const blob = parts.join(', ').toLowerCase()
+  if (/exactly 5 fingers|ten distinct fingertips|no missing fingers|anatomically correct human hands/i.test(blob)) {
+    return parts
+  }
+  return [...parts, HAND_ANATOMY_CANONICAL]
 }
 
 const DUAL_HAND_CLARITY_TAGS = [
@@ -261,8 +303,29 @@ const DUAL_HAND_CLARITY_TAGS = [
   'NOT single body with two different arms',
 ] as const
 
+/** 不露脸牵手特写：强调两只手，避免 “two separate people” 被画成双人半身 */
+const DUAL_HAND_ONLY_CLARITY_TAGS = [
+  'two separate hands from two people',
+  'only hands and forearms in frame',
+  'partner hand reaches from upper-right',
+  'own hand enters from lower-left',
+  'NOT self-holding',
+  'NOT single body with two different arms',
+  'NOT two people sitting',
+  'NOT upper bodies visible',
+] as const
+
 function dropMisleadingCloseUpForDualIntimate(parts: string[], original: string): string[] {
   if (!isCharacterMediaDualPersonIntimatePrompt(original) || hasCharacterMediaSelfiePrefix(original)) {
+    return parts
+  }
+  // 牵手/不露脸特写需要保留 close-up，不能当成「双人半身」误删
+  if (
+    !isCharacterMediaCharacterFaceVisiblePrompt(original) &&
+    (isCharacterMediaDualHandHoldingPrompt(original) ||
+      isCharacterMediaFingerInterlockPrompt(original) ||
+      /\bno faces?\b|不露脸|手部特写|双手特写/i.test(original))
+  ) {
     return parts
   }
   return parts.filter(
@@ -315,15 +378,40 @@ function sanitizeSelfieCloseUpParts(parts: string[], original: string): string[]
 }
 
 function ensureDualHandHoldingClarity(parts: string[], original: string): string[] {
-  if (!FIRST_PERSON_POV_RE.test(original) || !isCharacterMediaDualHandHoldingPrompt(original)) {
+  if (!isCharacterMediaDualHandHoldingPrompt(original)) {
     return parts
   }
-  const merged = [...parts]
-  const blob = merged.join(', ').toLowerCase()
-  for (const tag of DUAL_HAND_CLARITY_TAGS) {
-    if (!blob.includes(tag.toLowerCase())) merged.push(tag)
+  const handsOnlyNoFace =
+    !isCharacterMediaCharacterFaceVisiblePrompt(original) ||
+    /\bno faces?\b|不露脸|手部特写|双手特写/i.test(original)
+  const tags = handsOnlyNoFace ? DUAL_HAND_ONLY_CLARITY_TAGS : DUAL_HAND_CLARITY_TAGS
+  // 不露脸时去掉易被画成双人半身的 “two separate people”
+  const stripped = handsOnlyNoFace
+    ? parts.filter((part) => !/^two separate people$/i.test(part.trim()))
+    : [...parts]
+  // 非第一人称牵手也清理误导词；补充方向 tag 仅在第一人称时追加
+  if (!FIRST_PERSON_POV_RE.test(original) && !handsOnlyNoFace) {
+    return stripped
   }
-  return merged
+  if (!FIRST_PERSON_POV_RE.test(original) && handsOnlyNoFace) {
+    const next = [...stripped]
+    const blob = next.join(', ').toLowerCase()
+    for (const tag of [
+      'two separate hands from two people',
+      'only hands and forearms in frame',
+      'NOT two people sitting',
+      'NOT upper bodies visible',
+    ] as const) {
+      if (!blob.includes(tag.toLowerCase())) next.push(tag)
+    }
+    return next
+  }
+  const next = [...stripped]
+  const nextBlob = next.join(', ').toLowerCase()
+  for (const tag of tags) {
+    if (!nextBlob.includes(tag.toLowerCase())) next.push(tag)
+  }
+  return next
 }
 
 function sanitizeCharacterMediaImagePromptParts(parts: string[], original: string): string[] {
@@ -336,6 +424,8 @@ function sanitizeCharacterMediaImagePromptParts(parts: string[], original: strin
   cleaned = sanitizeSelfieCloseUpParts(cleaned, original)
   cleaned = ensureDualHandHoldingClarity(cleaned, original)
   cleaned = fixFingerInterlockPromptParts(cleaned, original)
+  cleaned = fixPalmToPalmHoldingPromptParts(cleaned, original)
+  cleaned = ensureHandAnatomyPromptParts(cleaned, original)
   cleaned = dropFrontSelfiePhoneVisibleParts(cleaned, original)
   cleaned = dropRearPovPhoneMetaParts(cleaned, original)
   cleaned = dropAutoInjectedPovOrPhoneParts(cleaned)
@@ -359,6 +449,10 @@ export function sanitizeCharacterMediaImagePrompt(prompt: string): string {
 
   s = stripCharacterMediaAppearanceBlockFromPrompt(s)
   s = s.replace(/十指相扣|十指交扣|指缝相扣/g, 'fingers interlaced, interlocked fingers, finger gaps visible between hands')
+  s = s.replace(
+    /手心相牵|掌心相贴|掌心相对|手心相握|掌心相握/g,
+    'palm-to-palm hold, palms pressed gently together, fingers not interlaced',
+  )
   s = fixFirstPersonPovHandOwnership(s)
   s = stripFrontSelfieMirrorCuePhrases(s)
 

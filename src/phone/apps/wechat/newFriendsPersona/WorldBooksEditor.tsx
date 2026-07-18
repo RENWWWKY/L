@@ -1,5 +1,5 @@
 import { AnimatePresence, motion } from 'framer-motion'
-import { BookOpen, ChevronDown, Link2, RotateCcw, Trash2 } from 'lucide-react'
+import { BookOpen, BookmarkPlus, ChevronDown, Eye, Link2, RotateCcw, Trash2, X } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { ApiConfig } from '../../api/types'
 import { generateWorldBookItemContent } from './ai'
@@ -32,7 +32,11 @@ import { hasMeetVol10GraduatedEpilogue } from '../../lumiMeet/meetNineDimensionW
 import { isMeetSyncedCharacter } from '../../lumiMeet/meetUserProfileSnapshot'
 import { personaDb } from './idb'
 import {
+  countWorldBookAfterMarkableAsInitial,
   countWorldBookAfterResettable,
+  listWorldBookAfterInitialSnapshots,
+  markAllWorldBookAfterContentAsInitial,
+  markWorldBookAfterItemContentAsInitial,
   resetWorldBookAfterItemToInitial,
   resetWorldBookAfterToInitial,
 } from './worldBookAfterPatch'
@@ -59,6 +63,8 @@ export function WorldBooksEditor({
   const [sheetEntry, setSheetEntry] = useState<null | { wbId: string; itemId: string }>(null)
   const [confirmDelete, setConfirmDelete] = useState<null | { kind: 'wb' | 'item'; wbId: string; itemId?: string; title: string }>(null)
   const [confirmResetEpilogue, setConfirmResetEpilogue] = useState(false)
+  const [confirmMarkEpilogue, setConfirmMarkEpilogue] = useState(false)
+  const [epilogueInitialPreviewOpen, setEpilogueInitialPreviewOpen] = useState(false)
   const [generatingKey, setGeneratingKey] = useState<string>('')
   const [wbItemGenPicker, setWbItemGenPicker] = useState<null | { wbId: string; itemId: string }>(null)
   const [archiveGuideOpen, setArchiveGuideOpen] = useState(false)
@@ -328,6 +334,14 @@ export function WorldBooksEditor({
     () => (forPlayerIdentity ? 0 : countWorldBookAfterResettable(character)),
     [character, forPlayerIdentity],
   )
+  const epilogueMarkableCount = useMemo(
+    () => (forPlayerIdentity ? 0 : countWorldBookAfterMarkableAsInitial(character)),
+    [character, forPlayerIdentity],
+  )
+  const epilogueInitialSnapshots = useMemo(
+    () => (forPlayerIdentity ? [] : listWorldBookAfterInitialSnapshots(character)),
+    [character, forPlayerIdentity],
+  )
 
   const handleResetEpilogue = useCallback(() => {
     if (forPlayerIdentity) return
@@ -341,26 +355,59 @@ export function WorldBooksEditor({
     const next = resetWorldBookAfterToInitial(character)
     if (!next) {
       setAlignUserToast(
-        '没有可重置的尾声条目。新生成的人设会自带出厂稿；旧档在尾声被自动更新一次后，也会把更新前正文记为起点。',
+        '没有可重置的尾声条目。请先用「定点尾声」把当前正文存为最初版本；或等自动更新后再试。',
       )
       window.setTimeout(() => setAlignUserToast(null), 5200)
       return
     }
     onChange(next)
-    setAlignUserToast(`已将 ${n} 条尾声延展恢复为最初内容，可重新开始对话。`)
+    setAlignUserToast(`已将 ${n} 条尾声延展恢复为定点内容，可重新开始对话。`)
     window.setTimeout(() => setAlignUserToast(null), 4200)
   }, [character, confirmResetEpilogue, forPlayerIdentity, onChange])
+
+  const handleMarkEpilogueInitial = useCallback(() => {
+    if (forPlayerIdentity) return
+    if (!confirmMarkEpilogue) {
+      setConfirmMarkEpilogue(true)
+      window.setTimeout(() => setConfirmMarkEpilogue(false), 4000)
+      return
+    }
+    setConfirmMarkEpilogue(false)
+    const n = countWorldBookAfterMarkableAsInitial(character)
+    const next = markAllWorldBookAfterContentAsInitial(character)
+    if (!next) {
+      setAlignUserToast('没有可定点的尾声条目（正文为空，或已与定点一致）。')
+      window.setTimeout(() => setAlignUserToast(null), 4200)
+      return
+    }
+    onChange(next)
+    setAlignUserToast(`已将 ${n} 条尾声当前正文记为最初定点；之后可用「重置尾声」回到这一版。`)
+    window.setTimeout(() => setAlignUserToast(null), 4800)
+  }, [character, confirmMarkEpilogue, forPlayerIdentity, onChange])
 
   const handleResetSheetEpilogueItem = useCallback(() => {
     if (!sheetEntry || forPlayerIdentity) return
     const next = resetWorldBookAfterItemToInitial(character, sheetEntry.wbId, sheetEntry.itemId)
     if (!next) {
-      setAlignUserToast('本条尚无出厂稿，或已是最初内容。')
+      setAlignUserToast('本条尚无定点稿，或已是定点内容。')
       window.setTimeout(() => setAlignUserToast(null), 3600)
       return
     }
     onChange(next)
-    setAlignUserToast('已恢复本条尾声为最初内容。')
+    setAlignUserToast('已恢复本条尾声为定点内容。')
+    window.setTimeout(() => setAlignUserToast(null), 3600)
+  }, [character, forPlayerIdentity, onChange, sheetEntry])
+
+  const handleMarkSheetEpilogueItem = useCallback(() => {
+    if (!sheetEntry || forPlayerIdentity) return
+    const next = markWorldBookAfterItemContentAsInitial(character, sheetEntry.wbId, sheetEntry.itemId)
+    if (!next) {
+      setAlignUserToast('正文为空，或当前已是定点稿。')
+      window.setTimeout(() => setAlignUserToast(null), 3600)
+      return
+    }
+    onChange(next)
+    setAlignUserToast('已将本条当前正文记为最初定点。')
     window.setTimeout(() => setAlignUserToast(null), 3600)
   }, [character, forPlayerIdentity, onChange, sheetEntry])
 
@@ -447,23 +494,60 @@ export function WorldBooksEditor({
             编辑说明
           </button>
           {!forPlayerIdentity ? (
-            <button
-              type="button"
-              onClick={handleResetEpilogue}
-              className={`inline-flex items-center gap-1.5 rounded-full border px-3 py-1.5 text-[12px] font-medium shadow-sm transition active:scale-[0.98] ${
-                confirmResetEpilogue
-                  ? 'border-amber-400/80 bg-amber-50 text-amber-900'
-                  : 'border-stone-200/90 bg-white/90 text-stone-600 hover:border-stone-300 hover:bg-white'
-              }`}
-              title="将所有尾声延展条目恢复为人设最初落定的关系快照"
-            >
-              <RotateCcw className="size-3.5 shrink-0" strokeWidth={2} />
-              {confirmResetEpilogue
-                ? '再点确认'
-                : epilogueResettableCount > 0
-                  ? `重置尾声 · ${epilogueResettableCount}`
-                  : '重置尾声'}
-            </button>
+            <>
+              <button
+                type="button"
+                onClick={() => {
+                  if (!epilogueInitialSnapshots.length) {
+                    setAlignUserToast('尚无定点尾声可预览。请先「定点尾声」保存当前正文。')
+                    window.setTimeout(() => setAlignUserToast(null), 4200)
+                    return
+                  }
+                  setEpilogueInitialPreviewOpen(true)
+                }}
+                className="inline-flex items-center gap-1.5 rounded-full border border-stone-200/90 bg-white/90 px-3 py-1.5 text-[12px] font-medium text-stone-600 shadow-sm transition hover:border-stone-300 hover:bg-white active:scale-[0.98]"
+                title="预览已保存的最初尾声定点正文"
+              >
+                <Eye className="size-3.5 shrink-0" strokeWidth={2} />
+                {epilogueInitialSnapshots.length > 0
+                  ? `预览定点 · ${epilogueInitialSnapshots.length}`
+                  : '预览定点'}
+              </button>
+              <button
+                type="button"
+                onClick={handleMarkEpilogueInitial}
+                className={`inline-flex items-center gap-1.5 rounded-full border px-3 py-1.5 text-[12px] font-medium shadow-sm transition active:scale-[0.98] ${
+                  confirmMarkEpilogue
+                    ? 'border-sky-400/80 bg-sky-50 text-sky-950'
+                    : 'border-stone-200/90 bg-white/90 text-stone-600 hover:border-stone-300 hover:bg-white'
+                }`}
+                title="把所有尾声延展的当前正文记为最初定点，供之后「重置尾声」恢复"
+              >
+                <BookmarkPlus className="size-3.5 shrink-0" strokeWidth={2} />
+                {confirmMarkEpilogue
+                  ? '再点确认定点'
+                  : epilogueMarkableCount > 0
+                    ? `定点尾声 · ${epilogueMarkableCount}`
+                    : '定点尾声'}
+              </button>
+              <button
+                type="button"
+                onClick={handleResetEpilogue}
+                className={`inline-flex items-center gap-1.5 rounded-full border px-3 py-1.5 text-[12px] font-medium shadow-sm transition active:scale-[0.98] ${
+                  confirmResetEpilogue
+                    ? 'border-amber-400/80 bg-amber-50 text-amber-900'
+                    : 'border-stone-200/90 bg-white/90 text-stone-600 hover:border-stone-300 hover:bg-white'
+                }`}
+                title="将所有尾声延展条目恢复为已保存的定点稿"
+              >
+                <RotateCcw className="size-3.5 shrink-0" strokeWidth={2} />
+                {confirmResetEpilogue
+                  ? '再点确认'
+                  : epilogueResettableCount > 0
+                    ? `重置尾声 · ${epilogueResettableCount}`
+                    : '重置尾声'}
+              </button>
+            </>
           ) : null}
         </div>
 
@@ -537,8 +621,16 @@ export function WorldBooksEditor({
                       按原文迁出；<strong className="text-stone-800">已绑好的槽位不会改</strong>。多账号请切换后再点一次对齐。
                     </li>
                     <li>
+                      标题下方<strong className="text-stone-800">「预览定点」</strong>
+                      ：查看已保存的最初尾声全文；单条编辑页内也可预览本条定点稿。
+                    </li>
+                    <li>
+                      标题下方<strong className="text-stone-800">「定点尾声」</strong>
+                      ：把<strong className="text-stone-800">当前</strong>所有尾声延展正文存成「最初版本」；旧档没有出厂稿时先点这个。关系推进后若想以新状态为起点，也可再点覆盖定点。
+                    </li>
+                    <li>
                       标题下方<strong className="text-stone-800">「重置尾声」</strong>
-                      ：一键把所有「尾声延展」条目恢复为人设最初落定的正文（对话推进后被自动改写的态度/称呼/边界等）。想重开与角色的关系线时用；需点两次确认。序言介入条目不受影响。
+                      ：一键把所有「尾声延展」恢复为已保存的定点稿。想重开关系线时用；需点两次确认。序言介入条目不受影响。
                     </li>
                   </ul>
                 )}
@@ -684,6 +776,7 @@ export function WorldBooksEditor({
           onPatchItem={updateItem}
           onDeleteItem={removeItem}
           onResetToInitial={forPlayerIdentity ? undefined : handleResetSheetEpilogueItem}
+          onMarkAsInitial={forPlayerIdentity ? undefined : handleMarkSheetEpilogueItem}
           forPlayerIdentity={forPlayerIdentity}
           networkPeersForInsert={networkPeersForInsert}
           canUseAi={canUseAi}
@@ -692,6 +785,77 @@ export function WorldBooksEditor({
           worldBookUserInsertContext={worldBookUserInsertContext}
         />
       ) : null}
+
+      <AnimatePresence>
+        {epilogueInitialPreviewOpen ? (
+          <motion.div
+            className="fixed inset-0 z-[1060] flex items-end justify-center sm:items-center"
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+          >
+            <button
+              type="button"
+              className="absolute inset-0 bg-stone-950/40 backdrop-blur-[2px]"
+              aria-label="关闭定点预览"
+              onClick={() => setEpilogueInitialPreviewOpen(false)}
+            />
+            <motion.div
+              role="dialog"
+              aria-modal="true"
+              aria-labelledby="epilogue-initial-preview-title"
+              initial={{ y: 24, opacity: 0 }}
+              animate={{ y: 0, opacity: 1 }}
+              exit={{ y: 16, opacity: 0 }}
+              transition={{ duration: 0.22, ease: [0.22, 1, 0.36, 1] }}
+              className="relative z-10 flex max-h-[min(82vh,720px)] w-full max-w-lg flex-col overflow-hidden rounded-t-3xl border border-stone-200/90 bg-[#f7f5f1] shadow-2xl sm:rounded-3xl"
+            >
+              <div className="flex items-center justify-between gap-3 border-b border-stone-200/80 px-4 py-3.5">
+                <div className="min-w-0">
+                  <p
+                    id="epilogue-initial-preview-title"
+                    className="text-[15px] font-semibold tracking-tight text-stone-900"
+                  >
+                    最初尾声定点
+                  </p>
+                  <p className="mt-0.5 text-[11px] text-stone-500">
+                    只读预览 · 共 {epilogueInitialSnapshots.length} 条
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setEpilogueInitialPreviewOpen(false)}
+                  className="flex size-9 shrink-0 items-center justify-center rounded-full bg-stone-200/70 text-stone-600 transition hover:bg-stone-300/80"
+                  aria-label="关闭"
+                >
+                  <X className="size-4" strokeWidth={2} />
+                </button>
+              </div>
+              <div className="min-h-0 flex-1 overflow-y-auto px-4 py-3 [-webkit-overflow-scrolling:touch]">
+                <ul className="space-y-3 pb-[max(1rem,env(safe-area-inset-bottom))]">
+                  {epilogueInitialSnapshots.map((row) => (
+                    <li
+                      key={`${row.worldBookId}:${row.itemId}`}
+                      className="rounded-2xl border border-violet-200/70 bg-white/95 px-3.5 py-3 shadow-sm"
+                    >
+                      <p className="text-[12px] font-medium text-stone-800">
+                        {row.itemName}
+                        <span className="ml-1.5 font-normal text-stone-400">· {row.worldBookName}</span>
+                      </p>
+                      <p className="mt-1 text-[10px] text-violet-600/90">
+                        {row.differsFromCurrent ? '与当前正文不同' : '与当前正文相同'}
+                      </p>
+                      <p className="mt-2 whitespace-pre-wrap text-[13px] leading-relaxed text-stone-700">
+                        {row.contentInitial}
+                      </p>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            </motion.div>
+          </motion.div>
+        ) : null}
+      </AnimatePresence>
 
       <WorldBookItemGenLengthModal
         open={!!wbItemGenPicker}

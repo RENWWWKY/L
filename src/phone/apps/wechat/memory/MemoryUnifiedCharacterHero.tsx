@@ -24,7 +24,10 @@ export function MemoryUnifiedCharacterHero({
 
   return (
     <div className="px-4 pt-2" style={{ background: ARCHIVE_BG }}>
-      <div className="overflow-hidden rounded-[28px] bg-white px-4 py-5 shadow-[0_10px_40px_rgba(0,0,0,0.04)]">
+      <div
+        data-memory-coach="detail-hero"
+        className="overflow-hidden rounded-[28px] bg-white px-4 py-5 shadow-[0_10px_40px_rgba(0,0,0,0.04)]"
+      >
         <div className="flex items-start gap-3">
           <div className="flex h-14 w-14 shrink-0 items-center justify-center overflow-hidden rounded-full bg-gray-100 ring-4 ring-gray-50">
             {character.avatarUrl ? (

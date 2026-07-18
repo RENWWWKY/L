@@ -40,7 +40,10 @@ import { MemoryCharacterDetailView } from './MemoryCharacterDetailView'
 import { MemoryCharacterRoster } from './MemoryCharacterRoster'
 import { MemoryList } from './MemoryList'
 import { MemoryEditorSheet } from './MemoryEditorSheet'
-import { MemoryStoryTimelineDetailSection } from './MemoryStoryTimelineDetailSection'
+import {
+  MemoryStoryTimelineDetailSection,
+  MemoryTodoLedgerSection,
+} from './MemoryStoryTimelineDetailSection'
 import { MemoryUnifiedCharacterHero } from './MemoryUnifiedCharacterHero'
 import {
   MemoryCharacterSourceTabNav,
@@ -58,25 +61,50 @@ import {
   type StoryTimelineEditorTarget,
 } from './StoryTimelineEditorSheet'
 import {
+  appendStoryTimelineOpenTodoToState,
+  createEmptyStoryTimelineState,
   prepareStoryTimelineArchiveDisplayText,
+  removeStoryTimelineTodoFromState,
+  resolveStoryTimelineOpenTodoInState,
+  stripStoryTimelineRowObligationSections,
   type StoryTimelinePlotRow,
+  type StoryTimelineState,
 } from './storyTimelineTypes'
 import { runManualStoryTimelineSummary } from './storyTimelinePerRoundSync'
+import {
+  clearStoryTimelineTodoLedger,
+  rebuildStoryTimelineTodoLedgerFromRecentContext,
+} from './storyTimelineTodoLedgerRebuild'
 import { buildUnifiedSummaryRoster, type MemoryUnifiedRosterItem } from './memoryUnifiedSummaryArchive'
 import type { ApiConfig } from '../../api/types'
-import { ARCHIVE_BG } from './memoryArchiveTheme'
+import {
+  ARCHIVE_BG,
+  MEMORY_ARCHIVE_SERIF_CLASS,
+  archiveSerifTextStyle,
+} from './memoryArchiveTheme'
 import { useDebouncedValue } from './useDebouncedValue'
 import { resolveWorldBookUserInsertContext } from '../charUserPlaceholders'
 import {
   alignAllStoredMemoryUserPlaceholders,
   summarizeMemoryUserPlaceholders,
 } from '../memoryUserPlaceholderBindings'
-import { MEMORY_ARCHIVE_COACH_STEPS, MEMORY_ARCHIVE_START_COACH_EVENT } from './memoryArchiveCoachSteps'
+import {
+  MEMORY_ARCHIVE_COACH_STEPS,
+  MEMORY_ARCHIVE_OPEN_TUTORIAL_EVENT,
+  MEMORY_ARCHIVE_START_COACH_EVENT,
+} from './memoryArchiveCoachSteps'
+import {
+  MEMORY_ARCHIVE_DETAIL_COACH_STEPS,
+  MEMORY_ARCHIVE_DETAIL_OPEN_TUTORIAL_EVENT,
+  MEMORY_ARCHIVE_DETAIL_START_COACH_EVENT,
+} from './memoryArchiveDetailCoachSteps'
+import { MEMORY_ARCHIVE_DETAIL_TUTORIAL_SECTIONS } from './memoryArchiveDetailTutorialCopy'
 import { MEMORY_ARCHIVE_TUTORIAL_SECTIONS } from './memoryArchiveTutorialCopy'
 import { MemoryCoachPortal } from './MemoryCoachPortal'
 import { MemoryTutorialModal } from './MemoryTutorialModal'
 import {
   MEMORY_ARCHIVE_COACH_SEEN_KEY,
+  MEMORY_ARCHIVE_DETAIL_COACH_SEEN_KEY,
   MEMORY_HUB_COACH_SEEN_KEY,
   readMemoryCoachSeen,
   writeMemoryCoachSeen,
@@ -131,9 +159,12 @@ export function MemoryArchivePanel({
   const [alignUserToast, setAlignUserToast] = useState<string | null>(null)
   const [userInsertCtx, setUserInsertCtx] =
     useState<import('../charUserPlaceholders').WorldBookUserInsertContext | null>(null)
-  const [tutorialOpen, setTutorialOpen] = useState(false)
+  const [rosterTutorialOpen, setRosterTutorialOpen] = useState(false)
+  const [detailTutorialOpen, setDetailTutorialOpen] = useState(false)
   const [coachOpen, setCoachOpen] = useState(false)
   const [coachStepIndex, setCoachStepIndex] = useState(0)
+  const [detailCoachOpen, setDetailCoachOpen] = useState(false)
+  const [detailCoachStepIndex, setDetailCoachStepIndex] = useState(0)
   const [clearAllConfirmOpen, setClearAllConfirmOpen] = useState(false)
   const [clearAllBusy, setClearAllBusy] = useState(false)
   const accountBootstrappedForAccountRef = useRef<string | null>(null)
@@ -142,6 +173,7 @@ export function MemoryArchivePanel({
   const [charRealNameById, setCharRealNameById] = useState<Map<string, string>>(() => new Map())
   const [offlineRoster, setOfflineRoster] = useState<StoryTimelineArchiveRosterItem[]>([])
   const [detailTimelineRows, setDetailTimelineRows] = useState<StoryTimelinePlotRow[]>([])
+  const [detailTimelineState, setDetailTimelineState] = useState<StoryTimelineState | null>(null)
   const [timelineRowDisplayById, setTimelineRowDisplayById] = useState<Map<string, string>>(
     () => new Map(),
   )
@@ -154,6 +186,8 @@ export function MemoryArchivePanel({
   const [timelineAlignFeedback, setTimelineAlignFeedback] = useState('')
   const [detailSourceTab, setDetailSourceTab] = useState<MemoryCharacterSourceTab>('online')
   const [detailTimelineHasState, setDetailTimelineHasState] = useState(false)
+  const [todoRebuildBusy, setTodoRebuildBusy] = useState(false)
+  const [todoRebuildFeedback, setTodoRebuildFeedback] = useState('')
 
   const reload = useCallback(async (opts?: { silent?: boolean }) => {
     if (!opts?.silent) setLoading(true)
@@ -266,35 +300,123 @@ export function MemoryArchivePanel({
   }, [reload])
 
   const startLiveCoach = useCallback(() => {
+    setDetailCoachOpen(false)
+    setDetailCoachStepIndex(0)
+    setDetailTutorialOpen(false)
+    setRosterTutorialOpen(false)
     setCoachStepIndex(0)
     setCoachOpen(true)
+  }, [])
+
+  const startDetailLiveCoach = useCallback(() => {
+    setCoachOpen(false)
+    setCoachStepIndex(0)
+    setRosterTutorialOpen(false)
+    setDetailTutorialOpen(false)
+    setDetailCoachStepIndex(0)
+    setDetailCoachOpen(true)
   }, [])
 
   const finishCoach = useCallback((opts?: { openTutorial?: boolean }) => {
     writeMemoryCoachSeen(MEMORY_ARCHIVE_COACH_SEEN_KEY)
     setCoachOpen(false)
     setCoachStepIndex(0)
-    if (opts?.openTutorial) setTutorialOpen(true)
+    if (opts?.openTutorial) setRosterTutorialOpen(true)
+  }, [])
+
+  const finishDetailCoach = useCallback((opts?: { openTutorial?: boolean }) => {
+    writeMemoryCoachSeen(MEMORY_ARCHIVE_DETAIL_COACH_SEEN_KEY)
+    setDetailCoachOpen(false)
+    setDetailCoachStepIndex(0)
+    if (opts?.openTutorial) setDetailTutorialOpen(true)
   }, [])
 
   useEffect(() => {
     if (!coachActive) {
       setCoachOpen(false)
       setCoachStepIndex(0)
+      setDetailCoachOpen(false)
+      setDetailCoachStepIndex(0)
       return
     }
     if (loading) return
+    if (archiveView !== 'roster') return
     if (!readMemoryCoachSeen(MEMORY_HUB_COACH_SEEN_KEY)) return
     if (readMemoryCoachSeen(MEMORY_ARCHIVE_COACH_SEEN_KEY)) return
     const id = window.setTimeout(() => startLiveCoach(), 640)
     return () => window.clearTimeout(id)
-  }, [loading, startLiveCoach, coachActive])
+  }, [loading, startLiveCoach, coachActive, archiveView])
 
   useEffect(() => {
-    const onStart = () => startLiveCoach()
+    if (!coachActive) return
+    if (loading) return
+    if (archiveView !== 'detail' || !selectedCharId) return
+    if (readMemoryCoachSeen(MEMORY_ARCHIVE_DETAIL_COACH_SEEN_KEY)) return
+    if (coachOpen) return
+    const id = window.setTimeout(() => startDetailLiveCoach(), 520)
+    return () => window.clearTimeout(id)
+  }, [
+    loading,
+    coachActive,
+    archiveView,
+    selectedCharId,
+    coachOpen,
+    startDetailLiveCoach,
+  ])
+
+  useEffect(() => {
+    const onStart = () => {
+      if (archiveView !== 'roster') return
+      startLiveCoach()
+    }
     window.addEventListener(MEMORY_ARCHIVE_START_COACH_EVENT, onStart)
     return () => window.removeEventListener(MEMORY_ARCHIVE_START_COACH_EVENT, onStart)
-  }, [startLiveCoach])
+  }, [archiveView, startLiveCoach])
+
+  useEffect(() => {
+    const onStart = () => {
+      if (archiveView !== 'detail') return
+      startDetailLiveCoach()
+    }
+    window.addEventListener(MEMORY_ARCHIVE_DETAIL_START_COACH_EVENT, onStart)
+    return () => window.removeEventListener(MEMORY_ARCHIVE_DETAIL_START_COACH_EVENT, onStart)
+  }, [archiveView, startDetailLiveCoach])
+
+  useEffect(() => {
+    const onOpenDetail = () => {
+      if (archiveView !== 'detail') return
+      setRosterTutorialOpen(false)
+      setDetailTutorialOpen(true)
+    }
+    const onOpenRoster = () => {
+      if (archiveView !== 'roster') return
+      setDetailTutorialOpen(false)
+      setRosterTutorialOpen(true)
+    }
+    window.addEventListener(MEMORY_ARCHIVE_DETAIL_OPEN_TUTORIAL_EVENT, onOpenDetail)
+    window.addEventListener(MEMORY_ARCHIVE_OPEN_TUTORIAL_EVENT, onOpenRoster)
+    return () => {
+      window.removeEventListener(MEMORY_ARCHIVE_DETAIL_OPEN_TUTORIAL_EVENT, onOpenDetail)
+      window.removeEventListener(MEMORY_ARCHIVE_OPEN_TUTORIAL_EVENT, onOpenRoster)
+    }
+  }, [archiveView])
+
+  /** 进详情时关掉列表引导；回列表时关掉详情引导——两套互不串台 */
+  useEffect(() => {
+    if (archiveView === 'detail') {
+      if (coachOpen) {
+        setCoachOpen(false)
+        setCoachStepIndex(0)
+      }
+      if (rosterTutorialOpen) setRosterTutorialOpen(false)
+      return
+    }
+    if (detailCoachOpen) {
+      setDetailCoachOpen(false)
+      setDetailCoachStepIndex(0)
+    }
+    if (detailTutorialOpen) setDetailTutorialOpen(false)
+  }, [archiveView]) // eslint-disable-line react-hooks/exhaustive-deps -- 仅随视图切换清理对侧教程
 
   useEffect(() => {
     let cancelled = false
@@ -430,6 +552,7 @@ export function MemoryArchivePanel({
   const loadTimelineDetail = useCallback(async (charId: string) => {
     const { rows, state } = await loadStoryTimelineArchiveForCharacter(charId)
     setDetailTimelineRows(rows)
+    setDetailTimelineState(state)
     setDetailTimelineHasState(
       !!(
         state?.manualAnchorBlock?.trim() ||
@@ -445,20 +568,23 @@ export function MemoryArchivePanel({
     )
     const expandedRows = await Promise.all(
       rows.map(async (row) =>
-        prepareStoryTimelineArchiveDisplayText(
-          await personaDb.expandStoryTimelineTextForDisplay(charId, row.rowText),
-          row.recordedAt,
+        stripStoryTimelineRowObligationSections(
+          prepareStoryTimelineArchiveDisplayText(
+            await personaDb.expandStoryTimelineTextForDisplay(charId, row.rowText),
+            row.recordedAt,
+          ),
         ),
       ),
     )
     const displayMap = new Map<string, string>()
     rows.forEach((row, i) => {
-      displayMap.set(row.id, expandedRows[i] ?? row.rowText)
+      displayMap.set(row.id, expandedRows[i] ?? stripStoryTimelineRowObligationSections(row.rowText))
     })
     setTimelineRowDisplayById(displayMap)
     const latest = await gatherLatestRoundBodyForEpilogue(charId)
     setTimelineAlignDraft(latest)
     setTimelineAlignFeedback('')
+    setTodoRebuildFeedback('')
   }, [])
 
   useEffect(() => {
@@ -489,6 +615,95 @@ export function MemoryArchivePanel({
     },
     [refreshAfterTimelineMutation],
   )
+
+  const persistTimelineStatePatch = useCallback(
+    async (next: StoryTimelineState) => {
+      await personaDb.putStoryTimelineState(next)
+      setDetailTimelineState(next)
+      setDetailTimelineHasState(true)
+      await reload({ silent: true })
+    },
+    [reload],
+  )
+
+  const handleResolveTodo = useCallback(
+    async (todoText: string, outcome: 'done' | 'missed') => {
+      if (!selectedCharId) return
+      const base =
+        detailTimelineState ?? createEmptyStoryTimelineState(selectedCharId)
+      const next = resolveStoryTimelineOpenTodoInState(base, todoText, outcome)
+      await persistTimelineStatePatch({ ...next, characterId: selectedCharId })
+    },
+    [detailTimelineState, persistTimelineStatePatch, selectedCharId],
+  )
+
+  const handleRemoveTodo = useCallback(
+    async (todoText: string) => {
+      if (!selectedCharId || !detailTimelineState) return
+      const next = removeStoryTimelineTodoFromState(detailTimelineState, todoText)
+      await persistTimelineStatePatch({ ...next, characterId: selectedCharId })
+    },
+    [detailTimelineState, persistTimelineStatePatch, selectedCharId],
+  )
+
+  const handleAppendTodo = useCallback(
+    async (todoText: string) => {
+      if (!selectedCharId) return
+      const base =
+        detailTimelineState ?? createEmptyStoryTimelineState(selectedCharId)
+      const next = appendStoryTimelineOpenTodoToState(base, todoText)
+      if (!next) return
+      await persistTimelineStatePatch({ ...next, characterId: selectedCharId })
+    },
+    [detailTimelineState, persistTimelineStatePatch, selectedCharId],
+  )
+
+  const handleClearTodoLedger = useCallback(async () => {
+    if (!selectedCharId || todoRebuildBusy) return
+    setTodoRebuildBusy(true)
+    setTodoRebuildFeedback('')
+    try {
+      const n = await clearStoryTimelineTodoLedger(selectedCharId)
+      setTodoRebuildFeedback(n > 0 ? `已清空 ${n} 条待办（摘要正文未改动）。` : '台账已是空的。')
+      await loadTimelineDetail(selectedCharId)
+      await reload({ silent: true })
+    } finally {
+      setTodoRebuildBusy(false)
+    }
+  }, [loadTimelineDetail, reload, selectedCharId, todoRebuildBusy])
+
+  const handleRebuildTodoLedger = useCallback(async () => {
+    if (!selectedCharId || !selectedUnifiedCharacter || todoRebuildBusy) return
+    setTodoRebuildBusy(true)
+    setTodoRebuildFeedback('')
+    try {
+      const outcome = await rebuildStoryTimelineTodoLedgerFromRecentContext({
+        apiConfig: apiConfig ?? null,
+        characterId: selectedCharId,
+        displayName: selectedUnifiedCharacter.displayName,
+      })
+      if (outcome.status === 'applied') {
+        setTodoRebuildFeedback(
+          outcome.openCount > 0
+            ? `已按最近 ${outcome.replyCount} 轮模型回复重建，写入 ${outcome.openCount} 条未完待办。`
+            : `已按最近 ${outcome.replyCount} 轮模型回复重建；未识别到仍有效的未完待办。`,
+        )
+        await loadTimelineDetail(selectedCharId)
+        await reload({ silent: true })
+      } else {
+        setTodoRebuildFeedback(outcome.reason || '重建失败')
+      }
+    } finally {
+      setTodoRebuildBusy(false)
+    }
+  }, [
+    apiConfig,
+    loadTimelineDetail,
+    reload,
+    selectedCharId,
+    selectedUnifiedCharacter,
+    todoRebuildBusy,
+  ])
 
   const handleTimelineRunAlign = useCallback(async () => {
     if (!selectedCharId || !selectedUnifiedCharacter || timelineAlignBusy) return
@@ -632,7 +847,7 @@ export function MemoryArchivePanel({
   ])
 
   const clearAllDefaultScope = useMemo((): MemoryArchiveClearScope => {
-    if (detailSourceTab === 'offline') return 'offline'
+    if (detailSourceTab === 'offline' || detailSourceTab === 'todos') return 'offline'
     if (detailSourceTab === 'online') return 'online'
     return 'both'
   }, [detailSourceTab])
@@ -669,15 +884,6 @@ export function MemoryArchivePanel({
     [unifiedRoster],
   )
 
-  const backToRoster = useCallback(() => {
-    setClearAllConfirmOpen(false)
-    setArchiveView('roster')
-    setSelectedCharId(null)
-    setTypeFilters(new Set())
-    scrollerRef.current?.scrollTo({ top: 0, behavior: 'auto' })
-    onCharacterPageChange?.(null)
-  }, [onCharacterPageChange])
-
   useEffect(() => {
     publishCharacterPage()
   }, [publishCharacterPage])
@@ -711,36 +917,33 @@ export function MemoryArchivePanel({
   }, [archiveView, navigateCharacter, onRegisterCharacterNav])
 
   useEffect(() => {
-    if (!coachOpen) return
-    const step = MEMORY_ARCHIVE_COACH_STEPS[coachStepIndex]
+    if (!detailCoachOpen || archiveView !== 'detail') return
+    const step = MEMORY_ARCHIVE_DETAIL_COACH_STEPS[detailCoachStepIndex]
     const target = step?.target
     if (!target) return
 
-    const rosterSteps = new Set([
-      'roster',
-      'source',
-      'search',
-      'align',
+    const onlineTargets = new Set([
+      'detail-source-tabs',
       'create',
-      'memories-tab-tutorial',
+      'search',
+      'type-filter',
+      'list',
+      'detail-tutorial',
+      'clear-all',
+      'detail-hero',
     ])
-    const detailSteps = new Set(['detail-source-tabs', 'type-filter', 'list'])
-
-    if (rosterSteps.has(target) && archiveView === 'detail') {
-      backToRoster()
+    if (onlineTargets.has(target)) {
+      setDetailSourceTab('online')
       return
     }
-    if (detailSteps.has(target) && archiveView === 'roster' && rosterForDisplay.length > 0) {
-      openCharacter(rosterForDisplay[0]!.charId)
+    if (target === 'detail-offline' || target === 'detail-offline-manual') {
+      setDetailSourceTab('offline')
       return
     }
-    if ((target === 'type-filter' || target === 'list') && archiveView === 'detail') {
-      setDetailSourceTab('online')
+    if (target === 'detail-todos') {
+      setDetailSourceTab('todos')
     }
-    if (target === 'detail-source-tabs' && archiveView === 'detail') {
-      setDetailSourceTab('online')
-    }
-  }, [coachOpen, coachStepIndex, archiveView, rosterForDisplay, openCharacter, backToRoster])
+  }, [detailCoachOpen, detailCoachStepIndex, archiveView])
 
   const openCreate = () => {
     setEditorMode('create')
@@ -793,6 +996,7 @@ export function MemoryArchivePanel({
       setSearch('')
       if (scope === 'offline' || scope === 'both') {
         setDetailTimelineRows([])
+        setDetailTimelineState(null)
         setTimelineRowDisplayById(new Map())
         setDetailTimelineHasState(false)
       }
@@ -841,7 +1045,6 @@ export function MemoryArchivePanel({
                 onAlignUser={runAlignUserPlaceholders}
                 alignUserToast={alignUserToast}
                 rosterSummary={rosterSummary}
-                onOpenTutorial={() => setTutorialOpen(true)}
               />
               {!loading && rosterForDisplay.length > 0 ? (
                 <div className="mx-auto max-w-xl px-4 pb-1 pt-2">
@@ -879,6 +1082,7 @@ export function MemoryArchivePanel({
                   }}
                   onlineCount={selectedUnifiedCharacter.onlineMemoryCount}
                   offlineCount={selectedUnifiedCharacter.offlineRowCount}
+                  todoCount={(detailTimelineState?.todos ?? []).filter((t) => t.status === 'open').length}
                 />
               </div>
               {detailSourceTab === 'offline' ? (
@@ -895,52 +1099,73 @@ export function MemoryArchivePanel({
                   onRunAlign={() => void handleTimelineRunAlign()}
                   onGatherLatest={() => void handleTimelineGatherLatest()}
                 />
+              ) : detailSourceTab === 'todos' ? (
+                <div
+                  className={`mx-4 mt-4 ${MEMORY_ARCHIVE_SERIF_CLASS}`}
+                  style={archiveSerifTextStyle}
+                >
+                  <MemoryTodoLedgerSection
+                    characterId={selectedCharId}
+                    showSectionHeading={false}
+                    state={detailTimelineState}
+                    actionBusy={todoRebuildBusy}
+                    actionFeedback={todoRebuildFeedback}
+                    onResolveOpen={(text, outcome) => void handleResolveTodo(text, outcome)}
+                    onRemove={(text) => void handleRemoveTodo(text)}
+                    onAppend={(text) => void handleAppendTodo(text)}
+                    onClearLedger={() => void handleClearTodoLedger()}
+                    onRebuildFromRecent={() => void handleRebuildTodoLedger()}
+                  />
+                </div>
               ) : (
                 <MemoryCharacterDetailView
                   character={detailCharacter}
                   rosterIndex={selectedRosterIndex}
                   rosterTotal={unifiedRoster.length}
                   layout="onlineSection"
-              search={search}
-              onSearchChange={setSearch}
-              accountOptions={accountOptions}
-              selectedAccountId={selectedAccountId}
-              onAccountChange={(id) => {
-                setSelectedAccountId(id)
-                setTypeFilters(new Set())
-              }}
-              typeFilters={typeFilters}
-              onTypeFiltersChange={setTypeFilters}
-              availableTypeFilters={availableTypeFilters}
-              filteredCount={filtered.length}
-              totalCount={characterTotalCount}
-              onCreate={openCreate}
-              onOpenTutorial={() => setTutorialOpen(true)}
-              onAlignUser={runAlignUserPlaceholders}
-              alignUserBusy={alignUserBusy}
-              alignUserDisabled={userPlaceholderSummary.slotCount === 0}
-              alignUserTitle={
-                userPlaceholderSummary.slotCount === 0
-                  ? '当前记忆库中没有 {{user}} 表达式'
-                  : userInsertCtx
-                    ? `先按各条来源线对齐；未绑定的 {{user}} 将绑到当前账号「${userInsertCtx.displayName || userInsertCtx.lineLabel}」；已有绑定不变`
-                    : '请先在当前微信账号下选择扮演身份'
-              }
-              alignUserToast={alignUserToast}
-            >
-              <MemoryList
-                entries={filtered}
-                loading={loading}
-                inCharacterContext
-                emptyHint={
-                  characterTotalCount === 0
-                    ? '该角色在当前账号下暂无记忆；可切换上方查看账号，或用「遇见应用」标签筛选 Lumi Meet 记忆，或点上方按钮新建。'
-                    : '调整检索词或记忆类型，或点上方按钮新建记忆。'
-                }
-                onEdit={openEdit}
-                onDelete={(e) => void handleDelete(e)}
-              />
-            </MemoryCharacterDetailView>
+                  search={search}
+                  onSearchChange={setSearch}
+                  accountOptions={accountOptions}
+                  selectedAccountId={selectedAccountId}
+                  onAccountChange={(id) => {
+                    setSelectedAccountId(id)
+                    setTypeFilters(new Set())
+                  }}
+                  typeFilters={typeFilters}
+                  onTypeFiltersChange={setTypeFilters}
+                  availableTypeFilters={availableTypeFilters}
+                  filteredCount={filtered.length}
+                  totalCount={characterTotalCount}
+                  onCreate={openCreate}
+                  onOpenTutorial={() => {
+                    setRosterTutorialOpen(false)
+                    setDetailTutorialOpen(true)
+                  }}
+                  onAlignUser={runAlignUserPlaceholders}
+                  alignUserBusy={alignUserBusy}
+                  alignUserDisabled={userPlaceholderSummary.slotCount === 0}
+                  alignUserTitle={
+                    userPlaceholderSummary.slotCount === 0
+                      ? '当前记忆库中没有 {{user}} 表达式'
+                      : userInsertCtx
+                        ? `先按各条来源线对齐；未绑定的 {{user}} 将绑到当前账号「${userInsertCtx.displayName || userInsertCtx.lineLabel}」；已有绑定不变`
+                        : '请先在当前微信账号下选择扮演身份'
+                  }
+                  alignUserToast={alignUserToast}
+                >
+                  <MemoryList
+                    entries={filtered}
+                    loading={loading}
+                    inCharacterContext
+                    emptyHint={
+                      characterTotalCount === 0
+                        ? '该角色在当前账号下暂无记忆；可切换上方查看账号，或用「遇见应用」标签筛选 Lumi Meet 记忆，或点上方按钮新建。'
+                        : '调整检索词或记忆类型，或点上方按钮新建记忆。'
+                    }
+                    onEdit={openEdit}
+                    onDelete={(e) => void handleDelete(e)}
+                  />
+                </MemoryCharacterDetailView>
               )}
             </>
           ) : null}
@@ -964,24 +1189,52 @@ export function MemoryArchivePanel({
       />
 
       <MemoryTutorialModal
-        open={tutorialOpen}
-        onClose={() => setTutorialOpen(false)}
-        title="角色总结 · 怎么看"
-        subtitle="按角色浏览线上与线下记忆"
+        open={rosterTutorialOpen && archiveView === 'roster'}
+        onClose={() => setRosterTutorialOpen(false)}
+        title="角色总结 · 列表怎么用"
+        subtitle="选角色、切账号、加记忆"
         sections={MEMORY_ARCHIVE_TUTORIAL_SECTIONS}
-        onStartLiveCoach={startLiveCoach}
+        onStartLiveCoach={() => {
+          setRosterTutorialOpen(false)
+          if (archiveView === 'roster') startLiveCoach()
+        }}
+        zIndex={55000}
+      />
+
+      <MemoryTutorialModal
+        open={detailTutorialOpen && archiveView === 'detail'}
+        onClose={() => setDetailTutorialOpen(false)}
+        title="角色总结 · 这位角色怎么用"
+        subtitle="线上总结 / 线下摘要 / 待办台账"
+        sections={MEMORY_ARCHIVE_DETAIL_TUTORIAL_SECTIONS}
+        onStartLiveCoach={() => {
+          setDetailTutorialOpen(false)
+          if (archiveView === 'detail') startDetailLiveCoach()
+        }}
         zIndex={55000}
       />
 
       <MemoryCoachPortal
-        open={coachOpen && coachActive}
+        open={coachOpen && coachActive && archiveView === 'roster'}
         steps={MEMORY_ARCHIVE_COACH_STEPS}
         stepIndex={coachStepIndex}
         onStepChange={setCoachStepIndex}
         onSkip={() => finishCoach()}
         onComplete={(opts) => finishCoach(opts)}
-        scopeRoot="memory-archive"
-        layoutEpoch={`${archiveView}-${selectedAccountId}-${selectedCharId ?? 'none'}-${detailSourceTab}`}
+        scopeRoot="memory-management"
+        layoutEpoch={`roster-${selectedAccountId}`}
+        zIndex={56000}
+      />
+
+      <MemoryCoachPortal
+        open={detailCoachOpen && coachActive && archiveView === 'detail'}
+        steps={MEMORY_ARCHIVE_DETAIL_COACH_STEPS}
+        stepIndex={detailCoachStepIndex}
+        onStepChange={setDetailCoachStepIndex}
+        onSkip={() => finishDetailCoach()}
+        onComplete={(opts) => finishDetailCoach(opts)}
+        scopeRoot="memory-management"
+        layoutEpoch={`detail-${selectedAccountId}-${selectedCharId ?? 'none'}-${detailSourceTab}-${detailCoachStepIndex}`}
         zIndex={56000}
       />
 

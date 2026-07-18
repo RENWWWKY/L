@@ -6,8 +6,8 @@ export const STICKER_UI_DEFAULT_ROUND_TRIGGER_PERCENT = 40
 export const CLASSIC_EMOJI_DEFAULT_ROUND_TRIGGER_PERCENT = 0
 /** @deprecated 使用 {@link CLASSIC_EMOJI_DEFAULT_ROUND_TRIGGER_PERCENT} */
 export const CLASSIC_EMOJI_UI_DEFAULT_ROUND_TRIGGER_PERCENT = CLASSIC_EMOJI_DEFAULT_ROUND_TRIGGER_PERCENT
-/** 聊天信息页未定制时，角色 AI 配图每轮触发概率的默认值 */
-export const IMAGE_DEFAULT_ROUND_TRIGGER_PERCENT = 0
+/** @deprecated 已取消「是否支持发图」门槛；保留常量以免旧调用报错 */
+export const IMAGE_DEFAULT_ROUND_TRIGGER_PERCENT = 100
 /** 每次发图张数下限 / 上限 */
 export const IMAGE_ROUND_COUNT_MIN_LIMIT = 1
 export const IMAGE_ROUND_COUNT_MAX_LIMIT = 9
@@ -425,26 +425,25 @@ export function rollRoundMediaTriggerAllowed(storedPercent: number | undefined):
   return Math.random() * 100 < storedPercent
 }
 
-/** AI 配图：未定制时默认 0%；用户明确要求发图时由调用方 bypass，勿用本函数 */
-export function rollImageRoundTriggerAllowed(storedPercent: number | undefined): boolean {
-  const percent = resolveEffectiveImageRoundTriggerPercent(storedPercent)
-  if (percent <= 0) return false
-  if (percent >= 100) return true
-  return Math.random() * 100 < percent
+/** @deprecated 已取消发图门槛；始终允许（张数上限仍由 shouldSuppressCharacterImageLine 约束） */
+export function rollImageRoundTriggerAllowed(_storedPercent?: number | undefined): boolean {
+  return true
+}
+
+/** @deprecated 已取消「是否支持发图」；始终视为支持 */
+export function isCharacterImageSendSupported(_storedPercent?: number | undefined): boolean {
+  return true
 }
 
 /**
- * 模型已输出 `[图片]` 行时，是否放行并真实生图（可绕过本轮概率骰子未命中）。
- * - 用户本轮明确要求发图 → 始终放行；
- * - 发图概率 > 0 → 模型既已输出则放行；
- * - 发图概率 = 0 且非用户要求 → 不放行，后处理会剔除。
+ * 模型已输出 `[图片]` 行时是否保留为配图占位（用户确认后再生成）。
+ * 已取消会话级拦截：只要启用了角色 AI 配图，一律放行。
  */
 export function shouldHonorModelCharacterImageLinesDespiteProbability(
-  imageRoundTriggerPercent: number | undefined,
-  userExplicitRequest: boolean,
+  _imageRoundTriggerPercent?: number | undefined,
+  _userExplicitRequest?: boolean,
 ): boolean {
-  if (userExplicitRequest) return true
-  return resolveEffectiveImageRoundTriggerPercent(imageRoundTriggerPercent) > 0
+  return true
 }
 
 const STICKER_CATALOG_SUPPRESSED_BY_USER = `---------------------
@@ -461,14 +460,14 @@ export function buildMediaSendFrequencyPromptBlock(params: {
   classicEmojiRoundTriggerPercent?: number
   /** 私聊：未存储黄脸概率时仍注入默认 0% 规则 */
   applyClassicEmojiDefault?: boolean
-  /** 已启用角色 AI 配图时注入 */
+  /** 已启用角色发图协议时注入（描述占位；与生图 API 是否配置无关） */
   imageRoundTriggerPercent?: number
   imageRoundCountMin?: number
   imageRoundCountMax?: number
-  /** 本轮已抽中的目标张数（仅当允许发图时传入） */
+  /** 本轮已抽中的目标张数（仅当本轮确实要发图时传入） */
   imageRoundCountTarget?: number
   userExplicitCharacterImageRequest?: boolean
-  /** 私聊：本轮概率骰是否命中；群聊不传（无逐轮门槛） */
+  /** 私聊：始终允许按语境发图；群聊不传 */
   imageRoundAllowed?: boolean
 }): string {
   const sticker = params.stickerRoundTriggerPercent
@@ -479,11 +478,13 @@ export function buildMediaSendFrequencyPromptBlock(params: {
       : params.applyClassicEmojiDefault
         ? CLASSIC_EMOJI_DEFAULT_ROUND_TRIGGER_PERCENT
         : undefined
-  const imagePercent =
+  const hasImageSection =
+    params.imageRoundCountMin !== undefined ||
+    params.imageRoundCountMax !== undefined ||
+    params.imageRoundCountTarget !== undefined ||
+    params.userExplicitCharacterImageRequest === true ||
+    params.imageRoundAllowed !== undefined ||
     params.imageRoundTriggerPercent !== undefined
-      ? resolveEffectiveImageRoundTriggerPercent(params.imageRoundTriggerPercent)
-      : undefined
-  const hasImageSection = imagePercent !== undefined
   const imageCountRange = hasImageSection
     ? parseStoredImageRoundCountRange(params.imageRoundCountMin, params.imageRoundCountMax)
     : null
@@ -544,42 +545,17 @@ export function buildMediaSendFrequencyPromptBlock(params: {
     }
   }
 
-  if (imagePercent !== undefined && imageCountRange) {
+  if (imageCountRange) {
     if (params.userExplicitCharacterImageRequest) {
       lines.push(
-        '- **AI 配图（\`[图片]\` 行）**：用户本轮**已明确要求**发图/照片/自拍——**完全无视**本会话发图概率设置；本轮**须**至少输出 1 条 \`[图片]\` 行（仍须贴合语境；确实不宜发图时只用文字婉拒，**禁止**口头假装已发）。',
+        '- **AI 配图（\`[图片]\` 行）**：用户本轮**已明确要求**发图/照片/自拍——本轮**须**至少输出 1 条 \`[图片]通俗中文画面描述\`（禁止英文 SD tag；确实不宜发图时只用文字婉拒，**禁止**口头假装已发）。客户端先显示中文占位，点生成时另推英文提示词。',
       )
-      lines.push(buildImageRoundCountPromptLine(imageCountRange, params.imageRoundCountTarget))
-    } else if (imagePercent <= 0) {
-      lines.push(
-        `- **AI 配图（\`[图片]\` 行）**：概率 **0%**，本轮**禁止**输出任何 \`[图片]\` 行；**唯一例外**：用户本轮**直接要求**你发图/照片/自拍时，须按张数规则发图。不要自发、不要顺带、不要「顺手」发图。`,
-      )
-    } else if (params.imageRoundAllowed === false) {
-      lines.push(
-        `- **AI 配图（\`[图片]\` 行）**：会话发图概率 **${imagePercent}%**，**本轮未命中**——**禁止**输出任何 \`[图片]\` 行。仅用**纯文字**回复；不要分享随手拍、不要晒物、不要配图烘托气氛。用户**直接要求**发图时不受此限制。`,
-      )
-    } else if (params.imageRoundAllowed === true) {
-      if (imagePercent >= 100) {
-        lines.push(
-          '- **AI 配图（\`[图片]\` 行）**：概率 **100%**，本轮**允许**发图——**仍须**有分享/展示类语境才输出 \`[图片]\` 行；纯文字聊天、问答、安慰、斗嘴、解释、承诺等**禁止**配图；无合适画面则只发文字。',
-        )
-      } else {
-        lines.push(
-          `- **AI 配图（\`[图片]\` 行）**：会话发图概率 **${imagePercent}%**，**本轮已命中允许**——**可以**发图，但**绝大多数轮次仍应纯文字**；仅当对话里确实在分享照片、晒物、展示场景、或视觉内容本身就是回复重点时，才输出 \`[图片]\` 行。情绪安慰、争吵和解、日常问答、纯闲聊**不要**配图。`,
-        )
-      }
-      lines.push(buildImageRoundCountPromptLine(imageCountRange, params.imageRoundCountTarget))
-    } else if (imagePercent >= 100) {
-      lines.push(
-        '- **AI 配图（\`[图片]\` 行）**：概率 **100%**，每轮回复**宜**在确有分享/展示语境时包含 \`[图片]\` 行；无合适画面则只发文字，禁止无意义刷屏。',
-      )
-      lines.push(buildImageRoundCountPromptLine(imageCountRange, params.imageRoundCountTarget))
     } else {
       lines.push(
-        `- **AI 配图（\`[图片]\` 行）**：会话发图概率约 **${imagePercent}%**（非每轮必发）。**默认纯文字**；仅在有分享/展示类语境或用户直接要求时才考虑 \`[图片]\` 行。`,
+        '- **AI 配图（\`[图片]\` 行）**：可按场景语境**适量**发图——有分享/展示/晒物/随手拍等冲动时再发；**禁止**每轮都发；纯文字聊天、问答、安慰、斗嘴、解释、承诺等无合适画面时只发文字。\`[图片]\` 只写通俗中文画面描述（禁止英文 tag）；客户端先显示占位，点生成时另推英文提示词。',
       )
-      lines.push(buildImageRoundCountPromptLine(imageCountRange, params.imageRoundCountTarget))
     }
+    lines.push(buildImageRoundCountPromptLine(imageCountRange, params.imageRoundCountTarget))
   }
 
   return `${lines.join('\n')}\n`
@@ -671,9 +647,9 @@ export function shouldSuppressCharacterVoiceLine(
 
 export function shouldSuppressCharacterImageLine(
   roomType: 'private' | 'group',
-  imageRoundTriggerPercent: number | undefined,
-  roundAllowed: boolean,
-  userExplicitRequest: boolean,
+  _imageRoundTriggerPercent: number | undefined,
+  _roundAllowed: boolean,
+  _userExplicitRequest: boolean,
   emittedCount: number,
   imageCountMinRaw: unknown,
   imageCountMaxRaw: unknown,
@@ -685,11 +661,7 @@ export function shouldSuppressCharacterImageLine(
     typeof imageCountTarget === 'number' && imageCountTarget > 0
       ? Math.min(range.max, imageCountTarget)
       : range.max
-  if (emittedCount >= cap) return true
-  if (userExplicitRequest || roundAllowed) return false
-  const percent = resolveEffectiveImageRoundTriggerPercent(imageRoundTriggerPercent)
-  if (percent <= 0) return true
-  return !roundAllowed
+  return emittedCount >= cap
 }
 
 const IMAGE_GEN_QUOTA_COOLDOWN_MS = 120_000

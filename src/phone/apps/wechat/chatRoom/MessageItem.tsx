@@ -94,6 +94,7 @@ export function chatMsgRenderFingerprint(m: {
   otherAnimated?: boolean
   selfAnimated?: boolean
   imageGenPending?: boolean
+  imageGenAwaitingConfirm?: boolean
   imageGenFailed?: boolean
   images?: Array<{ base64?: string; type?: string }>
   miniGameInvite?: {
@@ -108,6 +109,7 @@ export function chatMsgRenderFingerprint(m: {
   const img0 = m.images?.[0]
   const mediaKey = [
     m.imageGenPending ? '1' : '0',
+    m.imageGenAwaitingConfirm ? '1' : '0',
     m.imageGenFailed ? '1' : '0',
     img0?.base64?.length ?? 0,
     img0?.type ?? '',

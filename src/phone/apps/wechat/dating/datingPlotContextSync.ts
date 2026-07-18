@@ -1,6 +1,7 @@
 import type { ApiConfigCore } from '../../api/types'
 import type { DatingPlotSnapshotItem } from '../unifiedMemoryAutoSummary'
 import { rebuildStoryTimelineFromDatingPlots } from '../memory/storyTimelinePersist'
+import { computeStoryTimelineTodosAfterRemovingPlots } from '../memory/storyTimelineOfflineTodoLedger'
 import { personaDb } from '../newFriendsPersona/idb'
 import { rebuildWorldBookAfterFromDatingPlotList } from '../newFriendsPersona/worldBookAfterPatch'
 import type { PlotItem } from './types'
@@ -119,8 +120,15 @@ export async function finalizeDatingPlotListMutationSideEffects(
   const charId = params.perspectiveCharacterId.trim()
   if (charId) {
     try {
+      const prevTodos = (await personaDb.getStoryTimelineState(charId))?.todos ?? []
+      const todosOverride = computeStoryTimelineTodosAfterRemovingPlots(
+        params.prevPlots,
+        params.nextPlots,
+        prevTodos,
+      )
       await rebuildStoryTimelineFromDatingPlots(charId, params.nextPlots, {
         apiConfig: params.apiConfig ?? null,
+        todosOverride,
       })
     } catch (e) {
       console.warn('[dating] story timeline rebuild after plot mutation failed', e)

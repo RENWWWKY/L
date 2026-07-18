@@ -30,15 +30,16 @@ export const IMAGE_GEN_COMPOSITION_LIFE_FEEL_INTERNAL_COT = `
 【脑中排除·勿写入可见回复】close-up, headshot, portrait only, simple background, gradient background, solid color background, blank background, studio backdrop, stiff pose, expressionless, flat composition, no background, plain outfit
 `.trim()
 
-/** 本轮聊天是否应注入构图/生活感思维链 */
+/** 本轮聊天是否应注入构图/生活感思维链（发图协议已开时；与生图 API 是否配置无关） */
 export function shouldInjectImageGenCompositionLifeFeelCot(params: {
   characterImageGenEnabled?: boolean
   userExplicitCharacterImageRequest?: boolean
   imageRoundCountTarget?: number
-  /** 主动消息等路径：概率已命中允许发图 */
+  /** 主动消息等路径：本轮允许按语境发图（已取消概率门槛） */
   imageRoundAllowed?: boolean
 }): boolean {
-  if (!params.characterImageGenEnabled) return false
+  const protocolOn = params.characterImageGenEnabled === true || params.imageRoundAllowed === true
+  if (!protocolOn) return false
   if (params.userExplicitCharacterImageRequest) return true
   if (params.imageRoundAllowed) return true
   if ((params.imageRoundCountTarget ?? 0) > 0) return true

@@ -4,12 +4,14 @@ import { personaDb } from './idb'
 import type { Character } from './types'
 import {
   applyWorldBookAfterPatchesToCharacter,
+  collectWorldBookAfterRevertSnapshot,
   hasChatAfterWorldBookItems,
   listChatAfterWorldBookItems,
   parseWorldBookAfterPatchJson,
   WORLD_BOOK_AFTER_PATCH_UPDATED_EVENT,
   type WorldBookAfterPatch,
 } from './worldBookAfterPatch'
+import type { WorldBookAfterRevertEntry } from '../dating/types'
 import { resolveAutoSummaryApiConfigFromSettings } from '../memory/memorySummaryApi'
 import { isWorldBookAfterPerRoundSyncEnabled } from '../memory/worldBookAfterPerRoundSync'
 import { dispatchWorldBookAfterPerRoundSyncResult } from '../memory/worldBookAfterPerRoundResultEvents'
@@ -192,8 +194,14 @@ export async function requestWorldBookAfterPerRoundPatches(params: {
 export type WorldBookAfterPerRoundSyncOutcome =
   | { status: 'skipped'; reason: string }
   | { status: 'no_change' }
-  | { status: 'applied'; count: number }
+  | { status: 'applied'; count: number; revertEntries?: WorldBookAfterRevertEntry[] }
   | { status: 'failed'; reason: string }
+
+export type PersistWorldBookAfterSyncResult = {
+  applied: number
+  /** 各角色本批补丁写库前的回滚快照（供剧情/气泡挂 worldBookAfterRevertEntries） */
+  revertByCharacterId: Map<string, WorldBookAfterRevertEntry[]>
+}
 
 function notifyPerRoundEpilogueFailure(displayName: string, reason: string) {
   dispatchWorldBookAfterPerRoundSyncResult({
@@ -283,11 +291,18 @@ export async function finalizeWorldBookAfterPerAiRound(params: {
       maybeNotifyOfflineEpilogueNoChange(params, label)
       return { status: 'no_change' }
     }
-    const count = await persistWorldBookAfterSyncPatches(
+    const { applied: count, revertByCharacterId } = await persistWorldBookAfterSyncPatches(
       patches.map((p) => ({ ...p, characterId: p.characterId?.trim() || ch.id })),
       { source: 'per_round' },
     )
-    if (count > 0) return { status: 'applied', count }
+    if (count > 0) {
+      const revertEntries = revertByCharacterId.get(ch.id.trim())
+      return {
+        status: 'applied',
+        count,
+        ...(revertEntries?.length ? { revertEntries } : {}),
+      }
+    }
     maybeNotifyOfflineEpilogueNoChange(params, label)
     return { status: 'no_change' }
   } catch (e) {
@@ -389,12 +404,16 @@ export async function requestWorldBookAfterSyncPatches(params: {
   return parseWorldBookAfterPatchJson(jsonBody)
 }
 
-/** 将补丁写入人设库；返回成功条数 */
+/** 将补丁写入人设库；并采集写库前快照供删除/重生成回滚 */
 export async function persistWorldBookAfterSyncPatches(
   patches: WorldBookAfterPatch[],
   opts?: { source?: WorldBookAfterSyncSource },
-): Promise<number> {
-  if (!patches.length) return 0
+): Promise<PersistWorldBookAfterSyncResult> {
+  const empty: PersistWorldBookAfterSyncResult = {
+    applied: 0,
+    revertByCharacterId: new Map(),
+  }
+  if (!patches.length) return empty
   const byChar = new Map<string, WorldBookAfterPatch[]>()
   for (const p of patches) {
     const cid = p.characterId?.trim()
@@ -404,17 +423,20 @@ export async function persistWorldBookAfterSyncPatches(
     byChar.set(cid, arr)
   }
   let applied = 0
+  const revertByCharacterId = new Map<string, WorldBookAfterRevertEntry[]>()
   const traceRows: import('../memoryTraceTypes').MemoryTraceWorldBookAfterPatchRow[] = []
   let primaryCharacterId = ''
   for (const [cid, plist] of byChar) {
     const row = await personaDb.getCharacter(cid)
     if (!row) continue
     if (!primaryCharacterId) primaryCharacterId = cid
+    const snap = collectWorldBookAfterRevertSnapshot(row, plist)
     traceRows.push(...buildWorldBookAfterPatchRowsFromSingleCharacter(row, plist))
     const next = applyWorldBookAfterPatchesToCharacter(row, plist)
     if (next) {
       await personaDb.upsertCharacter(next)
       applied += plist.length
+      if (snap.length) revertByCharacterId.set(cid, snap)
     }
   }
   if (applied > 0) {
@@ -433,7 +455,7 @@ export async function persistWorldBookAfterSyncPatches(
       }).catch(() => {})
     }
   }
-  return applied
+  return { applied, revertByCharacterId }
 }
 
 /** 自动总结 JSON 中的 epiloguePatches 落库（primary + 可关联 NPC） */
@@ -441,9 +463,13 @@ export async function applyEpiloguePatchesFromAutoSummary(
   patches: WorldBookAfterPatch[] | null | undefined,
   primaryCharacterId: string,
   allowedNpcIds?: Set<string>,
-): Promise<number> {
+): Promise<PersistWorldBookAfterSyncResult> {
   const list = patches ?? []
-  if (!list.length) return 0
+  const empty: PersistWorldBookAfterSyncResult = {
+    applied: 0,
+    revertByCharacterId: new Map(),
+  }
+  if (!list.length) return empty
 
   const primaryId = primaryCharacterId.trim()
   const byChar = new Map<string, WorldBookAfterPatch[]>()
@@ -458,15 +484,18 @@ export async function applyEpiloguePatchesFromAutoSummary(
   }
 
   let applied = 0
+  const revertByCharacterId = new Map<string, WorldBookAfterRevertEntry[]>()
   const traceRows: import('../memoryTraceTypes').MemoryTraceWorldBookAfterPatchRow[] = []
   for (const [cid, plist] of byChar) {
     const row = await personaDb.getCharacter(cid)
     if (!row) continue
+    const snap = collectWorldBookAfterRevertSnapshot(row, plist)
     traceRows.push(...buildWorldBookAfterPatchRowsFromSingleCharacter(row, plist))
     const next = applyWorldBookAfterPatchesToCharacter(row, plist)
     if (next) {
       await personaDb.upsertCharacter(next)
       applied += plist.length
+      if (snap.length) revertByCharacterId.set(cid, snap)
     }
   }
   if (applied > 0) {
@@ -480,7 +509,7 @@ export async function applyEpiloguePatchesFromAutoSummary(
       patchRows: traceRows,
     }).catch(() => {})
   }
-  return applied
+  return { applied, revertByCharacterId }
 }
 
 function normalizePatchFromSummaryJson(raw: unknown): WorldBookAfterPatch | null {
@@ -534,11 +563,18 @@ export async function finalizeWorldBookAfterAutoSummaryPhase(params: {
   latestReplyHint: string
   /** 自动总结材料块（线上/线下/人脉） */
   summaryMaterialsBlock?: string
-}): Promise<number> {
+}): Promise<PersistWorldBookAfterSyncResult & { totalApplied: number }> {
   const ch = params.character
-  if (!ch?.id?.trim() || !hasChatAfterWorldBookItems(ch)) return 0
+  const empty = {
+    applied: 0,
+    revertByCharacterId: new Map<string, WorldBookAfterRevertEntry[]>(),
+    totalApplied: params.epiloguePatchesApplied,
+  }
+  if (!ch?.id?.trim() || !hasChatAfterWorldBookItems(ch)) return empty
 
-  if (params.epiloguePatchesApplied > 0) return params.epiloguePatchesApplied
+  if (params.epiloguePatchesApplied > 0) {
+    return { ...empty, totalApplied: params.epiloguePatchesApplied }
+  }
 
   try {
     const patches = await requestWorldBookAfterSyncPatches({
@@ -548,12 +584,13 @@ export async function finalizeWorldBookAfterAutoSummaryPhase(params: {
       latestReply: params.latestReplyHint,
       summaryMaterialsBlock: params.summaryMaterialsBlock,
     })
-    if (!patches.length) return 0
-    return await persistWorldBookAfterSyncPatches(
+    if (!patches.length) return empty
+    const persisted = await persistWorldBookAfterSyncPatches(
       patches.map((p) => ({ ...p, characterId: p.characterId?.trim() || ch.id })),
       { source: 'auto_summary' },
     )
+    return { ...persisted, totalApplied: persisted.applied }
   } catch {
-    return 0
+    return empty
   }
 }

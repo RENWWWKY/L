@@ -1585,9 +1585,17 @@ function normalizeWeChatChatMessage(input: unknown): WeChatChatMessage | null {
     typeof (m as { imageGenPending?: unknown }).imageGenPending === 'boolean'
       ? !!(m as { imageGenPending?: boolean }).imageGenPending
       : undefined
+  const imageGenAwaitingConfirm =
+    typeof (m as { imageGenAwaitingConfirm?: unknown }).imageGenAwaitingConfirm === 'boolean'
+      ? !!(m as { imageGenAwaitingConfirm?: boolean }).imageGenAwaitingConfirm
+      : undefined
   const imageGenFailed =
     typeof (m as { imageGenFailed?: unknown }).imageGenFailed === 'boolean'
       ? !!(m as { imageGenFailed?: boolean }).imageGenFailed
+      : undefined
+  const imageDescription =
+    typeof (m as { imageDescription?: unknown }).imageDescription === 'string'
+      ? String((m as { imageDescription?: unknown }).imageDescription).trim().slice(0, 800) || undefined
       : undefined
   const imageGenPrompt =
     typeof (m as { imageGenPrompt?: unknown }).imageGenPrompt === 'string'
@@ -1639,7 +1647,9 @@ function normalizeWeChatChatMessage(input: unknown): WeChatChatMessage | null {
     chatHistory,
     images: images.length ? images : undefined,
     ...(imageGenPending ? { imageGenPending: true } : {}),
+    ...(imageGenAwaitingConfirm ? { imageGenAwaitingConfirm: true } : {}),
     ...(imageGenFailed ? { imageGenFailed: true } : {}),
+    ...(imageDescription ? { imageDescription } : {}),
     ...(imageGenPrompt ? { imageGenPrompt } : {}),
     ...(stickerRef ? { stickerRef } : {}),
     isFavorite,
@@ -2233,18 +2243,54 @@ function normalizeStoryTimelineState(input: unknown): StoryTimelineState | null 
     costumes,
     items,
     foreshadows: foreshadows.filter((f) => f.status === 'open'),
-    todos: (Array.isArray(r.todos) ? (r.todos as unknown[]) : [])
-      .map((x) => {
-        const row = (x ?? {}) as { text?: unknown; status?: unknown }
-        const text = String(row.text ?? '').trim().slice(0, 160)
-        if (!text) return null
-        const st = String(row.status ?? '').trim().toLowerCase()
-        const status: 'open' | 'resolved' = st === 'resolved' ? 'resolved' : 'open'
-        return { text, status }
-      })
-      .filter((x): x is { text: string; status: 'open' | 'resolved' } => !!x)
-      .filter((t) => t.status === 'open')
-      .slice(0, 24),
+    todos: (() => {
+      const rawTodos = (Array.isArray(r.todos) ? (r.todos as unknown[]) : [])
+        .map((x) => {
+          const row = (x ?? {}) as {
+            text?: unknown
+            status?: unknown
+            openedStoryDay?: unknown
+            outcome?: unknown
+            resolvedNote?: unknown
+            resolvedAtStoryDay?: unknown
+          }
+          const text = String(row.text ?? '').trim().slice(0, 160)
+          if (!text) return null
+          const st = String(row.status ?? '').trim().toLowerCase()
+          const status: 'open' | 'resolved' = st === 'resolved' ? 'resolved' : 'open'
+          const outcomeRaw = String(row.outcome ?? '').trim().toLowerCase()
+          const outcome =
+            outcomeRaw === 'done' || outcomeRaw === 'missed' || outcomeRaw === 'cancelled'
+              ? (outcomeRaw as 'done' | 'missed' | 'cancelled')
+              : undefined
+          const openedStoryDay = String(row.openedStoryDay ?? '').trim().slice(0, 48)
+          const resolvedNote = String(row.resolvedNote ?? '').trim().slice(0, 160)
+          const resolvedAtStoryDay = String(row.resolvedAtStoryDay ?? '').trim().slice(0, 48)
+          return {
+            text,
+            status,
+            ...(openedStoryDay ? { openedStoryDay } : {}),
+            ...(status === 'resolved' && outcome ? { outcome } : {}),
+            ...(status === 'resolved' && resolvedNote ? { resolvedNote } : {}),
+            ...(status === 'resolved' && resolvedAtStoryDay ? { resolvedAtStoryDay } : {}),
+          }
+        })
+        .filter(
+          (
+            t,
+          ): t is {
+            text: string
+            status: 'open' | 'resolved'
+            openedStoryDay?: string
+            outcome?: 'done' | 'missed' | 'cancelled'
+            resolvedNote?: string
+            resolvedAtStoryDay?: string
+          } => !!t,
+        )
+      const open = rawTodos.filter((t) => t.status === 'open').slice(-16)
+      const resolved = rawTodos.filter((t) => t.status === 'resolved').slice(-12)
+      return [...open, ...resolved]
+    })(),
     recentEvents,
     ...(typeof r.manualAnchorBlock === 'string' && r.manualAnchorBlock.trim()
       ? { manualAnchorBlock: r.manualAnchorBlock.trim().slice(0, 8000) }
@@ -2343,6 +2389,7 @@ function normalizeStoryTimelinePlotRow(
       : {}),
     ...(sidePerspective ? { sidePerspective: true } : {}),
     ...(charactersPresent.length ? { charactersPresent } : {}),
+    ...(r.userEdited === true ? { userEdited: true } : {}),
   }
 }
 
@@ -2762,9 +2809,8 @@ function normalizeMemorySettingsRow(input: unknown): MemorySettingsRow {
   const localModelRaw = (r as { memoryLocalEmbeddingModelId?: unknown }).memoryLocalEmbeddingModelId
   const memoryLocalEmbeddingModelId: MemorySettingsRow['memoryLocalEmbeddingModelId'] =
     typeof localModelRaw === 'string' && localModelRaw.trim() ? localModelRaw.trim().slice(0, 160) : undefined
-  const ctxVecRaw = (r as { memoryContextVectorRecallEnabled?: unknown }).memoryContextVectorRecallEnabled
-  const memoryContextVectorRecallEnabled: MemorySettingsRow['memoryContextVectorRecallEnabled'] =
-    ctxVecRaw === false ? false : ctxVecRaw === true ? true : undefined
+  // 配置页已移除「游标前原文召回」；读档一律视为关闭
+  const memoryContextVectorRecallEnabled: MemorySettingsRow['memoryContextVectorRecallEnabled'] = false
   const memSummaryUrlRaw = (r as { memorySummaryApiUrl?: unknown }).memorySummaryApiUrl
   const memorySummaryApiUrl: MemorySettingsRow['memorySummaryApiUrl'] =
     typeof memSummaryUrlRaw === 'string' && memSummaryUrlRaw.trim()
@@ -5290,7 +5336,9 @@ export class PersonaDb {
       | 'replyTo'
       | 'images'
       | 'imageGenPending'
+      | 'imageGenAwaitingConfirm'
       | 'imageGenFailed'
+      | 'imageDescription'
       | 'imageGenPrompt'
       | 'isRead'
       | 'originalContent'
@@ -5342,7 +5390,9 @@ export class PersonaDb {
           : existing.miniGameInvite,
     }
     if (patch.imageGenPending === false) delete merged.imageGenPending
+    if (patch.imageGenAwaitingConfirm === false) delete merged.imageGenAwaitingConfirm
     if (patch.imageGenFailed === false) delete merged.imageGenFailed
+    if (patch.imageDescription === '') delete merged.imageDescription
     if (patch.imageGenPrompt === '') delete merged.imageGenPrompt
     const normalized = normalizeWeChatChatMessage(merged)
     if (!normalized) return
@@ -8343,7 +8393,7 @@ export class PersonaDb {
     const groupContentsPick = await this.expandMemoryListContentForPrompt(groupPick, cid)
 
     const vectorTail = vectorUsed
-      ? '以上含「始终触发」、关键词命中、向量语义召回及无触发词兜底。请按情境自然使用，勿机械复读。'
+      ? '以上含「始终触发」、关键词命中、向量语义召回及无触发词兜底。向量召回条目均为已发生历史：禁止复述事情经过或重演旧场，仅可回溯提起；勿机械复读。'
       : '以上含「始终触发」记忆、关键词命中项与少量无触发配置的旧数据兜底。请按情境自然使用，勿机械复读。'
 
     const lineScope = opts?.lineScope ?? null

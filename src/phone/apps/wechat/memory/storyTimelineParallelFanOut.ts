@@ -17,13 +17,13 @@ function buildParallelEventSummaryMaterial(params: {
 }): string {
   const parts: string[] = [
     '【任务·屏外平行事件 → 剧情摘要表】',
-    '须输出与主线相同的 timeline JSON（含 row_title、row_keywords、锚点、event_summary 等）；event_summary 为**摘要句**，禁止整段粘贴下方正文。',
-    'row_title：与主线摘要表相同（4～10 字概括平行切片情绪/转折）；**禁止**写「屏外平行」「IF」「第 N 轮」等类型标签。',
-    'row_keywords：3～5 个检索词，每条 ≤5 字，概括平行切片场景/人物/情绪钩子。',
-    '与锚点轮**同一时刻** elsewhere；主角色 {{char}} **未在场** → side_perspective 须 true。',
-    'characters_present：仅列平行切片内实际出场者（可用 {{id:…}}），**不得**含 {{char}}。',
-    'foreshadows / todos：仅写平行切片内 **characters_present** 在场 NPC 的动机/待办；每条 text 须以该 NPC 为动机主体，并含其 {{id:…}} 或姓名。',
-    '**禁止**写约会主角色 {{char}}（锚点侧、本切片未在场）的内心线、待办或对 {{char}} 的猜测性伏笔。',
+    '须输出与主线相同的 [TIMELINE] markup（禁止 JSON）：含标题、关键词、锚点、事件等；事件为**融合叙事摘要**，禁止整段粘贴下方正文。',
+    '标题：与主线摘要表相同（4～10 字概括平行切片情绪/转折）；**禁止**写「屏外平行」「IF」「第 N 轮」等类型标签。',
+    '关键词：3～5 个检索词，每条 ≤5 字，概括平行切片场景/人物/情绪钩子。',
+    '与锚点轮**同一时刻** elsewhere；主角色 {{char}} **未在场** → 侧幕填「是」。',
+    '在场：仅列平行切片内实际出场者（可用 {{id:…}}），**不得**含 {{char}}。',
+    '事件：把在场 NPC 的动作、用到的道具、其动机都写进「事件」一段；**禁止**单列服装/物品/伏笔/待办。',
+    '**禁止**写约会主角色 {{char}}（锚点侧、本切片未在场）的内心线或对 {{char}} 的猜测。',
   ]
   const anchor = String(params.anchorPlotBody ?? '').trim()
   if (anchor) {

@@ -21,6 +21,8 @@ import {
   readMemoryCoachSeen,
   writeMemoryCoachSeen,
 } from './memoryCoachTypes'
+import { MEMORY_ARCHIVE_OPEN_TUTORIAL_EVENT } from './memoryArchiveCoachSteps'
+import { MEMORY_ARCHIVE_DETAIL_OPEN_TUTORIAL_EVENT } from './memoryArchiveDetailCoachSteps'
 import { dispatchMemoryTabCoachForHubTab } from './useMemoryTabCoach'
 
 const MEMORY_ARCHIVE_TABS = [
@@ -38,12 +40,15 @@ function TopBar({
   subtitle,
   onBack,
   onOpenTutorial,
+  tutorialCoachTarget = 'hub-tutorial',
   backLabel = '返回',
 }: {
   title: string
   subtitle?: string
   onBack: () => void
   onOpenTutorial?: () => void
+  /** 高亮引导锚点：总馆 / 角色列表 / 角色详情 */
+  tutorialCoachTarget?: 'hub-tutorial' | 'memories-tab-tutorial' | 'detail-tutorial'
   backLabel?: string
 }) {
   return (
@@ -75,7 +80,11 @@ function TopBar({
         </div>
 
         {onOpenTutorial ? (
-          <MemoryTutorialButton compact onClick={onOpenTutorial} coachTarget="hub-tutorial" />
+          <MemoryTutorialButton
+            compact
+            onClick={onOpenTutorial}
+            coachTarget={tutorialCoachTarget}
+          />
         ) : (
           <div className="h-10 w-10 shrink-0" aria-hidden />
         )}
@@ -113,7 +122,8 @@ export function MemoryManagementApp({
     (activeTab === 'memories' && characterPage != null)
   const hubCoachActive = !onCharacterPage
   const configCoachActive = activeTab === 'config' && hubCoachActive
-  const archiveCoachActive = activeTab === 'memories' && hubCoachActive
+  /** 角色列表与角色详情页的高亮引导都挂在此 Tab；进详情时不可关掉，否则详情引导永远不显示 */
+  const archiveCoachActive = activeTab === 'memories'
   const progressCoachActive = activeTab === 'progress' && hubCoachActive
   const retryCoachActive = activeTab === 'retry' && hubCoachActive
   const epilogueCoachActive = activeTab === 'epilogue' && !epilogueCharacterPage
@@ -209,7 +219,26 @@ export function MemoryManagementApp({
         title={topTitle}
         onBack={handleTopBack}
         backLabel={onCharacterPage ? '返回浏览' : '返回'}
-        onOpenTutorial={hubCoachActive ? () => setHubTutorialOpen(true) : undefined}
+        tutorialCoachTarget={
+          activeTab === 'memories' && characterPage
+            ? 'detail-tutorial'
+            : activeTab === 'memories'
+              ? 'memories-tab-tutorial'
+              : 'hub-tutorial'
+        }
+        onOpenTutorial={
+          activeTab === 'memories' && characterPage
+            ? () => {
+                window.dispatchEvent(new Event(MEMORY_ARCHIVE_DETAIL_OPEN_TUTORIAL_EVENT))
+              }
+            : activeTab === 'memories'
+              ? () => {
+                  window.dispatchEvent(new Event(MEMORY_ARCHIVE_OPEN_TUTORIAL_EVENT))
+                }
+              : hubCoachActive
+                ? () => setHubTutorialOpen(true)
+                : undefined
+        }
       />
 
       {hubCoachActive ? (

@@ -747,6 +747,8 @@ export async function applyUnifiedMemoryFromParsedSummary(
   linkedNpcNamesWritten: string[]
   primaryWritten: boolean
   epiloguePatchesApplied: number
+  /** 本轮 JSON 尾声补丁写库前快照（主角）；挂到对应 AI 剧情供删除/重生成回滚 */
+  epilogueRevertEntries?: import('./dating/types').WorldBookAfterRevertEntry[]
   timelineWritten: boolean
 }> {
   const skipBump = opts.skipConversationRoundBump === true
@@ -903,7 +905,13 @@ export async function applyUnifiedMemoryFromParsedSummary(
     if (!defer && skipBump && !opts.suppressRoundRollbackOnFailure) {
       await rollbackMemoryAiRoundCountForChannel(ck, roundChannel)
     }
-    return { wroteAny: false, linkedNpcNamesWritten: [], primaryWritten: false, epiloguePatchesApplied: 0, timelineWritten: false }
+    return {
+      wroteAny: false,
+      linkedNpcNamesWritten: [],
+      primaryWritten: false,
+      epiloguePatchesApplied: 0,
+      timelineWritten: false,
+    }
   }
 
   let timelinePersisted = false
@@ -1011,13 +1019,17 @@ export async function applyUnifiedMemoryFromParsedSummary(
   }
 
   let epiloguePatchesApplied = 0
+  let epilogueRevertEntries: import('./dating/types').WorldBookAfterRevertEntry[] | undefined
   if (!opts.onlineOnly && summary.epiloguePatches?.length) {
     try {
-      epiloguePatchesApplied = await applyEpiloguePatchesFromAutoSummary(
+      const epi = await applyEpiloguePatchesFromAutoSummary(
         summary.epiloguePatches,
         cid,
         networkEligibleIdSet,
       )
+      epiloguePatchesApplied = epi.applied
+      const primarySnap = epi.revertByCharacterId.get(cid.trim())
+      if (primarySnap?.length) epilogueRevertEntries = primarySnap
     } catch {
       /* 尾声补丁写库失败不阻断 */
     }
@@ -1219,7 +1231,14 @@ export async function applyUnifiedMemoryFromParsedSummary(
     })
   }
 
-  return { wroteAny, linkedNpcNamesWritten, primaryWritten, epiloguePatchesApplied, timelineWritten: timelinePersisted }
+  return {
+    wroteAny,
+    linkedNpcNamesWritten,
+    primaryWritten,
+    epiloguePatchesApplied,
+    ...(epilogueRevertEntries?.length ? { epilogueRevertEntries } : {}),
+    timelineWritten: timelinePersisted,
+  }
 }
 
 /** 解析约会同一 HTTP 返回尾部的合并记忆 JSON 并落库；失败返回 false（调用方可改跑独立总结）。 */
@@ -1247,6 +1266,7 @@ export async function tryApplyDatingCombinedMemoryJsonTail(params: {
   linkedNpcNamesWritten: string[]
   primaryWritten: boolean
   epiloguePatchesApplied: number
+  epilogueRevertEntries?: import('./dating/types').WorldBookAfterRevertEntry[]
   timelineWritten: boolean
 }> {
   try {
@@ -1278,6 +1298,7 @@ export async function tryApplyDatingCombinedMemoryJsonTail(params: {
       primaryWritten: !!r?.primaryWritten,
       linkedNpcNamesWritten: Array.isArray(r?.linkedNpcNamesWritten) ? r.linkedNpcNamesWritten : [],
       epiloguePatchesApplied: r?.epiloguePatchesApplied ?? 0,
+      ...(r?.epilogueRevertEntries?.length ? { epilogueRevertEntries: r.epilogueRevertEntries } : {}),
       timelineWritten: !!r?.timelineWritten,
     }
   } catch {

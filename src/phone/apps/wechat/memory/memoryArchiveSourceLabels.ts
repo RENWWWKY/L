@@ -1,6 +1,7 @@
-/** 记忆档案馆 · 线上 prose 总结 vs 线下摘要表 */
+/** 记忆档案馆 · 线上 prose 总结 / 线下摘要表 / 待办台账 */
 export const ARCHIVE_SOURCE_ONLINE_LABEL = '线上总结'
 export const ARCHIVE_SOURCE_OFFLINE_LABEL = '线下摘要'
+export const ARCHIVE_SOURCE_TODOS_LABEL = '待办台账'
 
 export const ARCHIVE_SOURCE_ONLINE_CHIP =
   'rounded-full bg-gray-900 px-2 py-0.5 text-[10px] font-semibold text-white ring-1 ring-gray-900/10'

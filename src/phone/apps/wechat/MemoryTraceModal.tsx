@@ -16,16 +16,18 @@ const PLATINUM = '#D4AF37'
 const INK = '#1C1C1E'
 const SHEET_SPRING = { type: 'spring' as const, damping: 38, stiffness: 380 }
 
-type AccordionId = 'sample' | 'wbAfter' | 'network' | 'core' | 'cursor' | 'deep' | 'timeline'
+type AccordionId =
+  | 'sample'
+  | 'wbAfter'
+  | 'network'
+  | 'core'
+  | 'cursor'
+  | 'deep'
+  | 'timeline'
+  | 'todos'
 
 function pct(score: number): string {
   return `${Math.round(score * 1000) / 10}%`
-}
-
-function contextSourceLabel(kind: 'private_chat' | 'offline_plot' | 'meet_chat'): string {
-  if (kind === 'offline_plot') return '线下·剧情原文'
-  if (kind === 'meet_chat') return '遇见·原文'
-  return '私聊·消息原文'
 }
 
 function storyTimelineInjectBadge(row: {
@@ -88,17 +90,13 @@ function InjectionSummaryBar(props: { summary: NonNullable<MemoryTraceData['inje
     <div className="rounded-2xl border border-neutral-100 bg-gradient-to-b from-neutral-50/90 to-white p-4 shadow-sm">
       <p className="text-[10px] font-medium uppercase tracking-[0.28em] text-neutral-400">INJECTION · 本轮记忆注入</p>
       <p className="mt-1 text-[12px] leading-relaxed text-neutral-600">
-        与 system prompt 注入顺序对齐：长期记忆 → 剧情时间轴 → 未总结摘录 → 语义召回。
+        与 system prompt 注入顺序对齐：长期记忆 → 剧情时间轴 / 待办事项 → 未总结摘录 → 语义召回。
       </p>
       <div className="mt-3 flex flex-wrap gap-2">
         {chip(`关键词 ${s.keywordHitCount}`, s.keywordHitCount > 0, s.keywordHitCount > 0 ? 'gold' : 'muted')}
         {chip(`长期向量 ${s.longTermVectorCount}`, s.longTermVectorCount > 0, s.longTermVectorCount > 0 ? 'gold' : 'muted')}
-        {chip(
-          `游标前原文 ${s.contextVectorRecallCount}`,
-          s.contextVectorRecallEnabled && s.contextVectorRecallCount > 0,
-          !s.contextVectorRecallEnabled ? 'muted' : s.contextVectorRecallCount > 0 ? 'green' : 'muted',
-        )}
         {chip(`时间轴`, s.storyTimelineInjected, s.storyTimelineInjected ? 'green' : 'muted')}
+        {chip('待办事项', s.todoLedgerInjected === true, s.todoLedgerInjected === true ? 'green' : 'muted')}
         {chip(`未总结私聊`, s.unsummarizedPrivateInjected, s.unsummarizedPrivateInjected ? 'green' : 'muted')}
         {chip(`未总结群聊`, s.unsummarizedGroupInjected, s.unsummarizedGroupInjected ? 'green' : 'muted')}
         {chip(`未总结线下`, s.unsummarizedOfflineInjected, s.unsummarizedOfflineInjected ? 'green' : 'muted')}
@@ -241,6 +239,8 @@ export function MemoryTraceModal({ open, onClose, data }: MemoryTraceModalProps)
 
   const storyTimelineInjected =
     matrix?.storyTimeline?.injected === true && matrix.storyTimeline.promptExcerpt.trim().length > 0
+  const todoLedgerInjected =
+    matrix?.todoLedger?.injected === true && matrix.todoLedger.promptExcerpt.trim().length > 0
 
   const injectedOfflinePlotRows = useMemo(
     () => (matrix?.recentContext.unsummarizedOfflinePlots ?? []).filter((row) => row.snippet.trim()),
@@ -361,20 +361,13 @@ export function MemoryTraceModal({ open, onClose, data }: MemoryTraceModalProps)
 
                   <AccordionRow
                     titleEn="DEEP MEMORY"
-                    titleZh="深度记忆 · 长期 + 语义召回"
+                    titleZh="深度记忆 · 关键词 + 向量"
                     expanded={isExpanded('deep')}
                     onToggle={() => toggleAccordion('deep')}
-                    badge={
-                      matrix.deepMemory.contextVectorRecalls?.length ? (
-                        <span className="rounded-full bg-emerald-50 px-2 py-0.5 text-[10px] font-semibold text-emerald-800">
-                          +{matrix.deepMemory.contextVectorRecalls.length} 游标前原文
-                        </span>
-                      ) : null
-                    }
                   >
                     <div className="space-y-5 px-1">
                       <p className="text-[11px] leading-relaxed text-neutral-500">
-                        长期记忆（关键词 + 向量）与「游标前原文」语义召回分开展示；顺序与 prompt 一致，先于剧情时间轴与游标摘录。
+                        长期记忆：关键词命中与向量语义召回。
                       </p>
                       <div>
                         <p className="text-[11px] font-medium uppercase tracking-[0.2em] text-neutral-400">Keyword Hits · 关键词命中</p>
@@ -439,36 +432,6 @@ export function MemoryTraceModal({ open, onClose, data }: MemoryTraceModalProps)
                           ))}
                         </ul>
                       </div>
-                      <div>
-                        <p className="text-[11px] font-medium uppercase tracking-[0.2em] text-neutral-400">Context Vector · 游标前原文语义召回</p>
-                        <p className="mt-1 text-[11px] text-neutral-500">【语义召回·游标前原文】：默认关闭；开启后对游标已覆盖的私聊与线下 AI 正文建索引召回（不含玩家输入、不含线下摘要表）。游标后未总结原文见下方「尚未总结」块。</p>
-                        {!matrix.deepMemory.contextVectorRecalls?.length ? (
-                          <p className="mt-2 text-[12px] text-neutral-400">
-                            {data.injectionSummary?.contextVectorRecallEnabled !== true
-                              ? '游标前原文语义召回默认关闭（记忆引擎·向量召回子开关）'
-                              : '本轮未召回游标前原文（或无索引 / 相似度不足）'}
-                          </p>
-                        ) : (
-                          <ul className="mt-2 space-y-3">
-                            {matrix.deepMemory.contextVectorRecalls.map((row, i) => (
-                              <li
-                                key={i}
-                                className="flex gap-3 rounded-lg border border-emerald-100/80 bg-emerald-50/30 p-3"
-                              >
-                                <div className="min-w-0 flex-1">
-                                  <span className="rounded-md bg-emerald-100/70 px-1.5 py-0.5 text-[10px] font-semibold text-emerald-900">
-                                    {contextSourceLabel(row.sourceKind)}
-                                  </span>
-                                  <p className="mt-2 text-[12px] leading-relaxed text-neutral-700">{row.content}</p>
-                                </div>
-                                <span className="shrink-0 font-mono text-[10px] font-medium tabular-nums text-emerald-800">
-                                  sim {pct(row.relevanceScore)}
-                                </span>
-                              </li>
-                            ))}
-                          </ul>
-                        )}
-                      </div>
                     </div>
                   </AccordionRow>
 
@@ -526,6 +489,37 @@ export function MemoryTraceModal({ open, onClose, data }: MemoryTraceModalProps)
                           </pre>
                         )
                       ) : null}
+                    </div>
+                  </AccordionRow>
+
+                  <AccordionRow
+                    titleEn="TODO LEDGER"
+                    titleZh="待办事项"
+                    expanded={isExpanded('todos')}
+                    onToggle={() => toggleAccordion('todos')}
+                    badge={
+                      todoLedgerInjected ? (
+                        <span className="rounded-full bg-emerald-50 px-2 py-0.5 text-[10px] font-semibold text-emerald-800">
+                          已注入 · 未完 {matrix?.todoLedger?.openCount ?? 0}
+                        </span>
+                      ) : (
+                        <span className="rounded-full bg-neutral-100 px-2 py-0.5 text-[10px] font-semibold text-neutral-500">
+                          暂无
+                        </span>
+                      )
+                    }
+                  >
+                    <div className="px-1">
+                      <p className="text-[12px] leading-relaxed text-neutral-600">
+                        与 system prompt【当前状态】中的【待办】/【已完成事项】同源；线上回复后模型可判断完成、删除或新增。承接剧情时勿把已完成事项再当成未完义务。
+                      </p>
+                      {todoLedgerInjected ? (
+                        <pre className="mt-3 max-h-[min(44vh,440px)] overflow-y-auto whitespace-pre-wrap break-words rounded-xl border border-amber-100/80 bg-amber-50/30 p-3 font-sans text-[12px] leading-relaxed text-neutral-800 [scrollbar-width:thin]">
+                          {matrix!.todoLedger!.promptExcerpt}
+                        </pre>
+                      ) : (
+                        <p className="mt-3 text-[12px] text-neutral-400">本轮未注入待办台账（台账为空或尚未建立）。</p>
+                      )}
                     </div>
                   </AccordionRow>
 

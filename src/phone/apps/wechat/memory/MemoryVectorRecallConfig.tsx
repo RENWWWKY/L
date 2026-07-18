@@ -122,8 +122,6 @@ export function MemoryVectorRecallConfig({
   localModelDownloadProgress,
   localModelDownloadError,
   onLocalModelDownload,
-  contextVectorRecallEnabled,
-  onToggleContextVectorRecall,
   vectorDedicatedApiEnabled,
   onVectorApiModeChange,
   vectorConfig,
@@ -154,8 +152,6 @@ export function MemoryVectorRecallConfig({
   localModelDownloadProgress: LocalEmbeddingDownloadProgress | null
   localModelDownloadError: string | null
   onLocalModelDownload: (force: boolean) => void
-  contextVectorRecallEnabled: boolean
-  onToggleContextVectorRecall: () => void
   vectorDedicatedApiEnabled: boolean
   onVectorApiModeChange: (mode: MemoryApiMode) => void
   vectorConfig: VectorAPIConfig
@@ -267,17 +263,6 @@ export function MemoryVectorRecallConfig({
                 ) : null}
               </ConfigBlock>
             ) : null}
-
-            <ConfigBlock
-              title="游标前原文召回"
-              description="默认关闭。开启后对游标已覆盖的私聊消息与线下 AI 剧情正文做语义检索（不含玩家输入、不含线下摘要表）。剧情摘要向量召回不受此项影响。"
-              action={
-                <MemoryEngineSoftSwitch
-                  on={contextVectorRecallEnabled}
-                  onToggle={onToggleContextVectorRecall}
-                />
-              }
-            />
           </>
         ) : (
           <p className="text-[11px] leading-relaxed text-gray-400">

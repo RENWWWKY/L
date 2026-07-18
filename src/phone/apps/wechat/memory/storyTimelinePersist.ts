@@ -17,6 +17,7 @@ import { MEMORY_UNSUMMARIZED_OFFLINE_INJECT_AI_ROUNDS } from './memorySummaryRet
 import {
   buildStoryTimelinePlotRowFromDelta,
   buildStoryTimelineMainCharPresenceOpts,
+  createEmptyStoryTimelineState,
   enforceStoryTimelineDeltaChronology,
   formatStoryTimelineDeltaForDisplay,
   formatStoryTimelineInjectBody,
@@ -26,10 +27,12 @@ import {
   parseStoryCalendarDayStartMs,
   resolveStoryTimelineCurrentCalendarMs,
   selectStoryTimelineRecentInjectRows,
+  STORY_TIMELINE_EVENT_SUMMARY_MAX,
   type StoryTimelineEventScope,
   type StoryTimelineMainCharPresenceOpts,
   type StoryTimelinePromptLoadOpts,
   type StoryTimelineSummaryDelta,
+  type StoryTimelineTodoEntry,
 } from './storyTimelineTypes'
 
 async function loadStoryTimelineMainCharPresence(characterId: string): Promise<StoryTimelineMainCharPresenceOpts> {
@@ -85,6 +88,19 @@ export async function persistStoryTimelineFromSummaryDelta(
       )
     })()
   if (plotRow) {
+    const plotId = opts?.plotId?.trim()
+    // 同 plotId 若用户已手改摘要：本轮自动写入勿盖掉（重建路径也会保留 userEdited）
+    if (plotId) {
+      const existing = (await personaDb.listStoryTimelinePlotRowsByCharacterId(cid)).find(
+        (r) => r.plotId?.trim() === plotId && r.userEdited === true,
+      )
+      if (existing) {
+        if (scope === 'offline' || scope === 'linked') {
+          await advanceDatingPlotSummaryCursorIfNeeded(cid, plotRow.recordedAt)
+        }
+        return
+      }
+    }
     await personaDb.appendStoryTimelinePlotRow(plotRow)
     if (scope === 'offline' || scope === 'linked') {
       await advanceDatingPlotSummaryCursorIfNeeded(cid, plotRow.recordedAt)
@@ -108,16 +124,35 @@ export async function persistStoryTimelineFromSummaryDelta(
 /**
  * 按约会 archive 当前选中版本重建剧情 state + plot 行表（每 plot 一行，重新生成覆盖不追加）。
  * 不带 plotId 的 summary 行保留不动。
+ * 用户在档案馆手动改过的行（userEdited）按 plotId 保留正文，不被 timelineDelta 盖回。
  */
 export async function rebuildStoryTimelineFromDatingPlots(
   characterId: string,
   plots: PlotItem[],
-  opts?: { apiConfig?: ApiConfigCore | null },
+  opts?: {
+    apiConfig?: ApiConfigCore | null
+    /**
+     * 覆盖待办台账（含 `[]`）。
+     * 未传则保留重建前台账（待办与摘要解耦，禁止从历史摘要整表回放）。
+     */
+    todosOverride?: StoryTimelineTodoEntry[]
+  },
 ): Promise<{ parallelSummaryPlotIds: string[] }> {
   const cid = characterId.trim()
   if (!cid) return { parallelSummaryPlotIds: [] }
 
+  const prevState = await personaDb.getStoryTimelineState(cid)
+  const todosForState =
+    opts && 'todosOverride' in opts && opts.todosOverride !== undefined
+      ? opts.todosOverride
+      : (prevState?.todos ?? [])
   const mainCharPresence = await loadStoryTimelineMainCharPresence(cid)
+  const existingRows = await personaDb.listStoryTimelinePlotRowsByCharacterId(cid)
+  const userEditedByPlotId = new Map<string, (typeof existingRows)[number]>()
+  for (const r of existingRows) {
+    const pid = r.plotId?.trim()
+    if (pid && r.userEdited === true) userEditedByPlotId.set(pid, r)
+  }
 
   let merged: import('./storyTimelineTypes').StoryTimelineState | null = null
   const plotRows: NonNullable<ReturnType<typeof buildStoryTimelinePlotRowFromDelta>>[] = []
@@ -131,11 +166,16 @@ export async function rebuildStoryTimelineFromDatingPlots(
       const base = String(delta.event_summary ?? '').trim()
       delta = {
         ...delta,
-        event_summary: `${base ? `${base}\n` : ''}${foot}`.trim().slice(0, 400),
+        event_summary: `${base ? `${base}\n` : ''}${foot}`
+          .trim()
+          .slice(0, STORY_TIMELINE_EVENT_SUMMARY_MAX),
       }
     }
     if (delta && hasTimelineDeltaContent(delta)) {
-      merged = mergeStoryTimelineState(merged, cid, delta, 'offline')
+      // 重建地点/服装/伏笔等；待办台账与摘要解耦，禁止从历史摘要复活
+      merged = mergeStoryTimelineState(merged, cid, delta, 'offline', {
+        skipTodoLedgerMutation: true,
+      })
       const row = buildStoryTimelinePlotRowFromDelta(cid, delta, 'offline', {
         plotId: plot.id,
         recordedAtMs: plot.timestamp,
@@ -152,12 +192,46 @@ export async function rebuildStoryTimelineFromDatingPlots(
     }
   }
 
-  if (!merged && !plotRows.length) return { parallelSummaryPlotIds: [] }
+  if (!merged && !plotRows.length) {
+    // 剩余剧情无可用 delta（如重生首段 AI）：清空 plot 绑定行与世界锚点；待办按 override 或保留
+    await personaDb.deleteStoryTimelinePlotRowsWithPlotIdForCharacter(cid)
+    if (prevState || opts?.todosOverride !== undefined) {
+      await personaDb.putStoryTimelineState({
+        ...createEmptyStoryTimelineState(cid),
+        todos: todosForState,
+        ...(prevState?.manualAnchorBlock?.trim()
+          ? { manualAnchorBlock: prevState.manualAnchorBlock }
+          : {}),
+      })
+    }
+    const allRowsEmpty = await personaDb.listStoryTimelinePlotRowsByCharacterId(cid)
+    await syncDatingPlotSummaryCursorFromPlotRows(cid, allRowsEmpty)
+    return { parallelSummaryPlotIds: [] }
+  }
 
   await personaDb.deleteStoryTimelinePlotRowsWithPlotIdForCharacter(cid)
-  if (merged) await personaDb.putStoryTimelineState(merged)
+  if (merged) {
+    await personaDb.putStoryTimelineState({
+      ...merged,
+      todos: todosForState,
+      ...(prevState?.manualAnchorBlock?.trim()
+        ? { manualAnchorBlock: prevState.manualAnchorBlock }
+        : {}),
+    })
+  }
   for (const row of plotRows) {
-    await personaDb.upsertStoryTimelinePlotRow(row)
+    const pid = row.plotId?.trim()
+    const locked = pid ? userEditedByPlotId.get(pid) : undefined
+    if (locked) {
+      await personaDb.upsertStoryTimelinePlotRow({
+        ...locked,
+        recordedAt: row.recordedAt,
+        sourceScope: locked.sourceScope || row.sourceScope,
+        userEdited: true,
+      })
+    } else {
+      await personaDb.upsertStoryTimelinePlotRow(row)
+    }
   }
   const allRows = await personaDb.listStoryTimelinePlotRowsByCharacterId(cid)
   await syncDatingPlotSummaryCursorFromPlotRows(cid, allRows)

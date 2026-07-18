@@ -78,7 +78,7 @@ export const MEMORY_ENGINE_COACH_STEPS: MemoryCoachStep[] = [
   {
     target: 'vector-recall',
     title: '按意思找相关记忆',
-    body: '打开后，聊得比较长时，除了按关键词找记忆，还会按「意思相近」多捞几条相关的。下面「游标前原文召回」还能在游标已覆盖的私聊消息与线下剧情正文里按意思搜索（不含线下摘要表）。',
+    body: '打开后，聊得比较长时，除了按关键词找记忆，还会按「意思相近」多捞几条相关的长期记忆；线下摘要向量召回也依赖此总开关。',
   },
   {
     target: 'embedding-provider',

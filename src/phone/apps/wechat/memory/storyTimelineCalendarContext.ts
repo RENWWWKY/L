@@ -98,8 +98,8 @@ export const STORY_TIMELINE_CALENDAR_AWARENESS_RULES = `
 /** 约会正文生成用：接续上一回合锚点，禁止公历倒流 */
 export const STORY_TIMELINE_CALENDAR_CHRONOLOGY_RULES = `
 【剧情时间·接续铁律（高于自行编造年份）】
-- 接续剧情时正文与 timeline JSON 的 story_day 须为【剧情时间锚点】**同日或更晚**；**禁止**无回忆/闪回/插叙铺垫却把公历写成更早年份（例：锚点已是 2026 年却写 2024）。
-- 闪回/回忆须在正文与 relative_time 中明确标识（如「三年前」「闪回」），方可填写早于锚点的 story_day。
+- 接续剧情时正文与 [TIMELINE] 的「故事日」须为【剧情时间锚点】**同日或更晚**；**禁止**无回忆/闪回/插叙铺垫却把公历写成更早年份（例：锚点已是 2026 年却写 2024）。
+- 闪回/回忆须在正文与「相对时间」中明确标识（如「三年前」「闪回」），方可填写早于锚点的故事日。
 `.trim()
 
 export async function buildStoryTimelineCalendarContextBlock(params: {

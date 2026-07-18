@@ -1,6 +1,7 @@
 import {
   isCharacterMediaAppearanceLockPrompt,
   isCharacterMediaCharacterAppearanceNeededPrompt,
+  isCharacterMediaCharacterFaceVisiblePrompt,
   isCharacterMediaReferenceImagePrompt,
 } from '../../../components/moments/momentsImagePromptEnhancer'
 import { translateCharacterMediaPromptTagsToEnglishSync } from '../../../components/moments/characterMediaPromptTranslator'
@@ -104,6 +105,132 @@ export function extractCharacterAppearanceRefNote(character: Character | null | 
   const note = character?.appearanceRefNote?.trim().replace(/\s+/g, ' ')
   if (!note) return ''
   return note.slice(0, 500)
+}
+
+/** 外貌描述可对齐的身体区域（不露脸时按画面选择性注入） */
+export type AppearanceTraitRegion =
+  | 'face'
+  | 'hair'
+  | 'hands'
+  | 'arms'
+  | 'body'
+  | 'legs'
+  | 'skin'
+  | 'clothing'
+  | 'other'
+
+const APPEARANCE_REGION_SCENE_RES: Record<Exclude<AppearanceTraitRegion, 'other'>, RegExp> = {
+  face: /\b(?:face|faces|facial|headshot|portrait|eyes?|lips?|mouth|jaw|chin|cheek|forehead|nose|blush|expression|smile)\b|脸|面|五官|眼|唇|颊|额|鼻|表情|微笑/i,
+  hair: /\b(?:hair|bangs|ponytail|braid)\b|发|刘海|马尾|辫/i,
+  hands: /\b(?:hands?|fingers?|knuckles?|fingertips?|nails?|rings?|holding hand|interlaced|interlocked)\b|手|指|指节|指尖|指甲|戒指|指环|十指|牵手|握手/i,
+  arms: /\b(?:arms?|forearms?|wrists?|elbows?)\b|臂|手臂|小臂|腕|肘|袖口/i,
+  body: /\b(?:body|figure|physique|torso|waist|hips?|chest|belly|abdomen|curvy|slender|slim|muscular|hourglass|bust)\b|身材|体型|身形|腰|胯|胸|腹|臀|丰满|纤细|瘦|壮|宽肩|窄腰|身高/i,
+  legs: /\b(?:legs?|thighs?|calves?|feet|foot|ankles?|knees?)\b|腿|大腿|小腿|脚|踝|膝|鞋/i,
+  skin: /\b(?:skin|skin[\s-]?tone|fair skin|pale|tan)\b|肤|皮肤|肤色|冷白|暖白|小麦色/i,
+  clothing: /\b(?:clothes?|clothing|outfit|dress|shirt|coat|jacket|lingerie|underwear|sweater)\b|穿|衣|裙|衫|外套|内衣|睡衣|浴袍/i,
+}
+
+const APPEARANCE_REGION_CLAUSE_RES: Record<Exclude<AppearanceTraitRegion, 'other'>, RegExp> = {
+  face: /\b(?:face|facial|eyes?|eyelashes?|lips?|mouth|jaw|chin|cheek|forehead|nose|blush|expression|smile|pupils?)\b|脸|面|五官|眼|瞳|睫|唇|嘴|颊|额|鼻|表情|微笑|桃花眼|卧蚕/i,
+  hair: /\b(?:hair|bangs|ponytail|braid|fringe)\b|发|刘海|马尾|辫|鬓/i,
+  hands: /\b(?:hands?|fingers?|knuckles?|fingertips?|nails?|rings?|manicure)\b|手|指|指节|指尖|指甲|美甲|戒指|指环|无名指|尾戒/i,
+  arms: /\b(?:arms?|forearms?|wrists?|elbows?)\b|臂|手臂|小臂|腕|肘|手腕/i,
+  body: /\b(?:body|figure|physique|torso|waist|hips?|chest|belly|abdomen|curvy|slender|slim|muscular|hourglass|bust|height)\b|身材|体型|身形|腰|胯|胸|腹|臀|丰满|纤细|瘦削|壮硕|宽肩|窄腰|身高|体脂|肌肉/i,
+  legs: /\b(?:legs?|thighs?|calves?|feet|foot|ankles?|knees?)\b|腿|大腿|小腿|脚|踝|膝|长腿/i,
+  skin: /\b(?:skin|skin[\s-]?tone|fair skin|pale|tan|porcelain)\b|肤|皮肤|肤色|冷白|暖白|白皙|小麦色|健康色/i,
+  clothing: /\b(?:clothes?|clothing|outfit|dress|shirt|coat|jacket|lingerie|underwear|sweater|wear(?:s|ing)?)\b|穿|衣|裙|衫|外套|内衣|睡衣|浴袍|常穿|穿搭/i,
+}
+
+function splitAppearanceTraitClauses(text: string): string[] {
+  return text
+    .split(/[\n；;。！？!？]+|,(?![^()]*\))|，/)
+    .map((s) => s.trim())
+    .filter((s) => s.length >= 2)
+}
+
+function classifyAppearanceTraitClause(clause: string): AppearanceTraitRegion[] {
+  const hit: AppearanceTraitRegion[] = []
+  for (const region of Object.keys(APPEARANCE_REGION_CLAUSE_RES) as Array<
+    Exclude<AppearanceTraitRegion, 'other'>
+  >) {
+    if (APPEARANCE_REGION_CLAUSE_RES[region].test(clause)) hit.push(region)
+  }
+  return hit.length ? hit : ['other']
+}
+
+/** 从生图构图 prompt 推断画面中可能露出的身体区域 */
+export function detectVisibleAppearanceRegionsFromPrompt(prompt: string): Set<AppearanceTraitRegion> {
+  const p = prompt.trim()
+  const regions = new Set<AppearanceTraitRegion>()
+  if (!p) return regions
+
+  for (const region of Object.keys(APPEARANCE_REGION_SCENE_RES) as Array<
+    Exclude<AppearanceTraitRegion, 'other'>
+  >) {
+    if (APPEARANCE_REGION_SCENE_RES[region].test(p)) regions.add(region)
+  }
+
+  if (/\b(?:full body|whole body)\b|全身|整身/i.test(p)) {
+    regions.add('body')
+    regions.add('arms')
+    regions.add('legs')
+    regions.add('hands')
+    regions.add('clothing')
+    regions.add('skin')
+  }
+  if (/\b(?:upper body|half[\s-]?body|waist-up|chest-up)\b|上半身|半身|七分身|腰部以上/i.test(p)) {
+    regions.add('body')
+    regions.add('arms')
+    regions.add('clothing')
+    regions.add('skin')
+  }
+  if (
+    regions.has('hands') ||
+    regions.has('arms') ||
+    regions.has('body') ||
+    regions.has('legs')
+  ) {
+    regions.add('skin')
+  }
+
+  return regions
+}
+
+/**
+ * 按画面露出部位，从外貌关键词/特征补充里筛选可注入的描述。
+ * - 露脸：原样返回
+ * - 不露脸：去掉脸/发相关句，只保留与手、身材、腿等可见区域匹配的词
+ */
+export function selectAppearanceTraitsForVisibleParts(
+  appearanceText: string,
+  scenePrompt: string,
+  options?: { faceVisible?: boolean },
+): string {
+  const text = appearanceText.trim().replace(/\s+/g, ' ')
+  if (!text) return ''
+
+  const faceVisible =
+    options?.faceVisible ?? isCharacterMediaCharacterFaceVisiblePrompt(scenePrompt)
+  if (faceVisible) return text.slice(0, 500)
+
+  const visible = detectVisibleAppearanceRegionsFromPrompt(scenePrompt)
+  visible.delete('face')
+  visible.delete('hair')
+  if (!visible.size) return ''
+
+  const kept: string[] = []
+  const seen = new Set<string>()
+  for (const clause of splitAppearanceTraitClauses(text)) {
+    const regions = classifyAppearanceTraitClause(clause)
+    if (regions.includes('face') || regions.includes('hair')) continue
+    if (regions.length === 1 && regions[0] === 'other') continue
+    if (!regions.some((r) => visible.has(r))) continue
+    const key = clause.toLowerCase()
+    if (seen.has(key)) continue
+    seen.add(key)
+    kept.push(clause)
+  }
+  return kept.join('，').slice(0, 500)
 }
 
 function mergeUniqueCommaTags(parts: string[], extra: string): void {
@@ -246,17 +373,34 @@ export function buildCharacterMediaImageGenParams(opts: {
   const genderCorrected = enforceCharacterMediaImagePromptGender(promptForApi, opts.character?.gender)
   const prompt = sanitizeCharacterMediaImagePrompt(normalizeCharacterImageGenPromptForApi(genderCorrected))
   const lockAppearance = isCharacterMediaAppearanceLockPrompt(prompt)
+  const faceVisible = isCharacterMediaCharacterFaceVisiblePrompt(prompt)
+  /** 自拍/对镜：锁脸身份；其它露脸构图：仅锁画风；不露脸（牵手特写等）：不传参考图 */
   const attachIdentityReference =
     refUploadSupported && hasReferenceConfigured && isCharacterMediaReferenceImagePrompt(prompt)
   const attachStyleReference =
-    refUploadSupported && hasReferenceConfigured && !attachIdentityReference
+    refUploadSupported && hasReferenceConfigured && !attachIdentityReference && faceVisible
   const attachReferenceImages = attachIdentityReference || attachStyleReference
   const characterAppearanceNeeded = isCharacterMediaCharacterAppearanceNeededPrompt(rawPrompt)
-  const refNoteParts = [
+  const fullRefNoteParts = [
     characterAppearanceNeeded ? extractCharacterAppearanceRefNote(opts.character) : '',
     lockAppearance && characterAppearanceNeeded ? opts.additionalAppearanceRefNote?.trim() ?? '' : '',
   ].filter(Boolean)
-  const refNote = refNoteParts.join('；').slice(0, 500)
+  const fullRefNote = fullRefNoteParts.join('；').slice(0, 500)
+  /** 不露脸时仍按露出部位挑选戒指/身材等外貌词；露脸则用完整特征补充 */
+  const selectiveSource = [
+    extractCharacterAppearanceRefNote(opts.character),
+    opts.additionalAppearanceRefNote?.trim() ?? '',
+    !hasReferenceConfigured || !refUploadSupported
+      ? extractCharacterAppearanceHint(opts.character)
+      : '',
+  ]
+    .filter(Boolean)
+    .join('；')
+  const selectiveRefNote =
+    !faceVisible && characterAppearanceNeeded
+      ? selectAppearanceTraitsForVisibleParts(selectiveSource, rawPrompt, { faceVisible: false })
+      : ''
+  const refNote = faceVisible ? fullRefNote : selectiveRefNote
 
   const defaultDims =
     opts.width == null && opts.height == null && !opts.imageSize
@@ -287,7 +431,7 @@ export function buildCharacterMediaImageGenParams(opts: {
     referenceImageUrl: attachReferenceImages ? referenceImageUrls[0] : undefined,
     characterAppearanceRefNote: refNote || undefined,
     characterAppearanceHint:
-      !hasReferenceConfigured || !refUploadSupported
+      faceVisible && (!hasReferenceConfigured || !refUploadSupported)
         ? extractCharacterAppearanceHint(opts.character) || undefined
         : undefined,
     // 档案有明确性别时一律附带（不再仅限自拍），避免第三人称构图写成对面性别

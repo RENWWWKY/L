@@ -34,6 +34,7 @@ import {
   normalizeStoryTimelineRowKeywords,
   normalizeStoryTimelineRowTitle,
   parseStoryTimelineSummaryDelta,
+  splitStoryTimelineInjectBody,
   type StoryTimelineSummaryDelta,
 } from './memory/storyTimelineTypes'
 import {
@@ -269,9 +270,10 @@ export function isWeChatPeerRegenerateReplyBias(replyBias?: string): boolean {
 const WECHAT_PEER_REGENERATE_REPLY_APPENDIX = `
 ---
 【重新回复（重写上一轮 AI 气泡）】
-1）上下文**不含**你方本轮旧稿；须当作对该条用户消息的**首次作答**，**禁止**洗稿、同义复述或微调旧句交差。
-2）须有**可区分的新钩子**：对白措辞、信息披露顺序、动作/emoji、交涉策略至少一项明显不同。
-3）「尾声延展」：客户端已尝试恢复补丁前关系基准；勿假定旧稿逐字引用仍成立。
+1）若有「本轮回复偏向」，其为**内容最高优先级**（场面如何改写）；输出格式硬约束仍须遵守。
+2）上下文**不含**你方本轮旧稿；须当作对该条用户消息的**首次作答**，**禁止**洗稿、同义复述或微调旧句交差。
+3）须有**可区分的新钩子**：对白措辞、信息披露顺序、动作/emoji、交涉策略至少一项明显不同。
+4）不得捏造与「尚未总结」「剧情时间轴·当前状态」「尾声延展」明文冲突的已定事实；「尾声延展」以当前注入为准（客户端可能已回滚旧稿补丁）。
 `.trim()
 
 export type WeChatChatPromptMode = 'lumi-assistant' | 'persona'
@@ -609,25 +611,28 @@ function buildPlayerIdentitySection(playerIdentity: PlayerIdentity | null): stri
 
 function buildLongTermMemorySection(notes?: string): string {
   const body = notes?.trim() || '（暂无长期记忆模块入库数据，仅根据最近对话与人设推断。）'
-  return `\n\n---\n【长期记忆】\n${body}\n`
+  return (
+    `\n\n---\n【长期记忆】（关键词/向量召回；**优先级最低的事实补全层**；与上方「尚未总结」或「剧情时间轴·当前状态」冲突时以上方为准）\n` +
+    `【向量召回·已发生硬规则】下列内容**全部是已发生的历史事件**，不是本轮正在发生的场面；**禁止**复述、重演记忆中的事情经过或场景描写；**仅可**在相关时用回溯语气当作历史事件一笔带过，且不得覆盖尚未总结末尾或剧情时间轴·当前状态。\n${body}\n`
+  )
 }
 
 function buildUnsummarizedPrivateSection(notes?: string): string {
   const t = notes?.trim()
   if (!t) return ''
-  return `\n\n---\n【尚未写入长期记忆的私聊片段（本地游标之后；前缀若含 \`[剧情 …｜系统 …]\`：左侧为故事内锚点，右侧为真实落库钟点；仅有系统前缀时**不是**剧情时间。故事「现在」以【剧情时间轴】【当前锚点】为准；线上落库晚于线下时，视为接在该锚点之后）】\n${t}\n`
+  return `\n\n---\n【尚未写入长期记忆的私聊片段（本地游标之后；**末尾最新优先**；前缀若含 \`[剧情 …｜系统 …]\`：左侧为故事内锚点，右侧为真实落库钟点；仅有系统前缀时**不是**剧情时间。故事「现在」以【剧情时间轴·当前状态】为准；线上落库晚于线下时，视为接在该锚点之后）】\n${t}\n`
 }
 
 function buildUnsummarizedGroupSection(notes?: string): string {
   const t = notes?.trim()
   if (!t) return ''
-  return `\n\n---\n【尚未写入长期记忆的群聊片段（本地游标之后；前缀规则同私聊：有「剧情｜系统」双写时以剧情侧理解故事先后，系统侧仅表真实落库）】\n${t}\n`
+  return `\n\n---\n【尚未写入长期记忆的群聊片段（本地游标之后；**末尾最新优先**；前缀规则同私聊：有「剧情｜系统」双写时以剧情侧理解故事先后，系统侧仅表真实落库）】\n${t}\n`
 }
 
 function buildUnsummarizedMeetSection(notes?: string): string {
   const t = notes?.trim()
   if (!t) return ''
-  return `\n\n---\n【尚未写入长期记忆的遇见临时会话片段（本地游标之后）】\n${t}\n`
+  return `\n\n---\n【尚未写入长期记忆的遇见临时会话片段（本地游标之后；**末尾最新优先**）】\n${t}\n`
 }
 
 export function buildScheduleSection(params: { playerIdentity: ScheduleTable | null; character: ScheduleTable | null }): string {
@@ -664,7 +669,7 @@ export function buildSystemContent(params: {
   /** 小号试探：同角色在其他微信号通讯录中时的秘密指令 */
   altAccountProbeBlock?: string
   longTermMemoryNotes?: string
-  /** 剧情时间轴（地点/服装/物品/伏笔/近期事件；由自动总结维护） */
+  /** 剧情时间轴（地点/时段/本轮事件等；由自动总结维护；服装道具动机融于事件） */
   storyTimelineNotes?: string
   /** 角色关联的世界背景（优先于通用扮演，次于世界书条目） */
   worldBackgroundPrompt?: string
@@ -724,6 +729,11 @@ export function buildSystemContent(params: {
   networkRelationshipsBlock?: string
   /** 用户消息中的 https 链接经 Worker 抓取后的摘要块 */
   sharedLinkPreviewBlock?: string
+  /**
+   * 输出协议等格式硬约束；插入在效力层级与角色扮演壳之后、玩家身份之前。
+   * 由 requestWeChatPeerReplyText 传入，避免垫在 system 末尾被记忆块淹没。
+   */
+  earlyOutputAppendix?: string
 }): string {
   const worldBookIdentity = params.worldBookPlayerIdentity ?? params.playerIdentity
   const expandNames = resolveCharUserNamesForPrompt({
@@ -772,9 +782,17 @@ export function buildSystemContent(params: {
   const mem = buildLongTermMemorySection(params.longTermMemoryNotes)
   const memScopeFence =
     params.character && params.promptMode === 'persona'
-      ? `\n\n---\n【长期记忆适用边界】下方【长期记忆】条目**仅**锚定当前会话对象人设 id；**禁止**把其中事实套用到未在场的其他联系人，**禁止**引用与本会话对象无关的他人记忆（防串台）。\n`
+      ? `\n\n---\n【长期记忆适用边界】【长期记忆】条目**仅**锚定当前会话对象人设 id；**禁止**把其中事实套用到未在场的其他联系人，**禁止**引用与本会话对象无关的他人记忆（防串台）。\n`
       : ''
-  const storyTimeline = params.storyTimelineNotes?.trim() ?? ''
+  const storyTimelineRaw = params.storyTimelineNotes?.trim() ?? ''
+  const { currentState: storyTimelineCurrentState, recallAndNear: storyTimelineRecallAndNear } =
+    splitStoryTimelineInjectBody(storyTimelineRaw)
+  const timelineCurrent = storyTimelineCurrentState
+    ? `\n\n---\n【剧情时间轴·当前状态】（故事内「现在」；承接地点/时段/服装/未完结待办优先对照本块；**高于**下方语义召回与长期记忆）\n${storyTimelineCurrentState}\n`
+    : ''
+  const timelineRecall = storyTimelineRecallAndNear
+    ? `\n\n---\n【剧情时间轴·语义召回/近端摘要】（往事补全；**不得**覆盖上方当前状态与尚未总结末尾最新）\n${storyTimelineRecallAndNear}\n`
+    : ''
   const crossChannelTimeline = params.crossChannelTimelineNotes?.trim()
     ? `\n\n---\n${params.crossChannelTimelineNotes.trim()}\n`
     : ''
@@ -788,12 +806,16 @@ export function buildSystemContent(params: {
     ? `\n\n---\n${params.meetEncounterMemoriesContext.trim()}\n`
     : ''
   const groupChatsRecent = params.recentGroupChatsReference?.trim()
-    ? `\n\n---\n【群聊近期参考（本地消息摘录，非模型总结；用法同上方线下剧情参考）】\n${params.recentGroupChatsReference.trim()}\n`
+    ? `\n\n---\n【群聊近期参考（本地消息摘录，非模型总结；末尾最新优先；用法同上方线下剧情参考）】\n${params.recentGroupChatsReference.trim()}\n`
     : ''
-  const replyBias = params.replyBias?.trim() ? `\n\n---\n【本轮回复偏向（最高优先级）】\n${params.replyBias.trim()}\n` : ''
-  const regenAppendix = isWeChatPeerRegenerateReplyBias(params.replyBias)
-    ? `\n\n${WECHAT_PEER_REGENERATE_REPLY_APPENDIX}\n`
+  const isRegenBias = isWeChatPeerRegenerateReplyBias(params.replyBias)
+  const replyBiasRaw = params.replyBias?.trim() ?? ''
+  const replyBias = replyBiasRaw
+    ? isRegenBias
+      ? `\n\n---\n【本轮回复偏向（内容最高优先级）】\n${replyBiasRaw}\n`
+      : `\n\n---\n【本轮回复偏向（当轮方向参考；不得覆盖已定事实）】\n${replyBiasRaw}\n`
     : ''
+  const regenAppendix = isRegenBias ? `\n\n${WECHAT_PEER_REGENERATE_REPLY_APPENDIX}\n` : ''
   const linkPreviewBlock = params.sharedLinkPreviewBlock?.trim() ?? ''
   const isLumiAssistant = params.promptMode === 'lumi-assistant'
   const currentTime = resolveTimePromptSection({
@@ -818,6 +840,19 @@ export function buildSystemContent(params: {
       })
     : buildPlayerIdentitySection(params.playerIdentity)
   const fictionCot = `\n\n${LUMI_SYSTEM_OVERRIDE_APPENDIX}\n`
+  const earlyOutput = params.earlyOutputAppendix?.trim()
+    ? `\n\n---\n${params.earlyOutputAppendix.trim()}\n`
+    : ''
+  const priorityLadder = isLumiAssistant
+    ? ''
+    : isRegenBias
+      ? `\n\n---\n【效力层级·重新回复】本轮对上一气泡不满意重写。` +
+        `「本轮回复偏向」为**内容最高优先级**；输出格式硬约束仍须遵守；` +
+        `不得捏造与「尚未总结」「剧情时间轴·当前状态」「尾声延展」明文冲突的已定事实。\n`
+      : `\n\n---\n【效力层级·微信私聊】` +
+        `输出格式硬约束 > 玩家身份铁律 > 角色档案/世界书/世界背景/NPC网/尾声延展·关系 > ` +
+        `剧情时间轴·当前状态 > 尚未总结（末尾最新）与线下摘录末尾 > 时间轴语义召回/近端摘要 > 向量长期记忆。` +
+        `对话历史中的本轮用户消息决定接话方向，**不得**改写已定事实；角色在边界内可自主行动。\n`
 
   const linkedExpand = (raw: string) =>
     expandLinkedMemoryPlaceholders(raw, {
@@ -828,9 +863,20 @@ export function buildSystemContent(params: {
   const appendLinkPreview = (expanded: string) =>
     linkPreviewBlock ? `${expanded}\n\n---\n${linkPreviewBlock}\n` : expanded
 
+  /** 记忆尾部：当前态 → 尚未总结/近端摘录 → 召回 → 长期记忆（低） */
+  const memoryTail =
+    `${timelineCurrent}${crossChannelTimeline}` +
+    `${unsPriv}${unsGrp}${unsMeet}${offlinePlots}` +
+    `${meetEncounter}${meetContinuity}${groupChatsRecent}` +
+    `${timelineRecall}${memScopeFence}${mem}`
+
   if (isLumiAssistant) {
-    // 助手模式：不注入「虚构沙盒」免责声明，避免诱导沉浸式扮演。
-    const raw = `${LUMI_ASSISTANT_SYSTEM_PROMPT}${loreBlock}${mem}${memScopeFence}${storyTimeline}${crossChannelTimeline}${unsPriv}${unsGrp}${unsMeet}${offlinePlots}${meetEncounter}${meetContinuity}${altProbe}${groupChatsRecent}${replyBias}${currentTime}${schedule}${pi}${peerLine}`
+    // 助手模式：不注入「虚构沙盒」免责声明；记忆顺序与人设模式对齐。
+    const raw =
+      `${LUMI_ASSISTANT_SYSTEM_PROMPT}${earlyOutput}` +
+      `${pi}${loreBlock}` +
+      `${memoryTail}` +
+      `${altProbe}${replyBias}${currentTime}${schedule}${peerLine}`
     return appendLinkPreview(linkedExpand(raw))
   }
 
@@ -862,7 +908,17 @@ export function buildSystemContent(params: {
     params.promptMode === 'persona' ? params.networkNpcPronounBlock?.trim() || '' : ''
   const networkRelationships =
     params.promptMode === 'persona' ? params.networkRelationshipsBlock?.trim() || '' : ''
-  const rawMain = `${WECHAT_ROLEPLAY_SYSTEM_PROMPT}${loreBlock}${mem}${memScopeFence}${storyTimeline}${crossChannelTimeline}${unsPriv}${unsGrp}${unsMeet}${offlinePlots}${meetEncounter}${meetContinuity}${altProbe}${groupChatsRecent}${replyBias}${regenAppendix}${currentTime}${schedule}${pi}${fictionCot}${extra}${networkRelationships}${networkNpcPronoun}${peerLine}`
+  /**
+   * 效力层级（高→低，无导演意图/无独立文风层）：
+   * 重新回复偏向（若有）→ 输出格式硬约束 → 玩家身份 → 档案/世界书/NPC/尾声 →
+   * 时间轴·当前状态 → 尚未总结/线下末尾 → 语义召回/近端 → 向量长期记忆
+   */
+  const rawMain =
+    `${WECHAT_ROLEPLAY_SYSTEM_PROMPT}${priorityLadder}` +
+    `${replyBias}${regenAppendix}${earlyOutput}${fictionCot}` +
+    `${pi}${loreBlock}${extra}${networkRelationships}${networkNpcPronoun}` +
+    `${memoryTail}` +
+    `${altProbe}${currentTime}${schedule}${peerLine}`
   return appendLinkPreview(linkedExpand(rawMain))
 }
 
@@ -1473,20 +1529,20 @@ export async function requestWeChatPeerReplyBubbles(params: {
   applyClassicEmojiDefault?: boolean
   classicEmojiBannedNames?: string[]
   voiceRoundTriggerPercent?: number
-  /** 角色 AI 配图每轮触发概率（缺省 0%） */
+  /** @deprecated 已取消发图概率/开关；字段保留兼容 */
   imageRoundTriggerPercent?: number
   imageRoundCountMin?: number
   imageRoundCountMax?: number
   imageRoundCountTarget?: number
-  /** 用户本轮明确要求角色发图时 bypass 概率 */
+  /** 用户本轮明确要求角色发图 */
   userExplicitCharacterImageRequest?: boolean
-  /** 本轮概率已命中允许发图（与 imageRoundCountTarget 配合） */
+  /** @deprecated 已取消门槛；私聊始终允许按语境发图 */
   imageRoundAllowed?: boolean
   /** 角色主动消息：历史末尾追加系统 user 占位，确保模型以 assistant（角色）侧输出 */
   proactiveInitiation?: boolean
   /** 与 proactiveInitiation 配套；缺省使用内置主动消息占位文案 */
   proactiveInitiationNudge?: string
-  /** 当前 API 预设已配置生图引擎时注入 `[图片]` 输出协议 */
+  /** 私聊开启发图协议（描述占位；与生图 API 是否配置无关） */
   characterImageGenEnabled?: boolean
   /** 当前生图风格中文名，供协议说明（风格由客户端拼接，模型勿写） */
   characterImageGenStyleHint?: string
@@ -1529,39 +1585,6 @@ export async function requestWeChatPeerReplyBubbles(params: {
       : {}),
   })
 
-  const base = await materializeSystemContent({
-    character: params.character,
-    playerIdentity: params.playerIdentity,
-    playerDisplayName: params.playerDisplayName,
-    promptMode: params.promptMode,
-    wechatHomeProfile: params.wechatHomeProfile,
-    meetWechatContinuityBlock: params.meetWechatContinuityBlock,
-    altAccountProbeBlock: params.altAccountProbeBlock,
-    longTermMemoryNotes: params.longTermMemoryNotes,
-    storyTimelineNotes: params.storyTimelineNotes,
-    crossChannelTimelineNotes: params.crossChannelTimelineNotes,
-    worldBackgroundPrompt: params.worldBackgroundPrompt,
-    offlineDatingPlotsContext: params.offlineDatingPlotsContext,
-    meetEncounterMemoriesContext: params.meetEncounterMemoriesContext,
-    recentGroupChatsReference: params.recentGroupChatsReference,
-    unsummarizedPrivateNotes: params.unsummarizedPrivateNotes,
-    unsummarizedGroupNotes: params.unsummarizedGroupNotes,
-    unsummarizedMeetNotes: params.unsummarizedMeetNotes,
-    recentPrivateAiRoundsNotes: params.recentPrivateAiRoundsNotes,
-    recentOfflineAiRoundsNotes: params.recentOfflineAiRoundsNotes,
-    recentMeetAiRoundsNotes: params.recentMeetAiRoundsNotes,
-    replyBias: params.replyBias,
-    currentTimeMs: params.currentTimeMs,
-    timePerceptionEnabled: params.timePerceptionEnabled,
-    chatMemberIds: wbMemberIds,
-    globalWechatPlate: params.globalWechatPlate,
-    worldBookPlaceholderIdMap: params.worldBookPlaceholderIdMap,
-    friendRequestAdjudication: params.friendRequestAdjudication,
-    nonPrimarySpeakerLine: params.nonPrimarySpeakerLine,
-    worldBookPlayerIdentity: params.worldBookPlayerIdentity,
-    worldBookUserLineLabel: params.worldBookUserLineLabel,
-    sharedLinkPreviewBlock: params.sharedLinkPreviewBlock,
-  })
   const isLumi = params.promptMode === 'lumi-assistant'
   const busyPrefix = buildBusyPrefix(params.busyContext)
   const classicEmojiForCatalog =
@@ -1632,6 +1655,40 @@ export async function requestWeChatPeerReplyBubbles(params: {
           includeProfileImageChange: params.includeProfileImageChange === true,
           includeInternetMemeLexicon: params.includeInternetMemeLexicon === true,
         })
+  const base = await materializeSystemContent({
+    character: params.character,
+    playerIdentity: params.playerIdentity,
+    playerDisplayName: params.playerDisplayName,
+    promptMode: params.promptMode,
+    wechatHomeProfile: params.wechatHomeProfile,
+    meetWechatContinuityBlock: params.meetWechatContinuityBlock,
+    altAccountProbeBlock: params.altAccountProbeBlock,
+    longTermMemoryNotes: params.longTermMemoryNotes,
+    storyTimelineNotes: params.storyTimelineNotes,
+    crossChannelTimelineNotes: params.crossChannelTimelineNotes,
+    worldBackgroundPrompt: params.worldBackgroundPrompt,
+    offlineDatingPlotsContext: params.offlineDatingPlotsContext,
+    meetEncounterMemoriesContext: params.meetEncounterMemoriesContext,
+    recentGroupChatsReference: params.recentGroupChatsReference,
+    unsummarizedPrivateNotes: params.unsummarizedPrivateNotes,
+    unsummarizedGroupNotes: params.unsummarizedGroupNotes,
+    unsummarizedMeetNotes: params.unsummarizedMeetNotes,
+    recentPrivateAiRoundsNotes: params.recentPrivateAiRoundsNotes,
+    recentOfflineAiRoundsNotes: params.recentOfflineAiRoundsNotes,
+    recentMeetAiRoundsNotes: params.recentMeetAiRoundsNotes,
+    replyBias: params.replyBias,
+    currentTimeMs: params.currentTimeMs,
+    timePerceptionEnabled: params.timePerceptionEnabled,
+    chatMemberIds: wbMemberIds,
+    globalWechatPlate: params.globalWechatPlate,
+    worldBookPlaceholderIdMap: params.worldBookPlaceholderIdMap,
+    friendRequestAdjudication: params.friendRequestAdjudication,
+    nonPrimarySpeakerLine: params.nonPrimarySpeakerLine,
+    worldBookPlayerIdentity: params.worldBookPlayerIdentity,
+    worldBookUserLineLabel: params.worldBookUserLineLabel,
+    sharedLinkPreviewBlock: params.sharedLinkPreviewBlock,
+    earlyOutputAppendix: outputAppendix,
+  })
   const memoryMomentImages = (params.longTermMemoryMomentImages ?? [])
     .map((u) => u.trim())
     .filter(Boolean)
@@ -1645,7 +1702,8 @@ export async function requestWeChatPeerReplyBubbles(params: {
   const selfProfileImagesAppendix = selfProfileVisionParts.length
     ? `\n\n---\n${WECHAT_SELF_PROFILE_IMAGES_APPENDIX}\n`
     : ''
-  const system = `${busyPrefix ? `${busyPrefix}\n\n` : ''}${base}${selfProfileImagesAppendix}${memoryImagesAppendix}${recallGuide ? `\n\n${recallGuide}` : ''}\n\n${outputAppendix}${mediaFreqBlock ? `\n\n${mediaFreqBlock}` : ''}${danmakuInstruction ? `\n\n${danmakuInstruction}` : ''}\n\n${stickerBlock}${imageGenBlock ? `\n\n${imageGenBlock}` : ''}`
+  // 输出协议已经 earlyOutputAppendix 插入 base 前部；末尾仅留媒体/贴纸等附属指令
+  const system = `${busyPrefix ? `${busyPrefix}\n\n` : ''}${base}${selfProfileImagesAppendix}${memoryImagesAppendix}${recallGuide ? `\n\n${recallGuide}` : ''}${mediaFreqBlock ? `\n\n${mediaFreqBlock}` : ''}${danmakuInstruction ? `\n\n${danmakuInstruction}` : ''}\n\n${stickerBlock}${imageGenBlock ? `\n\n${imageGenBlock}` : ''}`
 
   const history = transcriptToMessages(params.transcript, { groupChat: params.groupChatTranscript })
   const messages: OpenAiCompatibleMessage[] = [{ role: 'system', content: system }, ...history]
@@ -3323,7 +3381,7 @@ export function buildDatingCombinedMemoryUserAppendix(params: {
   summaryRoundDue?: boolean
   /** 生日/节日/参考时刻（注入 timeline 写法的日历上下文） */
   calendarContextBlock?: string
-  /** 系统内仍 open 的动机伏笔 / 待办（同轮记忆块须对照回收） */
+  /** 系统内仍 open 的动机伏笔（同轮记忆块须对照回收；待办不由摘要维护） */
   priorOpenAnchorsBlock?: string
 }): string {
   const onlineBlock = formatUnifiedMemoryOnlineBlock(params.onlineTranscript, params.peerLabel.trim() || '对方')
@@ -3342,7 +3400,7 @@ export function buildDatingCombinedMemoryUserAppendix(params: {
   const summaryRoundDue = params.summaryRoundDue === true
   const roundModeBlock = summaryRoundDue
     ? `【本轮档位·合并长期记忆】本轮为自动总结间隔轮：[PRIMARY] 正文 **须**写 60～200 字第三人称备忘（无新事实可留空）；[TIMELINE] 仍须填写本轮状态增量。`
-    : `【本轮档位·仅剧情时间轴】本轮**不是**自动总结间隔轮：[PRIMARY] 正文 **必须**留空；但 [TIMELINE] **必须**填写本轮可核对的状态增量（地点/时段/服装/物品/伏笔/待办/事件等，无变化也须至少写「事件」，约 80～100 字）。`
+    : `【本轮档位·仅剧情时间轴】本轮**不是**自动总结间隔轮：[PRIMARY] 正文 **必须**留空；但 [TIMELINE] **必须**填写本轮锚点与「事件」（融合叙事：道具/服装变化/人物动机都写进事件；约 400～500 字，为保证完整可合理加长；**勿写待办，勿单列服装/物品/伏笔**）。`
   const priorAnchors = String(params.priorOpenAnchorsBlock || '').trim()
   const priorAnchorsSection = priorAnchors ? `\n${priorAnchors}\n` : ''
 
@@ -3363,7 +3421,7 @@ ${roundModeBlock}
 
 【本轮合并长期记忆的语义要求】
 - 你是嵌入在本轮剧情模型里的「长期记忆 / 剧情时间轴」子任务：须综合下列「线上 / 已有线下 / 人脉 NPC 摘录」以及**分隔符上方你刚输出的全部剧情正文**（去掉 \`<thinking>…</thinking>\`；VN 标签可保留）提炼事实。
-- **[TIMELINE]（每轮必填）**：须反映分隔符上方正文**读至末尾时**的时空、服装、物品、动机伏笔、待办与本轮关键事件；仅写相对上一状态的**增量**。**伏笔 / 待办必须是结尾快照**，不得与正文最后交代矛盾；无则省略。**故事日 / 时刻 为故事内时刻（禁止生成/落库时刻）**；跨时段须写结束故事日、结束时刻。**地点**：须写可区分的具体地点。**服装**：须写具体单品与可见状态。
+- **[TIMELINE]（每轮必填）**：须反映分隔符上方正文**读至末尾时**的时空锚点与本轮「事件」；仅写相对上一状态的**增量**。「事件」为融合叙事（道具、服装变化、人物动机都写进事件），**禁止**再单列服装/物品/伏笔/待办。**禁止输出待办 / todos**（待办由系统台账维护）。**故事日 / 时刻 为故事内时刻（禁止生成/落库时刻）**；跨时段须写结束故事日、结束时刻。**地点**：须写可区分的具体地点。
 - primary：**第三人称**；${summaryRoundDue ? '合成线上（若有）+ 游标后已有线下（若有）+ **本轮新正文**' : '本轮非总结间隔，正文可留空，勿写长期记忆正文'}；玩家 **{{user}}**、对方 **{{char}}**；**禁止「我」**；不要写 [私聊][线下] 前缀。
 - linked：除上表摘录外，**必须**结合你刚写的**本轮剧情正文**判断可关联角色是否有可记事实；每条 linked 正文**须为第三人称**，且一律用占位符。**每条 linked 后须再跟 [TIMELINE]**（含标题/关键词/事件）。
 - 若汇总后确实无任何可核对的新事实，primary 正文可留空且不写 [LINKED]。
@@ -3493,14 +3551,14 @@ export function parseUnifiedMemorySummaryWithLinkedModelOutput(raw: string): Uni
 const STORY_TIMELINE_SUMMARY_ONLY_SYSTEM = `
 你是「剧情摘要表」维护助手。用户会提供约会/私聊/线下剧情材料，请提炼本轮**剧情时间轴增量**。
 要求：
-- 只总结材料中可直接核对的时空、服装、物品、动机伏笔、待办与本轮关键事件；禁止材料外臆造。
-- **伏笔 / 待办必须是用户读完本轮剧情后的结尾快照**：以材料**末尾**为准，禁止与结尾已交代事实矛盾。
+- 只总结材料中可直接核对的时空锚点与本轮事件；禁止材料外臆造。
+- **事件须融合叙事**：道具、服装变化、人物动机/关系悬念都写进「事件」一段话里，**禁止**再单列服装/物品/伏笔/待办字段。
+- **禁止输出待办 / todos**（待办由系统台账维护）。
 - **地点**：须写可区分的具体地点，禁止仅写「饭馆、酒店、咖啡厅」等类名。
-- **服装**：正文可核对时须写具体单品与可见状态，禁止「便装、休闲」等空泛词。
-- 仅写相对上一状态的**增量**；无变化也须至少写「事件」（约 80～100 字）；**标题**短标题必填（4～10 字）；**关键词**必填（3～5 个、每条 ≤5 字）。
-- 若用户提供【系统已有·未收锚点】：须对照**正文末尾**是否已兑现；已完结者输出「resolved」。
+- 仅写相对上一状态的**增量**；无变化也须至少写「事件」（约 400～500 字，为保证完整可合理加长，勿砍关键经过）；**标题**必填（4～10 字）；**关键词**必填（3～5 个、每条 ≤5 字）。
+- 若用户提供【系统已有·未收动机】：已收束者在「事件」里回溯带过即可，勿再输出伏笔分区。
 - **禁止 JSON**；只输出：
-[PRIMARY]
+  [PRIMARY]
 正文：
 
 [TIMELINE]
@@ -3521,7 +3579,7 @@ export async function requestStoryTimelineSummaryOnly(params: {
   sessionPlayerIdentityId?: string | null
   /** @deprecated */
   storyTimeHintMs?: number | null
-  /** 系统内仍 open 的动机伏笔 / 待办清单（须对照材料输出 resolved） */
+  /** 系统内仍 open 的动机伏笔清单（须对照材料输出 resolved；不含待办） */
   priorOpenAnchorsBlock?: string
 }): Promise<StoryTimelineSummaryDelta | undefined> {
   const cfg = params.apiConfig
@@ -3536,7 +3594,7 @@ export async function requestStoryTimelineSummaryOnly(params: {
     latestRound = `${latestRound.slice(0, 6000)}\n\n（本轮正文因长度已截断）`
   }
   const latestBlock = latestRound
-    ? `【本轮剧情正文（优先据此写 TIMELINE；**伏笔/待办须以本块读至末尾时的状态为准**）】\n${latestRound}\n\n`
+    ? `【本轮剧情正文（优先据此写 TIMELINE；道具/动机融进「事件」；勿写待办或服装/物品/伏笔分区）】\n${latestRound}\n\n`
     : ''
   const priorAnchors = String(params.priorOpenAnchorsBlock || '').trim()
   const priorAnchorsBlock = priorAnchors ? `${priorAnchors}\n\n` : ''

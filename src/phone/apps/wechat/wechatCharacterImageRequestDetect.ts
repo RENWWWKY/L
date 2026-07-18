@@ -1,5 +1,5 @@
-/** 聊天信息页未定制时，角色 AI 配图每轮触发概率的默认值 */
-export const IMAGE_DEFAULT_ROUND_TRIGGER_PERCENT = 0
+/** @deprecated 已取消「是否支持发图」默认门槛；保留常量兼容 */
+export const IMAGE_DEFAULT_ROUND_TRIGGER_PERCENT = 100
 
 const PROFILE_OR_COVER_HINT =
   /(?:换|改|设|当|用作?).{0,8}(?:微信)?(?:头像|封面|背景)|朋友圈.{0,6}(?:背景|封面)|(?:头像|封面|背景).{0,6}(?:换|改|设)/u
@@ -123,7 +123,7 @@ export function userExplicitlyRequestsCharacterSticker(text: string | null | und
 export function buildUserExplicitCharacterImageRequestBias(explicit: boolean): string {
   if (!explicit) return ''
   return `[系统提示] 用户已**明确要求**发图/照片/自拍，或当前对话正处于「等你发照片/自拍/重拍」环节（AI 配图，非换头像/封面）。
-本轮**完全无视**聊天信息里的「每轮发图概率」：**须**在回复中单独占一行输出 \`[图片]画面描述\` 由客户端真实生图发出。
-禁止只用「发过去了」「发给你了」「拍好了」等文字假装已发图而无 \`[图片]\` 行。
+本轮**须**在回复中单独占一行输出 \`[图片]通俗中文画面描述\`（客户端先显示中文占位；点生成时另推英文提示词）。
+禁止写英文 SD tag；禁止只用「发过去了」「发给你了」「拍好了」等文字假装已发图而无 \`[图片]\` 行。
 若确实不宜发图，用文字说明原因并婉拒，**不要**输出 \`[图片]\` 行，也**不要**口头假装已发送。`
 }

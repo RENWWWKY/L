@@ -1,21 +1,14 @@
 import type { ApiConfig } from '../../api/types'
 import type { MemorySettingsRow } from '../newFriendsPersona/types'
-import { personaDb } from '../newFriendsPersona/idb'
 import { listSummarizedOfflinePlotContextLines } from '../dating/loadOfflineDatingPlotsForWechatPrompt'
 import { listSummarizedPrivateChatContextLines } from '../wechatMemoryPromptBlocks'
-import { fetchEmbeddingVectorUnified, fetchEmbeddingVectorsUnified } from './memoryEmbeddingProvider'
 import {
   buildMemoryContextVectorId,
   computeContextVectorTextHash,
   MEMORY_CONTEXT_VECTOR_CHUNK_CHAR_TARGET,
-  MEMORY_CONTEXT_VECTOR_INDEX_BATCH,
-  MEMORY_CONTEXT_VECTOR_MAX_PER_CHARACTER,
-  MEMORY_CONTEXT_VECTOR_MIN_SIM,
-  MEMORY_CONTEXT_VECTOR_RECALL_TOP_K,
-  type MemoryContextVectorEntry,
   type MemoryContextVectorSourceKind,
 } from './memoryContextVectorTypes'
-import { cosineSimilarity, isMemoryVectorRecallEnabled, type MemoryVectorRecallOpts } from './memoryVectorRecall'
+import type { MemoryVectorRecallOpts } from './memoryVectorRecall'
 
 type ContextCandidate = {
   id: string
@@ -123,78 +116,9 @@ async function gatherSummarizedOfflinePlotBodyCandidates(characterId: string): P
   })
 }
 
-function entryNeedsReembed(entry: MemoryContextVectorEntry, queryDim: number, provider: string, modelId: string): boolean {
-  if (!Array.isArray(entry.embedding) || entry.embedding.length !== queryDim) return true
-  if (entry.embeddingProvider !== provider) return true
-  if (entry.embeddingModelId !== modelId) return true
-  return false
-}
-
-async function backfillContextVectorsBestEffort(params: {
-  characterId: string
-  candidates: ContextCandidate[]
-  stored: MemoryContextVectorEntry[]
-  settings: MemorySettingsRow
-  chatApiConfig: Pick<ApiConfig, 'apiUrl' | 'apiKey'> | null
-  queryDim: number
-  provider: 'local' | 'api'
-  modelId: string
-}): Promise<void> {
-  const storedById = new Map(params.stored.map((e) => [e.id, e]))
-  const stale = params.candidates.filter((c) => {
-    const prev = storedById.get(c.id)
-    if (!prev) return true
-    return entryNeedsReembed(prev, params.queryDim, params.provider, params.modelId)
-  })
-  if (!stale.length) return
-
-  const batch = stale.slice(0, MEMORY_CONTEXT_VECTOR_INDEX_BATCH)
-  const texts = batch.map((c) => c.text)
-  try {
-    const embedded = await fetchEmbeddingVectorsUnified(params.settings, params.chatApiConfig, texts)
-    const now = Date.now()
-    for (let i = 0; i < batch.length; i++) {
-      const c = batch[i]
-      const hit = embedded[i]
-      if (!hit?.vec?.length || hit.vec.length !== params.queryDim) continue
-      await personaDb.upsertMemoryContextVector({
-        id: c.id,
-        characterId: c.characterId,
-        sourceKind: c.sourceKind,
-        sourceKey: c.sourceKey,
-        text: c.text,
-        textHash: c.textHash,
-        embedding: hit.vec,
-        embeddingProvider: hit.provider,
-        embeddingModelId: hit.modelId,
-        messageTimestamp: c.messageTimestamp,
-        updatedAt: now,
-      })
-    }
-    await personaDb.pruneMemoryContextVectors(params.characterId, MEMORY_CONTEXT_VECTOR_MAX_PER_CHARACTER)
-  } catch {
-    /* best effort */
-  }
-}
-
-function formatContextRecallBlock(snippets: string[]): string {
-  if (!snippets.length) return ''
-  const body = snippets.map((s, i) => `${i + 1}. ${s}`).join('\n')
-  return (
-    `【语义召回·游标前原文】\n` +
-    `${body}\n` +
-    `（↑ 来自游标已覆盖的私聊消息与线下剧情正文；**非**线下摘要表 / 非 prose 总结；游标后未总结原文见下方「尚未总结」块；勿机械复读。）`
-  )
-}
-
-function contextRecallSnippetTag(sourceKind: MemoryContextVectorSourceKind): string {
-  if (sourceKind === 'offline_plot') return '线下·剧情原文'
-  if (sourceKind === 'meet_chat') return '遇见·原文'
-  return '私聊·消息原文'
-}
-
 /**
- * 对游标已覆盖的私聊 / 线下剧情**原文**建索引并语义召回，追加到长期记忆 prompt 尾部。
+ * 游标前原文语义召回：配置页开关已移除，永久不再注入 prompt。
+ * 保留函数签名以免打断记忆拼装调用链。
  */
 export async function appendContextVectorRecallToMemoryText(params: {
   characterId: string
@@ -205,65 +129,13 @@ export async function appendContextVectorRecallToMemoryText(params: {
   opts?: MemoryVectorRecallOpts | null
   existingText: string
 }): Promise<{ text: string; recalledCount: number }> {
-  const cid = params.characterId.trim()
-  if (!cid) return { text: params.existingText, recalledCount: 0 }
-  if (params.settings.memoryContextVectorRecallEnabled !== true) {
-    return { text: params.existingText, recalledCount: 0 }
-  }
-  if (!isMemoryVectorRecallEnabled(params.settings, params.opts ?? null)) {
-    return { text: params.existingText, recalledCount: 0 }
-  }
-
-  const rawHay = String(params.relevanceText || '').trim()
-  if (rawHay.length < 10) return { text: params.existingText, recalledCount: 0 }
-
-  try {
-    const query = await fetchEmbeddingVectorUnified(params.settings, params.chatApiConfig, rawHay)
-    if (!query?.vec.length) return { text: params.existingText, recalledCount: 0 }
-
-    const [chatCandidates, plotCandidates] = await Promise.all([
-      gatherSummarizedOnlineChatCandidates(cid, params.conversationKey),
-      gatherSummarizedOfflinePlotBodyCandidates(cid),
-    ])
-    const candidates = [...chatCandidates, ...plotCandidates]
-    if (!candidates.length) return { text: params.existingText, recalledCount: 0 }
-
-    const candidateIds = new Set(candidates.map((c) => c.id))
-    const stored = await personaDb.listMemoryContextVectorsByCharacterId(cid)
-    await backfillContextVectorsBestEffort({
-      characterId: cid,
-      candidates,
-      stored,
-      settings: params.settings,
-      chatApiConfig: params.chatApiConfig,
-      queryDim: query.vec.length,
-      provider: query.provider,
-      modelId: query.modelId,
-    })
-
-    const fresh = await personaDb.listMemoryContextVectorsByCharacterId(cid)
-    const scored: { entry: MemoryContextVectorEntry; sim: number }[] = []
-    for (const entry of fresh) {
-      if (!candidateIds.has(entry.id)) continue
-      if (entry.embeddingProvider !== query.provider) continue
-      if (entry.embedding.length !== query.vec.length) continue
-      const sim = cosineSimilarity(query.vec, entry.embedding)
-      if (sim >= MEMORY_CONTEXT_VECTOR_MIN_SIM) scored.push({ entry, sim })
-    }
-    scored.sort((a, b) => b.sim - a.sim)
-    const top = scored.slice(0, MEMORY_CONTEXT_VECTOR_RECALL_TOP_K)
-    if (!top.length) return { text: params.existingText, recalledCount: 0 }
-
-    const snippets = top.map(({ entry, sim }) => {
-      const tag = contextRecallSnippetTag(entry.sourceKind)
-      return `（${tag}·sim ${sim.toFixed(2)}）${entry.text}`
-    })
-    const block = formatContextRecallBlock(snippets)
-    const merged = params.existingText.trim() ? `${params.existingText.trim()}\n\n${block}` : block
-    return { text: merged, recalledCount: top.length }
-  } catch {
-    return { text: params.existingText, recalledCount: 0 }
-  }
+  void params.characterId
+  void params.conversationKey
+  void params.relevanceText
+  void params.settings
+  void params.chatApiConfig
+  void params.opts
+  return { text: params.existingText, recalledCount: 0 }
 }
 
 export type ContextVectorRecallTraceItem = {
@@ -272,8 +144,8 @@ export type ContextVectorRecallTraceItem = {
   sourceKind: MemoryContextVectorSourceKind
 }
 
-/** 供思维溯源：与 appendContextVectorRecallToMemoryText 同源的语义召回结果 */
-export async function getContextVectorRecallTraceForPromptInjection(params: {
+/** 供思维溯源：游标前原文召回已下线，恒为空 */
+export async function getContextVectorRecallTraceForPromptInjection(_params: {
   characterId: string
   conversationKey?: string | null
   relevanceText: string
@@ -281,56 +153,7 @@ export async function getContextVectorRecallTraceForPromptInjection(params: {
   chatApiConfig: Pick<ApiConfig, 'apiUrl' | 'apiKey'> | null
   opts?: MemoryVectorRecallOpts | null
 }): Promise<ContextVectorRecallTraceItem[]> {
-  const cid = params.characterId.trim()
-  if (!cid) return []
-  if (params.settings.memoryContextVectorRecallEnabled !== true) return []
-  if (!isMemoryVectorRecallEnabled(params.settings, params.opts ?? null)) return []
-
-  const rawHay = String(params.relevanceText || '').trim()
-  if (rawHay.length < 10) return []
-
-  try {
-    const query = await fetchEmbeddingVectorUnified(params.settings, params.chatApiConfig, rawHay)
-    if (!query?.vec.length) return []
-
-    const [chatCandidates, plotCandidates] = await Promise.all([
-      gatherSummarizedOnlineChatCandidates(cid, params.conversationKey),
-      gatherSummarizedOfflinePlotBodyCandidates(cid),
-    ])
-    const candidates = [...chatCandidates, ...plotCandidates]
-    if (!candidates.length) return []
-
-    const candidateIds = new Set(candidates.map((c) => c.id))
-    const stored = await personaDb.listMemoryContextVectorsByCharacterId(cid)
-    await backfillContextVectorsBestEffort({
-      characterId: cid,
-      candidates,
-      stored,
-      settings: params.settings,
-      chatApiConfig: params.chatApiConfig,
-      queryDim: query.vec.length,
-      provider: query.provider,
-      modelId: query.modelId,
-    })
-
-    const fresh = await personaDb.listMemoryContextVectorsByCharacterId(cid)
-    const scored: { entry: MemoryContextVectorEntry; sim: number }[] = []
-    for (const entry of fresh) {
-      if (!candidateIds.has(entry.id)) continue
-      if (entry.embeddingProvider !== query.provider) continue
-      if (entry.embedding.length !== query.vec.length) continue
-      const sim = cosineSimilarity(query.vec, entry.embedding)
-      if (sim >= MEMORY_CONTEXT_VECTOR_MIN_SIM) scored.push({ entry, sim })
-    }
-    scored.sort((a, b) => b.sim - a.sim)
-    return scored.slice(0, MEMORY_CONTEXT_VECTOR_RECALL_TOP_K).map(({ entry, sim }) => ({
-      relevanceScore: sim,
-      content: entry.text,
-      sourceKind: entry.sourceKind,
-    }))
-  } catch {
-    return []
-  }
+  return []
 }
 
 /** 供思维溯源：列出本轮候选游标前原文（不写入 prompt） */

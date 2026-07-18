@@ -33,22 +33,21 @@ export const DATING_UNIFIED_MEMORY_MARKUP_DELIMITER = '<<<DATING_UNIFIED_MEMORY>
 export const DATING_UNIFIED_MEMORY_JSON_DELIMITER_LEGACY = '<<<DATING_UNIFIED_MEMORY_JSON>>>'
 
 export const STORY_TIMELINE_SUMMARY_MARKUP_FIELDS = `
-【时间轴字段 · 写在 [TIMELINE] 块内，每行「字段名：值」】
+【时间轴字段 · 写在 [TIMELINE] 块内，每行「字段名：值」；禁止 JSON】
 标题：（4～10 字短标题）
 关键词：（3～5 个，顿号「、」分隔，每条 ≤5 字）
-事件：（本轮关键事件摘要，约 80～100 字）
-地点：（具体地点，含店名/楼层/区域，禁止仅写「饭馆」「酒店」等类名）
 故事日：（含年份公历日，如 2025年10月1日）
 时刻：（24h，如 19:30）
 结束故事日：（可选）
 结束时刻：（可选）
 相对时间：（可选，如 约会第3天）
+地点：（具体地点，含店名/楼层/区域，禁止仅写「饭馆」「酒店」等类名）
 在场：（占位符，顿号分隔，如 {{user}}、{{char}}）
 侧幕：（是/否；侧幕叙写时填「是」，且在场不得含 {{char}}）
-服装：（可多行，每行「占位符｜具体穿着描述」）
-物品：（可多行，每行「名称｜备注｜normal/important/critical」）
-伏笔：（可多行，每行「文本｜open/resolved」；须为结尾快照）
-待办：（可多行，每行「文本｜open/resolved」；须为结尾快照）
+事件：
+（本轮融合叙事：谁做了什么、结果/情绪转折；本轮用到的道具、服装变化、人物动机/关系悬念都写进这段；约 400～500 字，为保证完整可合理加长，勿为凑字数注水；勿再单列服装/物品/伏笔/待办）
+
+禁止字段：服装、物品、伏笔、待办（及一切 JSON）。待办由系统台账维护。
 `.trim()
 
 export const UNIFIED_MEMORY_LINKED_MARKUP_RULE = `
@@ -74,7 +73,7 @@ character_id：（仅可关联角色 id 表中的 id）
 （第三人称；指称规则同 primary）
 
 [TIMELINE]
-（该 linked 角色本轮时间轴；线下摘要表须含标题/关键词/事件）
+（该 linked 角色本轮时间轴；须含标题/关键词/故事日或时刻/事件）
 
 [EPILOGUE_PATCH]
 character_id：
@@ -145,15 +144,6 @@ function parseKeywords(raw: string): string[] {
   )
 }
 
-function parsePipeRows(block: string, keys: string[]): string[] {
-  const body = multilineAfter(block, keys)
-  if (!body) return []
-  return body
-    .split(/\r?\n/)
-    .map((l) => l.replace(/^\s*[-*•]\s*/, '').trim())
-    .filter(Boolean)
-}
-
 export function parseTimelineMarkupFromBlock(block: string): StoryTimelineSummaryDelta | undefined {
   return parseTimelineMarkup(block)
 }
@@ -161,7 +151,9 @@ export function parseTimelineMarkupFromBlock(block: string): StoryTimelineSummar
 function parseTimelineMarkup(block: string): StoryTimelineSummaryDelta | undefined {
   const row_title = normalizeStoryTimelineRowTitle(fieldLine(block, ['标题', 'row_title', 'rowTitle']))
   const row_keywords = parseKeywords(fieldLine(block, ['关键词', 'row_keywords', 'keywords']))
-  const event_summary = fieldLine(block, ['事件', 'event_summary', 'eventSummary']) || multilineAfter(block, ['事件'])
+  const event_summary =
+    multilineAfter(block, ['事件', 'event_summary', 'eventSummary']) ||
+    fieldLine(block, ['事件', 'event_summary', 'eventSummary'])
   const location = fieldLine(block, ['地点', 'location'])
   const story_day = fieldLine(block, ['故事日', 'story_day', 'storyDay'])
   const story_time = fieldLine(block, ['时刻', 'story_time', 'storyTime'])
@@ -171,39 +163,7 @@ function parseTimelineMarkup(block: string): StoryTimelineSummaryDelta | undefin
   const presentRaw = fieldLine(block, ['在场', 'characters_present', 'charactersPresent'])
   const sideRaw = fieldLine(block, ['侧幕', 'side_perspective', 'sidePerspective'])
 
-  const costumes: Record<string, string> = {}
-  for (const row of parsePipeRows(block, ['服装', 'costumes'])) {
-    const [k, ...rest] = row.split(/[｜|]/)
-    const key = (k ?? '').trim()
-    const val = rest.join('｜').trim()
-    if (key && val) costumes[key] = val
-  }
-
-  const items: Array<{ name: string; note?: string; tier?: string }> = []
-  for (const row of parsePipeRows(block, ['物品', 'items'])) {
-    const parts = row.split(/[｜|]/).map((x) => x.trim())
-    if (!parts[0]) continue
-    items.push({
-      name: parts[0],
-      ...(parts[1] ? { note: parts[1] } : {}),
-      ...(parts[2] ? { tier: parts[2] } : {}),
-    })
-  }
-
-  const foreshadows: Array<{ text: string; status: string }> = []
-  for (const row of parsePipeRows(block, ['伏笔', 'foreshadows'])) {
-    const parts = row.split(/[｜|]/).map((x) => x.trim())
-    if (!parts[0]) continue
-    foreshadows.push({ text: parts[0], status: parts[1] || 'open' })
-  }
-
-  const todos: Array<{ text: string; status: string }> = []
-  for (const row of parsePipeRows(block, ['待办', 'todos'])) {
-    const parts = row.split(/[｜|]/).map((x) => x.trim())
-    if (!parts[0]) continue
-    todos.push({ text: parts[0], status: parts[1] || 'open' })
-  }
-
+  // 新格式：服装/物品/伏笔/待办已融入「事件」；旧 markup 若仍带这些行则忽略，避免分区复活
   const rawObj: Record<string, unknown> = {
     ...(row_title ? { row_title } : {}),
     ...(row_keywords.length ? { row_keywords } : {}),
@@ -225,10 +185,6 @@ function parseTimelineMarkup(block: string): StoryTimelineSummaryDelta | undefin
     ...(sideRaw === '是' || sideRaw.toLowerCase() === 'true' || sideRaw === '1'
       ? { side_perspective: true }
       : {}),
-    ...(Object.keys(costumes).length ? { costumes } : {}),
-    ...(items.length ? { items } : {}),
-    ...(foreshadows.length ? { foreshadows } : {}),
-    ...(todos.length ? { todos } : {}),
   }
 
   return parseStoryTimelineSummaryDelta(rawObj)

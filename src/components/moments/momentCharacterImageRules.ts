@@ -19,7 +19,8 @@ const IMAGE_PROMPT_POV_ANGLE_BACKGROUND_RULE = `
 - **后置·俯仰↔背景（仅当画面含 own hand / 低头看脚边 / 仰视天空 等要素时适用；纯拍他人/空镜勿写 POV 套话）**：
   - 写了 **looking down / high angle looking down / 俯视 / 低头看** → 镜头朝下，**正下方**必须是地面/脚边：wet sand at feet, floor tiles, pavement, tide foam on sand, bedsheets 等。
   - **禁止** 与俯视同写 horizon, skyline, sea waves, beach background, sunset over ocean, soft focus on horizon, lens flare on horizon —— 这些是**平视远景**，会误导成**第三人称站海滩拍远景**。
-  - 海边牵手·俯视·十指相扣：\`own mechanical metallic left hand, partner's delicate smaller hand, fingers interlaced, interlocked fingers, finger gaps visible between hands, wet beach sand directly below, warm golden light on sand grains, no horizon in frame\`
+  - 海边牵手·俯视·十指相扣：\`own left hand, partner's slightly smaller right hand, fingers interlaced, interlocked fingers, finger gaps visible between hands, each hand exactly 5 fingers including thumb, ten distinct fingertips, anatomically correct hands, no missing fingers, no extra fingers, wet beach sand directly below, warm golden light on sand grains, no horizon in frame\`
+  - 海边牵手·俯视·手心相牵：\`own left hand, partner's slightly smaller right hand, palm-to-palm hold, palms pressed gently together, fingers not interlaced, each hand exactly 5 fingers including thumb, ten distinct fingertips, anatomically correct hands, no missing fingers, no extra fingers, wet beach sand directly below, no horizon in frame\`
   - **平视远景** 才写 horizon / waves；**不要**与脚下 sand/floor 同写。
 - **仰角↔背景**：
   - 写了 **looking up / 仰视 / 抬头看** → 画面主体是**头顶上方**：sky, clouds, ceiling, tree canopy, building facade, neon sign overhead 等。
@@ -30,8 +31,12 @@ const IMAGE_PROMPT_POV_ANGLE_BACKGROUND_RULE = `
   - **禁止** user's hand / your hand。
 - **双人牵手（硬性）**：
   - 两人牵手 = **两个人的手在画面中央**；举机者 **own hand** 从画面下/左入镜，**partner's hand** 从对侧伸入，**禁止**画成同一人两只手。
+  - **手指数量（硬性）**：须写 **each hand exactly 5 fingers including thumb**；双手同框时写 **ten distinct fingertips**；**禁止**缺指/多指/融指/断指（no missing fingers, no extra fingers, no fused fingers）。
   - **十指相扣（硬性）**：须写 **fingers interlaced, interlocked fingers, finger gaps visible between hands**；**禁止**仅写 intertwined / clasped / holding hand / gripping on top（这些只会画成搭握，不是指缝相扣）。
-  - 俯视牵手：只写脚下 sand/floor；加 **two separate people, NOT self-holding**。
+  - 例（十指相扣）：\`own left hand, partner's slightly smaller right hand, fingers interlaced, interlocked fingers, finger gaps visible between hands, each hand exactly 5 fingers including thumb, ten distinct fingertips, anatomically correct hands, no missing fingers, no extra fingers, wet beach sand directly below, warm golden light on sand grains, no horizon in frame\`
+  - **手心相牵（硬性）**：须写 **palm-to-palm hold, palms pressed gently together, fingers not interlaced**；**禁止** fingers interlaced / interlocked fingers。
+  - 例（手心相牵）：\`own left hand, partner's slightly smaller right hand, palm-to-palm hold, palms pressed gently together, fingers not interlaced, thumbs along outer sides, each hand exactly 5 fingers including thumb, ten distinct fingertips, anatomically correct hands, no missing fingers, no extra fingers, messy white bedsheets directly below, warm soft side light\`
+  - 俯视牵手：只写脚下 sand/floor；加 **NOT self-holding**。
 `.trim()
 
 const IMAGE_PROMPT_THIRD_PERSON_RULE = `
@@ -160,7 +165,8 @@ ${IMAGE_PROMPT_CONCISE_STYLE_RULE}
   - **② 露肢体** → own shoulders, arms, hands, thighs, legs, feet 等按画面需要写入；**不是** front camera selfie、**不是** mirror selfie、**不是** third-person full-body portrait。
   - 例（空镜）：\`rainy street after rain, neon reflected on wet pavement, overcast scattered light, road surface reflections\`
   - 例（俯视·脚）：\`orange cat crouching on floor tiles, white sneakers and jeans cuffs at bottom of frame, afternoon sunlight, warm tile reflection\`
-  - 例（十指相扣）：\`own mechanical metallic left hand, partner's delicate smaller hand, fingers interlaced, interlocked fingers, finger gaps visible between hands, wet beach sand directly below, warm golden light on sand grains, no horizon in frame\`
+  - 例（十指相扣）：\`own left hand, partner's slightly smaller right hand, fingers interlaced, interlocked fingers, finger gaps visible between hands, each hand exactly 5 fingers including thumb, ten distinct fingertips, anatomically correct hands, no missing fingers, no extra fingers, wet beach sand directly below, warm golden light on sand grains, no horizon in frame\`
+  - 例（手心相牵）：\`own left hand, partner's slightly smaller right hand, palm-to-palm hold, palms pressed gently together, fingers not interlaced, thumbs along outer sides, each hand exactly 5 fingers including thumb, ten distinct fingertips, anatomically correct hands, no missing fingers, no extra fingers, messy white bedsheets directly below\`
   - 例（比耶+海）：\`peace sign hand at bottom-right of frame, sunset horizon over sea, golden rim side backlight\`
 - **后置·拍他人（成品照）**：主体写被拍的人（young woman / 1girl 等）；**只写画面内容**；**禁止** POV/eye level/rear camera 套话；**禁止** phone visible / hands holding phone / viewfinder / 第三人称「某人正在举机拍照」。
   - 例（游艇·拍女生）：\`young woman in black swimsuit sitting on yacht deck cushion, turquoise sea and sky behind her, bright midday sunlight, subject centered in frame\`

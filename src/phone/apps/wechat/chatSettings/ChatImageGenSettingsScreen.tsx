@@ -8,95 +8,27 @@ import { useAppearanceReferenceStatus } from '../appearanceRef/useAppearanceRefe
 import type { ChatConversationSettingsRow } from '../newFriendsPersona/types'
 import {
   clampImageRoundCount,
-  displayRoundTriggerPercent,
   formatImageRoundCountRangeLabel,
   IMAGE_DEFAULT_ROUND_COUNT_MAX,
   IMAGE_DEFAULT_ROUND_COUNT_MIN,
-  IMAGE_DEFAULT_ROUND_TRIGGER_PERCENT,
   IMAGE_ROUND_COUNT_MAX_LIMIT,
   IMAGE_ROUND_COUNT_MIN_LIMIT,
   isImageRoundCountRangeCustomized,
-  isRoundTriggerCustomized,
   parseStoredImageRoundCountRange,
 } from '../wechatMediaSendFrequency'
 import { CommitOnReleaseRangeInput } from './CommitOnReleaseRangeInput'
 
-type ImageGenTab = 'probability' | 'appearance' | 'style'
+type ImageGenTab = 'count' | 'appearance' | 'style'
 type RefSubTab = 'character' | 'user'
 
 export type ChatImageGenSettingsPatch = Partial<
-  Pick<
-    ChatConversationSettingsRow,
-    'imageRoundTriggerPercent' | 'imageRoundCountMin' | 'imageRoundCountMax'
-  >
+  Pick<ChatConversationSettingsRow, 'imageRoundCountMin' | 'imageRoundCountMax'>
 > & {
-  clearImageRoundTriggerPercent?: boolean
   clearImageRoundCountRange?: boolean
 }
 
 function ChatSettingsNum({ children }: { children: React.ReactNode }) {
   return <span style={phoneNumStyle}>{children}</span>
-}
-
-function ImageTriggerPercentControl({
-  stored,
-  onChange,
-  onResetDefault,
-}: {
-  stored: number | undefined
-  onChange: (percent: number) => void
-  onResetDefault: () => void
-}) {
-  const committed = displayRoundTriggerPercent(stored, 'image')
-  const customizedStored = isRoundTriggerCustomized(stored)
-  const [uiValue, setUiValue] = useState(committed)
-  const [dragging, setDragging] = useState(false)
-
-  useEffect(() => {
-    setUiValue(committed)
-  }, [committed])
-
-  const showCustom = dragging || customizedStored
-
-  return (
-    <div>
-      <div className="flex items-center justify-between gap-2">
-        <span className="text-[14px] font-medium text-black">
-          {showCustom ? (
-            <ChatSettingsNum>{uiValue}%</ChatSettingsNum>
-          ) : (
-            <>
-              默认 <ChatSettingsNum>{IMAGE_DEFAULT_ROUND_TRIGGER_PERCENT}%</ChatSettingsNum>（不发图）
-            </>
-          )}
-        </span>
-        {customizedStored && !dragging ? (
-          <button type="button" onClick={onResetDefault} className="shrink-0 text-[12px] text-[#576b95]">
-            恢复默认
-          </button>
-        ) : null}
-      </div>
-      <CommitOnReleaseRangeInput
-        min={0}
-        max={100}
-        step={1}
-        value={committed}
-        onDraftChange={setUiValue}
-        onDragStateChange={setDragging}
-        onCommit={onChange}
-        className="mt-2 w-full accent-black"
-        aria-label="AI 配图每轮触发概率"
-      />
-      <div className="mt-1 flex justify-between text-[11px] text-[#8e8e8e]">
-        <span>
-          <ChatSettingsNum>0%</ChatSettingsNum> 不发
-        </span>
-        <span>
-          <ChatSettingsNum>100%</ChatSettingsNum> 每轮必发
-        </span>
-      </div>
-    </div>
-  )
 }
 
 function ImageRoundCountRangeControl({
@@ -197,14 +129,6 @@ function ImageRoundCountRangeControl({
           aria-label="AI 配图每次最多张数"
         />
       </div>
-      <div className="mt-1 flex justify-between text-[11px] text-[#8e8e8e]">
-        <span>
-          <ChatSettingsNum>{IMAGE_ROUND_COUNT_MIN_LIMIT}</ChatSettingsNum> 张
-        </span>
-        <span>
-          <ChatSettingsNum>{IMAGE_ROUND_COUNT_MAX_LIMIT}</ChatSettingsNum> 张
-        </span>
-      </div>
     </div>
   )
 }
@@ -235,21 +159,15 @@ function RefTabButton({
 }
 
 export function summarizeChatImageGenSettings(
-  row: Pick<
-    ChatConversationSettingsRow,
-    'imageRoundTriggerPercent' | 'imageRoundCountMin' | 'imageRoundCountMax'
-  >,
+  row: Pick<ChatConversationSettingsRow, 'imageRoundCountMin' | 'imageRoundCountMax'>,
 ): string {
-  const parts: string[] = []
-  if (row.imageRoundTriggerPercent !== undefined) {
-    parts.push(`触发 ${row.imageRoundTriggerPercent}%`)
-  }
+  const parts: string[] = ['按语境发图']
   const range = parseStoredImageRoundCountRange(row.imageRoundCountMin, row.imageRoundCountMax)
   if (isImageRoundCountRangeCustomized(row.imageRoundCountMin, row.imageRoundCountMax)) {
     parts.push(formatImageRoundCountRangeLabel(range))
   }
   parts.push('形象与风格')
-  return parts.length > 1 ? parts.join(' · ') : '触发概率 · 形象参考 · 生图风格'
+  return parts.join(' · ')
 }
 
 export function ChatImageGenSettingsScreen({
@@ -267,7 +185,7 @@ export function ChatImageGenSettingsScreen({
   onPatch: (partial: ChatImageGenSettingsPatch) => void | Promise<void>
   onClose: () => void
 }) {
-  const [activeTab, setActiveTab] = useState<ImageGenTab>('probability')
+  const [activeTab, setActiveTab] = useState<ImageGenTab>('count')
   const [refTab, setRefTab] = useState<RefSubTab>('character')
   const { hasReference: hasAppearanceReference } = useAppearanceReferenceStatus({
     context: 'chat',
@@ -304,7 +222,7 @@ export function ChatImageGenSettingsScreen({
         <div className="flex gap-1">
           {(
             [
-              { id: 'probability' as const, label: '触发概率' },
+              { id: 'count' as const, label: '发图张数' },
               { id: 'appearance' as const, label: '形象参考' },
               { id: 'style' as const, label: '生图风格' },
             ] as const
@@ -327,24 +245,17 @@ export function ChatImageGenSettingsScreen({
       </div>
 
       <div className="min-h-0 flex-1 overflow-y-auto px-4 py-3">
-        {activeTab === 'probability' ? (
+        {activeTab === 'count' ? (
           <div className="space-y-3">
             <section
               className="rounded-[12px] bg-white px-4 py-4"
               style={{ boxShadow: '0 1px 3px rgba(0,0,0,0.06)' }}
             >
-              <p className="text-[15px] font-medium text-black">每轮触发概率</p>
+              <p className="text-[15px] font-medium text-black">按语境适量发图</p>
               <p className="mt-1 text-[12px] leading-relaxed text-[#8e8e8e]">
-                设定角色每轮回复中至少发 1 张 AI 配图的目标概率。用户直接要求发图时不受限制；须已配置生图
-                API。
+                角色可在合适场景自发配图（不是每轮都发）。气泡先显示通俗中文画面描述，点确认后另推英文提示词再生图；不点也能从描述知道发的是什么。须已配置对话
+                API（推演）与生图 API。
               </p>
-              <div className="mt-3">
-                <ImageTriggerPercentControl
-                  stored={settings.imageRoundTriggerPercent}
-                  onChange={(percent) => void onPatch({ imageRoundTriggerPercent: percent })}
-                  onResetDefault={() => void onPatch({ clearImageRoundTriggerPercent: true })}
-                />
-              </div>
             </section>
 
             <section
@@ -353,7 +264,7 @@ export function ChatImageGenSettingsScreen({
             >
               <p className="text-[15px] font-medium text-black">每次张数范围</p>
               <p className="mt-1 text-[12px] leading-relaxed text-[#8e8e8e]">
-                触发发图时，角色可发送的图片张数（每条 <span className="font-mono">[图片]</span> 行计 1
+                发图时角色可发送的图片张数（每条 <span className="font-mono">[图片]</span> 行计 1
                 张）。
               </p>
               <div className="mt-3">

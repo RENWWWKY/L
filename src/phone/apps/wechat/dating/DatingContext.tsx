@@ -54,6 +54,11 @@ import { resolveOnlineMessageTimeBoundsForConversation } from '../wechatCrossCha
 import { getAiPlotActiveTimelineDelta } from './plotTimelineDelta'
 import { formatPlotPromptTimeBracket } from './plotStoryTimeLabel'
 import { loadStoryTimelinePromptBlock, loadStoryTimelineOpenAnchorsBlockForSummary, rebuildStoryTimelineFromDatingPlots } from '../memory/storyTimelinePersist'
+import {
+  applyStoryTimelineTodoLedgerFromOfflineRound,
+  resolveStoryTimelineTodosBeforeRegeneratingPlot,
+  snapshotStoryTimelineTodoLedgerBefore,
+} from '../memory/storyTimelineOfflineTodoLedger'
 import { buildStoryTimelineCalendarContextBlock, resolveStoryCalendarAnchorFloorMs, resolveStoryCalendarAnchorFromPlotItems, resolveStoryCalendarAnchorFromPlots, STORY_TIMELINE_CALENDAR_CHRONOLOGY_RULES } from '../memory/storyTimelineCalendarContext'
 import {
   buildDatingStoryTimelineFallbackMaterial,
@@ -65,7 +70,13 @@ import {
   resolveParallelEventSummaryDelta,
 } from '../memory/storyTimelineParallelFanOut'
 import { deleteStoryTimelineLinkedRowsForDatingRound } from '../memory/storyTimelineLinkedFanOut'
-import { hasTimelineDeltaContent, clipStoryTimelinePromptBlock, hasStoryTimelineVectorRecallInBlock, enforceStoryTimelineDeltaChronology } from '../memory/storyTimelineTypes'
+import {
+  hasTimelineDeltaContent,
+  clipStoryTimelinePromptBlock,
+  hasStoryTimelineVectorRecallInBlock,
+  splitStoryTimelineInjectBody,
+  enforceStoryTimelineDeltaChronology,
+} from '../memory/storyTimelineTypes'
 import { peekWillSummarizeOnNextAiRound } from '../memory/memoryAutoSummaryInterval'
 import { isOfflineDatingRowPerRoundMode, isLinkedMemoryAutoSummaryEnabled } from '../memory/memoryRowPerRoundMode'
 import {
@@ -147,6 +158,9 @@ import {
   extractWorldBookAfterPatchBlock,
   hasChatAfterWorldBookItems,
   listChatAfterWorldBookItems,
+  mergeWorldBookAfterRevertEntries,
+  rebuildWorldBookAfterFromDatingPlotList,
+  revertWorldBookAfterUsingContentPrevious,
   sanitizeWorldBookAfterRevertEntries,
   WORLD_BOOK_AFTER_PATCH_UPDATED_EVENT,
 } from '../newFriendsPersona/worldBookAfterPatch'
@@ -802,7 +816,7 @@ function buildSlimDatingPlotChatMessages(params: {
 }
 
 const DATING_REGENERATE_DEFAULT_BIAS =
-  '【重新生成】须与上一版在**用词、开场动作、桥段顺序、道具与换场**上明显区分，禁止同义洗稿或微调后复读；仍须服从人设、线上事实铁律、故事内时刻锚点与【线上→线下·承接铁律】。'
+  '【重新生成】须与上一版在**用词、开场动作、桥段顺序、道具与换场**上明显区分，禁止同义洗稿或微调后复读；本轮以玩家填写的生成偏向为**内容最高优先级**（在不捏造与已定事实明文冲突的前提下重写场面）。'
 
 async function requestDatingPlotCompletion(params: {
   apiConfig: { apiUrl?: string; apiKey?: string; modelId?: string }
@@ -1211,12 +1225,16 @@ async function finalizeDatingMemoryAfterAiReply(params: {
   notifyParallelSummaryForPlotId?: string | null
   /** 本轮玩家输入（用于尾声补丁过滤：是否主动拉近） */
   userText?: string
-}): Promise<string[]> {
+}): Promise<{
+  linkedNpcNames: string[]
+  /** 本轮尾声写库前快照（JSON 尾 / 每轮判断 / 总结补救）；需合并进对应 AI 剧情 */
+  epilogueRevertEntries?: WorldBookAfterRevertEntry[]
+}> {
   const memSettings = await personaDb.getMemorySettings()
   const rowPerRoundMode = isOfflineDatingRowPerRoundMode(memSettings)
   const linkedOn = isLinkedMemoryAutoSummaryEnabled(memSettings)
   const datingMemOn = memSettings.autoSummaryEnabled !== false
-  if (!linkedOn && !datingMemOn) return []
+  if (!linkedOn && !datingMemOn) return { linkedNpcNames: [] }
 
   /** 生成前 gather 不含本轮 AI 剧情；linked 校验需要含本轮正文的 freshGather。 */
   const memCtx = await resolveDatingMemorySessionContext(params.char.id)
@@ -1232,7 +1250,7 @@ async function finalizeDatingMemoryAfterAiReply(params: {
         })
       : null
   const gatherForApply = freshGather ?? params.memoryGather
-  if (!gatherForApply) return []
+  if (!gatherForApply) return { linkedNpcNames: [] }
 
   const ck = gatherForApply.conversationKey
   const datingAiPlotId =
@@ -1263,6 +1281,7 @@ async function finalizeDatingMemoryAfterAiReply(params: {
   const linkedNpcNamesWritten: string[] = []
   let primaryWritten = false
   let epiloguePatchesApplied = 0
+  let epilogueRevertEntries: WorldBookAfterRevertEntry[] | undefined
   if (split.memoryJsonText?.trim()) {
     const r = await tryApplyDatingCombinedMemoryJsonTail({
       memoryJsonText: split.memoryJsonText.trim(),
@@ -1278,6 +1297,10 @@ async function finalizeDatingMemoryAfterAiReply(params: {
     primaryWritten = r.primaryWritten
     epiloguePatchesApplied = r.epiloguePatchesApplied
     linkedNpcNamesWritten.push(...(r.linkedNpcNamesWritten ?? []))
+    epilogueRevertEntries = mergeWorldBookAfterRevertEntries(
+      epilogueRevertEntries,
+      r.epilogueRevertEntries,
+    )
   }
   if (shouldSummarize && primaryWritten) {
     await personaDb.resetMemoryAiRoundCountForConversation(ck)
@@ -1297,7 +1320,7 @@ async function finalizeDatingMemoryAfterAiReply(params: {
     ]
       .filter(Boolean)
       .join('\n\n')
-    await finalizeWorldBookAfterAutoSummaryPhase({
+    const epiPhase = await finalizeWorldBookAfterAutoSummaryPhase({
       apiConfig: params.apiConfig,
       conversationKey: ck,
       character: mainRow,
@@ -1306,6 +1329,12 @@ async function finalizeDatingMemoryAfterAiReply(params: {
       latestReplyHint: turnPlotBody.trim(),
       summaryMaterialsBlock: summaryMaterials,
     })
+    const phaseSnap = mainRow?.id
+      ? epiPhase.revertByCharacterId.get(mainRow.id.trim())
+      : undefined
+    if (phaseSnap?.length) {
+      epilogueRevertEntries = mergeWorldBookAfterRevertEntries(epilogueRevertEntries, phaseSnap)
+    }
   }
   const shouldTryLinkedFallback =
     !rowPerRoundMode &&
@@ -1346,7 +1375,10 @@ async function finalizeDatingMemoryAfterAiReply(params: {
         wechatAccountId: memCtx.wechatAccountId,
       },
     )
-    return []
+    return {
+      linkedNpcNames: [],
+      ...(epilogueRevertEntries?.length ? { epilogueRevertEntries } : {}),
+    }
   }
 
   if (params.plotsAfterAi?.length && (rowPerRoundMode || !shouldSummarize || isRegenerateTurn)) {
@@ -1361,6 +1393,21 @@ async function finalizeDatingMemoryAfterAiReply(params: {
           await notifyParallelSummaryTableWritten(params.char.realName, params.char.id, plot)
         }
       }
+      // 待办只吃本轮新摘要；重生中间段时再重放该段之后的后续摘要
+      const roundPlot =
+        (datingAiPlotId
+          ? params.plotsAfterAi.find((p) => p.id === datingAiPlotId && p.type === 'ai')
+          : undefined) ??
+        [...params.plotsAfterAi].reverse().find((p) => p.type === 'ai')
+      if (roundPlot) {
+        const roundIdx = params.plotsAfterAi.findIndex((p) => p.id === roundPlot.id)
+        const afterPlots = roundIdx >= 0 ? params.plotsAfterAi.slice(roundIdx + 1) : []
+        await applyStoryTimelineTodoLedgerFromOfflineRound({
+          characterId: params.char.id,
+          roundPlot,
+          afterPlots,
+        })
+      }
     } catch (rebuildErr) {
       console.warn('[dating] story timeline rebuild failed', rebuildErr)
     }
@@ -1371,7 +1418,7 @@ async function finalizeDatingMemoryAfterAiReply(params: {
     try {
       const mainRow = await personaDb.getCharacter(params.char.id)
       const aiPlotCountInSnapshot = params.plotsSnapshotAfterAi.filter((p) => p.type === 'ai').length
-      await finalizeWorldBookAfterPerAiRound({
+      const perRound = await finalizeWorldBookAfterPerAiRound({
         apiConfig: params.apiConfig,
         character: mainRow,
         latestRoundBody: latestRoundBodyForEpilogue,
@@ -1385,12 +1432,21 @@ async function finalizeDatingMemoryAfterAiReply(params: {
           userText: params.userText,
         },
       })
+      if (perRound.status === 'applied' && perRound.revertEntries?.length) {
+        epilogueRevertEntries = mergeWorldBookAfterRevertEntries(
+          epilogueRevertEntries,
+          perRound.revertEntries,
+        )
+      }
     } catch (epilogueErr) {
       console.warn('[dating] per-round epilogue sync failed', epilogueErr)
     }
   }
 
-  return [...new Set(linkedNpcNamesWritten.map((n) => n.trim()).filter(Boolean))]
+  return {
+    linkedNpcNames: [...new Set(linkedNpcNamesWritten.map((n) => n.trim()).filter(Boolean))],
+    ...(epilogueRevertEntries?.length ? { epilogueRevertEntries } : {}),
+  }
 }
 
 function buildPlayerIdentityPromptBlock(
@@ -1637,12 +1693,15 @@ ${vnVoiceParamsRule ? `${vnVoiceParamsRule}\n` : ''}${vnBackgroundRule ? `${vnBa
       `禁止无过渡的瞬移（例如上文已关灯就寝，下文突然户外路边）；若必须换场，至少用一行旁白交代「间隔多久 / 为何出门 / 如何抵达」。` +
       `禁止在近 ${DATING_AI_PLOT_HISTORY_MAX} 条已发生剧情中，把**同一核心桥段**改头换面再演一遍（重复接吻拉扯、同梗吃醋质问、已收束的回忆又当新情节）；须推进**新的**动作、对白信息或矛盾。\n`
     : ''
+  const isRegenerateTurn = datingExtras?.regeneratingWorldBookBaseline === true
   const plotEmotionalDirectionRule =
-    `【情绪方向与对称旧梗（最高优先级）】` +
+    `【情绪方向与对称旧梗】` +
     `1）**本轮锚点优先**：「玩家输入/导演指令/屏外引导」与「最近剧情」**末尾最新**条目共同决定当轮矛盾方向（谁嫉妒谁、谁质问谁、谁主动/谁退缩、谁道歉/谁冷战）。` +
     `2）**禁止对称翻案**：若历史上已演绎「A 因某事吃 B 的醋」，而本轮玩家输入或最近 1～2 条已转向「B 吃 A 的醋」或全新矛盾，**禁止**无过渡地写回旧方向；不得仅因长期记忆、剧情时间轴、尚未总结摘录或语义召回里出现同主题词（吃醋/嫉妒/质问/冷战）就复述**主客体相反**的旧桥段。` +
     `3）**未收束点须兼容**：可回接最近剧情中的未收束点，但**不得**与本轮输入及最近末尾方向矛盾；旧线若已在正文里说开、翻篇，或玩家已明确转向新矛盾，视为**已收束**，不得强行捡回。` +
-    `4）**记忆块用法**：「尚未总结·私聊/群聊」与长期记忆里源自微信的内容作**既定事实**（见【线上聊天事实铁律】）；玩家输入/导演指令/屏外引导仅作**推进方向**。事实与引导冲突时**事实优先**，不得为情绪方向或自行发挥改写线上已说定内容。\n`
+    (isRegenerateTurn
+      ? `4）**记忆块用法（重新生成）**：「尚未总结·私聊/群聊」与「剧情时间轴·当前状态」、尾声延展中的**明文已定事实**仍不得捏造改写；场面如何重演、情绪与桥段如何改写以「本次生成偏向」为最高优先。\n`
+      : `4）**记忆块用法（续写）**：「尚未总结·私聊/群聊」与长期记忆里源自微信的内容作**既定事实**（见【线上聊天事实铁律】）；玩家输入/导演指令/屏外引导仅作**推进方向**，给角色自主行动空间。事实与引导冲突时**事实优先**。\n`)
   const plotAntiEchoRule = !isVnMode
     ? `【普通模式·去重复】「最近剧情」**末尾最新**优先；禁止把更早条目里的**同一核心桥段**（同梗吃醋/同场质问/已和解又重演）改头换面再演一遍；须推进**新的**对白、动作或矛盾。\n`
     : ''
@@ -1686,6 +1745,8 @@ ${vnVoiceParamsRule ? `${vnVoiceParamsRule}\n` : ''}${vnBackgroundRule ? `${vnBa
   const refCap = DATING_AI_REFERENCE_SECTION_CHAR_CAP
   const longMemClipped = clipDatingReferenceHead(longMem ?? '', refCap, '长期记忆')
   const storyTimelineClipped = clipStoryTimelinePromptBlock(storyTimelineBlock ?? '', refCap)
+  const { currentState: storyTimelineCurrentState, recallAndNear: storyTimelineRecallAndNear } =
+    splitStoryTimelineInjectBody(storyTimelineClipped)
   const storyCalendarAnchor = resolveStoryCalendarAnchorFromPlotItems(history)
   const storyCalendarHint = storyCalendarAnchor
     ? `\n【剧情时间锚点（上一回合故事内末尾·本轮须承接；勿用手机日期）】${storyCalendarAnchor}\n`
@@ -1693,7 +1754,7 @@ ${vnVoiceParamsRule ? `${vnVoiceParamsRule}\n` : ''}${vnBackgroundRule ? `${vnBa
   const storyCalendarChronologyRule = storyCalendarAnchor
     ? `\n${STORY_TIMELINE_CALENDAR_CHRONOLOGY_RULES}\n`
     : ''
-  const hasVectorStoryRecall = hasStoryTimelineVectorRecallInBlock(storyTimelineClipped)
+  const hasVectorStoryRecall = hasStoryTimelineVectorRecallInBlock(storyTimelineRecallAndNear || storyTimelineClipped)
   const unsPrivClipped = clipDatingReferenceTail(unsPrivBlock ?? '', refCap, '尚未总结·私聊')
   const unsGrpClipped = clipDatingReferenceTail(unsGrpBlock ?? '', refCap, '尚未总结·群聊')
   let unsOffClipped = ''
@@ -1730,26 +1791,30 @@ ${vnVoiceParamsRule ? `${vnVoiceParamsRule}\n` : ''}${vnBackgroundRule ? `${vnBa
   const hasOnlineWechatFacts =
     wechatUnsummarizedRefLen > 8 || Boolean(longMemClipped?.trim())
   const onlineWechatFactCanonRule = hasOnlineWechatFacts
-    ? `【线上聊天事实铁律（最高优先级｜高于导演指令、玩家输入与自行发挥）】` +
-      `「尚未总结·私聊/群聊」及长期记忆里源自微信聊天的条目，记录的是**线上已发生、双方已知并已说出口**的内容（约定、承诺、排期、待办、饮食/工作反馈口径、谁承诺何时何地再谈等），**是事实约束，不是写作指导、灵感参考或语气样本**。` +
-      `线下正文须**无条件服从**这些事实：` +
-      `**禁止**提前兑现线上明确推迟的事（例：聊天说「瑕疵明天午饭当面聊」，线下不得在见面前就当面对方已同意的方式提前细讲）；` +
-      `**禁止**与线上一致信息矛盾（改口、撤回、假装没说过、擅自改时间地点而无合理解释）；` +
-      `**禁止**只借摘录学口吻却无视摘录里的约定与排期；` +
-      `**禁止**线上末条仍是同一晚同地点的远程对话，线下却无过渡跳到次日清晨或无关换场（须承接末条空间状态与待兑现动作，如门外/进门/陪睡）；` +
-      `**禁止**线上仍冷淡公事、线下却写成暧昧/心动/私人越界（关系温度须与摘录及尾声延展一致，除非用户当轮明确打破）。` +
-      `「玩家输入/导演指令/屏外引导」只决定**当轮镜头与推进方式**，**不得**覆盖或改写线上已定事实；若指令与事实冲突，**以线上事实为准**并在思维链【线上事实卡】写清如何按事实承接。` +
-      `「最近剧情」旧稿若违背线上事实，须以线上事实**修正**承接，不得沿旧稿滑下去。` +
-      (godPerspective
-        ? `（上帝视角仍适用：角色屏外言行、独处自语、对他人转述须与线上一致；**禁止**借「屏外自由发挥」捏造与聊天矛盾的行程或态度反转。）\n`
-        : `允许在不违背事实的前提下**新增**当面细节、动作与环境；**禁止**把线上已聊内容当「新发现」对用户重复宣布。\n`)
+    ? (isRegenerateTurn
+        ? `【线上聊天事实铁律（重新生成·已定事实底线）】` +
+          `「尚未总结·私聊/群聊」及长期记忆里源自微信的**明文已定事实**仍不得捏造改写（约定、排期、谁说过什么）。` +
+          `本轮为对旧稿不满意的重写：「本次生成偏向」决定**场面如何重演**；若偏向与旧稿演绎冲突，以偏向为准；若偏向要求否定线上明文事实，须在思维链【线上事实卡】说明如何**在不撒谎改史**的前提下改写镜头。\n`
+        : `【线上聊天事实铁律（续写·高于导演指令与玩家输入）】` +
+          `「尚未总结·私聊/群聊」及长期记忆里源自微信聊天的条目，记录的是**线上已发生、双方已知并已说出口**的内容（约定、承诺、排期、待办、饮食/工作反馈口径、谁承诺何时何地再谈等），**是事实约束，不是写作指导、灵感参考或语气样本**。` +
+          `线下正文须**无条件服从**这些事实：` +
+          `**禁止**提前兑现线上明确推迟的事；**禁止**与线上一致信息矛盾；**禁止**只借摘录学口吻却无视约定与排期；` +
+          `**禁止**线上末条仍是同一晚同地点的远程对话，线下却无过渡跳到次日清晨或无关换场；` +
+          `**禁止**线上仍冷淡公事、线下却写成暧昧/心动/私人越界（关系温度须与摘录及尾声延展一致，除非用户当轮明确打破）。` +
+          `「玩家输入/导演指令/屏外引导」只决定**当轮镜头与推进方式**，给角色自主行动空间，**不得**覆盖或改写线上已定事实；若指令与事实冲突，**以线上事实为准**。` +
+          `「最近剧情」旧稿若违背线上事实，须以线上事实**修正**承接。` +
+          (godPerspective
+            ? `（上帝视角仍适用：角色屏外言行须与线上一致。）\n`
+            : `允许在不违背事实的前提下**新增**当面细节；**禁止**把线上已聊内容当「新发现」对用户重复宣布。\n`))
     : ''
   const storyTimelineVectorRecallRule = hasVectorStoryRecall
-    ? `【历史回忆事实铁律（高于自行发挥）】「剧情时间轴」里标「召回 · 相似 xx%」的条目为向量命中的**往日摘要行**；玩家提起相关话题时，**仅可**使用各行摘要字段（含【本轮事件】）中**已写明**的事实，**禁止**编造或扩写摘要未记载的细节。\n`
+    ? `【向量召回·已发生硬规则】下方「语义召回」**全部是已发生历史事件**，不是本轮场面；**禁止**复述/重演事情经过与场景，**仅可**回溯一笔带过。\n` +
+      `【历史回忆事实铁律（低于当前态与尚未总结）】玩家提起相关话题时，**仅可**使用各行摘要字段中**已写明**的事实，**禁止**编造或扩写未记载细节；**禁止**用往事摘要覆盖「剧情时间轴·当前状态」或「尚未总结/最近剧情」末尾最新事实。\n`
     : ''
-  const storyTimelineTemporalRule = storyTimelineClipped
-    ? `【剧情时间轴·时效铁律】当前故事内「现在」以【当前状态·合并快照】的【当前锚点】为准（勿用手机日期或系统落库时刻）。「语义召回」「近端摘要」**仍须保留并可用**；若某行带【时效·已发生】/「历史」且锚点公历日**早于**当前剧情日，该行内容为**往事**——正文提起须用回溯语气（如「五个月前…」），**禁止**把行内当时的「下周五 / 提醒考核」等当作尚未到来的安排；**未完结待办仅以【当前状态】为准**。\n`
-    : ''
+  const storyTimelineTemporalRule =
+    storyTimelineCurrentState || storyTimelineRecallAndNear
+      ? `【剧情时间轴·时效铁律】当前故事内「现在」以【剧情时间轴·当前状态】的【当前锚点】为准（勿用手机日期或系统落库时刻）。「语义召回」「近端摘要」若带【时效·已发生】且锚点公历日**早于**当前剧情日，为**往事**——须用回溯语气；**未完结待办仅以当前状态为准**。\n`
+      : ''
   const onlinePrivBoundaryReminder =
     wechatUnsummarizedRefLen > 8
       ? `【当轮强提醒·知悉边界】下列摘录多为**私聊/群聊原文**；线下**其他 NPC** 不得无因知晓用户与**${character.realName}**私聊的具体内容；**${character.realName}**也不得无因知晓用户与其他 NPC 私聊的内容，除非摘录或前文已给出合法知情路径（须在思维链【知情边界卡】与预检 12 中自检）。\n`
@@ -1899,12 +1964,23 @@ ${vnVoiceParamsRule ? `${vnVoiceParamsRule}\n` : ''}${vnBackgroundRule ? `${vnBa
     hasOnlineWechatFacts: hasOnlineWechatFacts,
     userText: userText ?? '',
   })
+  /**
+   * 线下 prompt 效力层级（高→低）：
+   * 续写：格式硬约束 > 玩家身份 > 档案/世界书/NPC/尾声·关系 > 文风禁词 >
+   *       时间轴·当前状态 > 尚未总结=最近剧情 > 语义召回/近端 > 向量长期记忆；
+   *       玩家输入决定方向，已定事实优先，角色可自主行动。
+   * 重新生成：本次生成偏向为内容最高优先（场面如何重写），格式与已定事实底线仍守。
+   */
   const systemPromptRaw =
-    `${charUserDirective}\n${MBTI_OUTPUT_BAN_RULE}\n\n${buildDatingStyleSystemPrompt(getLoreArchiveBuiltinPresetTogglesSnapshot())}${styleAppend}${
-      datingArchiveBlock
-        ? `\n\n${datingArchiveBlock}\n\n${worldBookRoleLockReminder}\n`
-        : '\n'
-    }\n${combinedMemNote}\n\n${wbAfterBlock}\n\n${PROSE_FORBIDDEN_LEXICON_PROMPT}`
+    `${charUserDirective}\n${MBTI_OUTPUT_BAN_RULE}\n\n` +
+    `${buildDatingStyleSystemPrompt(getLoreArchiveBuiltinPresetTogglesSnapshot())}` +
+    (datingArchiveBlock
+      ? `\n\n${datingArchiveBlock}\n\n${worldBookRoleLockReminder}\n`
+      : '\n') +
+    `${wbAfterBlock}\n\n` +
+    `${styleAppend}\n\n` +
+    `${PROSE_FORBIDDEN_LEXICON_PROMPT}\n\n` +
+    `${combinedMemNote}`
   const datingCharProfileBlock = mainCharRow
     ? `【约会对象·档案与简介${
         mainCharacterOffstage ? '（缺席模式：仅供边界参考，**本轮正文禁止该角色出场**）' : ''
@@ -1916,91 +1992,133 @@ ${vnVoiceParamsRule ? `${vnVoiceParamsRule}\n` : ''}${vnBackgroundRule ? `${vnBa
     playerIdentity: (playerIdentity?.schedule as ScheduleTable | undefined) ?? null,
     character: (mainCharRow?.schedule as ScheduleTable | undefined) ?? null,
   })
+  const priorityLadderBlock = isRegenerateTurn
+    ? `【效力层级·重新生成】本轮用户对旧稿不满意。` +
+      `「本次生成偏向」为**内容最高优先级**：场面如何改写、情绪与桥段如何重排须优先满足偏向；` +
+      `输出格式硬约束仍须遵守；不得捏造与「尚未总结·私聊/群聊」「剧情时间轴·当前状态」「尾声延展」**明文冲突**的已定事实。\n\n`
+    : `【效力层级·续写】本轮在已定事实之上推进剧情：` +
+      `玩家身份铁律 > 角色档案/世界书/世界背景/NPC网/尾声延展·关系阶段 > 文风禁词 > ` +
+      `剧情时间轴·当前状态 > 尚未总结·私聊/群聊（末尾最新）=最近剧情（末尾最新） > 时间轴语义召回/近端摘要 > 向量长期记忆。` +
+      `玩家输入决定当轮方向，**不得**改写已定事实；角色在边界内可自主行动。\n\n`
+  const biasBlock = initialBias
+    ? isRegenerateTurn
+      ? `本次生成偏向（**内容最高优先级**）：${initialBias}\n\n`
+      : `本次生成偏向（当轮方向参考；不得覆盖已定事实）：${initialBias}\n\n`
+    : ''
+  const playerInputHeader = godPerspective
+    ? '屏外剧情引导'
+    : playerInputIntentMode === 'paraphrase'
+      ? '导演指令'
+      : '玩家输入'
+  const continuityScopeBlock = isRegenerateTurn
+    ? `【本轮重写范围】以「本次生成偏向」与「${playerInputHeader}」为重写主轴；仍须知晓「尚未总结·私聊/群聊」末尾与「剧情时间轴·当前状态」中的明文事实，避免改史。` +
+      `禁止洗稿旧版本条；须给出可区分的新演绎。${
+        godPerspective
+          ? '**本轮须维持玩家不在场的屏外镜头**'
+          : mainCharacterOffstage
+            ? `**本轮须维持 ${character.realName} 不在场，只写玩家与 NPC**`
+            : ''
+      }\n`
+    : `【本轮承接范围】**第一优先**对照「尚未总结·私聊/群聊」**末尾最新**与「剧情时间轴·当前状态」；` +
+      `再承接「${playerInputHeader}」意图，并与「最近剧情」**末尾最新**在情绪方向、主动方上保持一致；` +
+      `向量召回的长期记忆与时间轴往事摘要不得覆盖上述近端事实。` +
+      `可回接**兼容**的未收束点，但**禁止**拾取与本轮方向矛盾的对称旧梗。${
+        godPerspective
+          ? '**本轮须维持玩家不在场的屏外镜头**'
+          : mainCharacterOffstage
+            ? `**本轮须维持 ${character.realName} 不在场，只写玩家与 NPC**`
+            : ''
+      }\n`
+  const formatHardConstraintsBlock =
+    `本轮模式：${roleMode}\n` +
+    `${perspectiveRule}\n` +
+    (perspectiveStrictRule ? `${perspectiveStrictRule}\n` : '') +
+    `${lengthRule}\n` +
+    `${antiFluffRule}\n` +
+    `${dialogueDrivenPlotRule}\n` +
+    `${npcRealNameRule}\n` +
+    (vnFormatRule ? `${vnFormatRule}\n` : '') +
+    (mainCharacterOffstageVnRule ? `${mainCharacterOffstageVnRule}` : '') +
+    (normalPlotFormatRule ? `${normalPlotFormatRule}\n` : '') +
+    (vnContinuityRule ? `${vnContinuityRule}` : '') +
+    `${plotEmotionalDirectionRule}` +
+    (plotAntiEchoRule ? `${plotAntiEchoRule}` : '') +
+    `${userReactionPromptBlock}\n` +
+    `${autoUserRoleplaySpaceRule}\n`
+  const loreAndRelationBlock =
+    datingCharProfileBlock +
+    datingPhysiqueBlock +
+    (datingCharWorldBg ? `【约会对象·世界背景】\n${datingCharWorldBg}\n\n` : '') +
+    (datingCharWb
+      ? `【约会对象·世界书】\n${datingCharWb}\n\n${worldBookRoleLockReminder}\n`
+      : '') +
+    `${datingScheduleBlock}` +
+    (npcNetworkBlock.trim() ? `${npcNetworkBlock.trim()}\n\n` : '') +
+    (presentNetworkBlock ? `${presentNetworkBlock}\n\n` : '') +
+    `${progressHint}\n` +
+    `${epilogueRelationshipBaselineBlock}\n\n`
+  const memoryTailBlock =
+    `【剧情时间轴·当前状态】（故事内「现在」；承接地点/时段/服装/未完结待办优先对照本块；**高于**下方语义召回与向量长期记忆）：${storyCalendarHint}\n${
+      storyTimelineCurrentState || '（暂无）'
+    }\n\n` +
+    `${onlineTemporalScopeRule}` +
+    `${offlineOnlineSpatialRule}` +
+    `${onlineWechatFactCanonRule}` +
+    `${storyTimelineTemporalRule}` +
+    `${storyCalendarChronologyRule}` +
+    `${onlinePrivBoundaryReminder}` +
+    `${wechatDialogueParityReminder}` +
+    `尚未总结·私聊（**线上已发生事实**｜末尾最新优先；${
+      onlineInjectScope?.storyCalendarAnchor?.trim() ? '**故事内时刻见【跨通道·故事内时刻对齐】，**' : ''
+    }有前缀时为**设备落库时刻**，**不是**故事内剧情时间；须服从）：\n${unsPrivClipped || '（暂无）'}\n\n` +
+    `尚未总结·群聊（**线上已发生事实**｜同一时间窗；末尾最新优先）：\n${unsGrpClipped || '（暂无）'}\n\n` +
+    `尚未总结·线下剧情（落库先后；末尾最新优先）：\n${unsOffClipped || '（暂无）'}\n\n` +
+    `【历史摘录·文风隔离】下条「最近剧情」**只**供提取事实、关系、未收束点与空间关系；**禁止**模仿旧稿措辞/网文腔；须按 system 文风与禁词表落笔。\n` +
+    `${godHistoryIsolationNote}` +
+    `${mainCharacterOffstageHistoryNote}` +
+    `最近剧情（最近 ${DATING_AI_PLOT_HISTORY_MAX} 条，**含本轮玩家输入**；**末尾最新**；超长时保留末尾；正文已去思维链）：\n${
+      historyClipped || '（暂无历史）'
+    }\n\n` +
+    `${storyTimelineVectorRecallRule}` +
+    `【剧情时间轴·语义召回/近端摘要】（往事补全；**不得**覆盖上方当前状态与尚未总结/最近剧情末尾）：\n${
+      storyTimelineRecallAndNear || '（暂无）'
+    }\n\n` +
+    `长期记忆（关键词触发 + 向量语义筛选；**优先级最低的事实补全层**；与上方尚未总结冲突时以上方为准；已总结微信内容仍属线上事实底线）：\n` +
+    `【向量召回·已发生硬规则】下列长期记忆**均为已发生历史**；**禁止**复述事情经过或重演旧场，**仅可**当作历史事件提起。\n${
+      longMemClipped || '（暂无）'
+    }\n\n`
+  const regenerateTailBlock = isRegenerateTurn
+    ? `【重新生成】本条为对**某一旧 AI 气泡**的重写请求。\n` +
+      `1）**偏向优先**：须优先落实「本次生成偏向」；禁止对上一版本条洗稿交差。\n` +
+      `2）**上下文边界**：你只拥有「最近剧情」里**在该条之前的**内容与玩家输入；上一版已从材料中剔除。\n` +
+      `3）「尾声延展」：以 system/上文注入的**当前**尾声延展为准（客户端可能已回滚旧稿补丁）。\n` +
+      (!isVnMode
+        ? `4）**格式**：普通剧情模式，**禁止**输出 VN 标签稿，仅输出普通段落体。\n\n`
+        : '\n')
+    : ''
   const userPromptRaw =
-        `${identityBlock}\n` +
-        `${playerGenderPronounReminder}` +
-        datingCharProfileBlock +
-        datingPhysiqueBlock +
-        (datingCharWorldBg ? `【约会对象·世界背景】\n${datingCharWorldBg}\n\n` : '') +
-        (datingCharWb
-          ? `【约会对象·世界书】\n${datingCharWb}\n\n${worldBookRoleLockReminder}\n`
-          : '') +
-        `${datingScheduleBlock}` +
-        (npcNetworkBlock.trim() ? `${npcNetworkBlock.trim()}\n\n` : '') +
-        `${progressHint}\n` +
-        `${epilogueRelationshipBaselineBlock}\n\n` +
-        `本轮模式：${roleMode}\n` +
-        `${perspectiveRule}\n` +
-        (perspectiveStrictRule ? `${perspectiveStrictRule}\n` : '') +
-        `${lengthRule}\n` +
-        `${antiFluffRule}\n` +
-        `${dialogueDrivenPlotRule}\n` +
-        `${npcRealNameRule}\n` +
-        (vnFormatRule ? `${vnFormatRule}\n` : '') +
-        (mainCharacterOffstageVnRule ? `${mainCharacterOffstageVnRule}` : '') +
-        (normalPlotFormatRule ? `${normalPlotFormatRule}\n` : '') +
-        (vnContinuityRule ? `${vnContinuityRule}` : '') +
-        `${plotEmotionalDirectionRule}` +
-        (plotAntiEchoRule ? `${plotAntiEchoRule}` : '') +
-        `${userReactionPromptBlock}\n` +
-        `${autoUserRoleplaySpaceRule}\n` +
-        `${STYLE_HINT}\n` +
-        (initialBias ? `本次生成偏向（最高优先级）：${initialBias}\n` : '') +
-        `${onlineTemporalScopeRule}` +
-        `${offlineOnlineSpatialRule}` +
-        `${onlineWechatFactCanonRule}` +
-        `${storyTimelineVectorRecallRule}` +
-        `${storyTimelineTemporalRule}` +
-        `${storyCalendarChronologyRule}` +
-        `${onlinePrivBoundaryReminder}` +
-        `${wechatDialogueParityReminder}` +
-        `${playerInputNoRecapReminder}` +
-        `${playerInputIntentRule}` +
-        (playerInputSemanticsBlock ? `${playerInputSemanticsBlock}\n\n` : '') +
-        (presentNetworkBlock ? `${presentNetworkBlock}\n\n` : '') +
-        `${mainCharacterOffstageReminder}` +
-        `【本轮承接范围】**第一优先**对照「尚未总结·私聊/群聊」**末尾最新**（若晚于线下则优先纠偏当场状态）与长期记忆里的**线上已定事实**（见【线上聊天事实铁律】与【线上→线下·承接铁律】，事实高于指导）；在此之上再承接${
-          godPerspective
-            ? '屏外剧情引导'
-            : playerInputIntentMode === 'paraphrase'
-              ? '导演指令'
-              : '“玩家输入：...”'
-        }中的意图，并与「最近剧情」**末尾最新**在情绪方向、主动方上保持一致；可回接**兼容**的未收束点，但**禁止**拾取与本轮方向矛盾的对称旧梗（见【情绪方向与对称旧梗】）。${
-          godPerspective
-            ? '**本轮须维持玩家不在场的屏外镜头**'
-            : mainCharacterOffstage
-              ? `**本轮须维持 ${character.realName} 不在场，只写玩家与 NPC**`
-              : ''
-        }\n` +
-        `${userDemand}${branchHintBlock}\n` +
-        `【本轮${
-          godPerspective
-            ? '屏外剧情引导'
-            : playerInputIntentMode === 'paraphrase'
-              ? '导演指令'
-              : '玩家输入'
-        }原文（锚点优先来源；**正文禁止复读或分条重述本块**）】\n${userText?.trim() || '（本轮无玩家输入）'}\n\n` +
-        `长期记忆（关键词触发 + 向量语义筛选；**已进自动总结的微信内容以本块为准**——属**线上已定事实**，须服从，勿与下方「尚未总结」矛盾）：\n${longMemClipped || '（暂无）'}\n\n` +
-        `【剧情时间轴】（故事内时空状态；由自动总结维护；承接地点/时段/服装时优先对照本块；**语义召回往日摘要须服从【历史回忆事实铁律】**；**未收动机伏笔与未完结待办**才须承接，已完结者勿再引用；**与下方「系统落库时刻」前缀独立**；**不得**违背上方线上聊天事实）：${storyCalendarHint}\n${storyTimelineClipped || '（暂无）'}\n\n` +
-        `尚未总结·私聊（**线上已发生事实**｜见块尾时间窗说明；${onlineInjectScope?.storyCalendarAnchor?.trim() ? '**故事内时刻见【跨通道·故事内时刻对齐】，**' : ''}有前缀时为**设备落库时刻**（真实发送钟点，**不是**故事内剧情时间）；须服从，**不是**写作指导）：\n${unsPrivClipped || '（暂无）'}\n\n` +
-        `尚未总结·群聊（**线上已发生事实**｜同一时间窗；每条前缀为**系统落库时刻**；须服从，**不是**写作指导）：\n${unsGrpClipped || '（暂无）'}\n\n` +
-        `尚未总结·线下剧情（**系统落库时刻见每条条目前缀**——真实生成钟点，非故事内剧情时间；按落库先后理解）：\n${unsOffClipped || '（暂无）'}\n\n` +
-        `【历史摘录·文风隔离（最高优先级）】下条「最近剧情」**只**供提取：**事实、关系、与本轮兼容的未收束点、人物在场与空间关系**；**禁止**把旧稿的措辞、节奏、修辞习惯、网文腔或油腻句式当作续写模板；**禁止**因旧稿曾出现某情绪主题就把本轮主客体方向写反。若上文显八股、堆砌感官词、触犯禁词表或与 system 白描要求相悖，本轮仍须按 **system 统一文风与禁词表** 落笔，**不得**「贴着旧稿语感滑下去」。重新生成同段时亦适用本条。\n` +
-        `${godHistoryIsolationNote}` +
-        `${mainCharacterOffstageHistoryNote}` +
-        `最近剧情（最近 ${DATING_AI_PLOT_HISTORY_MAX} 条，**含本轮玩家输入**；按落库先后排列，**末尾最新**；**每条条目前缀优先为故事内公历时刻**，无锚点时方显示系统落库·落库；超长时保留末尾；正文已去思维链；**不含**屏外平行事件原文）：\n${historyClipped || '（暂无历史）'}\n\n` +
-        (datingExtras?.regeneratingWorldBookBaseline
-          ? `【重新生成】本条为对**某一旧 AI 气泡**的重写请求。\n` +
-            `1）**上下文边界**：你只拥有「最近剧情」里**在该条之前的**内容与玩家输入；**切勿**假定或复述你已写过的上一版本条正文——上一版已从本轮材料中剔除，**禁止**对其洗稿、同义复述或微调后交差。\n` +
-            `2）**重写目标**：在满足人设与连续性前提下，须有**可与旧稿区分开**的推进：**新的对白钩子、动作顺序、信息披露或交涉策略**至少占明显比重；若无玩家新指令，也不得把旧稿换一种说法再输出一遍。\n` +
-            `3）「尾声延展」：若该条自上次成功落库后**未被你在人设里手改、也未被后续剧情覆盖**，客户端会将其恢复为**该次补丁写入前**的快照，避免旧稿补丁牵着走；**若你已编辑人设或条目正文已与当轮补丁结果不一致，则保持当前库内最新正文**，你必须以 **system 中注入的当前尾声延展** 为准，勿假定仍是首次生成时的旧条。\n`
-            +
-            (!isVnMode
-              ? `4）**格式**：当前为普通剧情模式，**禁止**输出 VN 标签稿（【旁白】等），仅输出普通段落体。\n\n`
-              : '\n')
-          : '') +
-        `请续写下一段剧情。` +
-        (datingExtras?.unifiedMemoryAppendix?.trim() ? `\n\n${datingExtras.unifiedMemoryAppendix.trim()}` : '')
+    `${priorityLadderBlock}` +
+    `${biasBlock}` +
+    `${playerInputNoRecapReminder}` +
+    `${playerInputIntentRule}` +
+    (playerInputSemanticsBlock ? `${playerInputSemanticsBlock}\n\n` : '') +
+    `${mainCharacterOffstageReminder}` +
+    `${continuityScopeBlock}` +
+    `${userDemand}${branchHintBlock}\n` +
+    `【本轮${playerInputHeader}原文（锚点优先来源；**正文禁止复读或分条重述本块**）】\n${
+      userText?.trim() || '（本轮无玩家输入）'
+    }\n\n` +
+    `【输出格式硬约束】\n${formatHardConstraintsBlock}\n` +
+    `${identityBlock}\n` +
+    `${playerGenderPronounReminder}` +
+    `${loreAndRelationBlock}` +
+    `${STYLE_HINT}\n` +
+    `${memoryTailBlock}` +
+    `${regenerateTailBlock}` +
+    `请续写下一段剧情。` +
+    (datingExtras?.unifiedMemoryAppendix?.trim()
+      ? `\n\n${datingExtras.unifiedMemoryAppendix.trim()}`
+      : '')
   const messages = [
     {
       role: 'system' as const,
@@ -2834,6 +2952,7 @@ export function DatingProvider({ children }: { children: ReactNode }) {
           const wbRevertNew = sanitizeWorldBookAfterRevertEntries(aiGen.worldBookAfterRevertEntries)
           const { dualNarrativeStoryFieldsFromDelta } = await import('../memory/dualNarrativeTime')
           const storyFields = dualNarrativeStoryFieldsFromDelta(timelineDelta)
+          const todoLedgerBefore = await snapshotStoryTimelineTodoLedgerBefore(char.id)
           let aiPlot: PlotItem = {
             id: uid('ai'),
             type: 'ai',
@@ -2843,6 +2962,7 @@ export function DatingProvider({ children }: { children: ReactNode }) {
             ...aiPlotPersistFields(parsed, timelineSnap, timelineDelta),
             ...storyFields,
             worldBookAfterRevertEntries: wbRevertNew.length ? wbRevertNew : undefined,
+            todoLedgerBefore,
           }
           let plotImageWarningForToast: string | undefined
           if (apiConfig) {
@@ -2911,7 +3031,7 @@ export function DatingProvider({ children }: { children: ReactNode }) {
           })
           let linkedNpcNames: string[] = []
           try {
-            linkedNpcNames = await finalizeDatingMemoryAfterAiReply({
+            const memResult = await finalizeDatingMemoryAfterAiReply({
               apiConfig,
               aiTextRaw,
               memoryGather,
@@ -2923,6 +3043,23 @@ export function DatingProvider({ children }: { children: ReactNode }) {
               notifyParallelSummaryForPlotId: parallelGeneratedPlotId,
               userText: msg,
             })
+            linkedNpcNames = memResult.linkedNpcNames
+            const extraRevert = sanitizeWorldBookAfterRevertEntries(memResult.epilogueRevertEntries)
+            if (extraRevert.length) {
+              const mergedRevert = mergeWorldBookAfterRevertEntries(
+                aiPlot.worldBookAfterRevertEntries,
+                extraRevert,
+              )
+              if (mergedRevert?.length) {
+                aiPlot = { ...aiPlot, worldBookAfterRevertEntries: mergedRevert }
+                await applyArchivePatch(charId, (p) => ({
+                  ...p,
+                  plots: p.plots.map((x) =>
+                    x.id === aiPlot.id ? { ...x, worldBookAfterRevertEntries: mergedRevert } : x,
+                  ),
+                }))
+              }
+            }
           } catch (memErr) {
             console.warn('[dating] memory post failed after plot saved', memErr)
           }
@@ -3207,17 +3344,41 @@ export function DatingProvider({ children }: { children: ReactNode }) {
           vnVoiceDisabled: !!archive.vnVoiceDisabled,
         }
         const plotSlot = archive.plots[idx]!
-        const wbRevertForRegen = sanitizeWorldBookAfterRevertEntries(plotSlot.worldBookAfterRevertEntries)
-        if (wbRevertForRegen.length) {
-          try {
-            const chRow = await personaDb.getCharacter(char.id)
-            if (chRow) {
-              const restored = applyWorldBookAfterRevertEntries(chRow, wbRevertForRegen)
-              if (restored) await personaDb.upsertCharacter(restored)
+        const afterPlots = archive.plots.slice(idx + 1)
+        /** 重生前：尾声延展 + 剧情时间轴（待办等）回退到「本段之前」，避免旧稿衍生状态注入提示词 */
+        try {
+          const chRow = await personaDb.getCharacter(char.id)
+          if (chRow) {
+            const rebuilt = rebuildWorldBookAfterFromDatingPlotList(chRow, before, [
+              plotSlot,
+              ...afterPlots,
+            ])
+            if (rebuilt) {
+              await personaDb.upsertCharacter(rebuilt)
+            } else {
+              const wbRevertForRegen = sanitizeWorldBookAfterRevertEntries(
+                plotSlot.worldBookAfterRevertEntries,
+              )
+              const fromEntries = wbRevertForRegen.length
+                ? applyWorldBookAfterRevertEntries(chRow, wbRevertForRegen)
+                : null
+              const fromPrev =
+                revertWorldBookAfterUsingContentPrevious(fromEntries ?? chRow) ?? fromEntries
+              if (fromPrev) await personaDb.upsertCharacter(fromPrev)
             }
-          } catch {
-            /* 恢复失败则仍用当前人设尝试生成 */
           }
+        } catch {
+          /* 恢复失败则仍用当前人设尝试生成 */
+        }
+        try {
+          const prevTodos = (await personaDb.getStoryTimelineState(char.id))?.todos ?? []
+          const todosOverride = resolveStoryTimelineTodosBeforeRegeneratingPlot(plotSlot, prevTodos)
+          await rebuildStoryTimelineFromDatingPlots(char.id, before, {
+            apiConfig,
+            ...(todosOverride !== undefined ? { todosOverride } : {}),
+          })
+        } catch (timelineRevertErr) {
+          console.warn('[dating] story timeline revert before regenerate failed', timelineRevertErr)
         }
         await clearOfflinePlotContextVectorsForCharacter(char.id)
         const [{ datingExtras: turnExtras, memoryGather }, onlineCtx] = await Promise.all([
@@ -3314,7 +3475,7 @@ export function DatingProvider({ children }: { children: ReactNode }) {
         void runOfflineDanmakuAfterAi(char, archAfter)
         let linkedNpcNames: string[] = []
         try {
-          linkedNpcNames = await finalizeDatingMemoryAfterAiReply({
+          const memResult = await finalizeDatingMemoryAfterAiReply({
             apiConfig,
             aiTextRaw,
             memoryGather,
@@ -3325,6 +3486,23 @@ export function DatingProvider({ children }: { children: ReactNode }) {
             skipMemoryRoundBump: true,
             worldBookInlinePatchApplied: Boolean(nextRevert.length),
           })
+          linkedNpcNames = memResult.linkedNpcNames
+          const extraRevert = sanitizeWorldBookAfterRevertEntries(memResult.epilogueRevertEntries)
+          if (extraRevert.length) {
+            const mergedRevert = mergeWorldBookAfterRevertEntries(
+              nextPlot.worldBookAfterRevertEntries,
+              extraRevert,
+            )
+            if (mergedRevert?.length) {
+              nextPlot = { ...nextPlot, worldBookAfterRevertEntries: mergedRevert }
+              await applyArchivePatch(charId, (p) => ({
+                ...p,
+                plots: p.plots.map((x, i) =>
+                  i === idx ? { ...x, worldBookAfterRevertEntries: mergedRevert } : x,
+                ),
+              }))
+            }
+          }
         } catch (memErr) {
           console.warn('[dating] memory post failed after plot saved', memErr)
         }

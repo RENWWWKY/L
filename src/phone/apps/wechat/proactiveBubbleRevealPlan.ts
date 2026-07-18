@@ -1,6 +1,3 @@
-import type { MomentsImageGenSettings } from '../../../components/moments/useMomentsSettingsStore'
-import { isCharacterImageGenEnabled } from '../api/imageGenPresetUtils'
-import { loadResolvedImageGenSettings } from '../api/loadResolvedImageGenSettings'
 import type { Character, WeChatChatMessage, WeChatImageMime, WeChatVoicePayload, WeChatMusicSyncInvitePayload, WeChatLocationPayload, WeChatTakeoutOrderPayload } from './newFriendsPersona/types'
 import { personaDb } from './newFriendsPersona/idb'
 import type { ProactiveMessageRevealBubble } from './proactiveMessageRevealBridge'
@@ -9,8 +6,7 @@ import {
   formatStickerTranscriptLine,
   wasCharacterStickerRefUsedRecently,
 } from './stickers/stickerAntiRepeat'
-import { parseCharacterImageGenLine } from './wechatCharacterImageGen'
-import { isImageGenQuotaOrRateLimitBlocked } from './wechatMediaSendFrequency'
+import { parseCharacterImageGenLine, looksLikeEnglishImageGenTags } from './wechatCharacterImageGen'
 import { stickerUrlToImagePayload } from './wechatStickerImagePayload'
 import {
   isCharacterMusicSyncDirectiveArtifactLine,
@@ -67,8 +63,11 @@ export type PlannedProactiveBubble = {
   voice?: WeChatVoicePayload
   images?: { base64: string; type: WeChatImageMime }[]
   imageGenPending?: boolean
+  imageGenAwaitingConfirm?: boolean
   imageGenFailed?: boolean
-  /** 异步生图 prompt（仅 imageGenPending 占位时携带） */
+  /** 给用户看的中文画面描述（占位） */
+  imageDescription?: string
+  /** 英文生图提示词缓存（点生成后写入） */
   imageGenPrompt?: string
   musicSync?: WeChatMusicSyncInvitePayload
   locationShare?: WeChatLocationPayload
@@ -94,7 +93,6 @@ export type ProactiveTakeoutContext = {
 async function planProactiveBubbleLineAsync(
   line: string,
   meta: { id: string; thinking?: string; timestamp: number },
-  imageGen: { enabled: boolean; settings: MomentsImageGenSettings },
   takeoutCtx?: ProactiveTakeoutContext,
   recentCharacterStickerRefs: string[] = [],
   _character?: Character | null,
@@ -211,15 +209,17 @@ async function planProactiveBubbleLineAsync(
   }
 
   const charImageGen = parseCharacterImageGenLine(trimmed)
-  if (charImageGen && imageGen.enabled) {
-    if (isImageGenQuotaOrRateLimitBlocked()) return null
+  if (charImageGen) {
+    const desc = charImageGen.description
+    const legacyEnglish = looksLikeEnglishImageGenTags(desc)
     return {
       id: meta.id,
       content: '',
       thinking: meta.thinking,
       timestamp: meta.timestamp,
-      imageGenPending: true,
-      imageGenPrompt: charImageGen.prompt,
+      imageGenPending: false,
+      imageGenAwaitingConfirm: true,
+      ...(legacyEnglish ? { imageGenPrompt: desc } : { imageDescription: desc }),
     }
   }
 
@@ -260,9 +260,6 @@ export async function planProactiveRevealBubblesAsync(
   recentCharacterStickerRefs: string[] = [],
 ): Promise<PlannedProactiveBubble[]> {
   await ensureStickerStoreHydrated()
-  const imageGenSettings = await loadResolvedImageGenSettings()
-  const imageGenEnabled = isCharacterImageGenEnabled(imageGenSettings)
-  const imageGen = { enabled: imageGenEnabled, settings: imageGenSettings }
   const characterId = takeoutCtx?.characterId?.trim()
   const character = characterId ? await personaDb.getCharacter(characterId) : null
 
@@ -324,7 +321,6 @@ export async function planProactiveRevealBubblesAsync(
           thinking: i === 0 ? bubble.thinking : undefined,
           timestamp: bubble.timestamp + i,
         },
-        imageGen,
         takeoutCtx,
         recentCharacterStickerRefs,
         character,
@@ -333,7 +329,13 @@ export async function planProactiveRevealBubblesAsync(
       if (planned.voice) {
         const transcript = planned.voice.transcriptText?.trim() || planned.content.trim()
         if (voiceTranscriptDuplicatesPlainTexts(transcript, plainTextsThisBatch)) continue
-      } else if (!planned.images?.length && !planned.imageGenPending && !planned.locationShare && !planned.takeoutOrder) {
+      } else if (
+        !planned.images?.length &&
+        !planned.imageGenPending &&
+        !planned.imageGenAwaitingConfirm &&
+        !planned.locationShare &&
+        !planned.takeoutOrder
+      ) {
         const plain = planned.content.trim()
         if (plain) plainTextsThisBatch.push(plain)
       }

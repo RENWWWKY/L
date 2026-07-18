@@ -23,6 +23,7 @@ import {
 } from './StoryTimelineEditorSheet'
 import {
   prepareStoryTimelineArchiveDisplayText,
+  stripStoryTimelineRowObligationSections,
   type StoryTimelinePlotRow,
 } from './storyTimelineTypes'
 import type { ApiConfig } from '../../api/types'
@@ -213,15 +214,17 @@ export function MemoryStoryTimelinePanel({
       setDetailRowsRaw(rows)
       const expandedRows = await Promise.all(
         rows.map(async (row) =>
-          prepareStoryTimelineArchiveDisplayText(
-            await personaDb.expandStoryTimelineTextForDisplay(charId, row.rowText),
-            row.recordedAt,
+          stripStoryTimelineRowObligationSections(
+            prepareStoryTimelineArchiveDisplayText(
+              await personaDb.expandStoryTimelineTextForDisplay(charId, row.rowText),
+              row.recordedAt,
+            ),
           ),
         ),
       )
       const displayMap = new Map<string, string>()
       rows.forEach((row, i) => {
-        displayMap.set(row.id, expandedRows[i] ?? row.rowText)
+        displayMap.set(row.id, expandedRows[i] ?? stripStoryTimelineRowObligationSections(row.rowText))
       })
       setRowDisplayById(displayMap)
       const latest = await gatherLatestRoundBodyForEpilogue(charId)

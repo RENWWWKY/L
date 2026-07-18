@@ -42,6 +42,8 @@ export function writePersonaCoachSeen(key: string): void {
 
 export const MEMORY_HUB_COACH_SEEN_KEY = 'memory-hub-coach-completed-v1'
 export const MEMORY_ARCHIVE_COACH_SEEN_KEY = 'memory-archive-coach-completed-v3'
+/** 进入某位角色的总结详情页（线上/线下/待办） */
+export const MEMORY_ARCHIVE_DETAIL_COACH_SEEN_KEY = 'memory-archive-detail-coach-completed-v2'
 export const MEMORY_PROGRESS_COACH_SEEN_KEY = 'memory-progress-coach-completed-v1'
 export const MEMORY_RETRY_COACH_SEEN_KEY = 'memory-retry-coach-completed-v1'
 export const MEMORY_EPILOGUE_COACH_SEEN_KEY = 'memory-epilogue-coach-completed-v1'

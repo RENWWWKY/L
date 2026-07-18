@@ -73,6 +73,37 @@ export function sanitizeWorldBookAfterRevertEntries(raw: unknown): WorldBookAfte
   return out
 }
 
+/** 合并多轮/多源尾声回滚快照：同条目保留最早 contentBefore，更新为最新 contentAfterPatch */
+export function mergeWorldBookAfterRevertEntries(
+  prev: WorldBookAfterRevertEntry[] | undefined,
+  next: WorldBookAfterRevertEntry[] | undefined,
+): WorldBookAfterRevertEntry[] | undefined {
+  const map = new Map<string, WorldBookAfterRevertEntry>()
+  for (const e of sanitizeWorldBookAfterRevertEntries(prev)) {
+    map.set(worldBookAfterEntryKey(e.worldBookId, e.itemId), e)
+  }
+  for (const e of sanitizeWorldBookAfterRevertEntries(next)) {
+    const key = worldBookAfterEntryKey(e.worldBookId, e.itemId)
+    const old = map.get(key)
+    if (old) {
+      map.set(key, {
+        worldBookId: e.worldBookId,
+        itemId: e.itemId,
+        contentBefore: old.contentBefore,
+        ...(e.contentAfterPatch !== undefined
+          ? { contentAfterPatch: e.contentAfterPatch }
+          : old.contentAfterPatch !== undefined
+            ? { contentAfterPatch: old.contentAfterPatch }
+            : {}),
+      })
+    } else {
+      map.set(key, e)
+    }
+  }
+  const out = [...map.values()]
+  return out.length ? out : undefined
+}
+
 /** 在应用补丁前采集各条目当前正文，供「重新生成」时写回 */
 export function collectWorldBookAfterRevertSnapshot(
   character: Character,
@@ -329,7 +360,7 @@ export function applyWorldBookAfterPatchesToCharacter(
   }
 }
 
-function worldBookAfterEntryKey(worldBookId: string, itemId: string): string {
+export function worldBookAfterEntryKey(worldBookId: string, itemId: string): string {
   return `${worldBookId}\0${itemId}`
 }
 
@@ -571,6 +602,125 @@ export function resetWorldBookAfterItemToInitial(
     ...character,
     worldBooks,
     updatedAt: Math.max(character.updatedAt ?? 0, Date.now()),
+  }
+}
+
+/** 列出有定点稿的尾声延展条目（供预览） */
+export function listWorldBookAfterInitialSnapshots(character: Character): Array<{
+  worldBookId: string
+  worldBookName: string
+  itemId: string
+  itemName: string
+  contentInitial: string
+  contentCurrent: string
+  differsFromCurrent: boolean
+}> {
+  const out: Array<{
+    worldBookId: string
+    worldBookName: string
+    itemId: string
+    itemName: string
+    contentInitial: string
+    contentCurrent: string
+    differsFromCurrent: boolean
+  }> = []
+  for (const wb of character.worldBooks ?? []) {
+    const bookName = String(wb.name ?? '').trim() || '世界书'
+    for (const it of wb.items ?? []) {
+      if (it.priority !== 'after') continue
+      const initial = String(it.contentInitial ?? '').trim()
+      if (!initial) continue
+      const current = String(it.content ?? '').trim()
+      out.push({
+        worldBookId: wb.id,
+        worldBookName: bookName,
+        itemId: it.id,
+        itemName: String(it.name ?? '').trim() || '尾声条目',
+        contentInitial: initial,
+        contentCurrent: current,
+        differsFromCurrent: current !== initial,
+      })
+    }
+  }
+  return out
+}
+
+/** 统计：当前正文可标为出厂定点（有正文，且与现有 contentInitial 不同或尚无出厂稿） */
+export function countWorldBookAfterMarkableAsInitial(character: Character): number {
+  let n = 0
+  for (const wb of character.worldBooks ?? []) {
+    for (const it of wb.items ?? []) {
+      if (it.priority !== 'after') continue
+      const cur = String(it.content ?? '').trim()
+      if (!cur) continue
+      if (cur === String(it.contentInitial ?? '').trim()) continue
+      n += 1
+    }
+  }
+  return n
+}
+
+/**
+ * 将单条尾声的「当前正文」记为出厂定点（contentInitial）。
+ * 之后「重置尾声」会回到这一版；可随时再点以更新后的正文重新定点。
+ */
+export function markWorldBookAfterItemContentAsInitial(
+  character: Character,
+  worldBookId: string,
+  itemId: string,
+): Character | null {
+  const wb = (character.worldBooks ?? []).find((w) => w.id === worldBookId)
+  const it = wb?.items?.find((i) => i.id === itemId)
+  if (!wb || !it || it.priority !== 'after') return null
+  const cur = String(it.content ?? '').trim()
+  if (!cur) return null
+  if (cur === String(it.contentInitial ?? '').trim()) return null
+  const now = Date.now()
+  const nextItems = (wb.items ?? []).map((row) =>
+    row.id === itemId
+      ? {
+          ...row,
+          contentInitial: String(row.content ?? ''),
+          updatedAt: now,
+        }
+      : row,
+  )
+  return {
+    ...character,
+    worldBooks: (character.worldBooks ?? []).map((w) =>
+      w.id === wb.id ? { ...w, items: nextItems } : w,
+    ),
+    updatedAt: Math.max(character.updatedAt ?? 0, now),
+  }
+}
+
+/** 将所有尾声延展条目的当前正文记为出厂定点 */
+export function markAllWorldBookAfterContentAsInitial(character: Character): Character | null {
+  const now = Date.now()
+  let changed = false
+  const worldBooks = (character.worldBooks ?? []).map((wb) => {
+    let itemsChanged = false
+    const nextItems = (wb.items ?? []).map((it) => {
+      if (it.priority !== 'after') return it
+      const cur = String(it.content ?? '').trim()
+      if (!cur) return it
+      if (cur === String(it.contentInitial ?? '').trim()) return it
+      itemsChanged = true
+      return {
+        ...it,
+        contentInitial: String(it.content ?? ''),
+        updatedAt: now,
+      }
+    })
+    if (!itemsChanged) return wb
+    changed = true
+    return { ...wb, items: nextItems }
+  })
+  if (!changed) return null
+  return {
+    ...character,
+    worldBooks,
+    updatedAt: Math.max(character.updatedAt ?? 0, now),
   }
 }
 
