@@ -13,6 +13,11 @@ import {
   wechatConversationKey,
   wechatGroupConversationKey,
 } from './wechatConversationKey'
+import { selectRecentWeChatMessagesAiRoundWindow } from './memory/memorySummaryRetention'
+import { parseStoryAnchorLabelToMs } from './time/applyOnlineChatTimeFusion'
+
+/** 线上固定注入「最近私聊轮次」：最近 N 轮对方回复（含其间用户消息） */
+export const MEMORY_RECENT_PRIVATE_CHAT_INJECT_AI_ROUNDS = 2
 
 /** 未总结聊天摘录单块汉字硬顶（默认入参仍较小；约会等可传入更大 maxChars） */
 const UNSUMMARIZED_BLOCK_CHAR_HARD_MAX = 500_000
@@ -86,14 +91,13 @@ function formatWechatUnsummarizedLineTime(m: Pick<WeChatChatMessage, 'timestamp'
   return formatSystemRecordTime(resolveMessageSystemRecordedAtMs(m))
 }
 
-/** 未总结摘录时间前缀：有剧情标签时双写「剧情｜系统」，避免模型把系统公历当年当成故事日 */
+/** 未总结摘录时间前缀：优先剧情时间；无剧情标签则用系统落库/发送时刻 */
 function formatUnsummarizedDualTimePrefix(
   m: Pick<WeChatChatMessage, 'timestamp' | 'systemRecordedAt' | 'storyTimeLabel'>,
 ): string {
-  const systemLabel = formatWechatUnsummarizedLineTime(m)
   const story = m.storyTimeLabel?.trim()
-  if (story) return `[剧情 ${story}｜系统 ${systemLabel}] `
-  return `[${systemLabel}] `
+  if (story) return `[${story}] `
+  return `[${formatWechatUnsummarizedLineTime(m)}] `
 }
 
 export function formatPrivateLineUnsummarized(
@@ -231,8 +235,150 @@ export async function formatUnsummarizedPrivateChatBlock(params: {
   }
   const footer =
     params.footerNote?.trim() ||
-    `（↑ 尚未经自动总结写入长期记忆的私聊片段；若与上文气泡重叠，以衔接「总结空白期」为主。）`
+    `（↑ 尚未经自动总结写入长期记忆的私聊片段；每条前缀为**剧情时间**（有则优先）或**系统发送/落库时刻**；若与上文气泡重叠，以衔接「总结空白期」为主。）`
   return `${body}\n${footer}`
+}
+
+/**
+ * 线上私聊：固定注入最近 N 轮「对方回复」及其间用户消息，每条带时间前缀（剧情时间优先）。
+ * 不依赖总结游标——游标推过后未总结块可能为空，仍须让模型看见近端气泡时刻。
+ */
+export async function buildRecentPrivateChatRoundsWithTimeBlock(params: {
+  conversationKey: string
+  retainAiRounds?: number
+  maxChars?: number
+}): Promise<string> {
+  const ck = params.conversationKey.trim()
+  if (!ck) return ''
+  const rounds = Math.max(
+    1,
+    Math.min(8, Math.floor(params.retainAiRounds ?? MEMORY_RECENT_PRIVATE_CHAT_INJECT_AI_ROUNDS)),
+  )
+  try {
+    const all = await personaDb.listWeChatChatMessagesByConversationKey(ck)
+    const usable = all.filter((m) => !m.isRecalled && !isMeetImportedWeChatMessageId(m.id))
+    if (!usable.length) return ''
+    const window = selectRecentWeChatMessagesAiRoundWindow(usable, rounds)
+    if (!window.length) return ''
+    const lines: string[] = []
+    for (const m of window) {
+      const line = formatPrivateLineUnsummarized(m, { includeTimestamp: true })
+      if (line) lines.push(line)
+    }
+    if (!lines.length) return ''
+    let body = lines.join('\n')
+    const charCap = Math.max(400, Math.min(UNSUMMARIZED_BLOCK_CHAR_HARD_MAX, Math.floor(params.maxChars ?? 6000)))
+    if (body.length > charCap) {
+      const parts = body.split('\n')
+      while (parts.join('\n').length > charCap && parts.length > 4) parts.shift()
+      body = parts.join('\n')
+      if (body.length > charCap) body = `${body.slice(-charCap)}\n…（更早近端私聊已截断）`
+    }
+    return [
+      `【最近私聊原文（固定最近 ${rounds} 轮对方回复，含其间用户消息）】`,
+      `每条前缀为**剧情时间**（有则优先）或**发送时系统/自定义时钟**；用于判断谁多久没回、间隔是否合理。`,
+      body,
+    ].join('\n')
+  } catch {
+    return ''
+  }
+}
+
+function formatGapHintFromMs(gapMs: number): string {
+  const gapMin = Math.round(Math.max(0, gapMs) / 60_000)
+  if (gapMin >= 120) return `约 ${Math.round(gapMin / 60)} 小时`
+  if (gapMin >= 15) return `约 ${gapMin} 分钟`
+  if (gapMin >= 3) return `约 ${gapMin} 分钟（较短）`
+  if (gapMin >= 1) return `约 1～2 分钟`
+  return '几乎刚发生 / 连着聊'
+}
+
+function resolveMessageStoryOrClockMs(m: WeChatChatMessage): number {
+  const storyMs = parseStoryAnchorLabelToMs(m.storyTimeLabel)
+  if (storyMs != null) return storyMs
+  const ts = typeof m.timestamp === 'number' && Number.isFinite(m.timestamp) ? m.timestamp : 0
+  return ts
+}
+
+function formatMessageTimeLabel(m: WeChatChatMessage): string {
+  return m.storyTimeLabel?.trim() || formatWechatUnsummarizedLineTime(m)
+}
+
+/**
+ * 线上私聊：对照「当前剧情现在」与最近用户/对方消息，明示双方未回复间隔。
+ * 覆盖「用户发完又调时钟再等角色回」：须用当前时钟 vs 用户最后一条，而非只比相邻两条。
+ */
+export async function buildLastOnlineChatContinuityNote(params: {
+  conversationKey: string
+  /** 当前剧情「现在」文案（来自剧情轴） */
+  currentStoryLabel?: string | null
+  /** 当前线上时钟毫秒（自定义/剧情时钟优先） */
+  currentTimeMs?: number | null
+}): Promise<string> {
+  const ck = params.conversationKey.trim()
+  if (!ck) return ''
+  try {
+    const rows = await personaDb.listWeChatChatMessagesByConversationKey(ck)
+    const usable = rows
+      .filter((m) => !m.isRecalled && !isMeetImportedWeChatMessageId(m.id))
+      .sort((a, b) => a.timestamp - b.timestamp)
+    if (!usable.length) return ''
+
+    const lastUser = [...usable].reverse().find((m) => m.type === 'player')
+    const lastChar = [...usable].reverse().find((m) => m.type === 'character')
+    const latest = usable[usable.length - 1]!
+
+    const nowFromLabel = parseStoryAnchorLabelToMs(params.currentStoryLabel)
+    const nowMs =
+      (typeof params.currentTimeMs === 'number' && Number.isFinite(params.currentTimeMs)
+        ? params.currentTimeMs
+        : null) ??
+      nowFromLabel ??
+      resolveMessageStoryOrClockMs(latest)
+
+    const nowLabel =
+      params.currentStoryLabel?.trim() ||
+      formatSystemRecordTime(nowMs) ||
+      formatMessageTimeLabel(latest)
+
+    const lines = [`【线上私聊·时间感知】`, `- 当前剧情「现在」：${nowLabel}`]
+
+    if (lastUser) {
+      const userMs = resolveMessageStoryOrClockMs(lastUser)
+      const sinceUser = formatGapHintFromMs(nowMs - userMs)
+      lines.push(`- 用户最近一条：${formatMessageTimeLabel(lastUser)}（距「现在」已过 ${sinceUser}）`)
+    }
+    if (lastChar) {
+      const charMs = resolveMessageStoryOrClockMs(lastChar)
+      const sinceChar = formatGapHintFromMs(nowMs - charMs)
+      lines.push(`- 你（对方）最近一条：${formatMessageTimeLabel(lastChar)}（距「现在」已过 ${sinceChar}）`)
+    }
+
+    if (latest.type === 'player' && lastUser) {
+      const wait = formatGapHintFromMs(nowMs - resolveMessageStoryOrClockMs(lastUser))
+      lines.push(
+        `- **待回复**：最新消息来自用户；若距「现在」已明显过去（本轮约 ${wait}），须体现你刚看到/隔了一会儿才回，**禁止**装作秒回或不知用户等了多久。`,
+      )
+    } else if (latest.type === 'character' && lastChar && lastUser) {
+      const userAfterChar =
+        resolveMessageStoryOrClockMs(lastUser) > resolveMessageStoryOrClockMs(lastChar)
+      if (userAfterChar) {
+        const gap = formatGapHintFromMs(
+          resolveMessageStoryOrClockMs(lastUser) - resolveMessageStoryOrClockMs(lastChar),
+        )
+        lines.push(
+          `- **用户回你间隔**：用户在你上一条之后隔了约 ${gap} 才发来；可自然接这个间隔（忙完才回/隔了会儿），勿当成无缝连聊。`,
+        )
+      }
+    }
+
+    lines.push(
+      `- 须按真实间隔理解（刚分别不久 / 已过数小时 / 隔日再聊等）；**禁止**装作不知刚线下见过，也**禁止**把数小时前的作息当「此刻刚醒」。`,
+    )
+    return lines.join('\n')
+  } catch {
+    return ''
+  }
 }
 
 /**

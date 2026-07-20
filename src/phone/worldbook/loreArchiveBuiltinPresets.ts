@@ -54,6 +54,11 @@ export function buildWechatReplyRomanceSections(
 ): string {
   const resolved = resolveLoreArchiveBuiltinPresetToggles(toggles)
   const parts: string[] = []
+  if (resolved.lumiDoctrineOfLove || resolved.activeConfession) {
+    parts.push(
+      '【内置恋爱参考·效力说明】下列爱情观/告白引擎为中性相处参考，**低于**角色档案与人设世界书；气质、主动程度与表达方式以人设为准，禁止写成霸总或强势主导。',
+    )
+  }
   if (resolved.lumiDoctrineOfLove) parts.push(LUMI_DOCTRINE_OF_LOVE_APPENDIX)
   if (resolved.activeConfession) parts.push(CHARACTER_EMOTION_CONFESSION_ENGINE_APPENDIX)
   return parts.filter(Boolean).join('\n\n')
@@ -67,13 +72,13 @@ export function buildWechatThinkingChainRomanceSteps(
   let stepNo = 5
   if (resolved.lumiDoctrineOfLove) {
     steps.push(
-      `- 第${['五', '六', '七', '八', '九', '十'][stepNo - 5] ?? String(stepNo)}步：内化「Lumi 高质量爱情观」（条文已在输出协议注入；只做内化校准，**禁止**复述条文）`,
+      `- 第${['五', '六', '七', '八', '九', '十'][stepNo - 5] ?? String(stepNo)}步：内化「Lumi 高质量爱情观」（中性参考，**不得覆盖人设**；条文已在输出协议；禁止复述）`,
     )
     stepNo += 1
   }
   if (resolved.activeConfession) {
     steps.push(
-      `- 第${['五', '六', '七', '八', '九', '十'][stepNo - 5] ?? String(stepNo)}步：内化「情感破冰与告白引擎」（条文已在输出协议注入；校准是否应推进告白/关系确认，**禁止**复述条文）`,
+      `- 第${['五', '六', '七', '八', '九', '十'][stepNo - 5] ?? String(stepNo)}步：内化「情感破冰与告白引擎」（推进节奏服从人设；条文已在输出协议；禁止复述）`,
     )
     stepNo += 1
   }
@@ -87,12 +92,12 @@ export function buildOfflineRomanceThinkingChainSections(
   const parts: string[] = []
   if (resolved.lumiDoctrineOfLove) {
     parts.push(`【Lumi高质量爱情观】
-以下规则为本轮恋爱互动与情感表达的**核心总纲**；须在思维链中先对照自检，再决定正文对白、动作、心理与亲密度：
+以下为恋爱相处**中性参考**（非最高优先级）。须在思维链中对照自检，但**不得**覆盖【约会对象·档案/世界书】或角色人设；气质与表达强度以人设为准，禁止借本节写成霸总/强势主导：
 ${LUMI_DOCTRINE_OF_LOVE_APPENDIX}`)
   }
   if (resolved.activeConfession) {
     parts.push(`【{{char}} 情感破冰与告白演绎引擎】
-以下规则为本轮情感推进与告白演绎的**硬性约束**；须在思维链中先校准是否触发破冰/告白/关系确认，再决定正文对白、动作、心理与亲密度：
+以下为情感推进参考；须在思维链中校准是否触发破冰/告白，但**节奏与语气服从人设世界书**；禁止为「推进」改成霸总腔：
 ${CHARACTER_EMOTION_CONFESSION_ENGINE_APPENDIX}`)
   }
   if (resolved.offlineRichInnerOs) {

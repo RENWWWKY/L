@@ -10,7 +10,6 @@ export type MemoryArchiveDetailCoachTargetId =
   | 'list'
   | 'detail-offline'
   | 'detail-offline-manual'
-  | 'detail-todos'
   | 'detail-tutorial'
 
 export const MEMORY_ARCHIVE_DETAIL_START_COACH_EVENT = 'memory-archive-detail-start-coach'
@@ -22,7 +21,7 @@ export const MEMORY_ARCHIVE_DETAIL_COACH_STEPS: MemoryCoachStep[] = [
     target: null,
     centered: true,
     title: '这位角色的记忆页',
-    body: '这是角色详情专用引导（和列表主页那套分开）。这里集中看 TA 的长期记忆：微信聊过的、约会推进过的，以及还没办完的事。',
+    body: '这是角色详情专用引导（和列表主页那套分开）。这里集中看 TA 的长期记忆：微信聊过的、约会推进过的。',
   },
   {
     target: 'detail-hero',
@@ -38,8 +37,8 @@ export const MEMORY_ARCHIVE_DETAIL_COACH_STEPS: MemoryCoachStep[] = [
   },
   {
     target: 'detail-source-tabs',
-    title: '三个标签分别干什么',
-    body: '· 线上总结：微信私聊、群聊、微博、遇见等收成的大段文字；聊天时按关键词带进对话。\n· 线下摘要：约会每推进一轮记一行「发生了什么、何时何地」；用来接续剧情时间线。\n· 待办台账：还没做完的具体事（赴约、交作业等），单独存放，避免塞进摘要里越积越乱。\n点哪个标签，就看哪一类。',
+    title: '两个标签分别干什么',
+    body: '· 线上总结：微信私聊、群聊、微博、遇见等收成的大段文字；聊天时按关键词带进对话。\n· 线下摘要：约会每推进一轮记一行「发生了什么、何时何地」；用来接续剧情时间线。\n点哪个标签，就看哪一类。',
     cardPlacement: 'below',
   },
   {
@@ -75,13 +74,7 @@ export const MEMORY_ARCHIVE_DETAIL_COACH_STEPS: MemoryCoachStep[] = [
   {
     target: 'detail-offline-manual',
     title: '手动补摘要',
-    body: '某轮约会没自动写出摘要时，可粘贴当轮正文，点「生成并写入」。只补摘要，不会改待办台账。',
-    cardPlacement: 'below',
-  },
-  {
-    target: 'detail-todos',
-    title: '待办台账怎么操作',
-    body: '看当前还没办完的事；可点「完成 / 未兑现 / 删除」，或底部「补充」手写一条。\n· 清空待办：只清台账，不动摘要正文。\n· 按近况重建：按剧情时间最近 2 轮模型回复（线上或线下）重新整理未完事项，适合旧档迁移。\n场景举例：约会约了明天见面、私聊说要交作业——会出现在这里，而不是埋在摘要里。',
+    body: '某轮约会没自动写出摘要时，可粘贴当轮正文，点「生成并写入」。只补摘要，不会改动其它记忆。',
     cardPlacement: 'below',
   },
   {
@@ -95,6 +88,6 @@ export const MEMORY_ARCHIVE_DETAIL_COACH_STEPS: MemoryCoachStep[] = [
     centered: true,
     isOutro: true,
     title: '可以开始翻了',
-    body: '先在三个标签之间切换找内容；要手动补事实用「刻录记忆」；旧待办乱了用待办台账里的清空/重建。',
+    body: '先在两个标签之间切换找内容；要手动补事实用「刻录记忆」；线下摘要缺了可在「手动生成摘要」里补。',
   },
 ]

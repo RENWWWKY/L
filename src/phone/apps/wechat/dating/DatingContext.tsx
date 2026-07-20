@@ -54,11 +54,6 @@ import { resolveOnlineMessageTimeBoundsForConversation } from '../wechatCrossCha
 import { getAiPlotActiveTimelineDelta } from './plotTimelineDelta'
 import { formatPlotPromptTimeBracket } from './plotStoryTimeLabel'
 import { loadStoryTimelinePromptBlock, loadStoryTimelineOpenAnchorsBlockForSummary, rebuildStoryTimelineFromDatingPlots } from '../memory/storyTimelinePersist'
-import {
-  applyStoryTimelineTodoLedgerFromOfflineRound,
-  resolveStoryTimelineTodosBeforeRegeneratingPlot,
-  snapshotStoryTimelineTodoLedgerBefore,
-} from '../memory/storyTimelineOfflineTodoLedger'
 import { buildStoryTimelineCalendarContextBlock, resolveStoryCalendarAnchorFloorMs, resolveStoryCalendarAnchorFromPlotItems, resolveStoryCalendarAnchorFromPlots, STORY_TIMELINE_CALENDAR_CHRONOLOGY_RULES } from '../memory/storyTimelineCalendarContext'
 import {
   buildDatingStoryTimelineFallbackMaterial,
@@ -1393,21 +1388,6 @@ async function finalizeDatingMemoryAfterAiReply(params: {
           await notifyParallelSummaryTableWritten(params.char.realName, params.char.id, plot)
         }
       }
-      // 待办只吃本轮新摘要；重生中间段时再重放该段之后的后续摘要
-      const roundPlot =
-        (datingAiPlotId
-          ? params.plotsAfterAi.find((p) => p.id === datingAiPlotId && p.type === 'ai')
-          : undefined) ??
-        [...params.plotsAfterAi].reverse().find((p) => p.type === 'ai')
-      if (roundPlot) {
-        const roundIdx = params.plotsAfterAi.findIndex((p) => p.id === roundPlot.id)
-        const afterPlots = roundIdx >= 0 ? params.plotsAfterAi.slice(roundIdx + 1) : []
-        await applyStoryTimelineTodoLedgerFromOfflineRound({
-          characterId: params.char.id,
-          roundPlot,
-          afterPlots,
-        })
-      }
     } catch (rebuildErr) {
       console.warn('[dating] story timeline rebuild failed', rebuildErr)
     }
@@ -1813,7 +1793,7 @@ ${vnVoiceParamsRule ? `${vnVoiceParamsRule}\n` : ''}${vnBackgroundRule ? `${vnBa
     : ''
   const storyTimelineTemporalRule =
     storyTimelineCurrentState || storyTimelineRecallAndNear
-      ? `【剧情时间轴·时效铁律】当前故事内「现在」以【剧情时间轴·当前状态】的【当前锚点】为准（勿用手机日期或系统落库时刻）。「语义召回」「近端摘要」若带【时效·已发生】且锚点公历日**早于**当前剧情日，为**往事**——须用回溯语气；**未完结待办仅以当前状态为准**。\n`
+      ? `【剧情时间轴·时效铁律】当前故事内「现在」以【剧情时间轴·当前状态】的【当前锚点】为准（勿用手机日期或系统落库时刻）。「语义召回」「近端摘要」若带【时效·已发生】且锚点公历日**早于**当前剧情日，为**往事**——须用回溯语气；**未收动机伏笔仅以当前状态为准**。\n`
       : ''
   const onlinePrivBoundaryReminder =
     wechatUnsummarizedRefLen > 8
@@ -1966,9 +1946,9 @@ ${vnVoiceParamsRule ? `${vnVoiceParamsRule}\n` : ''}${vnBackgroundRule ? `${vnBa
   })
   /**
    * 线下 prompt 效力层级（高→低）：
-   * 续写：格式硬约束 > 玩家身份 > 档案/世界书/NPC/尾声·关系 > 文风禁词 >
-   *       时间轴·当前状态 > 尚未总结=最近剧情 > 语义召回/近端 > 向量长期记忆；
-   *       玩家输入决定方向，已定事实优先，角色可自主行动。
+   * 续写：格式硬约束 > 玩家身份 > 人设档案/世界书 > 全局档案室 > NPC/尾声·关系 >
+   *       文风禁词与内置恋爱参考 > 时间轴·当前状态 > 尚未总结=最近剧情 >
+   *       语义召回/近端 > 向量长期记忆；人设与全局冲突以人设为准。
    * 重新生成：本次生成偏向为内容最高优先（场面如何重写），格式与已定事实底线仍守。
    */
   const systemPromptRaw =
@@ -1997,9 +1977,10 @@ ${vnVoiceParamsRule ? `${vnVoiceParamsRule}\n` : ''}${vnBackgroundRule ? `${vnBa
       `「本次生成偏向」为**内容最高优先级**：场面如何改写、情绪与桥段如何重排须优先满足偏向；` +
       `输出格式硬约束仍须遵守；不得捏造与「尚未总结·私聊/群聊」「剧情时间轴·当前状态」「尾声延展」**明文冲突**的已定事实。\n\n`
     : `【效力层级·续写】本轮在已定事实之上推进剧情：` +
-      `玩家身份铁律 > 角色档案/世界书/世界背景/NPC网/尾声延展·关系阶段 > 文风禁词 > ` +
+      `玩家身份铁律 > **约会对象·档案与人设世界书** > 全局档案室世界书 > 世界背景/NPC网/尾声延展·关系阶段 > ` +
+      `文风禁词与内置恋爱参考（高质量爱情观/告白引擎等，不得覆盖人设） > ` +
       `剧情时间轴·当前状态 > 尚未总结·私聊/群聊（末尾最新）=最近剧情（末尾最新） > 时间轴语义召回/近端摘要 > 向量长期记忆。` +
-      `玩家输入决定当轮方向，**不得**改写已定事实；角色在边界内可自主行动。\n\n`
+      `人设世界书与全局档案冲突时**以人设为准**；玩家输入决定当轮方向，**不得**改写已定事实；角色在边界内可自主行动。\n\n`
   const biasBlock = initialBias
     ? isRegenerateTurn
       ? `本次生成偏向（**内容最高优先级**）：${initialBias}\n\n`
@@ -2050,7 +2031,7 @@ ${vnVoiceParamsRule ? `${vnVoiceParamsRule}\n` : ''}${vnBackgroundRule ? `${vnBa
     datingPhysiqueBlock +
     (datingCharWorldBg ? `【约会对象·世界背景】\n${datingCharWorldBg}\n\n` : '') +
     (datingCharWb
-      ? `【约会对象·世界书】\n${datingCharWb}\n\n${worldBookRoleLockReminder}\n`
+      ? `【约会对象·世界书】（人设绑定·高于全局档案室与内置恋爱参考；与全局冲突时以本段为准）\n${datingCharWb}\n\n${worldBookRoleLockReminder}\n`
       : '') +
     `${datingScheduleBlock}` +
     (npcNetworkBlock.trim() ? `${npcNetworkBlock.trim()}\n\n` : '') +
@@ -2058,7 +2039,7 @@ ${vnVoiceParamsRule ? `${vnVoiceParamsRule}\n` : ''}${vnBackgroundRule ? `${vnBa
     `${progressHint}\n` +
     `${epilogueRelationshipBaselineBlock}\n\n`
   const memoryTailBlock =
-    `【剧情时间轴·当前状态】（故事内「现在」；承接地点/时段/服装/未完结待办优先对照本块；**高于**下方语义召回与向量长期记忆）：${storyCalendarHint}\n${
+    `【剧情时间轴·当前状态】（故事内「现在」；承接地点/时段/服装优先对照本块；**高于**下方语义召回与向量长期记忆）：${storyCalendarHint}\n${
       storyTimelineCurrentState || '（暂无）'
     }\n\n` +
     `${onlineTemporalScopeRule}` +
@@ -2515,7 +2496,7 @@ export function DatingProvider({ children }: { children: ReactNode }) {
             maxMessages: MEMORY_UNSUMMARIZED_GATHER_MESSAGE_LIMIT,
             maxChars: MEMORY_UNSUMMARIZED_BLOCK_CHAR_CAP,
             minMessageTimestamp: lastOfflineAiPlotTs ?? undefined,
-            includeMessageTimestamps: !storyCalendarAnchor.trim(),
+            includeMessageTimestamps: true,
             clipPreferRecent: true,
           })
           const privBody = stripUnsummarizedBlockFooter(privRaw)
@@ -2554,7 +2535,7 @@ export function DatingProvider({ children }: { children: ReactNode }) {
             maxMessagesPerGroup: 60,
             charCap: DATING_AI_REFERENCE_SECTION_CHAR_CAP,
             minMessageTimestamp: lastOfflineAiPlotTs ?? undefined,
-            includeMessageTimestamps: !storyCalendarAnchor.trim(),
+            includeMessageTimestamps: true,
           })
           const grpBody = stripUnsummarizedBlockFooter(grpRaw)
           const groupLineCount = countUnsummarizedInjectLines(grpBody)
@@ -2952,7 +2933,6 @@ export function DatingProvider({ children }: { children: ReactNode }) {
           const wbRevertNew = sanitizeWorldBookAfterRevertEntries(aiGen.worldBookAfterRevertEntries)
           const { dualNarrativeStoryFieldsFromDelta } = await import('../memory/dualNarrativeTime')
           const storyFields = dualNarrativeStoryFieldsFromDelta(timelineDelta)
-          const todoLedgerBefore = await snapshotStoryTimelineTodoLedgerBefore(char.id)
           let aiPlot: PlotItem = {
             id: uid('ai'),
             type: 'ai',
@@ -2962,7 +2942,6 @@ export function DatingProvider({ children }: { children: ReactNode }) {
             ...aiPlotPersistFields(parsed, timelineSnap, timelineDelta),
             ...storyFields,
             worldBookAfterRevertEntries: wbRevertNew.length ? wbRevertNew : undefined,
-            todoLedgerBefore,
           }
           let plotImageWarningForToast: string | undefined
           if (apiConfig) {
@@ -3345,7 +3324,7 @@ export function DatingProvider({ children }: { children: ReactNode }) {
         }
         const plotSlot = archive.plots[idx]!
         const afterPlots = archive.plots.slice(idx + 1)
-        /** 重生前：尾声延展 + 剧情时间轴（待办等）回退到「本段之前」，避免旧稿衍生状态注入提示词 */
+        /** 重生前：尾声延展 + 剧情时间轴回退到「本段之前」，避免旧稿衍生状态注入提示词 */
         try {
           const chRow = await personaDb.getCharacter(char.id)
           if (chRow) {
@@ -3371,11 +3350,8 @@ export function DatingProvider({ children }: { children: ReactNode }) {
           /* 恢复失败则仍用当前人设尝试生成 */
         }
         try {
-          const prevTodos = (await personaDb.getStoryTimelineState(char.id))?.todos ?? []
-          const todosOverride = resolveStoryTimelineTodosBeforeRegeneratingPlot(plotSlot, prevTodos)
           await rebuildStoryTimelineFromDatingPlots(char.id, before, {
             apiConfig,
-            ...(todosOverride !== undefined ? { todosOverride } : {}),
           })
         } catch (timelineRevertErr) {
           console.warn('[dating] story timeline revert before regenerate failed', timelineRevertErr)

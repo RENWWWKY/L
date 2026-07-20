@@ -1,5 +1,5 @@
 import { AnimatePresence, motion, type Variants } from 'framer-motion'
-import { ChevronDown, ChevronLeft } from 'lucide-react'
+import { ChevronDown, ChevronLeft, ChevronRight } from 'lucide-react'
 import { useState } from 'react'
 
 import { Pressable } from '../../components/Pressable'
@@ -273,26 +273,129 @@ function HeroRelease({ record }: { record: VersionRecord }) {
   )
 }
 
-function HistoryCard({ record }: { record: VersionRecord }) {
+function countRecordItems(record: VersionRecord): number {
+  return record.categories.reduce((n, cat) => n + countCategoryItems(cat), 0)
+}
+
+function HistoryVersionPreviewRow({
+  record,
+  onOpen,
+}: {
+  record: VersionRecord
+  onOpen: () => void
+}) {
+  const itemCount = countRecordItems(record)
+  const catCount = record.categories.length
   return (
-    <motion.article variants={moduleCard} className="relative pl-5">
-      <div
-        className="absolute left-0 top-[1.35rem] size-2.5 -translate-x-1/2 rounded-full border border-gray-100 bg-white"
-        aria-hidden
-      />
-      <p className="absolute -left-[4.6rem] top-[1.15rem] w-[4.2rem] text-right font-mono text-[10px] leading-none text-gray-400">
-        {record.date}
-      </p>
-      <div className="mb-8 rounded-[24px] border border-gray-50 bg-white p-6 shadow-[0_4px_20px_rgba(0,0,0,0.02)]">
-        <p className="font-mono text-[15px] font-light tracking-tight text-[#1C1C1E]">
-          {record.version}
-        </p>
-        <h3 className="mt-2 font-serif text-[16px] font-bold leading-snug text-[#1C1C1E]">
+    <motion.li variants={moduleCard}>
+      <button
+        type="button"
+        onClick={onOpen}
+        className="flex w-full items-center gap-3 rounded-[20px] border border-gray-50 bg-white px-4 py-3.5 text-left shadow-[0_4px_16px_rgba(0,0,0,0.02)] transition-opacity active:opacity-80"
+      >
+        <div className="min-w-0 flex-1">
+          <div className="flex items-baseline gap-2">
+            <span className="font-mono text-[16px] font-light tracking-tight text-[#1C1C1E]">
+              {record.version}
+            </span>
+            <span className="font-mono text-[11px] tabular-nums text-gray-400">{record.date}</span>
+          </div>
+          <p className="mt-1 truncate font-serif text-[14px] font-semibold leading-snug text-[#1C1C1E]">
+            {record.title}
+          </p>
+          <p className="mt-1 text-[11px] text-gray-400">
+            {catCount} 个板块 · {itemCount} 条 · 点此查看
+          </p>
+        </div>
+        <span className="flex size-8 shrink-0 items-center justify-center rounded-full bg-gray-100 text-gray-500">
+          <ChevronRight className="size-4" strokeWidth={2} aria-hidden />
+        </span>
+      </button>
+    </motion.li>
+  )
+}
+
+function HistoryVersionDetail({
+  record,
+  onBack,
+}: {
+  record: VersionRecord
+  onBack: () => void
+}) {
+  return (
+    <motion.div
+      key={record.version}
+      initial={{ opacity: 0, x: 24 }}
+      animate={{ opacity: 1, x: 0 }}
+      exit={{ opacity: 0, x: 16 }}
+      transition={SPRING}
+    >
+      <button
+        type="button"
+        onClick={onBack}
+        className="mb-4 flex items-center gap-1 rounded-full py-1 pr-2 text-[13px] text-gray-500 transition-opacity active:opacity-70"
+      >
+        <ChevronLeft className="size-4" strokeWidth={1.75} />
+        返回版本列表
+      </button>
+      <div className="rounded-[24px] border border-gray-50 bg-white p-6 shadow-[0_4px_20px_rgba(0,0,0,0.02)]">
+        <div className="relative">
+          <p className="font-mono text-[28px] font-light tracking-tight text-[#1C1C1E]">
+            {record.version}
+          </p>
+          <span className="absolute bottom-1 right-0 font-mono text-[11px] text-gray-400">
+            {record.date}
+          </span>
+        </div>
+        <h3 className="mt-3 font-serif text-[17px] font-bold leading-snug text-[#1C1C1E]">
           {record.title}
         </h3>
-        <CategoriesArchive categories={record.categories} />
       </div>
-    </motion.article>
+      <CategoriesArchive categories={record.categories} defaultOpenFirst />
+    </motion.div>
+  )
+}
+
+function HistoryArchive({ records }: { records: VersionRecord[] }) {
+  const [selectedVersion, setSelectedVersion] = useState<string | null>(null)
+  const selected = records.find((r) => r.version === selectedVersion) ?? null
+
+  return (
+    <section className="px-4 pt-10">
+      <p className="mb-2 px-1 text-[10px] font-medium uppercase tracking-[0.2em] text-gray-400">
+        Archive
+      </p>
+      <p className="mb-5 px-1 text-[12px] text-gray-400">
+        {selected ? '正在查看历史版本详情' : `共 ${records.length} 个历史版本 · 点版本号查看更新`}
+      </p>
+      <AnimatePresence mode="wait" initial={false}>
+        {selected ? (
+          <HistoryVersionDetail
+            key={`detail-${selected.version}`}
+            record={selected}
+            onBack={() => setSelectedVersion(null)}
+          />
+        ) : (
+          <motion.ul
+            key="history-list"
+            className="space-y-3"
+            variants={categoryContainer}
+            initial="hidden"
+            animate="show"
+            exit={{ opacity: 0, y: -8 }}
+            transition={{ duration: 0.2 }}
+          >
+            {records.map((record) => (
+              <HistoryVersionPreviewRow
+                key={record.version}
+                record={record}
+                onOpen={() => setSelectedVersion(record.version)}
+              />
+            ))}
+          </motion.ul>
+        )}
+      </AnimatePresence>
+    </section>
   )
 }
 
@@ -354,25 +457,7 @@ export function EvolutionApp({ onBack }: { onBack: () => void }) {
         <div className="h-full overflow-y-auto pb-28 [scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden">
           <HeroRelease record={latest} />
 
-          {history.length > 0 ? (
-            <section className="px-4 pt-10">
-              <p className="mb-6 px-1 text-[10px] font-medium uppercase tracking-[0.2em] text-gray-400">
-                Archive
-              </p>
-              <AnimatePresence>
-                <motion.div
-                  className="relative ml-[4.6rem] border-l border-gray-100"
-                  variants={categoryContainer}
-                  initial="hidden"
-                  animate="show"
-                >
-                  {history.map((record) => (
-                    <HistoryCard key={record.version} record={record} />
-                  ))}
-                </motion.div>
-              </AnimatePresence>
-            </section>
-          ) : null}
+          {history.length > 0 ? <HistoryArchive records={history} /> : null}
         </div>
       </div>
     </div>

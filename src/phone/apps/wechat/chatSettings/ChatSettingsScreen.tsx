@@ -1,4 +1,4 @@
-import { ArrowLeft, ChevronRight, Clock, Phone, Plus } from 'lucide-react'
+import { ArrowLeft, ChevronRight, Phone, Plus } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { AnimatePresence, motion } from 'framer-motion'
 
@@ -14,6 +14,7 @@ import type {
 } from '../newFriendsPersona/types'
 import {
   displayRoundTriggerPercent,
+  isCharacterImageSendSupported,
   isRoundTriggerCustomized,
   VOICE_PROTOCOL_DEFAULT_ROUND_TRIGGER_PERCENT,
 } from '../wechatMediaSendFrequency'
@@ -38,7 +39,6 @@ import {
   type ChatImageGenSettingsPatch,
 } from './ChatImageGenSettingsScreen'
 import { personaDb } from '../newFriendsPersona/idb'
-import { ChatTimeSettingsScreen } from './ChatTimeSettingsScreen'
 import { ChatFindChatHistoryScreen } from './ChatFindChatHistoryScreen'
 import {
   ChatEmojiProbabilitySettingsScreen,
@@ -237,7 +237,6 @@ export function ChatSettingsScreen({
   const [stub, setStub] = useState<StubKind | null>(null)
   const [chatBgDraft, setChatBgDraft] = useState('')
   const [chatBgCropSrc, setChatBgCropSrc] = useState<string | null>(null)
-  const [timeSettingsOpen, setTimeSettingsOpen] = useState(false)
   const [clearOpen, setClearOpen] = useState(false)
   const [inviteGroupOpen, setInviteGroupOpen] = useState(false)
   const chatBgFileRef = useRef<HTMLInputElement | null>(null)
@@ -897,10 +896,6 @@ export function ChatSettingsScreen({
               onToggle={() => void patch({ internetMemeLexiconEnabled: !effective.internetMemeLexiconEnabled })}
             />
           </ListRow>
-          <ListRow onClick={() => setTimeSettingsOpen(true)} borderBottom>
-            <span className="text-[16px] text-black">角色时间设置</span>
-            <Clock className="size-4 shrink-0 text-[#c7c7cc]" aria-hidden />
-          </ListRow>
           <ListRow onClick={() => setStub('chat-bg')} borderBottom>
             <span className="text-[16px] text-black">设置当前聊天背景</span>
             <ChevronRight className="size-4 shrink-0 text-[#c7c7cc]" aria-hidden />
@@ -929,6 +924,24 @@ export function ChatSettingsScreen({
                 onResetDefault={() => void patch({ clearVoiceRoundTriggerPercent: true })}
               />
             </div>
+          </ListRow>
+          <ListRow borderBottom>
+            <div className="min-w-0 flex-1">
+              <span className="text-[16px] text-black">支持发图</span>
+              <p className="mt-1 text-[12px] leading-relaxed text-[#8e8e8e]">
+                开启后角色可按语境适量发图；关闭后不注入发图/生图提示词，也不展示图片占位。
+              </p>
+            </div>
+            <WxSwitch
+              on={isCharacterImageSendSupported(effective.imageRoundTriggerPercent)}
+              onToggle={() => {
+                if (isCharacterImageSendSupported(effective.imageRoundTriggerPercent)) {
+                  void patch({ clearImageRoundTriggerPercent: true })
+                } else {
+                  void patch({ imageRoundTriggerPercent: 100 })
+                }
+              }}
+            />
           </ListRow>
           <ListRow onClick={() => setImageGenOpen(true)} borderBottom>
             <div className="min-w-0 flex-1">
@@ -970,13 +983,6 @@ export function ChatSettingsScreen({
 
         <div className="h-5 shrink-0" style={{ minHeight: 'max(20px, env(safe-area-inset-bottom, 0px))' }} />
       </div>
-
-      <ChatTimeSettingsScreen
-        open={timeSettingsOpen}
-        characterId={peerCharacterId}
-        peerDisplayName={peerDisplayName}
-        onClose={() => setTimeSettingsOpen(false)}
-      />
 
       {clearOpen ? (
         <div className="fixed inset-0 z-[400] flex items-center justify-center bg-black/45 px-6">

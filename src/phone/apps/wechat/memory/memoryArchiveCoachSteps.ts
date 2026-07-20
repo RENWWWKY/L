@@ -60,6 +60,6 @@ export const MEMORY_ARCHIVE_COACH_STEPS: MemoryCoachStep[] = [
     centered: true,
     isOutro: true,
     title: '好啦',
-    body: '可以点一位角色进去了。详情里的线上/线下/待办，会在进角色后单独教一遍。',
+    body: '可以点一位角色进去了。详情里的线上/线下，会在进角色后单独教一遍。',
   },
 ]

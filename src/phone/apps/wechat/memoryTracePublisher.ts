@@ -36,10 +36,9 @@ import type {
   MemoryTraceWorldBookAfterPatchRow,
 } from './memoryTraceTypes'
 import {
-  formatStoryTimelineTodoLedgerForPrompt,
   parseStoryTimelineInjectBodyForTrace,
 } from './memory/storyTimelineTypes'
-import type { MemoryTraceStoryTimeline, MemoryTraceTodoLedger } from './memoryTraceTypes'
+import type { MemoryTraceStoryTimeline } from './memoryTraceTypes'
 import {
   hasChatAfterWorldBookItems,
   listChatAfterWorldBookItems,
@@ -67,30 +66,6 @@ function buildStoryTimelineTraceBlock(
     injected: true,
     promptExcerpt,
     ...(rows.length ? { rows } : {}),
-  }
-}
-
-async function buildTodoLedgerTraceBlock(
-  characterId: string,
-  expand: (s: string) => string,
-): Promise<MemoryTraceTodoLedger> {
-  const cid = characterId.trim()
-  if (!cid) return { injected: false, promptExcerpt: '', openCount: 0, resolvedCount: 0 }
-  try {
-    const state = await personaDb.getStoryTimelineState(cid)
-    const openCount = (state?.todos ?? []).filter((t) => t.status === 'open').length
-    const resolvedCount = (state?.todos ?? []).filter((t) => t.status === 'resolved').length
-    const raw = formatStoryTimelineTodoLedgerForPrompt(state)
-    if (!raw) return { injected: false, promptExcerpt: '', openCount, resolvedCount }
-    const expanded = await personaDb.expandStoryTimelineTextForDisplay(cid, raw)
-    return {
-      injected: true,
-      promptExcerpt: expand(expanded.trim() || raw),
-      openCount,
-      resolvedCount,
-    }
-  } catch {
-    return { injected: false, promptExcerpt: '', openCount: 0, resolvedCount: 0 }
   }
 }
 
@@ -475,7 +450,6 @@ function buildInjectionSummary(params: {
   keywordHitCount: number
   longTermVectorCount: number
   storyTimelineInjected: boolean
-  todoLedgerInjected: boolean
   unsummarizedPrivateInjected: boolean
   unsummarizedGroupInjected: boolean
   unsummarizedOfflineInjected: boolean
@@ -638,7 +612,6 @@ export async function publishWeChatPrivatePersonaMemoryTrace(params: {
     ? await personaDb.expandStoryTimelineTextForDisplay(cid, params.storyTimelineNotes)
     : ''
   const storyTimeline = buildStoryTimelineTraceBlock(storyTimelineNotesExpanded, expand)
-  const todoLedger = await buildTodoLedgerTraceBlock(cid, expand)
 
   const recentRoundRefs = buildRecentRoundRefsForTrace({
     recentPrivate: params.recentPrivateAiRoundsNotes ?? '',
@@ -653,7 +626,6 @@ export async function publishWeChatPrivatePersonaMemoryTrace(params: {
     keywordHitCount: deep.keywordHits.length,
     longTermVectorCount: deep.vectorRetrievals.length,
     storyTimelineInjected: storyTimeline.injected,
-    todoLedgerInjected: todoLedger.injected,
     unsummarizedPrivateInjected: !!unsPrivateInjected,
     unsummarizedGroupInjected: !!params.unsGroupNotes.trim(),
     unsummarizedOfflineInjected: !!offlineCtxBody,
@@ -720,7 +692,6 @@ export async function publishWeChatPrivatePersonaMemoryTrace(params: {
         worldbooks: [],
       },
       storyTimeline,
-      todoLedger,
       recentContext: {
         activeSessionMessages: activeSessionMessageCount(params.transcript),
         unsummarizedOfflinePlots: offlinePlotRows,
@@ -945,7 +916,6 @@ export async function publishDatingOfflineMemoryTrace(params: {
     ? await personaDb.expandStoryTimelineTextForDisplay(datingCid, params.storyTimelineNotes)
     : ''
   const storyTimeline = buildStoryTimelineTraceBlock(storyTimelineNotesExpanded, expand)
-  const todoLedger = await buildTodoLedgerTraceBlock(datingCid, expand)
 
   const recentRoundRefs = buildRecentRoundRefsForTrace({
     recentPrivate: params.recentPrivateAiRoundsNotes ?? '',
@@ -960,7 +930,6 @@ export async function publishDatingOfflineMemoryTrace(params: {
     keywordHitCount: deep.keywordHits.length,
     longTermVectorCount: deep.vectorRetrievals.length,
     storyTimelineInjected: storyTimeline.injected,
-    todoLedgerInjected: todoLedger.injected,
     unsummarizedPrivateInjected: !!params.unsPrivateBlock.trim(),
     unsummarizedGroupInjected: !!params.unsGroupBlock.trim(),
     unsummarizedOfflineInjected: !!offlineCtxBody,
@@ -985,7 +954,6 @@ export async function publishDatingOfflineMemoryTrace(params: {
         worldbooks: [],
       },
       storyTimeline,
-      todoLedger,
       recentContext: {
         activeSessionMessages: Math.min(Math.max(0, params.historyPlotCount), 32),
         unsummarizedOfflinePlots: offlinePlotRows,

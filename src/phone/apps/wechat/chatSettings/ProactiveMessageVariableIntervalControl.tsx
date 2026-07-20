@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 
 import { Pressable } from '../../../components/Pressable'
 import {
@@ -18,18 +18,10 @@ import {
 
 const numStyle = { fontFamily: PROACTIVE_MESSAGE_NUMBER_FONT } as const
 
-function variableUnitInputMinMax(unit: ProactiveMessageIntervalUnit): {
-  min: number
-  max: number
-  step: number
-} {
-  if (unit === 'second') {
-    return { min: 1, max: 2 * 60 * 60, step: 1 }
-  }
-  if (unit === 'minute') {
-    return { min: 1, max: 120, step: 1 }
-  }
-  return { min: 1, max: 2, step: 0.1 }
+function formatUnitDraft(value: number): string {
+  if (!Number.isFinite(value)) return ''
+  const rounded = Math.round(value * 1000) / 1000
+  return String(rounded)
 }
 
 function unitValueToVariableSeconds(value: number, unit: ProactiveMessageIntervalUnit): number {
@@ -48,34 +40,43 @@ type BoundFieldProps = {
 
 function BoundField({ label, seconds, onChange }: BoundFieldProps) {
   const [unit, setUnit] = useState<ProactiveMessageIntervalUnit>(() => pickDisplayUnitForSeconds(seconds))
-  const [draftValue, setDraftValue] = useState(() => secondsToUnitValue(seconds, unit))
+  const [draftInput, setDraftInput] = useState(() =>
+    formatUnitDraft(secondsToUnitValue(seconds, unit)),
+  )
 
   useEffect(() => {
     const nextUnit = pickDisplayUnitForSeconds(seconds)
     setUnit(nextUnit)
-    setDraftValue(secondsToUnitValue(seconds, nextUnit))
+    setDraftInput(formatUnitDraft(secondsToUnitValue(seconds, nextUnit)))
   }, [seconds])
 
-  const { min, max, step } = useMemo(() => variableUnitInputMinMax(unit), [unit])
-
   const syncToSeconds = useCallback(() => {
-    onChange(unitValueToVariableSeconds(draftValue, unit))
-  }, [draftValue, onChange, unit])
+    const raw = draftInput.trim()
+    if (!raw) {
+      setDraftInput(formatUnitDraft(secondsToUnitValue(seconds, unit)))
+      return
+    }
+    const n = Number(raw)
+    if (!Number.isFinite(n)) {
+      setDraftInput(formatUnitDraft(secondsToUnitValue(seconds, unit)))
+      return
+    }
+    onChange(unitValueToVariableSeconds(n, unit))
+  }, [draftInput, onChange, seconds, unit])
 
   return (
     <div>
       <span className="text-[12px] text-[#666666]">{label}</span>
       <div className="mt-1.5 flex items-center gap-2 rounded-[10px] border border-[#e5e5e5] bg-white px-3 py-2">
         <input
-          type="number"
-          min={min}
-          max={max}
-          step={step}
-          value={draftValue}
+          type="text"
+          inputMode="decimal"
+          value={draftInput}
           onChange={(e) => {
-            const n = Number(e.target.value)
-            if (!Number.isFinite(n)) return
-            setDraftValue(n)
+            const raw = e.target.value
+            if (raw === '' || /^\d*\.?\d*$/.test(raw)) {
+              setDraftInput(raw)
+            }
           }}
           onBlur={syncToSeconds}
           onKeyDown={(e) => {
@@ -97,7 +98,7 @@ function BoundField({ label, seconds, onChange }: BoundFieldProps) {
                 type="button"
                 onClick={() => {
                   setUnit(u.id)
-                  setDraftValue(secondsToUnitValue(seconds, u.id))
+                  setDraftInput(formatUnitDraft(secondsToUnitValue(seconds, u.id)))
                 }}
                 className={`rounded-full px-2.5 py-1 text-[12px] transition-colors ${
                   active ? 'bg-black text-white' : 'bg-[#f2f2f2] text-[#666666]'

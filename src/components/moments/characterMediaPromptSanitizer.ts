@@ -239,8 +239,7 @@ function dropGroundPartsForUpwardPov(parts: string[], original: string): string[
 const VAGUE_INTERLOCK_PART_RE =
   /\b(?:intertwined|holding hand|hand in hand|clasped(?: together)?|hands clasped|gripping (?:on top|partner)|palm[- ]over[- ]palm|simple (?:hand )?hold|firmly holding)\b/i
 
-const FINGER_INTERLOCK_CANONICAL =
-  'fingers interlaced, interlocked fingers, finger gaps visible between hands'
+const FINGER_INTERLOCK_CANONICAL = 'fingers interlaced, joints clearly visible'
 
 /** 手心相牵（掌心相对、手指不交叉） */
 const PALM_TO_PALM_CANONICAL =
@@ -255,11 +254,8 @@ export function fixFingerInterlockPromptParts(parts: string[], original: string)
   if (!isCharacterMediaFingerInterlockPrompt(original)) return parts
   const merged = parts.filter((part) => !VAGUE_INTERLOCK_PART_RE.test(part))
   const blob = merged.join(', ').toLowerCase()
-  if (!/fingers interlaced|interlocked fingers|finger gaps visible|finger slots/i.test(blob)) {
+  if (!/fingers interlaced|interlocked fingers/i.test(blob)) {
     merged.push(FINGER_INTERLOCK_CANONICAL)
-  }
-  if (!blob.includes('not palm-over-palm clasp') && !blob.includes('not palm-to-palm')) {
-    merged.push('NOT palm-to-palm clasp', 'NOT palm-over-palm clasp', 'NOT one hand gripping on top')
   }
   return merged
 }
@@ -283,11 +279,13 @@ export function fixPalmToPalmHoldingPromptParts(parts: string[], original: strin
   return merged
 }
 
-/** 任意手部特写：强制手指数量与手形规范 */
+/** 手部特写：补手指数量规范；十指相扣按模版，不堆手指数量 */
 export function ensureHandAnatomyPromptParts(parts: string[], original: string): string[] {
   if (!isCharacterMediaHandFocusPrompt(original) && !isCharacterMediaDualHandHoldingPrompt(original)) {
     return parts
   }
+  // 十指相扣：按用户模版，不再注入手指数量硬规范
+  if (isCharacterMediaFingerInterlockPrompt(original)) return parts
   const blob = parts.join(', ').toLowerCase()
   if (/exactly 5 fingers|ten distinct fingertips|no missing fingers|anatomically correct human hands/i.test(blob)) {
     return parts
@@ -448,7 +446,7 @@ export function sanitizeCharacterMediaImagePrompt(prompt: string): string {
   }
 
   s = stripCharacterMediaAppearanceBlockFromPrompt(s)
-  s = s.replace(/十指相扣|十指交扣|指缝相扣/g, 'fingers interlaced, interlocked fingers, finger gaps visible between hands')
+  s = s.replace(/十指相扣|十指交扣|指缝相扣/g, 'fingers interlaced, joints clearly visible')
   s = s.replace(
     /手心相牵|掌心相贴|掌心相对|手心相握|掌心相握/g,
     'palm-to-palm hold, palms pressed gently together, fingers not interlaced',

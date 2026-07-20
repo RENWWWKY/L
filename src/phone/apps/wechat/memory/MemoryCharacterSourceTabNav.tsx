@@ -3,34 +3,30 @@ import { ListenNumericText } from '../../../../components/discoverListen/ListenN
 import {
   ARCHIVE_SOURCE_OFFLINE_LABEL,
   ARCHIVE_SOURCE_ONLINE_LABEL,
-  ARCHIVE_SOURCE_TODOS_LABEL,
 } from './memoryArchiveSourceLabels'
 
-export type MemoryCharacterSourceTab = 'online' | 'offline' | 'todos'
+export type MemoryCharacterSourceTab = 'online' | 'offline'
 
 export function MemoryCharacterSourceTabNav({
   value,
   onChange,
   onlineCount,
   offlineCount,
-  todoCount,
 }: {
   value: MemoryCharacterSourceTab
   onChange: (tab: MemoryCharacterSourceTab) => void
   onlineCount: number
   offlineCount: number
-  todoCount: number
 }) {
   const tabs: ReadonlyArray<{ id: MemoryCharacterSourceTab; label: string; count: number }> = [
     { id: 'online', label: ARCHIVE_SOURCE_ONLINE_LABEL, count: onlineCount },
     { id: 'offline', label: ARCHIVE_SOURCE_OFFLINE_LABEL, count: offlineCount },
-    { id: 'todos', label: ARCHIVE_SOURCE_TODOS_LABEL, count: todoCount },
   ]
 
   return (
     <nav
       data-memory-coach="detail-source-tabs"
-      className="grid grid-cols-3 gap-1 rounded-2xl bg-white p-1 shadow-[0_4px_20px_rgba(0,0,0,0.03)]"
+      className="grid grid-cols-2 gap-1 rounded-2xl bg-white p-1 shadow-[0_4px_20px_rgba(0,0,0,0.03)]"
       role="tablist"
       aria-label="角色总结来源"
     >
@@ -66,9 +62,7 @@ export function MemoryCharacterSourceTabNav({
               <span
                 className={`text-[10px] tabular-nums ${active ? 'text-white/75' : 'text-gray-400'}`}
               >
-                <ListenNumericText
-                  text={tab.id === 'todos' ? `${tab.count} 项` : `${tab.count} 条`}
-                />
+                <ListenNumericText text={`${tab.count} 条`} />
               </span>
             </span>
           </button>

@@ -346,9 +346,9 @@ const HAND_AESTHETIC_GUARD =
 const HAND_ANATOMY_GUARD =
   'each hand has exactly 5 fingers including thumb, ten distinct fingertips when both hands shown, anatomically correct human hands, correct finger count, clear finger separation, natural finger joints, no missing fingers, no extra fingers, no fused fingers, no truncated fingers, no deformed fingers'
 
-/** 十指相扣构图补强 */
+/** 十指相扣：只补「指缝相扣 / 指节可见」，不堆手指数量 */
 const FINGER_INTERLOCK_STYLE_GUARD =
-  'fingers tightly interlaced alternating from both hands, visible gaps between crossed fingers, NOT palm-to-palm clasp'
+  'fingers interlaced, joints clearly visible, NOT palm-to-palm clasp'
 
 /** 手心相牵构图补强 */
 const PALM_TO_PALM_STYLE_GUARD =
@@ -469,16 +469,19 @@ function appendCharacterMediaHandAestheticGuard(
   if (!isCharacterMediaHandFocusPrompt(inferFrom)) return
   const blob = parts.join(', ').toLowerCase()
 
-  // 手指数量/手形：始终注入（防缺指乱指）
-  if (!/exactly 5 fingers|ten distinct fingertips|no missing fingers|anatomically correct human hands/i.test(blob)) {
-    parts.push(HAND_ANATOMY_GUARD)
-  }
-
+  // 十指相扣：按模版，不注入手指数量硬规范
   if (isCharacterMediaFingerInterlockPrompt(inferFrom)) {
-    if (!/alternating from both hands|visible gaps between crossed fingers/i.test(blob)) {
+    if (!/fingers interlaced|joints clearly visible/i.test(blob)) {
       parts.push(FINGER_INTERLOCK_STYLE_GUARD)
     }
-  } else if (isCharacterMediaPalmToPalmHoldingPrompt(inferFrom)) {
+  } else {
+    // 其它手部特写仍防缺指乱指
+    if (!/exactly 5 fingers|ten distinct fingertips|no missing fingers|anatomically correct human hands/i.test(blob)) {
+      parts.push(HAND_ANATOMY_GUARD)
+    }
+  }
+
+  if (isCharacterMediaPalmToPalmHoldingPrompt(inferFrom)) {
     if (!/palms flat against each other|fingers extended together not crossed/i.test(blob)) {
       parts.push(PALM_TO_PALM_STYLE_GUARD)
     }

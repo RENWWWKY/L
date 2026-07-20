@@ -151,7 +151,7 @@ export function buildOnlineChatGenerationTimelineRule(snap: CrossChannelTimeline
   if (snap.lastOfflineAiPlotTs != null) {
     lines.push(`最新一轮线下 AI 正文系统落库于 ${formatSystemRecordTime(snap.lastOfflineAiPlotTs)}。`)
     lines.push(
-      `**空间承接**：若注入了「尚未总结·线下剧情」，当场同室/分离/门内外/肢体距离以该块**最后一条 AI 剧情**为准；微信本轮为远程消息，勿用更早亲密同场或【尾声延展】覆盖末尾分离事实。`,
+      `**空间承接**：若注入了「最近线下剧情」，当场同室/分离/门内外/肢体距离以该块**最后一条 AI 剧情**为准；微信本轮为远程消息，勿用更早亲密同场或【尾声延展】覆盖末尾分离事实。`,
     )
   }
   if (snap.onlineInjectMinTs != null && snap.onlineInjectMaxTs != null) {
@@ -172,11 +172,11 @@ export function buildOnlineChatGenerationTimelineRule(snap: CrossChannelTimeline
       `当前无新注入私聊摘录；用户本轮发送/你本轮回复真实生成于 ${genLabel}，**晚于** 上述线下落库，须按此顺序承接。`,
     )
     lines.push(
-      `**空间承接**：用户本轮为**远程微信**；须以「尚未总结·线下剧情」**最后一条 AI 剧情**为当场空间锚点（同室/分离/门内外/睡醒）。若线下末尾已写你离开房间或在门外守，禁止线上写「你缩在我怀里」等同场肢体接触。`,
+      `**空间承接**：用户本轮为**远程微信**；须以「最近线下剧情」**最后一条 AI 剧情**为当场空间锚点（同室/分离/门内外/睡醒）。若线下末尾已写你离开房间或在门外守，禁止线上写「你缩在我怀里」等同场肢体接触。`,
     )
   }
   lines.push(
-    `「尚未总结·私聊/群聊」与「尚未总结·线下剧情」中，每条前缀 \`[…]\` 为**系统落库时刻**；按落库先后理解因果，勿打乱顺序。`,
+    `「尚未总结·私聊/群聊」与「最近线下剧情」中，每条前缀 \`[…]\` 为**剧情时间（优先）或系统落库时刻**；按时间先后理解因果，勿打乱顺序。`,
     SYSTEM_RECORD_TIME_CROSS_CHANNEL_FOOTER,
   )
   return `${lines.join('\n')}\n`

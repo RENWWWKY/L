@@ -82,6 +82,7 @@ import {
 } from './addFriend/friendRequestTempChat'
 import { PlayerIdentityApp } from './playerIdentity/PlayerIdentityApp'
 import { ChatSettingsScreen } from './chatSettings/ChatSettingsScreen'
+import { ChatTimeSettingsScreen } from './chatSettings/ChatTimeSettingsScreen'
 import { CreateGroupPickContactsSheet } from './group/CreateGroupPickContactsSheet'
 import { ContactsGroupChatsScreen } from './group/ContactsGroupChatsScreen'
 import { GroupInfoScreen, createWeChatGroupAndSeedConversation } from './group/GroupInfoScreen'
@@ -708,6 +709,8 @@ function Header({
   pendingQueueCount = 0,
   /** 为 true 时标题相对整条顶栏绝对居中（聊天页右侧多按钮时使用） */
   titleCenterAbsolute = false,
+  /** 私聊：返回键旁打开线上时间设置 */
+  onOpenTimeSettings,
 }: {
   title: string
   /** 第二行：备注/说明（灰色小字），与微信昵称主行搭配 */
@@ -731,6 +734,7 @@ function Header({
   customRight?: ReactNode
   showAppearanceGuide?: boolean
   onDismissAppearanceGuide?: () => void
+  onOpenTimeSettings?: () => void
 }) {
   const effectivePendingCount =
     pendingQueueCount > 0 ? pendingQueueCount : titleTypingAlternate ? 1 : 0
@@ -756,7 +760,8 @@ function Header({
     </div>
   )
 
-  const balancedSideSlot = customRight ? 'min-w-[76px]' : 'w-10'
+  const balancedSideSlot =
+    customRight || onOpenTimeSettings ? 'min-w-[76px]' : 'w-10'
 
   return (
     <header
@@ -769,7 +774,7 @@ function Header({
         color: 'var(--wx-chat-header-text, var(--wx-text))',
       }}
     >
-      <div className={`relative z-20 flex ${balancedSideSlot} shrink-0 items-center justify-start`}>
+      <div className={`relative z-20 flex ${balancedSideSlot} shrink-0 items-center justify-start gap-0.5`}>
         {showBack ? (
           <Pressable
             onClick={onBack}
@@ -810,6 +815,29 @@ function Header({
               <path d="M3 11l9-7 9 7" />
               <path d="M5 10.5V20a1.8 1.8 0 0 0 1.8 1.8h10.4A1.8 1.8 0 0 0 19 20v-9.5" />
               <path d="M10 21v-6.2a1.6 1.6 0 0 1 1.6-1.6h.8a1.6 1.6 0 0 1 1.6 1.6V21" />
+            </svg>
+          </Pressable>
+        ) : null}
+        {showBack && onOpenTimeSettings ? (
+          <Pressable
+            onClick={onOpenTimeSettings}
+            className="flex h-9 w-9 items-center justify-center rounded-full"
+            style={{ color: 'var(--wx-text)' }}
+            aria-label="线上时间设置"
+          >
+            <svg
+              width="18"
+              height="18"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="1.5"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              aria-hidden
+            >
+              <circle cx="12" cy="12" r="9" />
+              <path d="M12 7v5l3 2" />
             </svg>
           </Pressable>
         ) : null}
@@ -3701,6 +3729,7 @@ function WeChatAppInner({ onBack }: Props) {
   const [themeOpen, setThemeOpen] = useState(false)
   const [themePanelBoot, setThemePanelBoot] = useState<ThemePanelBoot>({})
   const [chatSettingsOpen, setChatSettingsOpen] = useState(false)
+  const [chatTimeSettingsOpen, setChatTimeSettingsOpen] = useState(false)
   const [chatCheckPhoneOpen, setChatCheckPhoneOpen] = useState(false)
   const [chatMiniGameOverlayOpen, setChatMiniGameOverlayOpen] = useState(false)
   const [chatVoiceCallOverlayOpen, setChatVoiceCallOverlayOpen] = useState(false)
@@ -4882,7 +4911,10 @@ function WeChatAppInner({ onBack }: Props) {
   const clearPendingScrollToMessage = useCallback(() => setPendingScrollToMessageId(null), [])
 
   useEffect(() => {
-    if (route.name !== 'chat') setChatSettingsOpen(false)
+    if (route.name !== 'chat') {
+      setChatSettingsOpen(false)
+      setChatTimeSettingsOpen(false)
+    }
   }, [route.name])
 
   useEffect(() => {
@@ -6017,6 +6049,11 @@ function WeChatAppInner({ onBack }: Props) {
           fontFamily={chatMessengerFontFamily}
           onBack={() => exitChatToMessages()}
           onOpenSettings={() => setChatSettingsOpen(true)}
+          onOpenTimeSettings={
+            route.name === 'chat' && wxDockChat?.kind === 'persona'
+              ? () => setChatTimeSettingsOpen(true)
+              : undefined
+          }
           onOpenPsycheRadar={() => setPsycheRadarOpen(true)}
           showPsycheRadar={chatHeaderShowPsycheRadar}
           backBadgeCount={chatBackBadgeUnreadTotal}
@@ -6054,6 +6091,11 @@ function WeChatAppInner({ onBack }: Props) {
           titleCenterAbsolute={route.name === 'chat'}
           typingText={
             route.name === 'chat' && route.chat.kind === 'group' ? '成员正在输入…' : '对方正在输入…'
+          }
+          onOpenTimeSettings={
+            route.name === 'chat' && wxDockChat?.kind === 'persona'
+              ? () => setChatTimeSettingsOpen(true)
+              : undefined
           }
           showBack={route.name !== 'tabs'}
           showHome={route.name === 'tabs'}
@@ -7480,6 +7522,15 @@ function WeChatAppInner({ onBack }: Props) {
             </motion.div>
           ) : null}
         </AnimatePresence>
+
+        {route.name === 'chat' && wxDockChat?.kind === 'persona' ? (
+          <ChatTimeSettingsScreen
+            open={chatTimeSettingsOpen}
+            characterId={wxDockChat.characterId}
+            peerDisplayName={chatPeerContact?.remarkName ?? '聊天'}
+            onClose={() => setChatTimeSettingsOpen(false)}
+          />
+        ) : null}
 
         <AnimatePresence>
           {(route.name === 'tabs' || route.name === 'contacts-group-chats') &&

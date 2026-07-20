@@ -2243,54 +2243,7 @@ function normalizeStoryTimelineState(input: unknown): StoryTimelineState | null 
     costumes,
     items,
     foreshadows: foreshadows.filter((f) => f.status === 'open'),
-    todos: (() => {
-      const rawTodos = (Array.isArray(r.todos) ? (r.todos as unknown[]) : [])
-        .map((x) => {
-          const row = (x ?? {}) as {
-            text?: unknown
-            status?: unknown
-            openedStoryDay?: unknown
-            outcome?: unknown
-            resolvedNote?: unknown
-            resolvedAtStoryDay?: unknown
-          }
-          const text = String(row.text ?? '').trim().slice(0, 160)
-          if (!text) return null
-          const st = String(row.status ?? '').trim().toLowerCase()
-          const status: 'open' | 'resolved' = st === 'resolved' ? 'resolved' : 'open'
-          const outcomeRaw = String(row.outcome ?? '').trim().toLowerCase()
-          const outcome =
-            outcomeRaw === 'done' || outcomeRaw === 'missed' || outcomeRaw === 'cancelled'
-              ? (outcomeRaw as 'done' | 'missed' | 'cancelled')
-              : undefined
-          const openedStoryDay = String(row.openedStoryDay ?? '').trim().slice(0, 48)
-          const resolvedNote = String(row.resolvedNote ?? '').trim().slice(0, 160)
-          const resolvedAtStoryDay = String(row.resolvedAtStoryDay ?? '').trim().slice(0, 48)
-          return {
-            text,
-            status,
-            ...(openedStoryDay ? { openedStoryDay } : {}),
-            ...(status === 'resolved' && outcome ? { outcome } : {}),
-            ...(status === 'resolved' && resolvedNote ? { resolvedNote } : {}),
-            ...(status === 'resolved' && resolvedAtStoryDay ? { resolvedAtStoryDay } : {}),
-          }
-        })
-        .filter(
-          (
-            t,
-          ): t is {
-            text: string
-            status: 'open' | 'resolved'
-            openedStoryDay?: string
-            outcome?: 'done' | 'missed' | 'cancelled'
-            resolvedNote?: string
-            resolvedAtStoryDay?: string
-          } => !!t,
-        )
-      const open = rawTodos.filter((t) => t.status === 'open').slice(-16)
-      const resolved = rawTodos.filter((t) => t.status === 'resolved').slice(-12)
-      return [...open, ...resolved]
-    })(),
+    todos: [],
     recentEvents,
     ...(typeof r.manualAnchorBlock === 'string' && r.manualAnchorBlock.trim()
       ? { manualAnchorBlock: r.manualAnchorBlock.trim().slice(0, 8000) }

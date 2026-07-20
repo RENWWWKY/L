@@ -85,9 +85,11 @@ import {
   characterOutputClaimsSentImageWithoutLine,
   mergeCharacterImageRetryBubbles,
   parseCharacterImageGenLine,
-  looksLikeEnglishImageGenTags,
   countCharacterImageGenLinesInBubbles,
   limitCharacterImageGenLinesFromBubbles,
+  stripCharacterImageGenLinesFromBubbles,
+  resolveCharacterImageDescriptionForUi,
+  resolveCharacterImageGenPromptForApi,
 } from './wechatCharacterImageGen'
 import { buildChatContextTailFromTranscript } from './nsfwPoseLibrary/buildWeChatNsfwPoseLibraryPromptBlock'
 import {
@@ -122,6 +124,8 @@ import {
 import { loadMeetEncounterMemoriesPromptBlock } from '../lumiMeet/meetWechatSyncOnFriendLinked'
 import { formatCharacterMemoriesForPromptInjectionPack } from './memory/formatCharacterMemoriesForPromptInjection'
 import { loadStoryTimelinePromptBlock } from './memory/storyTimelinePersist'
+import { composeStoryTimelineCalendarAnchorLabel } from './memory/storyTimelineTypes'
+import { syncStoryTimelineNowFromOnlineClock } from './time/applyOnlineChatTimeFusion'
 import { mergeMomentImageUrlsForGroup } from './memory/momentMemoryPromptImages'
 import { emitWeChatStorageChanged, personaDb } from './newFriendsPersona/idb'
 import {
@@ -180,7 +184,6 @@ import {
   type WorldBookAfterPatch,
 } from './newFriendsPersona/worldBookAfterPatch'
 import { finalizeWorldBookAfterPerAiRound } from './newFriendsPersona/worldBookAfterSync'
-import { syncStoryTimelineTodoLedgerAfterOnlineReply } from './memory/storyTimelineOnlineTodoSync'
 import type {
   Character,
   CharacterBusySettingsRow,
@@ -214,6 +217,7 @@ import {
   rollClassicEmojiRoundTriggerAllowed,
   drawRoundImageCount,
   parseStoredImageRoundCountRange,
+  isCharacterImageSendSupported,
   shouldSuppressCharacterStickerLine,
   shouldSuppressCharacterVoiceLine,
   shouldSuppressCharacterImageLine,
@@ -260,6 +264,8 @@ import {
 } from './groupChatPrivateDigest'
 import {
   buildMemoryRelevanceHaystack,
+  buildLastOnlineChatContinuityNote,
+  buildRecentPrivateChatRoundsWithTimeBlock,
   buildNpcGroupChatsUnsummarizedDigestForPrivatePrompt,
   formatUnsummarizedCurrentGroupChatBlock,
   formatUnsummarizedPrivateChatBlock,
@@ -2934,11 +2940,41 @@ export function ChatRoomInner({
       ])
       const timelineApiConfig =
         apiConfig?.apiUrl?.trim() && apiConfig?.apiKey?.trim() ? apiConfig : null
+      const liveMs = getCurrentTimeMs()
+      // 线上时钟在流逝时，把剧情轴「现在」推到同一时刻（未点保存也会同步）
+      const syncedStory = await syncStoryTimelineNowFromOnlineClock({
+        characterId: pc,
+        liveTimeMs: liveMs,
+      })
+      const timelineState = await personaDb.getStoryTimelineState(pc)
+      const storyCalendarAnchor =
+        syncedStory.storyLabel.trim() ||
+        composeStoryTimelineCalendarAnchorLabel({
+          story_day: timelineState?.currentStoryDay,
+          story_time: timelineState?.currentStoryTime,
+        }).trim() ||
+        undefined
+      const lastOnlineNote = (
+        await buildLastOnlineChatContinuityNote({
+          conversationKey,
+          currentStoryLabel: storyCalendarAnchor,
+          currentTimeMs: liveMs,
+        })
+      ).trim()
+      const recentPrivateRounds = (
+        await buildRecentPrivateChatRoundsWithTimeBlock({
+          conversationKey,
+        })
+      ).trim()
+      const latestUserText =
+        [...transcript].reverse().find((t) => t.from === 'self')?.text?.trim() || ''
       let storyTimeline = ''
       try {
         storyTimeline = (
           await loadStoryTimelinePromptBlock(pc, {
             relevanceText: hay,
+            recallQueryUserText: latestUserText || undefined,
+            storyCalendarAnchor,
             apiConfig: timelineApiConfig,
             conversationKey,
           })
@@ -2966,7 +3002,7 @@ export function ChatRoomInner({
       return {
         memory,
         momentImageUrls,
-        unsPrivate,
+        unsPrivate: [lastOnlineNote, recentPrivateRounds, unsPrivate].filter(Boolean).join('\n\n'),
         unsGroup,
         unsMeet,
         recentPrivateAiRounds: '',
@@ -2987,6 +3023,7 @@ export function ChatRoomInner({
       apiConfig,
       conversationKey,
       currentAccountId,
+      getCurrentTimeMs,
       roomType,
       useLumiProjectAssistantPrompt,
       personaCharacterId,
@@ -5131,13 +5168,13 @@ export function ChatRoomInner({
   const retryCharacterImageGenInFlightRef = useRef(new Set<string>())
 
   const handleRetryCharacterImageGen = useCallback(
-    (msg: Pick<ChatMsg, 'id' | 'imageDescription' | 'imageGenPrompt'>) => {
+    (msg: Pick<ChatMsg, 'id' | 'imageGenPrompt' | 'imageDescription'>) => {
       const messageId = msg.id.trim()
       if (!messageId || retryCharacterImageGenInFlightRef.current.has(messageId)) return
       retryCharacterImageGenInFlightRef.current.add(messageId)
       void retryWeChatCharacterImageGenMessage({
         messageId,
-        prompt: msg.imageDescription?.trim() || msg.imageGenPrompt,
+        prompt: resolveCharacterImageGenPromptForApi(msg) || undefined,
         playerIdentityId,
       })
         .then((result) => {
@@ -5161,9 +5198,9 @@ export function ChatRoomInner({
   )
 
   const handleConfirmCharacterImageGen = useCallback(
-    (msg: Pick<ChatMsg, 'id' | 'imageDescription' | 'imageGenPrompt'>) => {
+    (msg: Pick<ChatMsg, 'id' | 'imageGenPrompt' | 'imageDescription'>) => {
       const messageId = msg.id.trim()
-      const prompt = msg.imageDescription?.trim() || msg.imageGenPrompt?.trim() || ''
+      const prompt = resolveCharacterImageGenPromptForApi(msg)
       if (!messageId || !prompt || retryCharacterImageGenInFlightRef.current.has(messageId)) return
       retryCharacterImageGenInFlightRef.current.add(messageId)
       patchChatMsgInListRef.current(messageId, {
@@ -8483,8 +8520,11 @@ export function ChatRoomInner({
               }
             }
             resolvedImageGenSettings = await loadResolvedImageGenSettings()
-            // 私聊默认开启发图协议（按语境适量发描述占位）；生图 API 仅在用户点确认后需要
-            characterImageGenEnabled = roomType !== 'group' && !lumiAssistantChat
+            // 私聊且「支持发图」开启时注入发图协议；关闭则不注入、不展示占位
+            characterImageGenEnabled =
+              roomType !== 'group' &&
+              !lumiAssistantChat &&
+              isCharacterImageSendSupported(convMediaFreqRef.current.image)
             const characterImageGenStyleHint = resolveCharacterMediaImageStyleHint(
               resolvedImageGenSettings,
               characterHasAppearanceReference(character),
@@ -9261,22 +9301,6 @@ export function ChatRoomInner({
                     displayName,
                     inlinePatchApplied: worldBookAfterUpdated,
                   })
-                  const latestUserText =
-                    [...transcript]
-                      .reverse()
-                      .find((t) => t.from === 'self')
-                      ?.text?.trim() || ''
-                  try {
-                    await syncStoryTimelineTodoLedgerAfterOnlineReply({
-                      apiConfig,
-                      characterId: character.id,
-                      displayName,
-                      latestUserText,
-                      latestAiText: latestBody,
-                    })
-                  } catch (todoErr) {
-                    console.warn('[wechat] online todo ledger sync failed', todoErr)
-                  }
                 }
               }
             } catch (epilogueErr) {
@@ -9377,6 +9401,13 @@ export function ChatRoomInner({
             logConsole('ai', `本轮 [图片] 行超过张数上限 ${imageLineCap}，已截断`)
           }
           bubbles = limited
+          rebuildOrderedSegmentsFromBubbles(bubbles)
+        } else if (roomType !== 'group' && !lumiAssistantChat && !characterImageGenEnabled) {
+          const stripped = stripCharacterImageGenLinesFromBubbles(bubbles)
+          if (stripped.length !== bubbles.length) {
+            logConsole('ai', '支持发图已关闭：已剔除本轮 [图片] 行（不展示占位）')
+          }
+          bubbles = stripped
           rebuildOrderedSegmentsFromBubbles(bubbles)
         }
         if (
@@ -11422,7 +11453,11 @@ export function ChatRoomInner({
             }
 
             const charImageGen = parseCharacterImageGenLine(currentLine)
-            if (charImageGen && characterImageGenEnabled) {
+            if (charImageGen) {
+              if (!characterImageGenEnabled) {
+                logConsole('ai', `[imagegen] 已跳过：支持发图已关闭`)
+                continue
+              }
               if (
                 shouldSuppressCharacterImageLine(
                   roomType,
@@ -11441,7 +11476,7 @@ export function ChatRoomInner({
                 )
                 continue
               }
-              const dedupeImageGen = `imagegen:${charImageGen.description}`
+              const dedupeImageGen = `imagegen:${charImageGen.prompt || charImageGen.description}`
               if (emittedThisRound.has(dedupeImageGen)) {
                 logConsole('ai', `[imagegen] 已跳过：本轮重复 prompt`)
                 continue
@@ -11456,8 +11491,6 @@ export function ChatRoomInner({
               logConsole('ai', `[imagegen] 排队配图占位 id=${oidImage}`)
               const thinkingForImage = !thinkingAttached && thinking ? thinking : undefined
               if (thinkingForImage) thinkingAttached = true
-              const desc = charImageGen.description
-              const legacyEnglish = looksLikeEnglishImageGenTags(desc)
               const incomingImage: ChatMsg = {
                 id: oidImage,
                 kind: 'msg',
@@ -11468,9 +11501,8 @@ export function ChatRoomInner({
                 timestamp: tsImage,
                 replyTo: replyToImage ?? undefined,
                 imageGenAwaitingConfirm: true,
-                ...(legacyEnglish
-                  ? { imageGenPrompt: desc }
-                  : { imageDescription: desc }),
+                imageDescription: charImageGen.description,
+                imageGenPrompt: charImageGen.prompt,
                 otherAnimated: true,
               }
               const imageStep = markEmittedThisRound(oidImage, tsImage, '（发送了一张图片）')
@@ -11492,9 +11524,8 @@ export function ChatRoomInner({
                         conversationKey: revealConvKey,
                         notifyPeerTitle: notifyPeerRound.trim() || undefined,
                         imageGenAwaitingConfirm: true,
-                        ...(legacyEnglish
-                          ? { imageGenPrompt: desc }
-                          : { imageDescription: desc }),
+                        imageDescription: charImageGen.description,
+                        imageGenPrompt: charImageGen.prompt,
                       })
                       .catch((e) => {
                         logger.log('error', `角色 AI 配图占位落库失败: ${e instanceof Error ? e.message : String(e)}`)
@@ -15392,7 +15423,7 @@ export function ChatRoomInner({
             isSelf={isSelf}
             generating={!!m.imageGenPending && !m.imageGenFailed && !m.imageGenAwaitingConfirm}
             awaitingConfirm={!!m.imageGenAwaitingConfirm && !m.imageGenPending && !m.imageGenFailed}
-            description={m.imageDescription?.trim() || m.imageGenPrompt}
+            description={resolveCharacterImageDescriptionForUi(m)}
             genFailed={!!m.imageGenFailed}
             onRetry={
               !isSelf && m.imageGenFailed
@@ -15402,7 +15433,7 @@ export function ChatRoomInner({
             onConfirmGenerate={
               !isSelf &&
               m.imageGenAwaitingConfirm &&
-              (m.imageDescription?.trim() || m.imageGenPrompt?.trim())
+              resolveCharacterImageGenPromptForApi(m)
                 ? () => handleConfirmCharacterImageGen(m)
                 : undefined
             }

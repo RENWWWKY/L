@@ -110,7 +110,7 @@ export function buildOfflinePlotsFullText(opts: OfflinePlotBuildOpts): string {
         : `（当前人设缺少可用于检索的名字/昵称，未对「${rootName}」线下剧情做片段过滤。）`
     lines.push(hint)
   }
-  return clipReferenceTail(lines.join('\n'), opts.maxChars, '尚未总结·线下剧情')
+  return clipReferenceTail(lines.join('\n'), opts.maxChars, '最近线下剧情')
 }
 
 /** 游标已覆盖的线下剧情正文（供语义召回索引；非线下摘要表 rowText） */
@@ -191,6 +191,8 @@ export async function listUnsummarizedOfflinePlotTraceItems(
     retainAiRounds?: number
     /** 思维溯源：仅展示 AI 剧情条，不含玩家输入 */
     aiOnly?: boolean
+    /** 为 true 时忽略 plot 总结游标，取全档最近 N 轮（线上固定注入） */
+    ignorePlotSummaryCursor?: boolean
   },
 ): Promise<Array<{ date: string; snippet: string }>> {
   const cid = characterId?.trim()
@@ -202,8 +204,10 @@ export async function listUnsummarizedOfflinePlotTraceItems(
   try {
     const ctx = await resolveOfflineDatingArchiveContext(cid)
     if (!ctx) return []
-    const plotCursor = await personaDb.getDatingPlotSummaryCursor(ctx.archiveCharacterId)
-    const dMin = plotCursor ?? 0
+    const plotCursor = opts?.ignorePlotSummaryCursor
+      ? -1
+      : ((await personaDb.getDatingPlotSummaryCursor(ctx.archiveCharacterId)) ?? 0)
+    const dMin = plotCursor
     const plots = await loadDatingPlotsFromKv(ctx.archiveCharacterId)
     let tail = plots
       .filter((p) => {
@@ -293,6 +297,55 @@ export async function buildUnsummarizedOfflineDatingText(
   }
 }
 
+/**
+ * 线上私聊固定注入：最近 N 轮线下 AI 剧情正文（含其间玩家输入）。
+ * 不依赖 plot 总结游标——线下每轮已自动写摘要，游标后常为空；仍须全文承接近端线下事实。
+ */
+export async function buildRecentOfflinePlotInjectBody(
+  characterId: string | null | undefined,
+  peerDisplayName?: string | null,
+  retainAiRounds: number = MEMORY_UNSUMMARIZED_OFFLINE_INJECT_AI_ROUNDS,
+): Promise<string> {
+  const cid = characterId?.trim()
+  if (!cid) return ''
+  const rounds = Math.max(1, Math.min(8, Math.floor(retainAiRounds)))
+  try {
+    const ctx = await resolveOfflineDatingArchiveContext(cid)
+    if (!ctx) return ''
+    const plots = await loadDatingPlotsFromKv(ctx.archiveCharacterId)
+    if (!plots.length) return ''
+    const borrowed = ctx.perspectiveCharacterId !== ctx.archiveCharacterId
+    const tokens = borrowed ? collectCharacterMentionSearchTokens(ctx.perspective) : []
+    const peerLabel = peerDisplayName?.trim() || (ctx.perspective?.name ?? '').trim() || '对方'
+    return buildOfflinePlotsFullText({
+      plots,
+      plotCursorMin: -1,
+      borrowed,
+      rootName: (ctx.archiveOwner?.name ?? '').trim() || '主角',
+      peerLabel,
+      filterNpc:
+        borrowed && tokens.length
+          ? (_plot, body) =>
+              offlinePlotBodyRelevantToNpcForLinkedExcerpt(body, ctx.perspective, tokens)
+          : undefined,
+      maxChars: DATING_AI_OFFLINE_UNSUMMARIZED_CHAR_CAP,
+      retainAiRounds: rounds,
+    })
+  } catch {
+    return ''
+  }
+}
+
+/**
+ * @deprecated 请用 {@link buildRecentOfflinePlotInjectBody}；保留给约会页「游标后」材料拼装。
+ */
+export async function buildLatestOfflinePlotContinuityBody(
+  characterId: string | null | undefined,
+  peerDisplayName?: string | null,
+): Promise<string> {
+  return buildRecentOfflinePlotInjectBody(characterId, peerDisplayName, 1)
+}
+
 /** 仅从给定快照拼接游标后线下剧情正文（不从 KV 再读全档）。 */
 export async function formatOfflineUnsummarizedBlockFromPlotSnapshots(
   plots: DatingPlotSnapshotItem[],
@@ -340,13 +393,16 @@ export function buildOnlineOfflineSpatialContinuityAppendix(
     `【线下→线上·空间状态铁律（最高优先级）】`,
     ...(storyFromTail
       ? [
-          `- **故事内时刻**：线下摘录末条故事时间为 **${storyFromTail}**；微信线上须按该故事时刻理解（同一夜/同一时段），**禁止**用设备落库钟点（如上午 10:20）误判为剧情清晨或另一天。`,
+          `- **故事内时刻（线下末条）**：摘录末条故事时间为 **${storyFromTail}**（空间/在场以该条为准）。`,
+          `- **若【剧情时间轴·当前状态】锚点已晚于该末条**（用户在线上时间设置中往后推过）：线上「现在」以剧情轴当前锚点为准，**禁止**强行拉回末条那一夜；空间仍承接末条分离/同场事实，时段按推进后的锚点理解。`,
+          `- **若剧情轴当前锚点未推进、仍与末条同时段**：线上按 **${storyFromTail}** 同一夜/同一时段理解；**禁止**用设备落库钟点（如上午 10:20）误判为剧情清晨或另一天。`,
         ]
       : []),
-    `- 微信线上 = **远程用手机发消息**；须承接上方「尚未总结·线下剧情」**最后一条 AI 剧情**（时间/落库最新）所写的**当场空间事实**：谁在场、是否同室、门内外、睡/醒、有无肢体接触。`,
+    `- 微信线上 = **远程用手机发消息**；须承接上方「最近线下剧情」**最后一条 AI 剧情**所写的**当场空间事实**：谁在场、是否同室、门内外、睡/醒、有无肢体接触。`,
     `- **禁止**用更早条目、【尾声延展】或长期记忆里旧的「同场/怀里/同床」描写，覆盖末尾已写明的**分离状态**（例如末尾已写 ${peer} 出门/在门外守/离开房间/各自在不同空间，则禁止气泡写「你缩在我怀里」「抱着你」「同床」「面对面」等同场肢体接触）。`,
     `- 【尾声延展】条目约束**态度、称呼、好感档位**，**不约束**物理空间；二者冲突时以**线下末尾最新 AI 条**的空间事实为准。`,
-    `- 用户当轮发来微信，默认表示 ${peer} **不在同一物理接触距离内**打字；可写「还在被窝里玩手机？」「门外守着呢你发什么消息」等符合分离事实的反应，勿写成贴身耳语体。`,
+    `- 若【剧情时间轴·当前状态】锚点**晚于**线下末条（如末条 08:00 已分别、轴指 10:00）：须按**已推进后的时段**理解（对方已起床/在路上/到机场等），**禁止**仍按分手前作息反问「起这么早 / 不是睡到中午吗 / 昨晚拍戏」；语义召回/长期记忆里**早于末条**的作息或事件不得覆盖末条事实。`,
+    `- 用户当轮发来微信，默认表示 ${peer} **不在同一物理接触距离内**打字；可写符合分离事实的反应，勿写成贴身耳语体。`,
   ]
   if (tail) {
     lines.push('', `【最新线下末尾锚点（空间/在场以本条为准）】`, tail)
@@ -354,34 +410,34 @@ export function buildOnlineOfflineSpatialContinuityAppendix(
   return lines.join('\n')
 }
 
-/** 微信与其它线上 completion：注入游标后线下剧情正文。 */
+/** 微信与其它线上 completion：固定注入最近 N 轮线下剧情正文（与线下每轮摘要并存，不依赖游标空窗）。 */
 export async function loadOfflineDatingPlotsPromptBlock(
   characterId: string | null | undefined,
   characterDisplayName?: string | null,
 ): Promise<string> {
   const cid = characterId?.trim()
-  const body = await buildUnsummarizedOfflineDatingText(cid, characterDisplayName)
+  const rounds = MEMORY_UNSUMMARIZED_OFFLINE_INJECT_AI_ROUNDS
+  const body = await buildRecentOfflinePlotInjectBody(cid, characterDisplayName, rounds)
   if (!body.trim()) return ''
 
   const ctx = cid ? await resolveOfflineDatingArchiveContext(cid) : null
   const borrowed = !!(ctx && ctx.perspectiveCharacterId !== ctx.archiveCharacterId)
 
-  const rounds = MEMORY_UNSUMMARIZED_OFFLINE_INJECT_AI_ROUNDS
   const timeHint =
     '每条前缀优先为**故事内公历时刻**（来自该条 timeline 锚点）；无锚点时方显示 `[…·落库]` 系统落库时刻（真实生成钟点，**不是**故事内时间）'
   const header = borrowed
-    ? `【尚未总结·关联主角线下剧情（节选）】` +
-      `你与「${(ctx?.archiveOwner?.name ?? '').trim() || '主角'}」同属一条时间线；下列为游标后**最近 ${rounds} 轮 AI 剧情**及其间玩家输入；${timeHint}；更早段由【剧情时间轴】/长期记忆/语义召回承接。`
-    : `【尚未总结·线下剧情（约会页 plot 总结游标之后）】` +
-      `与当前会话为**同一角色、同一时间线**；下列为游标后**最近 ${rounds} 轮 AI 剧情**及其间玩家输入；${timeHint}；须自然衔接、**禁止**明显矛盾。`
+    ? `【最近线下剧情（关联主角·固定最近 ${rounds} 轮 AI）】` +
+      `你与「${(ctx?.archiveOwner?.name ?? '').trim() || '主角'}」同属一条时间线；下列为约会页**时间/落库最新**的 ${rounds} 轮 AI 剧情及其间玩家输入（${timeHint}）。线下每轮通常已写入摘要，本块仍须全文承接；更早段由【剧情时间轴】/长期记忆/语义召回补全。`
+    : `【最近线下剧情（固定最近 ${rounds} 轮 AI）】` +
+      `与当前会话为**同一角色、同一时间线**；下列为约会页**时间/落库最新**的 ${rounds} 轮 AI 剧情及其间玩家输入（${timeHint}）。线下每轮通常已写入摘要，本块仍须全文承接近端事实；更早段由【剧情时间轴】/长期记忆/语义召回补全；**禁止**明显矛盾或假装未发生末条事件。`
 
   const spatialRule = buildOnlineOfflineSpatialContinuityAppendix(body, characterDisplayName)
   return `${header}\n\n${body}\n\n---\n${spatialRule}`
 }
 
-/** 模型注入块里的「尚未总结·线下剧情」说明段（单行，后接空行再是正文）。 */
+/** 模型注入块里的「最近线下剧情 / 尚未总结·线下」说明段（单行，后接空行再是正文）。 */
 const OFFLINE_PLOT_INJECT_HEADER_RE =
-  /【尚未总结·(?:关联主角线下剧情（节选）|线下剧情（约会页 plot 总结游标之后）)】[^\n]*\n\n/g
+  /【(?:最近线下剧情[^】]*|最新线下剧情·承接锚点[^】]*|尚未总结·(?:关联主角线下剧情（节选）|线下剧情（约会页 plot 总结游标之后）))】[^\n]*\n\n/g
 
 /** 思维溯源 ACTIVE CONTEXT：与 prompt 注入同源，最近 N 轮 AI 线下剧情（仅 AI 条）。 */
 export async function listInjectedOfflinePlotTraceRowsForMemoryTrace(
@@ -390,6 +446,8 @@ export async function listInjectedOfflinePlotTraceRowsForMemoryTrace(
 ): Promise<Array<{ date: string; snippet: string }>> {
   return listUnsummarizedOfflinePlotTraceItems(characterId, peerDisplayName, {
     retainAiRounds: MEMORY_UNSUMMARIZED_OFFLINE_INJECT_AI_ROUNDS,
+    /** 与线上固定注入一致：忽略总结游标，取全档最近 N 轮 */
+    ignorePlotSummaryCursor: true,
     aiOnly: true,
     maxItems: MEMORY_UNSUMMARIZED_OFFLINE_INJECT_AI_ROUNDS,
     fullSnippet: true,
@@ -411,7 +469,7 @@ export function stripOfflineDatingPlotsInjectHeaderForTraceDisplay(text: string)
   if (!s) return ''
 
   s = s.replace(OFFLINE_PLOT_INJECT_HEADER_RE, '').trim()
-  s = s.replace(/…【尚未总结·线下剧情[^】]*】\n?/g, '').trim()
+  s = s.replace(/…【(?:最近线下剧情|尚未总结·线下剧情)[^】]*】\n?/g, '').trim()
   s = s
     .replace(/（近期「[^」]+」的线下剧情中，未找到[^\n]+）\n?/g, '')
     .replace(/（当前人设缺少可用于检索[^\n]+）\n?/g, '')

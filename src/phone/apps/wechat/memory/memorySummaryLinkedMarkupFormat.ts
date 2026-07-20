@@ -47,7 +47,7 @@ export const STORY_TIMELINE_SUMMARY_MARKUP_FIELDS = `
 事件：
 （本轮融合叙事：谁做了什么、结果/情绪转折；本轮用到的道具、服装变化、人物动机/关系悬念都写进这段；约 400～500 字，为保证完整可合理加长，勿为凑字数注水；勿再单列服装/物品/伏笔/待办）
 
-禁止字段：服装、物品、伏笔、待办（及一切 JSON）。待办由系统台账维护。
+禁止字段：服装、物品、伏笔、待办（及一切 JSON）。勿输出待办 / todos。
 `.trim()
 
 export const UNIFIED_MEMORY_LINKED_MARKUP_RULE = `

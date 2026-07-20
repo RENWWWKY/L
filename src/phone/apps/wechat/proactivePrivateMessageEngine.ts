@@ -26,9 +26,10 @@ import {
   buildCharacterProfileImageCatalogBlock,
   stripAndApplyCharacterProfileImageActions,
 } from './wechatCharacterProfileImageApply'
-import { limitCharacterImageGenLinesFromBubbles } from './wechatCharacterImageGen'
+import { limitCharacterImageGenLinesFromBubbles, stripCharacterImageGenLinesFromBubbles } from './wechatCharacterImageGen'
 import {
   drawRoundImageCount,
+  isCharacterImageSendSupported,
   parseStoredImageRoundCountRange,
 } from './wechatMediaSendFrequency'
 import {
@@ -336,6 +337,7 @@ async function fireProactiveMessage(row: ChatConversationSettingsRow): Promise<v
       activeRow.imageRoundCountMin,
       activeRow.imageRoundCountMax,
     )
+    const characterImageGenEnabled = isCharacterImageSendSupported(activeRow.imageRoundTriggerPercent)
 
     const realNow = Date.now()
     const intervalMs = resolveProactiveMessageIntervalMs(activeRow, scheduleOptions)
@@ -409,7 +411,7 @@ async function fireProactiveMessage(row: ChatConversationSettingsRow): Promise<v
             : undefined,
       })
 
-      const imageRoundCountTarget = drawRoundImageCount(imageCountRange)
+      const imageRoundCountTarget = characterImageGenEnabled ? drawRoundImageCount(imageCountRange) : 0
 
       const ai = await requestWeChatPeerReplyBubbles({
         apiConfig,
@@ -457,12 +459,16 @@ async function fireProactiveMessage(row: ChatConversationSettingsRow): Promise<v
         ...(activeRow.classicEmojiBannedNames?.length
           ? { classicEmojiBannedNames: activeRow.classicEmojiBannedNames }
           : {}),
-        characterImageGenEnabled: true,
-        characterImageGenStyleHint,
-        imageRoundCountMin: imageCountRange.min,
-        imageRoundCountMax: imageCountRange.max,
-        ...(imageRoundCountTarget > 0 ? { imageRoundCountTarget: imageRoundCountTarget } : {}),
-        imageRoundAllowed: true,
+        ...(characterImageGenEnabled
+          ? {
+              characterImageGenEnabled: true,
+              characterImageGenStyleHint,
+              imageRoundCountMin: imageCountRange.min,
+              imageRoundCountMax: imageCountRange.max,
+              ...(imageRoundCountTarget > 0 ? { imageRoundCountTarget: imageRoundCountTarget } : {}),
+              imageRoundAllowed: true,
+            }
+          : {}),
         ...(characterMomentsPinCatalog.trim()
           ? { characterMomentsPinCatalog }
           : {}),
@@ -477,7 +483,9 @@ async function fireProactiveMessage(row: ChatConversationSettingsRow): Promise<v
       })
 
       let bubbles = (ai.bubbles ?? []).map((s) => String(s ?? '').trim()).filter(Boolean)
-      bubbles = limitCharacterImageGenLinesFromBubbles(bubbles, imageCountRange.max)
+      bubbles = characterImageGenEnabled
+        ? limitCharacterImageGenLinesFromBubbles(bubbles, imageCountRange.max)
+        : stripCharacterImageGenLinesFromBubbles(bubbles)
       let musicSyncInvites: WeChatMusicSyncInvitePayload[] = []
       if (wechatAccountId && characterId) {
         if (bubbles.length) {

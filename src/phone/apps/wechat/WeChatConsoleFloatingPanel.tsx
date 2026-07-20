@@ -4,8 +4,15 @@ import { Minus, Terminal, Trash2, X } from 'lucide-react'
 
 import type { ConsoleLog, LogType } from './consoleLogger'
 import { formatTs, logConsole } from './consoleLogger'
-import { composeStoryTimelineCalendarAnchorLabel } from './memory/storyTimelineTypes'
+import {
+  composeStoryTimelineCalendarAnchorLabel,
+  formatGregorianStoryDayFromMs,
+} from './memory/storyTimelineTypes'
 import { personaDb } from './newFriendsPersona/idb'
+import {
+  formatStoryTimeClockFromMs,
+  syncStoryTimelineNowFromOnlineClock,
+} from './time/applyOnlineChatTimeFusion'
 import { useWeChatCurrentTime } from './time/useWeChatCurrentTime'
 import { useConsoleLogs, useConsoleLogger } from './useConsoleLogger'
 
@@ -118,9 +125,19 @@ export function WeChatConsoleFloatingPanel({
         return
       }
       try {
+        const liveMs = getCurrentTimeMs()
+        const synced = await syncStoryTimelineNowFromOnlineClock({
+          characterId: cid,
+          liveTimeMs: liveMs,
+        })
+        if (cancelled) return
+        if (synced.storyLabel.trim()) {
+          setStoryTimeLabel(synced.storyLabel.trim())
+          return
+        }
         const st = await personaDb.getStoryTimelineState(cid)
         if (cancelled) return
-        const label =
+        const stored =
           composeStoryTimelineCalendarAnchorLabel({
             story_day: st?.currentStoryDay,
             story_time: st?.currentStoryTime,
@@ -130,7 +147,16 @@ export function WeChatConsoleFloatingPanel({
               ? `${st.currentStoryDay.trim()} ${st.currentStoryTime.trim()}`
               : st.currentStoryDay.trim()
             : '')
-        setStoryTimeLabel(label)
+        // 有剧情日但未写入成功时，用流动时钟推演展示（不落库）
+        if (stored && st?.currentStoryDay?.trim()) {
+          const liveLabel = composeStoryTimelineCalendarAnchorLabel({
+            story_day: formatGregorianStoryDayFromMs(liveMs),
+            story_time: formatStoryTimeClockFromMs(liveMs),
+          }).trim()
+          setStoryTimeLabel(liveLabel || stored)
+          return
+        }
+        setStoryTimeLabel(stored)
       } catch {
         if (!cancelled) setStoryTimeLabel('')
       }
@@ -144,7 +170,7 @@ export function WeChatConsoleFloatingPanel({
       window.clearInterval(timer)
       window.removeEventListener('wechat-storage-changed', onStorage)
     }
-  }, [open, minimized, cid])
+  }, [open, minimized, cid, getCurrentTimeMs])
 
   useEffect(() => {
     if (!open || minimized) return

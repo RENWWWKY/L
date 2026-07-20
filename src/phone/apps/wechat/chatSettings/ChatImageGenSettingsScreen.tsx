@@ -13,6 +13,7 @@ import {
   IMAGE_DEFAULT_ROUND_COUNT_MIN,
   IMAGE_ROUND_COUNT_MAX_LIMIT,
   IMAGE_ROUND_COUNT_MIN_LIMIT,
+  isCharacterImageSendSupported,
   isImageRoundCountRangeCustomized,
   parseStoredImageRoundCountRange,
 } from '../wechatMediaSendFrequency'
@@ -159,12 +160,18 @@ function RefTabButton({
 }
 
 export function summarizeChatImageGenSettings(
-  row: Pick<ChatConversationSettingsRow, 'imageRoundCountMin' | 'imageRoundCountMax'>,
+  row: Pick<
+    ChatConversationSettingsRow,
+    'imageRoundTriggerPercent' | 'imageRoundCountMin' | 'imageRoundCountMax'
+  >,
 ): string {
-  const parts: string[] = ['按语境发图']
-  const range = parseStoredImageRoundCountRange(row.imageRoundCountMin, row.imageRoundCountMax)
-  if (isImageRoundCountRangeCustomized(row.imageRoundCountMin, row.imageRoundCountMax)) {
-    parts.push(formatImageRoundCountRangeLabel(range))
+  const imageSendSupported = isCharacterImageSendSupported(row.imageRoundTriggerPercent)
+  const parts: string[] = imageSendSupported ? ['按语境发图'] : ['已关闭发图']
+  if (imageSendSupported) {
+    const range = parseStoredImageRoundCountRange(row.imageRoundCountMin, row.imageRoundCountMax)
+    if (isImageRoundCountRangeCustomized(row.imageRoundCountMin, row.imageRoundCountMax)) {
+      parts.push(formatImageRoundCountRangeLabel(range))
+    }
   }
   parts.push('形象与风格')
   return parts.join(' · ')
@@ -194,6 +201,7 @@ export function ChatImageGenSettingsScreen({
   })
 
   const showUserRef = !!playerIdentityId?.trim()
+  const imageSendSupported = isCharacterImageSendSupported(settings.imageRoundTriggerPercent)
 
   return (
     <div className="flex h-full min-h-0 flex-col bg-[#ededed]">
@@ -222,7 +230,7 @@ export function ChatImageGenSettingsScreen({
         <div className="flex gap-1">
           {(
             [
-              { id: 'count' as const, label: '发图张数' },
+              { id: 'count' as const, label: '发图设置' },
               { id: 'appearance' as const, label: '形象参考' },
               { id: 'style' as const, label: '生图风格' },
             ] as const
@@ -247,35 +255,49 @@ export function ChatImageGenSettingsScreen({
       <div className="min-h-0 flex-1 overflow-y-auto px-4 py-3">
         {activeTab === 'count' ? (
           <div className="space-y-3">
-            <section
-              className="rounded-[12px] bg-white px-4 py-4"
-              style={{ boxShadow: '0 1px 3px rgba(0,0,0,0.06)' }}
-            >
-              <p className="text-[15px] font-medium text-black">按语境适量发图</p>
-              <p className="mt-1 text-[12px] leading-relaxed text-[#8e8e8e]">
-                角色可在合适场景自发配图（不是每轮都发）。气泡先显示通俗中文画面描述，点确认后另推英文提示词再生图；不点也能从描述知道发的是什么。须已配置对话
-                API（推演）与生图 API。
-              </p>
-            </section>
+            {!imageSendSupported ? (
+              <section
+                className="rounded-[12px] bg-white px-4 py-4"
+                style={{ boxShadow: '0 1px 3px rgba(0,0,0,0.06)' }}
+              >
+                <p className="text-[15px] font-medium text-black">发图已关闭</p>
+                <p className="mt-1 text-[12px] leading-relaxed text-[#8e8e8e]">
+                  请先在「聊天信息」页打开「支持发图」开关，再调整张数与形象。关闭时不注入发图/生图提示词，也不展示图片占位。
+                </p>
+              </section>
+            ) : (
+              <>
+                <section
+                  className="rounded-[12px] bg-white px-4 py-4"
+                  style={{ boxShadow: '0 1px 3px rgba(0,0,0,0.06)' }}
+                >
+                  <p className="text-[15px] font-medium text-black">按语境适量发图</p>
+                  <p className="mt-1 text-[12px] leading-relaxed text-[#8e8e8e]">
+                    角色可在合适场景自发配图（不是每轮都发）。气泡先显示通俗中文画面描述；点确认后直接用同轮输出的英文生图提示词生图，不再另调模型推提示词。须已配置生图
+                    API。总开关在「聊天信息 › 支持发图」。
+                  </p>
+                </section>
 
-            <section
-              className="rounded-[12px] bg-white px-4 py-4"
-              style={{ boxShadow: '0 1px 3px rgba(0,0,0,0.06)' }}
-            >
-              <p className="text-[15px] font-medium text-black">每次张数范围</p>
-              <p className="mt-1 text-[12px] leading-relaxed text-[#8e8e8e]">
-                发图时角色可发送的图片张数（每条 <span className="font-mono">[图片]</span> 行计 1
-                张）。
-              </p>
-              <div className="mt-3">
-                <ImageRoundCountRangeControl
-                  minStored={settings.imageRoundCountMin}
-                  maxStored={settings.imageRoundCountMax}
-                  onChange={(min, max) => void onPatch({ imageRoundCountMin: min, imageRoundCountMax: max })}
-                  onResetDefault={() => void onPatch({ clearImageRoundCountRange: true })}
-                />
-              </div>
-            </section>
+                <section
+                  className="rounded-[12px] bg-white px-4 py-4"
+                  style={{ boxShadow: '0 1px 3px rgba(0,0,0,0.06)' }}
+                >
+                  <p className="text-[15px] font-medium text-black">每次张数范围</p>
+                  <p className="mt-1 text-[12px] leading-relaxed text-[#8e8e8e]">
+                    发图时角色可发送的图片张数（每条 <span className="font-mono">[图片]</span> 行计 1
+                    张）。
+                  </p>
+                  <div className="mt-3">
+                    <ImageRoundCountRangeControl
+                      minStored={settings.imageRoundCountMin}
+                      maxStored={settings.imageRoundCountMax}
+                      onChange={(min, max) => void onPatch({ imageRoundCountMin: min, imageRoundCountMax: max })}
+                      onResetDefault={() => void onPatch({ clearImageRoundCountRange: true })}
+                    />
+                  </div>
+                </section>
+              </>
+            )}
           </div>
         ) : null}
 

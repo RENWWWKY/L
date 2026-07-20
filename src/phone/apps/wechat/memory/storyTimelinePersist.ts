@@ -32,7 +32,6 @@ import {
   type StoryTimelineMainCharPresenceOpts,
   type StoryTimelinePromptLoadOpts,
   type StoryTimelineSummaryDelta,
-  type StoryTimelineTodoEntry,
 } from './storyTimelineTypes'
 
 async function loadStoryTimelineMainCharPresence(characterId: string): Promise<StoryTimelineMainCharPresenceOpts> {
@@ -131,21 +130,12 @@ export async function rebuildStoryTimelineFromDatingPlots(
   plots: PlotItem[],
   opts?: {
     apiConfig?: ApiConfigCore | null
-    /**
-     * 覆盖待办台账（含 `[]`）。
-     * 未传则保留重建前台账（待办与摘要解耦，禁止从历史摘要整表回放）。
-     */
-    todosOverride?: StoryTimelineTodoEntry[]
   },
 ): Promise<{ parallelSummaryPlotIds: string[] }> {
   const cid = characterId.trim()
   if (!cid) return { parallelSummaryPlotIds: [] }
 
   const prevState = await personaDb.getStoryTimelineState(cid)
-  const todosForState =
-    opts && 'todosOverride' in opts && opts.todosOverride !== undefined
-      ? opts.todosOverride
-      : (prevState?.todos ?? [])
   const mainCharPresence = await loadStoryTimelineMainCharPresence(cid)
   const existingRows = await personaDb.listStoryTimelinePlotRowsByCharacterId(cid)
   const userEditedByPlotId = new Map<string, (typeof existingRows)[number]>()
@@ -172,10 +162,7 @@ export async function rebuildStoryTimelineFromDatingPlots(
       }
     }
     if (delta && hasTimelineDeltaContent(delta)) {
-      // 重建地点/服装/伏笔等；待办台账与摘要解耦，禁止从历史摘要复活
-      merged = mergeStoryTimelineState(merged, cid, delta, 'offline', {
-        skipTodoLedgerMutation: true,
-      })
+      merged = mergeStoryTimelineState(merged, cid, delta, 'offline')
       const row = buildStoryTimelinePlotRowFromDelta(cid, delta, 'offline', {
         plotId: plot.id,
         recordedAtMs: plot.timestamp,
@@ -193,12 +180,12 @@ export async function rebuildStoryTimelineFromDatingPlots(
   }
 
   if (!merged && !plotRows.length) {
-    // 剩余剧情无可用 delta（如重生首段 AI）：清空 plot 绑定行与世界锚点；待办按 override 或保留
+    // 剩余剧情无可用 delta（如重生首段 AI）：清空 plot 绑定行与世界锚点
     await personaDb.deleteStoryTimelinePlotRowsWithPlotIdForCharacter(cid)
-    if (prevState || opts?.todosOverride !== undefined) {
+    if (prevState) {
       await personaDb.putStoryTimelineState({
         ...createEmptyStoryTimelineState(cid),
-        todos: todosForState,
+        todos: [],
         ...(prevState?.manualAnchorBlock?.trim()
           ? { manualAnchorBlock: prevState.manualAnchorBlock }
           : {}),
@@ -213,7 +200,7 @@ export async function rebuildStoryTimelineFromDatingPlots(
   if (merged) {
     await personaDb.putStoryTimelineState({
       ...merged,
-      todos: todosForState,
+      todos: [],
       ...(prevState?.manualAnchorBlock?.trim()
         ? { manualAnchorBlock: prevState.manualAnchorBlock }
         : {}),
@@ -334,7 +321,7 @@ export async function loadStoryTimelinePromptBlock(
   return `\n\n---\n【剧情时间轴】\n${expandedBody}\n`
 }
 
-/** 摘要补救 / 自动总结：加载未收动机伏笔与待办清单 */
+/** 摘要补救 / 自动总结：加载未收动机伏笔清单 */
 export async function loadStoryTimelineOpenAnchorsBlockForSummary(
   characterId: string,
 ): Promise<string> {

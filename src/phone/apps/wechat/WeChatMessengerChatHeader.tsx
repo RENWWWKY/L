@@ -56,12 +56,23 @@ function HeaderAvatar({ url, name, sizePx }: { url?: string; name: string; sizeP
   )
 }
 
+function ChatTimeClockIcon({ className }: { className?: string }) {
+  return (
+    <svg className={className} fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={1.8} aria-hidden>
+      <circle cx="12" cy="12" r="9" />
+      <path strokeLinecap="round" strokeLinejoin="round" d="M12 7v5l3 2" />
+    </svg>
+  )
+}
+
 export type WeChatMessengerChatHeaderProps = {
   variant: 'wechat' | 'imessage' | 'telegram' | 'talkmaker'
   title: string
   avatarUrl?: string
   onBack: () => void
   onOpenSettings: () => void
+  /** 返回键旁：线上时间设置（融合剧情锚点） */
+  onOpenTimeSettings?: () => void
   onOpenPsycheRadar?: () => void
   showPsycheRadar?: boolean
   /** iMessage 返回键旁未读数 */
@@ -122,6 +133,7 @@ export function WeChatMessengerChatHeader({
   avatarUrl,
   onBack,
   onOpenSettings,
+  onOpenTimeSettings,
   onOpenPsycheRadar,
   showPsycheRadar = false,
   backBadgeCount,
@@ -142,7 +154,7 @@ export function WeChatMessengerChatHeader({
         }}
       >
         <div className="relative flex h-11 items-center px-2">
-          <div className="flex w-[88px] shrink-0 items-center justify-start">
+          <div className={`flex ${onOpenTimeSettings ? 'min-w-[88px]' : 'w-[88px]'} shrink-0 items-center justify-start gap-0.5`}>
             <Pressable
               type="button"
               aria-label="返回"
@@ -156,6 +168,16 @@ export function WeChatMessengerChatHeader({
                 <span className="text-[17px]">{backBadgeCount}</span>
               ) : null}
             </Pressable>
+            {onOpenTimeSettings ? (
+              <Pressable
+                type="button"
+                aria-label="线上时间设置"
+                onClick={onOpenTimeSettings}
+                className="flex h-9 w-9 shrink-0 items-center justify-center text-[#191919] active:opacity-60"
+              >
+                <ChatTimeClockIcon className="h-5 w-5" />
+              </Pressable>
+            ) : null}
           </div>
 
           <Pressable
@@ -205,7 +227,7 @@ export function WeChatMessengerChatHeader({
         }}
       >
         <div className="flex h-11 items-center px-2">
-          <div className="flex w-[88px] shrink-0 justify-start">
+          <div className={`flex ${onOpenTimeSettings ? 'min-w-[88px]' : 'w-[88px]'} shrink-0 items-center justify-start gap-0.5`}>
             <Pressable
               type="button"
               aria-label="返回"
@@ -216,6 +238,16 @@ export function WeChatMessengerChatHeader({
                 <path strokeLinecap="round" strokeLinejoin="round" d="M15 19l-7-7 7-7" />
               </svg>
             </Pressable>
+            {onOpenTimeSettings ? (
+              <Pressable
+                type="button"
+                aria-label="线上时间设置"
+                onClick={onOpenTimeSettings}
+                className="flex h-10 w-10 items-center justify-center text-black active:opacity-60"
+              >
+                <ChatTimeClockIcon className="h-5 w-5" />
+              </Pressable>
+            ) : null}
           </div>
 
           <Pressable
@@ -271,6 +303,16 @@ export function WeChatMessengerChatHeader({
               <path strokeLinecap="round" strokeLinejoin="round" d="M10 19l-7-7m0 0l7-7m-7 7h18" />
             </svg>
           </Pressable>
+          {onOpenTimeSettings ? (
+            <Pressable
+              type="button"
+              aria-label="线上时间设置"
+              onClick={onOpenTimeSettings}
+              className="flex shrink-0 items-center justify-center rounded-full p-2 text-gray-600 transition-colors active:bg-gray-100"
+            >
+              <ChatTimeClockIcon className="h-5 w-5" />
+            </Pressable>
+          ) : null}
 
           <Pressable
             type="button"
@@ -339,7 +381,7 @@ export function WeChatMessengerChatHeader({
         aria-hidden
       />
       <div className="relative flex min-h-[58px] items-center px-2">
-        <div className="flex w-[88px] shrink-0 justify-start">
+        <div className={`flex ${onOpenTimeSettings ? 'min-w-[88px]' : 'w-[88px]'} shrink-0 items-center justify-start gap-0.5`}>
           <Pressable
             type="button"
             aria-label="返回"
@@ -354,6 +396,17 @@ export function WeChatMessengerChatHeader({
               <span className="-ml-1 text-[17px]">{backBadgeCount}</span>
             ) : null}
           </Pressable>
+          {onOpenTimeSettings ? (
+            <Pressable
+              type="button"
+              aria-label="线上时间设置"
+              onClick={onOpenTimeSettings}
+              className="flex h-9 w-9 items-center justify-center active:opacity-60"
+              style={{ color: IOS_BLUE }}
+            >
+              <ChatTimeClockIcon className="h-5 w-5" />
+            </Pressable>
+          ) : null}
         </div>
 
         <Pressable

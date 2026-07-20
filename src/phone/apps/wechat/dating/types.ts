@@ -189,7 +189,7 @@ export type PlotItem = {
    */
   worldBookAfterRevertEntries?: WorldBookAfterRevertEntry[]
   /**
-   * 本段落库前的待办台账快照；删除本段或重新回复时回退到此状态，再按新摘要/后续段重放。
+   * @deprecated 待办台账已下线；旧档可能仍有此字段，读写时忽略。
    */
   todoLedgerBefore?: import('../memory/storyTimelineTypes').StoryTimelineTodoEntry[]
   /** 平行事件：与锚点同刻、异场景的切片（不影响主线 canon） */

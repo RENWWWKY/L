@@ -245,11 +245,14 @@ export type ChatConversationSettingsRow = {
   classicEmojiBannedNames?: string[]
   /** 角色每轮回复是否出现语音的目标概率 0–100（门槛，非条数上限；命中后仍可多条 [语音]）；缺省 = 不覆写系统协议（约 30%） */
   voiceRoundTriggerPercent?: number
-  /** 角色每次发图张数下限 1–9；缺省 1。发图本身按语境适量，不再用概率/开关拦截 */
+  /** 角色每次发图张数下限 1–9；缺省 1。发图本身按语境适量（须「支持发图」开启） */
   imageRoundCountMin?: number
   /** 角色每次发图张数上限 1–9；缺省 1 */
   imageRoundCountMax?: number
-  /** @deprecated 已取消「是否支持发图」；保留字段兼容旧存档 */
+  /**
+   * 是否支持发图：未存或 `0` = 关闭（默认）；>0 = 开启（按语境适量发图）。
+   * 旧档若存过概率百分比，>0 仍视为开启。
+   */
   imageRoundTriggerPercent?: number
   /** 角色私聊：是否开启主动消息（按频率在后台也可能发来新消息） */
   proactiveMessageEnabled?: boolean
@@ -1119,9 +1122,9 @@ export type WeChatChatMessage = {
   imageGenAwaitingConfirm?: boolean
   /** AI 配图生成失败（占位气泡） */
   imageGenFailed?: boolean
-  /** 给用户看的通俗中文画面描述（占位文案；与微博 description 同层） */
+  /** 给用户看的通俗中文画面描述（`[图片]` 行 `|||` 左侧） */
   imageDescription?: string
-  /** 英文生图提示词缓存（点生成时由中文描述推演；旧档可能直接存英文 tags） */
+  /** 生图 API 用英文 tag（`[图片]` 行 `|||` 右侧；点确认后直接生图） */
   imageGenPrompt?: string
   /** 是否收藏 */
   isFavorite?: boolean

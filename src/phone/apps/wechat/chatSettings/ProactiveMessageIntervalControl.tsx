@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 
 import { Pressable } from '../../../components/Pressable'
 import {
@@ -10,11 +10,17 @@ import {
   resolveProactiveMessageIntervalSeconds,
   secondsToUnitValue,
   type ProactiveMessageIntervalUnit,
-  unitInputMinMax,
   unitValueToSeconds,
 } from '../proactivePrivateMessageTypes'
 
 const numStyle = { fontFamily: PROACTIVE_MESSAGE_NUMBER_FONT } as const
+
+function formatUnitDraft(value: number): string {
+  if (!Number.isFinite(value)) return ''
+  // 去掉多余尾零，便于编辑（如 1.0 → 1）
+  const rounded = Math.round(value * 1000) / 1000
+  return String(rounded)
+}
 
 export function ProactiveMessageIntervalControl({
   savedIntervalSeconds,
@@ -37,44 +43,74 @@ export function ProactiveMessageIntervalControl({
   const [unit, setUnit] = useState<ProactiveMessageIntervalUnit>(() =>
     pickDisplayUnitForSeconds(storedSeconds),
   )
-  const [draftValue, setDraftValue] = useState(() => secondsToUnitValue(storedSeconds, unit))
+  const [draftInput, setDraftInput] = useState(() =>
+    formatUnitDraft(secondsToUnitValue(storedSeconds, unit)),
+  )
 
   useEffect(() => {
     setDraftSeconds(storedSeconds)
     const nextUnit = pickDisplayUnitForSeconds(storedSeconds)
     setUnit(nextUnit)
-    setDraftValue(secondsToUnitValue(storedSeconds, nextUnit))
+    setDraftInput(formatUnitDraft(secondsToUnitValue(storedSeconds, nextUnit)))
   }, [storedSeconds])
-
-  const { min, max, step } = useMemo(() => unitInputMinMax(unit), [unit])
 
   const dirty = draftSeconds !== storedSeconds
   const draftLabel = formatProactiveMessageIntervalLabel(draftSeconds)
   const savedLabel = formatProactiveMessageIntervalLabel(storedSeconds)
 
-  const applyDraftSeconds = useCallback((nextSeconds: number) => {
+  /** 预设等：可按秒数自动挑选展示单位 */
+  const applyDraftSeconds = useCallback((nextSeconds: number, preferUnit?: ProactiveMessageIntervalUnit) => {
     const clamped = resolveProactiveMessageIntervalSeconds({
       proactiveMessageIntervalSeconds: nextSeconds,
     })
     setDraftSeconds(clamped)
-    const nextUnit = pickDisplayUnitForSeconds(clamped)
+    const nextUnit = preferUnit ?? pickDisplayUnitForSeconds(clamped)
     setUnit(nextUnit)
-    setDraftValue(secondsToUnitValue(clamped, nextUnit))
+    setDraftInput(formatUnitDraft(secondsToUnitValue(clamped, nextUnit)))
   }, [])
 
   const onUnitChange = (nextUnit: ProactiveMessageIntervalUnit) => {
+    let seconds = draftSeconds
+    let display = secondsToUnitValue(seconds, nextUnit)
+    // 从「秒」切到分/时若不足 1 个单位，抬到 1，避免立刻被钳回秒并看起来像选不了
+    if (nextUnit !== 'second' && display < 1) {
+      display = 1
+      seconds = unitValueToSeconds(1, nextUnit)
+      setDraftSeconds(
+        resolveProactiveMessageIntervalSeconds({ proactiveMessageIntervalSeconds: seconds }),
+      )
+    }
     setUnit(nextUnit)
-    setDraftValue(secondsToUnitValue(draftSeconds, nextUnit))
+    setDraftInput(formatUnitDraft(display))
   }
 
+  const parseDraftInput = useCallback((): number | null => {
+    const raw = draftInput.trim()
+    if (!raw) return null
+    const n = Number(raw)
+    if (!Number.isFinite(n)) return null
+    return n
+  }, [draftInput])
+
+  /** 失焦结算时保留用户当前选的单位，不要按秒数自动改回「秒」 */
   const syncDraftValueToSeconds = useCallback(() => {
-    applyDraftSeconds(unitValueToSeconds(draftValue, unit))
-  }, [applyDraftSeconds, draftValue, unit])
+    const n = parseDraftInput()
+    if (n == null) {
+      setDraftInput(formatUnitDraft(secondsToUnitValue(draftSeconds, unit)))
+      return
+    }
+    const clamped = resolveProactiveMessageIntervalSeconds({
+      proactiveMessageIntervalSeconds: unitValueToSeconds(n, unit),
+    })
+    setDraftSeconds(clamped)
+    setDraftInput(formatUnitDraft(secondsToUnitValue(clamped, unit)))
+  }, [draftSeconds, parseDraftInput, unit])
 
   const presetActive = PROACTIVE_MESSAGE_PRESETS.find((p) => p.seconds === draftSeconds)?.id
 
   const handleSave = () => {
-    const next = unitValueToSeconds(draftValue, unit)
+    const n = parseDraftInput()
+    const next = n == null ? draftSeconds : unitValueToSeconds(n, unit)
     void onSave(resolveProactiveMessageIntervalSeconds({ proactiveMessageIntervalSeconds: next }))
   }
 
@@ -114,18 +150,18 @@ export function ProactiveMessageIntervalControl({
         })}
       </div>
 
-      <div className="mt-3 flex items-center gap-2">
-        <div className="flex flex-1 items-center gap-2 rounded-[10px] border border-[#e5e5e5] bg-white px-3 py-2">
+      <div className="mt-3 space-y-2">
+        <div className="flex items-center rounded-[10px] border border-[#e5e5e5] bg-white px-3 py-2">
           <input
-            type="number"
-            min={min}
-            max={max}
-            step={step}
-            value={draftValue}
+            type="text"
+            inputMode="decimal"
+            value={draftInput}
             onChange={(e) => {
-              const n = Number(e.target.value)
-              if (!Number.isFinite(n)) return
-              setDraftValue(n)
+              const raw = e.target.value
+              // 允许清空后重输；仅拦非法字符
+              if (raw === '' || /^\d*\.?\d*$/.test(raw)) {
+                setDraftInput(raw)
+              }
             }}
             onBlur={syncDraftValueToSeconds}
             onKeyDown={(e) => {
@@ -134,29 +170,29 @@ export function ProactiveMessageIntervalControl({
                 syncDraftValueToSeconds()
               }
             }}
-            className="min-w-0 flex-1 border-0 bg-transparent text-[18px] text-black outline-none"
+            className="min-w-0 w-full border-0 bg-transparent text-[18px] text-black outline-none"
             style={numStyle}
             aria-label="主动消息间隔数值"
           />
-          <div className="flex shrink-0 gap-1">
-            {PROACTIVE_MESSAGE_INTERVAL_UNITS.map((u) => {
-              const active = unit === u.id
-              return (
-                <button
-                  key={u.id}
-                  type="button"
-                  onClick={() => onUnitChange(u.id)}
-                  className={`rounded-full px-2.5 py-1 text-[12px] transition-colors ${
-                    active
-                      ? 'bg-black text-white'
-                      : 'bg-[#f2f2f2] text-[#666666]'
-                  }`}
-                >
-                  {u.label}
-                </button>
-              )
-            })}
-          </div>
+        </div>
+        <div className="flex flex-wrap gap-1.5">
+          {PROACTIVE_MESSAGE_INTERVAL_UNITS.map((u) => {
+            const active = unit === u.id
+            return (
+              <button
+                key={u.id}
+                type="button"
+                // 避免点击单位时输入框先 blur 把单位钳回「秒」
+                onMouseDown={(e) => e.preventDefault()}
+                onClick={() => onUnitChange(u.id)}
+                className={`rounded-full px-3 py-1.5 text-[12px] transition-colors ${
+                  active ? 'bg-black text-white' : 'bg-[#f2f2f2] text-[#666666]'
+                }`}
+              >
+                {u.label}
+              </button>
+            )
+          })}
         </div>
       </div>
 

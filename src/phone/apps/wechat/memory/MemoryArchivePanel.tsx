@@ -42,7 +42,6 @@ import { MemoryList } from './MemoryList'
 import { MemoryEditorSheet } from './MemoryEditorSheet'
 import {
   MemoryStoryTimelineDetailSection,
-  MemoryTodoLedgerSection,
 } from './MemoryStoryTimelineDetailSection'
 import { MemoryUnifiedCharacterHero } from './MemoryUnifiedCharacterHero'
 import {
@@ -61,26 +60,15 @@ import {
   type StoryTimelineEditorTarget,
 } from './StoryTimelineEditorSheet'
 import {
-  appendStoryTimelineOpenTodoToState,
-  createEmptyStoryTimelineState,
   prepareStoryTimelineArchiveDisplayText,
-  removeStoryTimelineTodoFromState,
-  resolveStoryTimelineOpenTodoInState,
   stripStoryTimelineRowObligationSections,
   type StoryTimelinePlotRow,
-  type StoryTimelineState,
 } from './storyTimelineTypes'
 import { runManualStoryTimelineSummary } from './storyTimelinePerRoundSync'
-import {
-  clearStoryTimelineTodoLedger,
-  rebuildStoryTimelineTodoLedgerFromRecentContext,
-} from './storyTimelineTodoLedgerRebuild'
 import { buildUnifiedSummaryRoster, type MemoryUnifiedRosterItem } from './memoryUnifiedSummaryArchive'
 import type { ApiConfig } from '../../api/types'
 import {
   ARCHIVE_BG,
-  MEMORY_ARCHIVE_SERIF_CLASS,
-  archiveSerifTextStyle,
 } from './memoryArchiveTheme'
 import { useDebouncedValue } from './useDebouncedValue'
 import { resolveWorldBookUserInsertContext } from '../charUserPlaceholders'
@@ -173,7 +161,6 @@ export function MemoryArchivePanel({
   const [charRealNameById, setCharRealNameById] = useState<Map<string, string>>(() => new Map())
   const [offlineRoster, setOfflineRoster] = useState<StoryTimelineArchiveRosterItem[]>([])
   const [detailTimelineRows, setDetailTimelineRows] = useState<StoryTimelinePlotRow[]>([])
-  const [detailTimelineState, setDetailTimelineState] = useState<StoryTimelineState | null>(null)
   const [timelineRowDisplayById, setTimelineRowDisplayById] = useState<Map<string, string>>(
     () => new Map(),
   )
@@ -186,8 +173,6 @@ export function MemoryArchivePanel({
   const [timelineAlignFeedback, setTimelineAlignFeedback] = useState('')
   const [detailSourceTab, setDetailSourceTab] = useState<MemoryCharacterSourceTab>('online')
   const [detailTimelineHasState, setDetailTimelineHasState] = useState(false)
-  const [todoRebuildBusy, setTodoRebuildBusy] = useState(false)
-  const [todoRebuildFeedback, setTodoRebuildFeedback] = useState('')
 
   const reload = useCallback(async (opts?: { silent?: boolean }) => {
     if (!opts?.silent) setLoading(true)
@@ -552,7 +537,6 @@ export function MemoryArchivePanel({
   const loadTimelineDetail = useCallback(async (charId: string) => {
     const { rows, state } = await loadStoryTimelineArchiveForCharacter(charId)
     setDetailTimelineRows(rows)
-    setDetailTimelineState(state)
     setDetailTimelineHasState(
       !!(
         state?.manualAnchorBlock?.trim() ||
@@ -562,7 +546,6 @@ export function MemoryArchivePanel({
         state?.costumes.length ||
         state?.items.length ||
         state?.foreshadows.length ||
-        (state?.todos?.length ?? 0) ||
         state?.recentEvents.length
       ),
     )
@@ -584,7 +567,6 @@ export function MemoryArchivePanel({
     const latest = await gatherLatestRoundBodyForEpilogue(charId)
     setTimelineAlignDraft(latest)
     setTimelineAlignFeedback('')
-    setTodoRebuildFeedback('')
   }, [])
 
   useEffect(() => {
@@ -615,95 +597,6 @@ export function MemoryArchivePanel({
     },
     [refreshAfterTimelineMutation],
   )
-
-  const persistTimelineStatePatch = useCallback(
-    async (next: StoryTimelineState) => {
-      await personaDb.putStoryTimelineState(next)
-      setDetailTimelineState(next)
-      setDetailTimelineHasState(true)
-      await reload({ silent: true })
-    },
-    [reload],
-  )
-
-  const handleResolveTodo = useCallback(
-    async (todoText: string, outcome: 'done' | 'missed') => {
-      if (!selectedCharId) return
-      const base =
-        detailTimelineState ?? createEmptyStoryTimelineState(selectedCharId)
-      const next = resolveStoryTimelineOpenTodoInState(base, todoText, outcome)
-      await persistTimelineStatePatch({ ...next, characterId: selectedCharId })
-    },
-    [detailTimelineState, persistTimelineStatePatch, selectedCharId],
-  )
-
-  const handleRemoveTodo = useCallback(
-    async (todoText: string) => {
-      if (!selectedCharId || !detailTimelineState) return
-      const next = removeStoryTimelineTodoFromState(detailTimelineState, todoText)
-      await persistTimelineStatePatch({ ...next, characterId: selectedCharId })
-    },
-    [detailTimelineState, persistTimelineStatePatch, selectedCharId],
-  )
-
-  const handleAppendTodo = useCallback(
-    async (todoText: string) => {
-      if (!selectedCharId) return
-      const base =
-        detailTimelineState ?? createEmptyStoryTimelineState(selectedCharId)
-      const next = appendStoryTimelineOpenTodoToState(base, todoText)
-      if (!next) return
-      await persistTimelineStatePatch({ ...next, characterId: selectedCharId })
-    },
-    [detailTimelineState, persistTimelineStatePatch, selectedCharId],
-  )
-
-  const handleClearTodoLedger = useCallback(async () => {
-    if (!selectedCharId || todoRebuildBusy) return
-    setTodoRebuildBusy(true)
-    setTodoRebuildFeedback('')
-    try {
-      const n = await clearStoryTimelineTodoLedger(selectedCharId)
-      setTodoRebuildFeedback(n > 0 ? `已清空 ${n} 条待办（摘要正文未改动）。` : '台账已是空的。')
-      await loadTimelineDetail(selectedCharId)
-      await reload({ silent: true })
-    } finally {
-      setTodoRebuildBusy(false)
-    }
-  }, [loadTimelineDetail, reload, selectedCharId, todoRebuildBusy])
-
-  const handleRebuildTodoLedger = useCallback(async () => {
-    if (!selectedCharId || !selectedUnifiedCharacter || todoRebuildBusy) return
-    setTodoRebuildBusy(true)
-    setTodoRebuildFeedback('')
-    try {
-      const outcome = await rebuildStoryTimelineTodoLedgerFromRecentContext({
-        apiConfig: apiConfig ?? null,
-        characterId: selectedCharId,
-        displayName: selectedUnifiedCharacter.displayName,
-      })
-      if (outcome.status === 'applied') {
-        setTodoRebuildFeedback(
-          outcome.openCount > 0
-            ? `已按最近 ${outcome.replyCount} 轮模型回复重建，写入 ${outcome.openCount} 条未完待办。`
-            : `已按最近 ${outcome.replyCount} 轮模型回复重建；未识别到仍有效的未完待办。`,
-        )
-        await loadTimelineDetail(selectedCharId)
-        await reload({ silent: true })
-      } else {
-        setTodoRebuildFeedback(outcome.reason || '重建失败')
-      }
-    } finally {
-      setTodoRebuildBusy(false)
-    }
-  }, [
-    apiConfig,
-    loadTimelineDetail,
-    reload,
-    selectedCharId,
-    selectedUnifiedCharacter,
-    todoRebuildBusy,
-  ])
 
   const handleTimelineRunAlign = useCallback(async () => {
     if (!selectedCharId || !selectedUnifiedCharacter || timelineAlignBusy) return
@@ -847,7 +740,7 @@ export function MemoryArchivePanel({
   ])
 
   const clearAllDefaultScope = useMemo((): MemoryArchiveClearScope => {
-    if (detailSourceTab === 'offline' || detailSourceTab === 'todos') return 'offline'
+    if (detailSourceTab === 'offline') return 'offline'
     if (detailSourceTab === 'online') return 'online'
     return 'both'
   }, [detailSourceTab])
@@ -938,10 +831,6 @@ export function MemoryArchivePanel({
     }
     if (target === 'detail-offline' || target === 'detail-offline-manual') {
       setDetailSourceTab('offline')
-      return
-    }
-    if (target === 'detail-todos') {
-      setDetailSourceTab('todos')
     }
   }, [detailCoachOpen, detailCoachStepIndex, archiveView])
 
@@ -996,7 +885,6 @@ export function MemoryArchivePanel({
       setSearch('')
       if (scope === 'offline' || scope === 'both') {
         setDetailTimelineRows([])
-        setDetailTimelineState(null)
         setTimelineRowDisplayById(new Map())
         setDetailTimelineHasState(false)
       }
@@ -1082,7 +970,6 @@ export function MemoryArchivePanel({
                   }}
                   onlineCount={selectedUnifiedCharacter.onlineMemoryCount}
                   offlineCount={selectedUnifiedCharacter.offlineRowCount}
-                  todoCount={(detailTimelineState?.todos ?? []).filter((t) => t.status === 'open').length}
                 />
               </div>
               {detailSourceTab === 'offline' ? (
@@ -1099,24 +986,6 @@ export function MemoryArchivePanel({
                   onRunAlign={() => void handleTimelineRunAlign()}
                   onGatherLatest={() => void handleTimelineGatherLatest()}
                 />
-              ) : detailSourceTab === 'todos' ? (
-                <div
-                  className={`mx-4 mt-4 ${MEMORY_ARCHIVE_SERIF_CLASS}`}
-                  style={archiveSerifTextStyle}
-                >
-                  <MemoryTodoLedgerSection
-                    characterId={selectedCharId}
-                    showSectionHeading={false}
-                    state={detailTimelineState}
-                    actionBusy={todoRebuildBusy}
-                    actionFeedback={todoRebuildFeedback}
-                    onResolveOpen={(text, outcome) => void handleResolveTodo(text, outcome)}
-                    onRemove={(text) => void handleRemoveTodo(text)}
-                    onAppend={(text) => void handleAppendTodo(text)}
-                    onClearLedger={() => void handleClearTodoLedger()}
-                    onRebuildFromRecent={() => void handleRebuildTodoLedger()}
-                  />
-                </div>
               ) : (
                 <MemoryCharacterDetailView
                   character={detailCharacter}
@@ -1205,7 +1074,7 @@ export function MemoryArchivePanel({
         open={detailTutorialOpen && archiveView === 'detail'}
         onClose={() => setDetailTutorialOpen(false)}
         title="角色总结 · 这位角色怎么用"
-        subtitle="线上总结 / 线下摘要 / 待办台账"
+        subtitle="线上总结 / 线下摘要"
         sections={MEMORY_ARCHIVE_DETAIL_TUTORIAL_SECTIONS}
         onStartLiveCoach={() => {
           setDetailTutorialOpen(false)

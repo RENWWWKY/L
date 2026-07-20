@@ -24,7 +24,6 @@ type AccordionId =
   | 'cursor'
   | 'deep'
   | 'timeline'
-  | 'todos'
 
 function pct(score: number): string {
   return `${Math.round(score * 1000) / 10}%`
@@ -90,13 +89,12 @@ function InjectionSummaryBar(props: { summary: NonNullable<MemoryTraceData['inje
     <div className="rounded-2xl border border-neutral-100 bg-gradient-to-b from-neutral-50/90 to-white p-4 shadow-sm">
       <p className="text-[10px] font-medium uppercase tracking-[0.28em] text-neutral-400">INJECTION · 本轮记忆注入</p>
       <p className="mt-1 text-[12px] leading-relaxed text-neutral-600">
-        与 system prompt 注入顺序对齐：长期记忆 → 剧情时间轴 / 待办事项 → 未总结摘录 → 语义召回。
+        与 system prompt 注入顺序对齐：长期记忆 → 剧情时间轴 → 未总结摘录 → 语义召回。
       </p>
       <div className="mt-3 flex flex-wrap gap-2">
         {chip(`关键词 ${s.keywordHitCount}`, s.keywordHitCount > 0, s.keywordHitCount > 0 ? 'gold' : 'muted')}
         {chip(`长期向量 ${s.longTermVectorCount}`, s.longTermVectorCount > 0, s.longTermVectorCount > 0 ? 'gold' : 'muted')}
         {chip(`时间轴`, s.storyTimelineInjected, s.storyTimelineInjected ? 'green' : 'muted')}
-        {chip('待办事项', s.todoLedgerInjected === true, s.todoLedgerInjected === true ? 'green' : 'muted')}
         {chip(`未总结私聊`, s.unsummarizedPrivateInjected, s.unsummarizedPrivateInjected ? 'green' : 'muted')}
         {chip(`未总结群聊`, s.unsummarizedGroupInjected, s.unsummarizedGroupInjected ? 'green' : 'muted')}
         {chip(`未总结线下`, s.unsummarizedOfflineInjected, s.unsummarizedOfflineInjected ? 'green' : 'muted')}
@@ -239,8 +237,6 @@ export function MemoryTraceModal({ open, onClose, data }: MemoryTraceModalProps)
 
   const storyTimelineInjected =
     matrix?.storyTimeline?.injected === true && matrix.storyTimeline.promptExcerpt.trim().length > 0
-  const todoLedgerInjected =
-    matrix?.todoLedger?.injected === true && matrix.todoLedger.promptExcerpt.trim().length > 0
 
   const injectedOfflinePlotRows = useMemo(
     () => (matrix?.recentContext.unsummarizedOfflinePlots ?? []).filter((row) => row.snippet.trim()),
@@ -493,37 +489,6 @@ export function MemoryTraceModal({ open, onClose, data }: MemoryTraceModalProps)
                   </AccordionRow>
 
                   <AccordionRow
-                    titleEn="TODO LEDGER"
-                    titleZh="待办事项"
-                    expanded={isExpanded('todos')}
-                    onToggle={() => toggleAccordion('todos')}
-                    badge={
-                      todoLedgerInjected ? (
-                        <span className="rounded-full bg-emerald-50 px-2 py-0.5 text-[10px] font-semibold text-emerald-800">
-                          已注入 · 未完 {matrix?.todoLedger?.openCount ?? 0}
-                        </span>
-                      ) : (
-                        <span className="rounded-full bg-neutral-100 px-2 py-0.5 text-[10px] font-semibold text-neutral-500">
-                          暂无
-                        </span>
-                      )
-                    }
-                  >
-                    <div className="px-1">
-                      <p className="text-[12px] leading-relaxed text-neutral-600">
-                        与 system prompt【当前状态】中的【待办】/【已完成事项】同源；线上回复后模型可判断完成、删除或新增。承接剧情时勿把已完成事项再当成未完义务。
-                      </p>
-                      {todoLedgerInjected ? (
-                        <pre className="mt-3 max-h-[min(44vh,440px)] overflow-y-auto whitespace-pre-wrap break-words rounded-xl border border-amber-100/80 bg-amber-50/30 p-3 font-sans text-[12px] leading-relaxed text-neutral-800 [scrollbar-width:thin]">
-                          {matrix!.todoLedger!.promptExcerpt}
-                        </pre>
-                      ) : (
-                        <p className="mt-3 text-[12px] text-neutral-400">本轮未注入待办台账（台账为空或尚未建立）。</p>
-                      )}
-                    </div>
-                  </AccordionRow>
-
-                  <AccordionRow
                     titleEn="ACTIVE CONTEXT"
                     titleZh="游标上下文 · 未总结摘录"
                     expanded={isExpanded('cursor')}
@@ -541,7 +506,7 @@ export function MemoryTraceModal({ open, onClose, data }: MemoryTraceModalProps)
                       <div>
                         <p className="text-[11px] font-medium uppercase tracking-[0.2em] text-neutral-400">本轮注入 · 线下剧情（最近 {MEMORY_UNSUMMARIZED_OFFLINE_INJECT_AI_ROUNDS} 轮 AI）</p>
                         <p className="mt-1 text-[11px] leading-relaxed text-neutral-500">
-                          与 prompt 一致：游标后最近 {MEMORY_UNSUMMARIZED_OFFLINE_INJECT_AI_ROUNDS} 轮 AI 剧情及其间玩家输入以原文注入（优先于上方近端摘要）；此处逐条展示 AI 回复。更早未总结段由剧情时间轴近端摘要 / 长期记忆 / 语义召回承接。
+                          与 prompt 一致：固定注入约会页最近 {MEMORY_UNSUMMARIZED_OFFLINE_INJECT_AI_ROUNDS} 轮 AI 剧情原文（不依赖「尚未总结」游标；线下每轮通常已写摘要）。此处逐条展示 AI 回复。更早段由剧情时间轴近端摘要 / 长期记忆 / 语义召回承接。
                         </p>
                         <ul className="mt-2 space-y-3">
                           {injectedOfflinePlotRows.map((row, i) => (

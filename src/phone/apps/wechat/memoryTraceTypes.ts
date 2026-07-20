@@ -107,8 +107,8 @@ export type MemoryTraceInjectionSummary = {
   contextVectorRecallCount: number
   /** 是否注入剧情时间轴块 */
   storyTimelineInjected: boolean
-  /** 是否注入待办台账块（【待办】/【已完成事项】） */
-  todoLedgerInjected: boolean
+  /** @deprecated 待办台账已下线；旧持久化记录可能仍有此字段 */
+  todoLedgerInjected?: boolean
   /** 未总结私聊是否注入 */
   unsummarizedPrivateInjected: boolean
   /** 未总结群聊是否注入 */
@@ -143,7 +143,7 @@ export type MemoryTraceStoryTimeline = {
   rows?: MemoryTraceStoryTimelineInjectRow[]
 }
 
-/** 待办台账注入块（与【当前状态】中的【待办】同源） */
+/** @deprecated 待办台账已下线；旧持久化记录可能仍有此块 */
 export type MemoryTraceTodoLedger = {
   injected: boolean
   promptExcerpt: string
@@ -192,7 +192,7 @@ export type MemoryTraceData = {
     }
     /** 可选：剧情时间轴（Phase 1） */
     storyTimeline?: MemoryTraceStoryTimeline | null
-    /** 可选：待办台账注入（与 prompt 【待办】同源） */
+    /** @deprecated 待办台账已下线；旧持久化记录可能仍有此块 */
     todoLedger?: MemoryTraceTodoLedger | null
     recentContext: {
       activeSessionMessages: number
@@ -493,7 +493,7 @@ export function parseMemoryTraceData(raw: unknown): MemoryTraceData | null {
       longTermVectorCount: asNum(s.longTermVectorCount, 0),
       contextVectorRecallCount: asNum(s.contextVectorRecallCount, 0),
       storyTimelineInjected: Boolean(s.storyTimelineInjected),
-      todoLedgerInjected: Boolean(s.todoLedgerInjected),
+      ...(s.todoLedgerInjected != null ? { todoLedgerInjected: Boolean(s.todoLedgerInjected) } : {}),
       unsummarizedPrivateInjected: Boolean(s.unsummarizedPrivateInjected),
       unsummarizedGroupInjected: Boolean(s.unsummarizedGroupInjected),
       unsummarizedOfflineInjected: Boolean(s.unsummarizedOfflineInjected),

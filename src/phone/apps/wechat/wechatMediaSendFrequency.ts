@@ -6,8 +6,8 @@ export const STICKER_UI_DEFAULT_ROUND_TRIGGER_PERCENT = 40
 export const CLASSIC_EMOJI_DEFAULT_ROUND_TRIGGER_PERCENT = 0
 /** @deprecated 使用 {@link CLASSIC_EMOJI_DEFAULT_ROUND_TRIGGER_PERCENT} */
 export const CLASSIC_EMOJI_UI_DEFAULT_ROUND_TRIGGER_PERCENT = CLASSIC_EMOJI_DEFAULT_ROUND_TRIGGER_PERCENT
-/** @deprecated 已取消「是否支持发图」门槛；保留常量以免旧调用报错 */
-export const IMAGE_DEFAULT_ROUND_TRIGGER_PERCENT = 100
+/** 未定制时不支持发图（须在聊天信息手动开启） */
+export const IMAGE_DEFAULT_ROUND_TRIGGER_PERCENT = 0
 /** 每次发图张数下限 / 上限 */
 export const IMAGE_ROUND_COUNT_MIN_LIMIT = 1
 export const IMAGE_ROUND_COUNT_MAX_LIMIT = 9
@@ -425,25 +425,25 @@ export function rollRoundMediaTriggerAllowed(storedPercent: number | undefined):
   return Math.random() * 100 < storedPercent
 }
 
-/** @deprecated 已取消发图门槛；始终允许（张数上限仍由 shouldSuppressCharacterImageLine 约束） */
-export function rollImageRoundTriggerAllowed(_storedPercent?: number | undefined): boolean {
-  return true
+/** @deprecated 发图已改为开关；保留调用兼容（等同 {@link isCharacterImageSendSupported}） */
+export function rollImageRoundTriggerAllowed(storedPercent?: number | undefined): boolean {
+  return isCharacterImageSendSupported(storedPercent)
 }
 
-/** @deprecated 已取消「是否支持发图」；始终视为支持 */
-export function isCharacterImageSendSupported(_storedPercent?: number | undefined): boolean {
-  return true
+/** 聊天信息「支持发图」：未存或 `0` 为关闭；>0 为开启 */
+export function isCharacterImageSendSupported(storedPercent?: number | undefined): boolean {
+  return resolveEffectiveImageRoundTriggerPercent(storedPercent) > 0
 }
 
 /**
  * 模型已输出 `[图片]` 行时是否保留为配图占位（用户确认后再生成）。
- * 已取消会话级拦截：只要启用了角色 AI 配图，一律放行。
+ * 「支持发图」关闭时一律不放行（含用户口头要图）。
  */
 export function shouldHonorModelCharacterImageLinesDespiteProbability(
-  _imageRoundTriggerPercent?: number | undefined,
+  imageRoundTriggerPercent?: number | undefined,
   _userExplicitRequest?: boolean,
 ): boolean {
-  return true
+  return isCharacterImageSendSupported(imageRoundTriggerPercent)
 }
 
 const STICKER_CATALOG_SUPPRESSED_BY_USER = `---------------------
@@ -467,7 +467,7 @@ export function buildMediaSendFrequencyPromptBlock(params: {
   /** 本轮已抽中的目标张数（仅当本轮确实要发图时传入） */
   imageRoundCountTarget?: number
   userExplicitCharacterImageRequest?: boolean
-  /** 私聊：始终允许按语境发图；群聊不传 */
+  /** 私聊：本轮允许按语境发图；群聊不传；关闭「支持发图」时勿传 */
   imageRoundAllowed?: boolean
 }): string {
   const sticker = params.stickerRoundTriggerPercent
@@ -548,11 +548,11 @@ export function buildMediaSendFrequencyPromptBlock(params: {
   if (imageCountRange) {
     if (params.userExplicitCharacterImageRequest) {
       lines.push(
-        '- **AI 配图（\`[图片]\` 行）**：用户本轮**已明确要求**发图/照片/自拍——本轮**须**至少输出 1 条 \`[图片]通俗中文画面描述\`（禁止英文 SD tag；确实不宜发图时只用文字婉拒，**禁止**口头假装已发）。客户端先显示中文占位，点生成时另推英文提示词。',
+        '- **AI 配图（\`[图片]\` 行）**：用户本轮**已明确要求**发图/照片/自拍——本轮**须**至少输出 1 条 \`[图片]中文描述|||English tags\`（仍须贴合语境；确实不宜发图时只用文字婉拒，**禁止**口头假装已发）。客户端气泡只显示左侧中文；点确认后**直接用右侧英文 tag 生图**（不再另调模型推提示词）。',
       )
     } else {
       lines.push(
-        '- **AI 配图（\`[图片]\` 行）**：可按场景语境**适量**发图——有分享/展示/晒物/随手拍等冲动时再发；**禁止**每轮都发；纯文字聊天、问答、安慰、斗嘴、解释、承诺等无合适画面时只发文字。\`[图片]\` 只写通俗中文画面描述（禁止英文 tag）；客户端先显示占位，点生成时另推英文提示词。',
+        '- **AI 配图（\`[图片]\` 行）**：可按场景语境**适量**发图——有分享/展示/晒物/随手拍等冲动时再发；**禁止**每轮都发；纯文字聊天、问答、安慰、斗嘴、解释、承诺等无合适画面时只发文字。格式 \`[图片]中文|||英文\`；气泡只显示中文占位，点确认后直接用右侧生图。',
       )
     }
     lines.push(buildImageRoundCountPromptLine(imageCountRange, params.imageRoundCountTarget))
@@ -647,7 +647,7 @@ export function shouldSuppressCharacterVoiceLine(
 
 export function shouldSuppressCharacterImageLine(
   roomType: 'private' | 'group',
-  _imageRoundTriggerPercent: number | undefined,
+  imageRoundTriggerPercent: number | undefined,
   _roundAllowed: boolean,
   _userExplicitRequest: boolean,
   emittedCount: number,
@@ -656,6 +656,7 @@ export function shouldSuppressCharacterImageLine(
   imageCountTarget?: number,
 ): boolean {
   if (roomType !== 'private') return true
+  if (!isCharacterImageSendSupported(imageRoundTriggerPercent)) return true
   const range = parseStoredImageRoundCountRange(imageCountMinRaw, imageCountMaxRaw)
   const cap =
     typeof imageCountTarget === 'number' && imageCountTarget > 0

@@ -305,7 +305,7 @@ export function StoryTimelineEditorSheet({
                   loadingDisplay
                     ? '正在展开占位符…'
                     : isState
-                      ? '地点、服装、物品、动机伏笔、待办等'
+                      ? '地点、服装、物品、动机伏笔等'
                       : '本轮发生了什么'
                 }
                 className={ARCHIVE_SOFT_TEXTAREA}
@@ -341,4 +341,4 @@ export function StoryTimelineEditorSheet({
     document.body,
   )
 }
-
+

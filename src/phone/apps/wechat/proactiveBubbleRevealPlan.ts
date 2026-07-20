@@ -6,7 +6,7 @@ import {
   formatStickerTranscriptLine,
   wasCharacterStickerRefUsedRecently,
 } from './stickers/stickerAntiRepeat'
-import { parseCharacterImageGenLine, looksLikeEnglishImageGenTags } from './wechatCharacterImageGen'
+import { parseCharacterImageGenLine } from './wechatCharacterImageGen'
 import { stickerUrlToImagePayload } from './wechatStickerImagePayload'
 import {
   isCharacterMusicSyncDirectiveArtifactLine,
@@ -210,8 +210,6 @@ async function planProactiveBubbleLineAsync(
 
   const charImageGen = parseCharacterImageGenLine(trimmed)
   if (charImageGen) {
-    const desc = charImageGen.description
-    const legacyEnglish = looksLikeEnglishImageGenTags(desc)
     return {
       id: meta.id,
       content: '',
@@ -219,7 +217,8 @@ async function planProactiveBubbleLineAsync(
       timestamp: meta.timestamp,
       imageGenPending: false,
       imageGenAwaitingConfirm: true,
-      ...(legacyEnglish ? { imageGenPrompt: desc } : { imageDescription: desc }),
+      imageDescription: charImageGen.description,
+      imageGenPrompt: charImageGen.prompt,
     }
   }
 
