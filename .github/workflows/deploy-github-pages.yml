@@ -35,6 +35,8 @@ jobs:
         env:
           CI: true
           COLUMNS: '9999'
+          # 自定义域名 www.lumiphone.cn 使用根路径（勿再写 /Lumi-Phone/）
+          VITE_BASE: /
           VITE_WEB_PUSH_API_BASE: https://lumi-push.lyx815934990.workers.dev
           VITE_USER_SYSTEM_API_BASE: https://user-system-api.lyx815934990.workers.dev
           VITE_DISCORD_CLIENT_ID: ${{ secrets.VITE_DISCORD_CLIENT_ID }}
