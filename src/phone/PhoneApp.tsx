@@ -40,7 +40,6 @@ import { LoreArchiveApp } from './apps/loreArchive/LoreArchiveApp'
 import { RecycleBinApp } from './apps/recycleBin/RecycleBinApp'
 import { BackgroundNotifyApp } from './apps/backgroundNotify/BackgroundNotifyApp'
 import { EvolutionApp } from './apps/evolution/EvolutionApp'
-import { ThemeStudioApp } from './apps/themeStudio/ThemeStudioApp'
 import { EvolutionUpdatePushModal } from './apps/evolution/EvolutionUpdatePushModal'
 import { getLatestEvolutionRecord } from './apps/evolution/evolutionLogData'
 import { shouldOfferEvolutionPush } from './apps/evolution/evolutionPushStorage'
@@ -545,8 +544,6 @@ export function PhoneApp() {
                   <SandboxApp onBack={goHome} />
                 ) : route.id === 'evolution' ? (
                   <EvolutionApp onBack={goHome} />
-                ) : route.id === 'themeStudio' ? (
-                  <ThemeStudioApp onBack={goHome} />
                 ) : route.id === 'takeout' ? (
                   <LumiTasteApp onBack={goHome} />
                 ) : (
