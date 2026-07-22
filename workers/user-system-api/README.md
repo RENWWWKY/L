@@ -2,6 +2,8 @@
 
 本目录提供 **Discord 授权登录 / 注册填 ID** 的后端参考实现，需合并到你已部署的 `user-system-api` Worker 中。
 
+> **正式实现位置**：`leancloud-user-system/workers/user-system/`（含社区 Lumi 身份组校验）。
+
 前端（本仓库）已对接以下接口：
 
 | 方法 | 路径 | 说明 |
@@ -10,6 +12,20 @@
 | POST | `/api/auth/discord/identify` | 用 OAuth code 换取 Discord ID（注册页自动填入） |
 
 账密登录 `/api/auth/login` 保持不变，两种方式并存。
+
+登录 / `GET /api/auth/status` 会附带社区身份组字段：
+
+- `communityVerified`：是否持有官方 Discord「Lumi」身份组
+- `communityVerifyReason` / `communityVerifyMessage`：未通过时的原因与文案
+
+Worker 需配置（与验证分发 Bot 共用即可）：
+
+```bash
+wrangler secret put DISCORD_BOT_TOKEN
+# wrangler.toml [vars]：
+# DISCORD_GUILD_ID
+# DISCORD_VERIFIED_ROLE_ID
+```
 
 ## 1. Discord Developer Portal
 

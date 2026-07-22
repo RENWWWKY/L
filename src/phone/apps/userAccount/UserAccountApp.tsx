@@ -10,7 +10,7 @@ import {
   loginUser,
   readBannedNotice,
 } from '../../userSystem/userSystemApi'
-import { accountStatusLabel, formatAccountDate } from '../../userSystem/accountStatusLabel'
+import { accountStatusLabel, communityRoleStatusLabel, formatAccountDate } from '../../userSystem/accountStatusLabel'
 import { AccountNum, AccountNumericText, accountNumStyle } from '../../userSystem/AccountNum'
 import {
   readUserAccountTheme,
@@ -271,6 +271,7 @@ export function UserAccountApp({ onBack, initialTab = 'overview', initialAuthTab
     : sessionLoggedIn
       ? accountStatusLabel({ auditStatus: 'pending', banStatus: 'normal' })
       : null
+  const communityStatus = communityRoleStatusLabel(profile)
 
   const inputCls = `h-10 w-full rounded-[10px] border px-3 text-[14px] outline-none focus:border-[#4F46E5] ${t.input}`
   const drawerBorder = theme === 'dark' ? 'border-[#2d3a4d]' : 'border-black/8'
@@ -424,11 +425,21 @@ export function UserAccountApp({ onBack, initialTab = 'overview', initialAuthTab
               <AccountNumericText text={profile?.username || getStoredUsername()} />
             </p>
           </div>
-          {status ? (
-            <span className={`shrink-0 rounded-full px-2.5 py-1 text-[12px] font-medium ${statusBadge[status.tone]}`}>
-              {status.label}
-            </span>
-          ) : null}
+          <div className="flex shrink-0 flex-col items-end gap-1.5">
+            {status ? (
+              <span className={`rounded-full px-2.5 py-1 text-[12px] font-medium ${statusBadge[status.tone]}`}>
+                {status.label}
+              </span>
+            ) : null}
+            {communityStatus ? (
+              <span
+                className={`rounded-full px-2.5 py-1 text-[12px] font-medium ${statusBadge[communityStatus.tone]}`}
+                title={profile?.communityVerifyMessage || undefined}
+              >
+                身份组 · {communityStatus.label}
+              </span>
+            ) : null}
+          </div>
         </div>
 
         {profile && profile.auditStatus === 'pending' ? (
@@ -439,6 +450,9 @@ export function UserAccountApp({ onBack, initialTab = 'overview', initialAuthTab
             管理员要求更正 QQ / Discord 信息，请在 48 小时内完成，逾期将自动封禁。请返回 Lumi 主页完成更正后再继续使用。
             {profile.auditRejectReason ? ` 说明：${profile.auditRejectReason}` : ''}
           </p>
+        ) : null}
+        {profile && profile.communityVerified === false && profile.communityVerifyMessage ? (
+          <p className={`mt-3 text-[12px] leading-5 ${t.statusRejected}`}>{profile.communityVerifyMessage}</p>
         ) : null}
 
         {profileLoading ? (
@@ -451,6 +465,16 @@ export function UserAccountApp({ onBack, initialTab = 'overview', initialAuthTab
                 <AccountNumericText text={formatAccountDate(profile.createdAt)} className="text-[13px]" />
               </dd>
             </div>
+            {communityStatus ? (
+              <div className="flex justify-between gap-4">
+                <dt className={t.subtitle}>社区身份组</dt>
+                <dd className="text-right">
+                  <span className={`inline-flex rounded-full px-2 py-0.5 text-[12px] font-medium ${statusBadge[communityStatus.tone]}`}>
+                    {communityStatus.label}
+                  </span>
+                </dd>
+              </div>
+            ) : null}
             <div className="flex justify-between gap-4">
               <dt className={t.subtitle}>QQ</dt>
               <dd className="text-right">

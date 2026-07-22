@@ -399,7 +399,9 @@ export async function logoutUser(): Promise<void> {
 }
 
 /** Lumi 机前台活跃心跳（管理端「在线」仅据此判断） */
-export async function sendLumiHeartbeat(): Promise<'ok' | 'session_conflict' | 'banned' | 'ignored'> {
+export async function sendLumiHeartbeat(): Promise<
+  'ok' | 'session_conflict' | 'banned' | 'community_required' | 'ignored'
+> {
   if (isLocalDevBypassAuth()) return 'ignored'
   if (!getAuthToken()) return 'ignored'
   const fp = await getDeviceFingerprint()
@@ -407,6 +409,10 @@ export async function sendLumiHeartbeat(): Promise<'ok' | 'session_conflict' | '
   if (!r.ok && /封禁/.test(r.error)) {
     handleLumiBanned(r.error)
     return 'banned'
+  }
+  if (!r.ok && /身份组|社区身份|Discord 社区|Discord ID/.test(r.error)) {
+    clearAuthVerified()
+    return 'community_required'
   }
   if (!r.ok && /其他浏览器|会话已|已在其他浏览器登录/.test(r.error)) {
     handleLumiSessionDisplaced(r.error)
@@ -431,7 +437,9 @@ export async function watchLumiSession(): Promise<'ok' | 'displaced' | 'ignored'
 }
 
 /** 打开主页且账号待复查时：联网校验会话 / 封禁 */
-export async function runLumiSessionGuard(): Promise<'ok' | 'displaced' | 'banned' | 'ignored'> {
+export async function runLumiSessionGuard(): Promise<
+  'ok' | 'displaced' | 'banned' | 'community_required' | 'ignored'
+> {
   if (isLocalDevBypassAuth()) return 'ignored'
   if (!shouldCheckLumiSessionOnOpen()) return 'ignored'
   const sessionResult = await watchLumiSession()
@@ -439,6 +447,7 @@ export async function runLumiSessionGuard(): Promise<'ok' | 'displaced' | 'banne
   const heartbeatResult = await sendLumiHeartbeat()
   if (heartbeatResult === 'session_conflict') return 'displaced'
   if (heartbeatResult === 'banned') return 'banned'
+  if (heartbeatResult === 'community_required') return 'community_required'
   return heartbeatResult === 'ok' ? 'ok' : 'ignored'
 }
 
@@ -711,6 +720,11 @@ export async function fetchUserProfile(): Promise<UserProfile | null> {
     banStatus: (p.banStatus as UserProfile['banStatus']) ?? 'normal',
     banReason: String(p.banReason ?? ''),
     createdAt: String(p.createdAt ?? ''),
+    communityVerified: typeof p.communityVerified === 'boolean' ? p.communityVerified : undefined,
+    communityVerifyReason:
+      typeof p.communityVerifyReason === 'string' ? p.communityVerifyReason : undefined,
+    communityVerifyMessage:
+      typeof p.communityVerifyMessage === 'string' ? p.communityVerifyMessage : undefined,
   }
 }
 

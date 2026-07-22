@@ -14,4 +14,7 @@ export const LOCAL_DEV_MOCK_STATUS: UserLoginStatus = {
   auditRejectReason: '',
   banStatus: 'normal',
   banReason: '',
+  communityVerified: true,
+  communityVerifyReason: 'ok',
+  communityVerifyMessage: '',
 }

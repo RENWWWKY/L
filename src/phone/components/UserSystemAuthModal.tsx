@@ -9,7 +9,7 @@ import {
   loginUser,
   logoutUser,
 } from '../userSystem/userSystemApi'
-import { isUserActivated, type UserAccountTab, type UserLoginStatus } from '../userSystem/types'
+import { isUserActivated, needsCommunityRole, type UserAccountTab, type UserLoginStatus } from '../userSystem/types'
 import { UserAccountRecoverPanel } from './UserAccountRecoverPanel'
 import { AuthDivider, DiscordLoginButton } from './DiscordLoginButton'
 import { consumeDiscordOAuthError } from '../userSystem/discordOAuthFlow'
@@ -200,12 +200,19 @@ export function UserSystemAuthModal({
                   <div className="rounded-[14px] border border-black/8 bg-[#F9FAFB] p-4 text-center">
                     <p className="text-[14px] font-medium">{storedName || status.username}</p>
                     <p className="mt-2 text-[13px] leading-6 text-[#1C1C1E]/75">
-                      {status.auditStatus === 'correction_required' &&
-                        `请更正账号信息${status.auditRejectReason ? `：${status.auditRejectReason}` : ''}`}
-                      {status.auditStatus === 'rejected' &&
-                        `审核未通过${status.auditRejectReason ? `：${status.auditRejectReason}` : ''}`}
                       {status.banStatus === 'banned' &&
                         `账号已封禁${status.banReason ? `：${status.banReason}` : ''}`}
+                      {status.banStatus !== 'banned' && needsCommunityRole(status) &&
+                        (status.communityVerifyMessage?.trim()
+                          || '尚未获得 Lumi 社区身份组。请先在 Discord 验证区完成入门验证后再进入。')}
+                      {status.banStatus !== 'banned' &&
+                        !needsCommunityRole(status) &&
+                        status.auditStatus === 'correction_required' &&
+                        `请更正账号信息${status.auditRejectReason ? `：${status.auditRejectReason}` : ''}`}
+                      {status.banStatus !== 'banned' &&
+                        !needsCommunityRole(status) &&
+                        status.auditStatus === 'rejected' &&
+                        `审核未通过${status.auditRejectReason ? `：${status.auditRejectReason}` : ''}`}
                     </p>
                   </div>
                   <button
@@ -217,7 +224,11 @@ export function UserSystemAuthModal({
                     }`}
                     onClick={() => onOpenAccount(status.banStatus === 'banned' ? 'unban' : 'overview')}
                   >
-                    {status.banStatus === 'banned' ? '申请解封' : '前往账号中心'}
+                    {status.banStatus === 'banned'
+                      ? '申请解封'
+                      : needsCommunityRole(status)
+                        ? '前往账号中心核对 Discord ID'
+                        : '前往账号中心'}
                   </button>
                   <button
                     type="button"
