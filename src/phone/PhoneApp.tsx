@@ -62,13 +62,7 @@ import {
   storeDiscordOAuthError,
 } from './userSystem/discordOAuthFlow'
 import { consumeDiscordRegisterFromCommunityTroubleshoot } from './userSystem/discordRegisterFlags'
-import {
-  clearDiscordRegisterPending,
-  DiscordRegisterCompleteModal,
-  readDiscordRegisterPending,
-  storeDiscordRegisterPending,
-  type DiscordRegisterPending,
-} from './components/DiscordRegisterCompleteModal'
+import { storeDiscordRegisterPending } from './components/DiscordRegisterCompleteModal'
 
 type Route =
   | { name: 'home' }
