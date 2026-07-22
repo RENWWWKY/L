@@ -13,6 +13,7 @@ import { isUserActivated, needsCommunityRole, type UserAccountTab, type UserLogi
 import { UserAccountRecoverPanel } from './UserAccountRecoverPanel'
 import { AuthDivider, DiscordLoginButton } from './DiscordLoginButton'
 import { consumeDiscordOAuthError } from '../userSystem/discordOAuthFlow'
+import { OFFICIAL_DISCORD_VERIFY_CHANNEL_URL } from '../userSystem/officialCommunity'
 
 type Props = {
   open: boolean
@@ -222,12 +223,22 @@ export function UserSystemAuthModal({
                         ? 'bg-[#1C1C1E] text-white'
                         : 'bg-[#4F46E5] text-white'
                     }`}
-                    onClick={() => onOpenAccount(status.banStatus === 'banned' ? 'unban' : 'overview')}
+                    onClick={() => {
+                      if (status.banStatus === 'banned') {
+                        onOpenAccount('unban')
+                        return
+                      }
+                      if (needsCommunityRole(status)) {
+                        window.open(OFFICIAL_DISCORD_VERIFY_CHANNEL_URL, '_blank', 'noopener,noreferrer')
+                        return
+                      }
+                      onOpenAccount('overview')
+                    }}
                   >
                     {status.banStatus === 'banned'
                       ? '申请解封'
                       : needsCommunityRole(status)
-                        ? '前往账号中心核对 Discord ID'
+                        ? '前往 Discord 验证区'
                         : '前往账号中心'}
                   </button>
                   <button

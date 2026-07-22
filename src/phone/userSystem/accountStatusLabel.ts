@@ -20,11 +20,11 @@ export function communityRoleStatusLabel(
 ): { label: string; tone: 'normal' | 'pending' | 'banned' | 'rejected' } | null {
   if (!status || status.communityVerified === undefined) return null
   if (status.communityVerified) {
-    if (status.communityVerifyReason === 'skipped_admin') {
-      return { label: '管理员免检', tone: 'normal' }
-    }
     if (status.communityVerifyReason === 'not_configured') {
       return { label: '未启用检测', tone: 'pending' }
+    }
+    if (status.communityVerifyReason === 'skipped_admin') {
+      return { label: '管理员（未绑 Discord）', tone: 'pending' }
     }
     return { label: '已获得', tone: 'normal' }
   }
