@@ -1,7 +1,10 @@
 import { AnimatePresence, motion } from 'framer-motion'
 import { useCallback, useState } from 'react'
 import { getDeviceFingerprint, getPublicIp } from '../userSystem/deviceFingerprint'
-import { registerWithDiscord } from '../userSystem/userSystemApi'
+import {
+  registerWithDiscord,
+  type DiscordRegisterConflict,
+} from '../userSystem/userSystemApi'
 import { AccountNumericText, accountNumStyle } from '../userSystem/AccountNum'
 
 const accountInputNumStyle = {
@@ -16,6 +19,8 @@ export type DiscordRegisterPending = {
   discordDisplayName?: string
   discordUsername: string
   fromUnregisteredLogin?: boolean
+  /** 身份组异常引导的重新授权注册 */
+  fromCommunityTroubleshoot?: boolean
 }
 
 type Props = {
@@ -47,40 +52,61 @@ export function DiscordRegisterCompleteModal({
   const [qq, setQq] = useState('')
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState('')
+  const [replacePrompt, setReplacePrompt] = useState<{
+    conflicts: DiscordRegisterConflict[]
+    message: string
+  } | null>(null)
 
-  const handleSubmit = useCallback(async () => {
-    if (!pending) return
-    setError('')
-    if (!username.trim() || !password) {
-      setError('请填写账号与密码')
-      return
-    }
-    if (password !== password2) {
-      setError('两次密码不一致')
-      return
-    }
-    setSubmitting(true)
-    try {
-      const fp = await getDeviceFingerprint()
-      const ip = await getPublicIp()
-      const r = await registerWithDiscord({
-        registerToken: pending.registerToken,
-        username: username.trim(),
-        password,
-        qq: qq.trim(),
-        publicIp: ip,
-        deviceId: fp.deviceId,
-        deviceType: fp.deviceType,
-      })
-      if (!r.ok) {
-        setError(r.error)
+  const submitRegister = useCallback(
+    async (confirmReplace: boolean) => {
+      if (!pending) return
+      setError('')
+      if (!username.trim() || !password) {
+        setError('请填写账号与密码')
         return
       }
-      onSuccess({ username: username.trim(), password })
-    } finally {
-      setSubmitting(false)
-    }
-  }, [pending, username, password, password2, qq, onSuccess])
+      if (password !== password2) {
+        setError('两次密码不一致')
+        return
+      }
+      setSubmitting(true)
+      try {
+        const fp = await getDeviceFingerprint()
+        const ip = await getPublicIp()
+        const r = await registerWithDiscord({
+          registerToken: pending.registerToken,
+          username: username.trim(),
+          password,
+          qq: qq.trim(),
+          publicIp: ip,
+          deviceId: fp.deviceId,
+          deviceType: fp.deviceType,
+          confirmReplace,
+        })
+        if (!r.ok) {
+          setError(r.error)
+          return
+        }
+        if ('needsReplaceConfirm' in r && r.needsReplaceConfirm) {
+          setReplacePrompt({ conflicts: r.conflicts, message: r.message })
+          return
+        }
+        setReplacePrompt(null)
+        onSuccess({ username: username.trim(), password })
+      } finally {
+        setSubmitting(false)
+      }
+    },
+    [pending, username, password, password2, qq, onSuccess],
+  )
+
+  const handleSubmit = useCallback(() => {
+    void submitRegister(false)
+  }, [submitRegister])
+
+  const handleConfirmReplace = useCallback(() => {
+    void submitRegister(true)
+  }, [submitRegister])
 
   const inputCls = `h-10 w-full rounded-[10px] border px-3 text-[14px] outline-none focus:border-[#4F46E5] ${t.input}`
 
@@ -95,7 +121,7 @@ export function DiscordRegisterCompleteModal({
         >
           <div className="absolute inset-0 bg-black/45 backdrop-blur-[2px]" onClick={onClose} />
           <motion.div
-            className={`relative w-full max-w-md rounded-[18px] border p-5 shadow-xl ${t.card}`}
+            className={`relative max-h-[min(92vh,720px)] w-full max-w-md overflow-y-auto rounded-[18px] border p-5 shadow-xl ${t.card}`}
             initial={{ y: 12, opacity: 0 }}
             animate={{ y: 0, opacity: 1 }}
             exit={{ y: 8, opacity: 0 }}
@@ -103,106 +129,165 @@ export function DiscordRegisterCompleteModal({
             aria-modal="true"
             aria-label="完善注册信息"
           >
-            <h3 className="text-[17px] font-semibold">
-              {pending.fromUnregisteredLogin ? 'Discord 账号尚未注册' : 'Discord 授权成功'}
-            </h3>
-            {pending.fromUnregisteredLogin ? (
-              <p className={`mt-2 rounded-[10px] border px-3 py-2.5 text-[13px] leading-6 ${t.infoBox ?? t.muted}`}>
-                当前 Discord 账号尚未注册 Lumi，已自动为你打开注册信息填写面板。请设置账号与密码完成注册。
-              </p>
+            {replacePrompt ? (
+              <>
+                <h3 className="text-[17px] font-semibold">检测到重复的旧账号</h3>
+                <p className={`mt-2 rounded-[10px] border px-3 py-2.5 text-[13px] leading-6 ${t.infoBox ?? t.muted}`}>
+                  {replacePrompt.message}
+                </p>
+                <p className={`mt-2 text-[12px] leading-5 ${t.muted}`}>
+                  常见于最初代账密用户：当时尚未接入 Discord 授权，手填信息可能导致身份组识别失败。确认重新注册后，下列旧登录账号将被回收且不可再用；
+                  <strong className="font-semibold text-inherit">本浏览器内的小手机玩法数据不会丢失</strong>
+                  ，可用新账号继续游玩。
+                </p>
+                <ul className="mt-3 space-y-2">
+                  {replacePrompt.conflicts.map((c) => (
+                    <li key={c.objectId} className={`rounded-[12px] border px-3 py-2.5 text-[13px] ${t.input}`}>
+                      <p className="font-medium">
+                        <AccountNumericText text={c.username} className="text-[13px]" />
+                      </p>
+                      <p className={`mt-1 text-[12px] ${t.muted}`}>
+                        QQ：{c.qq || '—'} · Discord：{c.dcId || '—'}
+                      </p>
+                      <p className={`mt-1 text-[12px] ${t.label}`}>匹配原因：{c.matchReasons.join('、')}</p>
+                    </li>
+                  ))}
+                </ul>
+                {error ? (
+                  <div className={`mt-3 rounded-[10px] border px-3 py-2 text-[13px] ${t.errorBox}`}>{error}</div>
+                ) : null}
+                <div className="mt-5 flex flex-col gap-2">
+                  <button
+                    type="button"
+                    className={`h-11 w-full rounded-[12px] text-[14px] font-medium disabled:opacity-50 ${t.primaryBtn}`}
+                    disabled={submitting}
+                    onClick={handleConfirmReplace}
+                  >
+                    {submitting ? '处理中…' : '确认回收旧账号并完成注册'}
+                  </button>
+                  <button
+                    type="button"
+                    className={`h-11 w-full rounded-[12px] border text-[14px] ${t.input}`}
+                    disabled={submitting}
+                    onClick={() => setReplacePrompt(null)}
+                  >
+                    返回修改信息
+                  </button>
+                </div>
+              </>
             ) : (
-              <p className={`mt-2 text-[13px] leading-6 ${t.muted}`}>
-                请设置 Lumi 账号与密码。QQ 号可选填，但将作为找回账密的重要信息，建议填写。
-              </p>
+              <>
+                <h3 className="text-[17px] font-semibold">
+                  {pending.fromCommunityTroubleshoot
+                    ? 'Discord 重新授权注册'
+                    : pending.fromUnregisteredLogin
+                      ? 'Discord 账号尚未注册'
+                      : 'Discord 授权成功'}
+                </h3>
+                {pending.fromCommunityTroubleshoot ? (
+                  <p className={`mt-2 rounded-[10px] border px-3 py-2.5 text-[13px] leading-6 ${t.infoBox ?? t.muted}`}>
+                    将用当前 Discord 账号创建新的 Lumi 登录账号（自动绑定正确数字 ID）。若与旧账密号冲突，提交后会提示你确认是否回收旧号。
+                    本浏览器玩法数据通常保留。
+                  </p>
+                ) : pending.fromUnregisteredLogin ? (
+                  <p className={`mt-2 rounded-[10px] border px-3 py-2.5 text-[13px] leading-6 ${t.infoBox ?? t.muted}`}>
+                    当前 Discord 账号尚未注册 Lumi，已自动为你打开注册信息填写面板。请设置账号与密码完成注册。
+                  </p>
+                ) : (
+                  <p className={`mt-2 text-[13px] leading-6 ${t.muted}`}>
+                    请设置 Lumi 账号与密码。QQ 号可选填，但将作为找回账密的重要信息，建议填写。
+                  </p>
+                )}
+
+                <div className={`mt-3 rounded-[12px] border px-3 py-2.5 text-[13px] ${t.input}`}>
+                  <p className={`text-[12px] ${t.label}`}>Discord 用户名</p>
+                  <p className="mt-0.5 font-medium">
+                    {pending.discordHandle || pending.discordUsername || '—'}
+                  </p>
+                  {pending.discordDisplayName &&
+                  pending.discordHandle &&
+                  pending.discordDisplayName !== pending.discordHandle ? (
+                    <>
+                      <p className={`mt-2 text-[12px] ${t.label}`}>Discord 显示昵称</p>
+                      <p className="mt-0.5 font-medium">{pending.discordDisplayName}</p>
+                    </>
+                  ) : null}
+                  <p className={`mt-2 text-[12px] ${t.label}`}>Discord 数字 ID</p>
+                  <p className="mt-0.5 break-all font-medium">
+                    <AccountNumericText text={pending.discordId} className="text-[13px]" />
+                  </p>
+                </div>
+
+                {error ? (
+                  <div className={`mt-3 rounded-[10px] border px-3 py-2 text-[13px] ${t.errorBox}`}>{error}</div>
+                ) : null}
+
+                <div className="mt-4 space-y-3">
+                  <label className="block">
+                    <span className={`mb-1 block text-[12px] ${t.label}`}>账号</span>
+                    <input
+                      className={inputCls}
+                      style={accountInputNumStyle}
+                      value={username}
+                      onChange={(e) => setUsername(e.target.value)}
+                      autoComplete="username"
+                    />
+                  </label>
+                  <label className="block">
+                    <span className={`mb-1 block text-[12px] ${t.label}`}>密码</span>
+                    <input
+                      type="password"
+                      className={inputCls}
+                      style={accountInputNumStyle}
+                      value={password}
+                      onChange={(e) => setPassword(e.target.value)}
+                      autoComplete="new-password"
+                    />
+                  </label>
+                  <label className="block">
+                    <span className={`mb-1 block text-[12px] ${t.label}`}>确认密码</span>
+                    <input
+                      type="password"
+                      className={inputCls}
+                      style={accountInputNumStyle}
+                      value={password2}
+                      onChange={(e) => setPassword2(e.target.value)}
+                      autoComplete="new-password"
+                    />
+                  </label>
+                  <label className="block">
+                    <span className={`mb-1 block text-[12px] ${t.label}`}>QQ（选填）</span>
+                    <input
+                      className={inputCls}
+                      style={accountInputNumStyle}
+                      inputMode="numeric"
+                      value={qq}
+                      onChange={(e) => setQq(e.target.value)}
+                      placeholder="建议填写，便于找回账密"
+                    />
+                  </label>
+                </div>
+
+                <div className="mt-5 flex gap-2">
+                  <button
+                    type="button"
+                    className={`h-11 flex-1 rounded-[12px] border text-[14px] ${t.input}`}
+                    disabled={submitting}
+                    onClick={onClose}
+                  >
+                    取消
+                  </button>
+                  <button
+                    type="button"
+                    className={`h-11 flex-1 rounded-[12px] text-[14px] font-medium disabled:opacity-50 ${t.primaryBtn}`}
+                    disabled={submitting}
+                    onClick={handleSubmit}
+                  >
+                    {submitting ? '注册中…' : '完成注册'}
+                  </button>
+                </div>
+              </>
             )}
-
-            <div className={`mt-3 rounded-[12px] border px-3 py-2.5 text-[13px] ${t.input}`}>
-              <p className={`text-[12px] ${t.label}`}>Discord 用户名</p>
-              <p className="mt-0.5 font-medium">
-                {pending.discordHandle || pending.discordUsername || '—'}
-              </p>
-              {pending.discordDisplayName &&
-              pending.discordHandle &&
-              pending.discordDisplayName !== pending.discordHandle ? (
-                <>
-                  <p className={`mt-2 text-[12px] ${t.label}`}>Discord 显示昵称</p>
-                  <p className="mt-0.5 font-medium">{pending.discordDisplayName}</p>
-                </>
-              ) : null}
-              <p className={`mt-2 text-[12px] ${t.label}`}>Discord 数字 ID</p>
-              <p className="mt-0.5 break-all font-medium">
-                <AccountNumericText text={pending.discordId} className="text-[13px]" />
-              </p>
-            </div>
-
-            {error ? (
-              <div className={`mt-3 rounded-[10px] border px-3 py-2 text-[13px] ${t.errorBox}`}>{error}</div>
-            ) : null}
-
-            <div className="mt-4 space-y-3">
-              <label className="block">
-                <span className={`mb-1 block text-[12px] ${t.label}`}>账号</span>
-                <input
-                  className={inputCls}
-                  style={accountInputNumStyle}
-                  value={username}
-                  onChange={(e) => setUsername(e.target.value)}
-                  autoComplete="username"
-                />
-              </label>
-              <label className="block">
-                <span className={`mb-1 block text-[12px] ${t.label}`}>密码</span>
-                <input
-                  type="password"
-                  className={inputCls}
-                  style={accountInputNumStyle}
-                  value={password}
-                  onChange={(e) => setPassword(e.target.value)}
-                  autoComplete="new-password"
-                />
-              </label>
-              <label className="block">
-                <span className={`mb-1 block text-[12px] ${t.label}`}>确认密码</span>
-                <input
-                  type="password"
-                  className={inputCls}
-                  style={accountInputNumStyle}
-                  value={password2}
-                  onChange={(e) => setPassword2(e.target.value)}
-                  autoComplete="new-password"
-                />
-              </label>
-              <label className="block">
-                <span className={`mb-1 block text-[12px] ${t.label}`}>QQ（选填）</span>
-                <input
-                  className={inputCls}
-                  style={accountInputNumStyle}
-                  inputMode="numeric"
-                  value={qq}
-                  onChange={(e) => setQq(e.target.value)}
-                  placeholder="建议填写，便于找回账密"
-                />
-              </label>
-            </div>
-
-            <div className="mt-5 flex gap-2">
-              <button
-                type="button"
-                className={`h-11 flex-1 rounded-[12px] border text-[14px] ${t.input}`}
-                disabled={submitting}
-                onClick={onClose}
-              >
-                取消
-              </button>
-              <button
-                type="button"
-                className={`h-11 flex-1 rounded-[12px] text-[14px] font-medium disabled:opacity-50 ${t.primaryBtn}`}
-                disabled={submitting}
-                onClick={() => void handleSubmit()}
-              >
-                {submitting ? '注册中…' : '完成注册'}
-              </button>
-            </div>
           </motion.div>
         </motion.div>
       ) : null}
@@ -223,6 +308,7 @@ function parseDiscordRegisterPending(raw: string): DiscordRegisterPending | null
       discordDisplayName: parsed.discordDisplayName?.trim() || parsed.discordUsername?.trim() || '',
       discordUsername: parsed.discordUsername?.trim() || parsed.discordDisplayName?.trim() || '',
       fromUnregisteredLogin: parsed.fromUnregisteredLogin === true,
+      fromCommunityTroubleshoot: parsed.fromCommunityTroubleshoot === true,
     }
   } catch {
     return null

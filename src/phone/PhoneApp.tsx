@@ -40,6 +40,7 @@ import { LoreArchiveApp } from './apps/loreArchive/LoreArchiveApp'
 import { RecycleBinApp } from './apps/recycleBin/RecycleBinApp'
 import { BackgroundNotifyApp } from './apps/backgroundNotify/BackgroundNotifyApp'
 import { EvolutionApp } from './apps/evolution/EvolutionApp'
+import { ThemeStudioApp } from './apps/themeStudio/ThemeStudioApp'
 import { EvolutionUpdatePushModal } from './apps/evolution/EvolutionUpdatePushModal'
 import { getLatestEvolutionRecord } from './apps/evolution/evolutionLogData'
 import { shouldOfferEvolutionPush } from './apps/evolution/evolutionPushStorage'
@@ -60,8 +61,13 @@ import {
   resolveDiscordAuthTabAfterOAuth,
   storeDiscordOAuthError,
 } from './userSystem/discordOAuthFlow'
+import { consumeDiscordRegisterFromCommunityTroubleshoot } from './userSystem/discordRegisterFlags'
 import {
+  clearDiscordRegisterPending,
+  DiscordRegisterCompleteModal,
+  readDiscordRegisterPending,
   storeDiscordRegisterPending,
+  type DiscordRegisterPending,
 } from './components/DiscordRegisterCompleteModal'
 
 type Route =
@@ -434,6 +440,7 @@ export function PhoneApp() {
           discordDisplayName: result.discordDisplayName,
           discordUsername: result.discordUsername,
           fromUnregisteredLogin: result.fromUnregisteredLogin,
+          fromCommunityTroubleshoot: consumeDiscordRegisterFromCommunityTroubleshoot(),
         })
         openUserAccount('auth', result.fromUnregisteredLogin ? 'login' : 'register')
         return
@@ -544,6 +551,8 @@ export function PhoneApp() {
                   <SandboxApp onBack={goHome} />
                 ) : route.id === 'evolution' ? (
                   <EvolutionApp onBack={goHome} />
+                ) : route.id === 'themeStudio' ? (
+                  <ThemeStudioApp onBack={goHome} />
                 ) : route.id === 'takeout' ? (
                   <LumiTasteApp onBack={goHome} />
                 ) : (

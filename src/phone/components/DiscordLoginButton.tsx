@@ -13,6 +13,8 @@ type Props = {
   className?: string
   buttonClassName?: string
   onError?: (message: string) => void
+  /** 跳转 Discord 前调用（例如标记来自身份组排查） */
+  onClickBefore?: () => void
 }
 
 function DiscordIcon({ className }: { className?: string }) {
@@ -34,17 +36,19 @@ export function DiscordLoginButton({
   className = '',
   buttonClassName = '',
   onError,
+  onClickBefore,
 }: Props) {
   const [redirecting, setRedirecting] = useState(false)
 
   const handleClick = useCallback(() => {
+    onClickBefore?.()
     setRedirecting(true)
     const r = beginDiscordOAuth({ intent, lumiEntry })
     if (!r.ok) {
       setRedirecting(false)
       onError?.(r.error)
     }
-  }, [intent, lumiEntry, onError])
+  }, [intent, lumiEntry, onError, onClickBefore])
 
   if (!isDiscordOAuthConfigured()) return null
 

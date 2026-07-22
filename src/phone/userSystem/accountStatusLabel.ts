@@ -31,8 +31,14 @@ export function communityRoleStatusLabel(
   if (status.communityVerifyReason === 'discord_unavailable') {
     return { label: '暂时无法验证', tone: 'pending' }
   }
+  if (status.communityVerifyReason === 'bot_unauthorized' || status.communityVerifyReason === 'bot_forbidden') {
+    return { label: '验证服务异常', tone: 'pending' }
+  }
   if (status.communityVerifyReason === 'missing_dc_id') {
     return { label: '未绑定 Discord', tone: 'rejected' }
+  }
+  if (status.communityVerifyReason === 'invalid_dc_id') {
+    return { label: 'Discord ID 格式错误', tone: 'rejected' }
   }
   if (status.communityVerifyReason === 'not_in_guild') {
     return { label: '未加入社区', tone: 'rejected' }

@@ -23,6 +23,7 @@ import {
 import { type UserAccountTab, type UserProfile } from '../../userSystem/types'
 import { UserAccountAnnouncementPanel } from './UserAccountAnnouncementPanel'
 import { UserAccountChangePasswordPanel } from './UserAccountChangePasswordPanel'
+import { UserAccountFixDiscordIdPanel } from './UserAccountFixDiscordIdPanel'
 import { UserAccountReportPanel } from './UserAccountReportPanel'
 import { UserAccountUnbanPanel } from './UserAccountUnbanPanel'
 import { UserAccountRecoverPanel } from '../../components/UserAccountRecoverPanel'
@@ -534,6 +535,22 @@ export function UserAccountApp({ onBack, initialTab = 'overview', initialAuthTab
           </dl>
         ) : null}
       </div>
+      {profile && profile.auditStatus !== 'correction_required' ? (
+        <UserAccountFixDiscordIdPanel
+          t={t}
+          inputCls={inputCls}
+          dividerCls={drawerBorder}
+          profile={profile}
+          defaultOpen={
+            profile.communityVerifyReason === 'invalid_dc_id' ||
+            profile.communityVerifyReason === 'missing_dc_id' ||
+            (!!profile.dcId && !/^\d{17,20}$/.test(profile.dcId.trim()))
+          }
+          onInfo={setInfo}
+          onError={setError}
+          onUpdated={setProfile}
+        />
+      ) : null}
       <UserAccountChangePasswordPanel
         t={t}
         inputCls={inputCls}

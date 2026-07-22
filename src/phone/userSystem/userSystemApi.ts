@@ -654,6 +654,14 @@ export async function identifyDiscordUser(
   }
 }
 
+export type DiscordRegisterConflict = {
+  objectId: string
+  username: string
+  qq: string
+  dcId: string
+  matchReasons: string[]
+}
+
 export async function registerWithDiscord(payload: {
   registerToken: string
   username: string
@@ -662,9 +670,34 @@ export async function registerWithDiscord(payload: {
   publicIp: string
   deviceId: string
   deviceType: string
-}): Promise<{ ok: true } | { ok: false; error: string }> {
-  const r = await request<{ username: string }>('POST', '/api/auth/discord/register', payload, false)
+  confirmReplace?: boolean
+}): Promise<
+  | { ok: true }
+  | {
+      ok: true
+      needsReplaceConfirm: true
+      conflicts: DiscordRegisterConflict[]
+      message: string
+    }
+  | { ok: false; error: string }
+> {
+  const r = await request<{
+    username?: string
+    needsReplaceConfirm?: boolean
+    conflicts?: DiscordRegisterConflict[]
+    message?: string
+  }>('POST', '/api/auth/discord/register', payload, false)
   if (!r.ok) return r
+  if (r.data.needsReplaceConfirm) {
+    return {
+      ok: true,
+      needsReplaceConfirm: true,
+      conflicts: Array.isArray(r.data.conflicts) ? r.data.conflicts : [],
+      message:
+        r.data.message?.trim() ||
+        '检测到重复的旧账号信息。确认后将回收旧登录账号；本浏览器玩法数据不会丢失。',
+    }
+  }
   return { ok: true }
 }
 
@@ -807,6 +840,38 @@ export async function submitUnbanApplication(payload: {
   const r = await request<{ message?: string }>('POST', '/api/unban/apply', payload, true)
   if (!r.ok) return r
   return { ok: true, message: r.data.message || '解封申请已提交，请等待管理员审核' }
+}
+
+export async function updateUserProfile(payload: {
+  qq?: string
+  dcId?: string
+}): Promise<{ ok: true; profile: UserProfile } | { ok: false; error: string }> {
+  if (!getAuthToken()) return { ok: false, error: '登录已失效，请重新登录后再修改' }
+  const r = await request<{ profile: Record<string, unknown> }>('POST', '/api/user/profile', payload, true)
+  if (!r.ok) return r
+  const p = r.data.profile
+  const profile: UserProfile = {
+    username: String(p.username ?? ''),
+    qq: String(p.qq ?? ''),
+    dcId: String(p.dcId ?? ''),
+    discordHandle: String(p.discordHandle ?? ''),
+    discordDisplayName: String(p.discordDisplayName ?? ''),
+    auditStatus: (p.auditStatus as UserProfile['auditStatus']) ?? 'pending',
+    auditRejectReason: String(p.auditRejectReason ?? ''),
+    auditInquiryImages: Array.isArray(p.auditInquiryImages)
+      ? p.auditInquiryImages.filter((x): x is string => typeof x === 'string')
+      : [],
+    correctionRequestedAt: String(p.correctionRequestedAt ?? ''),
+    banStatus: (p.banStatus as UserProfile['banStatus']) ?? 'normal',
+    banReason: String(p.banReason ?? ''),
+    createdAt: String(p.createdAt ?? ''),
+    communityVerified: typeof p.communityVerified === 'boolean' ? p.communityVerified : undefined,
+    communityVerifyReason:
+      typeof p.communityVerifyReason === 'string' ? p.communityVerifyReason : undefined,
+    communityVerifyMessage:
+      typeof p.communityVerifyMessage === 'string' ? p.communityVerifyMessage : undefined,
+  }
+  return { ok: true, profile }
 }
 
 export async function submitUserInfoCorrection(payload: {

@@ -5,9 +5,12 @@ export type CommunityVerifyReason =
   | 'skipped_admin'
   | 'not_configured'
   | 'missing_dc_id'
+  | 'invalid_dc_id'
   | 'not_in_guild'
   | 'missing_role'
   | 'discord_unavailable'
+  | 'bot_unauthorized'
+  | 'bot_forbidden'
 
 export type UserLoginStatus = {
   auditStatus: UserAuditStatus

@@ -1,6 +1,7 @@
 import { AnimatePresence, motion } from 'framer-motion'
 import { useCallback, useEffect, useState } from 'react'
 import { fetchUserProfile, logoutUser, submitUserInfoCorrection } from '../userSystem/userSystemApi'
+import { DISCORD_SNOWFLAKE_HINT, isDiscordSnowflakeId } from '../userSystem/discordId'
 import type { UserLoginStatus } from '../userSystem/types'
 
 const CORRECTION_DEADLINE_MS = 48 * 60 * 60 * 1000
@@ -55,6 +56,10 @@ export function UserInfoCorrectionModal({ open, status, onCorrected, onLogout }:
     setInfo('')
     if (!qq.trim() || !dcId.trim()) {
       setError('请填写完整的 QQ 号与 Discord ID')
+      return
+    }
+    if (!isDiscordSnowflakeId(dcId)) {
+      setError(DISCORD_SNOWFLAKE_HINT)
       return
     }
     setLoading(true)
@@ -155,13 +160,15 @@ export function UserInfoCorrectionModal({ open, status, onCorrected, onLogout }:
                   />
                 </label>
                 <label className="block">
-                  <span className="mb-1 block text-[12px] text-[#1C1C1E]/55">Discord ID</span>
+                  <span className="mb-1 block text-[12px] text-[#1C1C1E]/55">Discord 数字 ID</span>
                   <input
                     className="h-10 w-full rounded-[10px] border border-black/10 bg-[#FAFAFA] px-3 text-[14px] outline-none focus:border-[#4F46E5]"
                     value={dcId}
                     onChange={(e) => setDcId(e.target.value)}
+                    inputMode="numeric"
                     autoComplete="off"
                   />
+                  <p className="mt-1 text-[11px] leading-4 text-[#1C1C1E]/45">{DISCORD_SNOWFLAKE_HINT}</p>
                 </label>
                 <button
                   type="button"
