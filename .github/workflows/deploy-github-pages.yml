@@ -1,5 +1,6 @@
 # 推送 main 时构建 Vite 项目，并把 dist 发布到 GitHub Pages
 # 仓库 Settings → Pages → Build and deployment 的 Source 请选择「GitHub Actions」
+# 部署成功后自动触发副仓 lumiphone-cn，同步 www.lumiphone.cn（需 secrets.GH_PAT）
 name: Deploy GitHub Pages
 
 on:
@@ -35,6 +36,8 @@ jobs:
         env:
           CI: true
           COLUMNS: '9999'
+          # 保留 GitHub Pages 项目站子路径；Cloudflare Pages 用根路径（见 deploy-cloudflare-pages.yml）
+          VITE_BASE: /Lumi-Phone/
           VITE_WEB_PUSH_API_BASE: https://lumi-push.lyx815934990.workers.dev
           VITE_USER_SYSTEM_API_BASE: https://user-system-api.lyx815934990.workers.dev
           VITE_DISCORD_CLIENT_ID: ${{ secrets.VITE_DISCORD_CLIENT_ID }}
@@ -52,3 +55,20 @@ jobs:
     steps:
       - id: deployment
         uses: actions/deploy-pages@v4
+
+  # 主站 github.io 部署成功后，触发副仓同步自定义域名站
+  sync-domain-site:
+    needs: deploy
+    runs-on: ubuntu-latest
+    steps:
+      - name: Trigger lumiphone-cn domain deploy
+        env:
+          GH_TOKEN: ${{ secrets.GH_PAT }}
+        run: |
+          if [ -z "$GH_TOKEN" ]; then
+            echo "::warning::未配置 secrets.GH_PAT，已跳过同步 www.lumiphone.cn。请按仓库说明创建 Token 并写入主仓/副仓 Secrets。"
+            exit 0
+          fi
+          gh workflow run "Deploy GitHub Pages (domain verify)" \
+            --repo lyx815934990-oss/lumiphone-cn
+          echo "已触发副仓部署：https://www.lumiphone.cn/"
