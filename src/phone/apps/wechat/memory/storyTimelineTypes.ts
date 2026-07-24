@@ -109,7 +109,10 @@ export type StoryTimelinePromptLoadOpts = {
   apiConfig?: Pick<import('../../api/types').ApiConfig, 'apiUrl' | 'apiKey'> | null
   /** 私聊/群聊总结游标键；用于排除游标后行进入「已总结片段」向量召回 */
   conversationKey?: string | null
-  /** 上一回合故事内公历锚点（约会 plot 末尾）；优先于 state.currentStoryDay 作「当前剧情日」 */
+  /**
+   * 故事内公历参考锚点（约会 plot 末尾等）。
+   * 与 state.currentStoryDay 取**较晚者**作「当前剧情日」（线上推进后不得被更早的线下末条压回）。
+   */
   storyCalendarAnchor?: string | null
 }
 
@@ -633,25 +636,27 @@ export function extractStoryTimelineRowAnchorStartMs(rowText: string): number | 
   return storyCalendarDayStartMs(dayPart)
 }
 
-/** 解析「当前剧情日」：优先约会末尾锚点，其次 state，再回退最近摘要行 */
+/** 解析「当前剧情日」：state 与约会末尾锚点取较晚者，再回退最近摘要行 */
 export function resolveStoryTimelineCurrentCalendarMs(params: {
   state?: StoryTimelineState | null
   rows?: StoryTimelinePlotRow[]
   storyCalendarAnchor?: string | null
 }): number | null {
+  const candidates: number[] = []
   const anchorRaw = String(params.storyCalendarAnchor ?? '').trim()
   if (anchorRaw) {
     const dayPart = anchorRaw.match(/^(\d{4}年\d{1,2}月\d{1,2}日)/)?.[1]
     if (dayPart) {
       const ms = storyCalendarDayStartMs(dayPart)
-      if (ms != null) return ms
+      if (ms != null) candidates.push(ms)
     }
   }
   const stateDay = params.state?.currentStoryDay?.trim()
   if (stateDay) {
     const ms = storyCalendarDayStartMs(stateDay)
-    if (ms != null) return ms
+    if (ms != null) candidates.push(ms)
   }
+  if (candidates.length) return Math.max(...candidates)
   const rows = params.rows ?? []
   for (let i = rows.length - 1; i >= 0; i--) {
     const ms = extractStoryTimelineRowAnchorStartMs(rows[i]!.rowText)

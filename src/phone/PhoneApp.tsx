@@ -12,6 +12,7 @@ import { AccountStatusCheckingOverlay } from './components/AccountStatusChecking
 import { SplashScreen } from './components/SplashScreen'
 import { useCustomization } from './CustomizationContext'
 import {
+  clearAuth,
   clearAuthVerified,
   fetchUserStatus,
   getAuthToken,
@@ -24,7 +25,6 @@ import {
   runLumiSessionGuard,
   shouldShowAccountStatusCheck,
   setAuthVerified,
-  STATUS_CHECK_NETWORK_ERROR,
   STATUS_FETCH_TIMEOUT_MS,
   STATUS_CHECK_MIN_OVERLAY_MS,
   waitForStatusCheckOverlay,
@@ -290,8 +290,10 @@ export function PhoneApp() {
       if (!status) {
         openVerifiedRef.current = false
         clearAuthVerified()
+        // 状态接口失败（含 401/404）时清掉旧 token，避免只剩「重新验证」无法登录
+        clearAuth()
         setUserAuthStatus(null)
-        setAuthVerifyError(STATUS_CHECK_NETWORK_ERROR)
+        setAuthVerifyError(null)
         setBanNotice(readBannedNotice()?.message ?? null)
         setSessionKickedNotice(readSessionKickedNotice())
         setUserAuthReady(true)

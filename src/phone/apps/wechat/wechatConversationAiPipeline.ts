@@ -6,6 +6,7 @@
 import {
   getStashedOpponentRevealJobCount,
   hasStashedOpponentRevealJobs,
+  setOpponentRevealStoreExternalNotify,
 } from './chatRoom/opponentRevealQueueStore'
 import { resolveWeChatStorageConversationIdentity } from './wechatConversationKey'
 
@@ -55,6 +56,10 @@ function notify(): void {
     }
   }
 }
+
+setOpponentRevealStoreExternalNotify(() => {
+  notify()
+})
 
 function normKey(conversationKey: string): string {
   return conversationKey.trim()

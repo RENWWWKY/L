@@ -75,6 +75,8 @@ export function MigrationPanel() {
   const [ceremonyLines, setCeremonyLines] = useState<readonly string[]>(EXPORT_LINES)
   const [lineIdx, setLineIdx] = useState(0)
   const [importConfirmOpen, setImportConfirmOpen] = useState(false)
+  const [importSuccessOpen, setImportSuccessOpen] = useState(false)
+  const [importSuccessDetail, setImportSuccessDetail] = useState('')
   const [pendingImportText, setPendingImportText] = useState<string | null>(null)
   const [exportNameOpen, setExportNameOpen] = useState(false)
   const [exportNameDraft, setExportNameDraft] = useState('')
@@ -128,7 +130,7 @@ export function MigrationPanel() {
     return () => window.clearTimeout(t)
   }, [exportNameOpen])
 
-  const finishImportWithFlash = useCallback(async () => {
+  const finishImportCeremony = useCallback(async () => {
     setCeremonyLines(IMPORT_LINES)
     setLineIdx(0)
     setCeremonyOpen(true)
@@ -146,11 +148,12 @@ export function MigrationPanel() {
     requestAnimationFrame(() => {
       flash.style.opacity = '0'
     })
-    window.setTimeout(() => {
-      flash.remove()
-      window.alert('记忆已重载，即将重启系统。')
-      window.location.reload()
-    }, 480)
+    await new Promise<void>((resolve) => {
+      window.setTimeout(() => {
+        flash.remove()
+        resolve()
+      }, 480)
+    })
   }, [])
 
   const executeImport = useCallback(async () => {
@@ -160,14 +163,18 @@ export function MigrationPanel() {
     if (!text) return
     setBusy('import')
     try {
-      await importDataFromFile(text)
-      await finishImportWithFlash()
+      const result = await importDataFromFile(text)
+      await finishImportCeremony()
+      const parts = [`已恢复 ${result.keysRestored} 项本地键`]
+      if (result.indexedDbRestored) parts.push('并已写入 IndexedDB 快照')
+      setImportSuccessDetail(`${parts.join('，')}。相关界面将自动同步，无需重启。`)
+      setImportSuccessOpen(true)
     } catch (e) {
       window.alert(e instanceof Error ? e.message : '导入失败')
     } finally {
       setBusy(null)
     }
-  }, [finishImportWithFlash, pendingImportText])
+  }, [finishImportCeremony, pendingImportText])
 
   useEffect(() => () => clearLineTimers(), [])
 
@@ -272,6 +279,38 @@ export function MigrationPanel() {
                 onClick={() => void executeImport()}
               >
                 确认覆盖
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      {importSuccessOpen ? (
+        <div
+          className="fixed inset-0 z-[2100] flex items-center justify-center px-5"
+          style={{ background: 'rgba(28,28,30,0.35)', backdropFilter: 'blur(10px)' }}
+        >
+          <div
+            className="max-w-[320px] rounded-2xl border px-5 py-5 shadow-xl"
+            style={{
+              borderColor: PLATINUM.line,
+              background: 'rgba(255,255,255,0.92)',
+            }}
+          >
+            <p className="text-[15px] font-semibold" style={{ color: PLATINUM.ink }}>
+              导入数据成功
+            </p>
+            <p className="mt-2 text-[13px] leading-relaxed" style={{ color: PLATINUM.ash }}>
+              {importSuccessDetail || '备份已写入本机，无需重启系统。'}
+            </p>
+            <div className="mt-5">
+              <button
+                type="button"
+                className="w-full rounded-xl py-2.5 text-[13px] font-semibold text-white"
+                style={{ background: PLATINUM.ink }}
+                onClick={() => setImportSuccessOpen(false)}
+              >
+                知道了
               </button>
             </div>
           </div>

@@ -5,6 +5,7 @@ import {
   Globe2,
   Headphones,
   MessageCircleQuestionMark,
+  Radio,
   ScrollText,
   Store,
 } from 'lucide-react'
@@ -19,6 +20,7 @@ import { DiscoverListenTogetherApp } from './discoverListen/DiscoverListenTogeth
 import { LISTEN_TOGETHER_NAVIGATE_EVENT } from './discoverListen/listenTogetherNavigation'
 import { LISTEN_TOGETHER_SHARE_TO_MOMENTS_EVENT } from './discoverListen/listenTogetherMomentShareNavigation'
 import { JubenshaHallApp } from './jubensha'
+import { LumiLiveApp } from '../phone/apps/lumiLive'
 import {
   consumePendingPulseOpenWeibo,
   LUMI_PULSE_NAVIGATE_EVENT,
@@ -37,6 +39,7 @@ type DiscoverActionId =
   | 'anonymous-qa'
   | 'listen-together'
   | 'weibo'
+  | 'lumi-live'
   | 'subconscious-archives'
   | 'jubensha'
   | 'shop'
@@ -75,6 +78,7 @@ const DISCOVER_ACTIONS: DiscoverAction[] = [
   { id: 'listen-together', label: '听一听', icon: Headphones },
   { id: 'anonymous-qa', label: '匿问我答', icon: MessageCircleQuestionMark },
   { id: 'weibo', label: '微博广场', icon: Globe2 },
+  { id: 'lumi-live', label: '浮光直播', icon: Radio },
   { id: 'subconscious-archives', label: '私语档案', icon: ScrollText },
   { id: 'jubensha', label: '剧本杀馆', icon: BookOpen },
   { id: 'shop', label: '小店', icon: Store },
@@ -100,7 +104,14 @@ export function WeChatDiscoverInstagram({
   const momentContacts = mockContactsToMomentRefs(qnaContacts ?? [])
   const momentsUnreadCount = useMomentsInteractionUnreadCount()
   const [activeView, setActiveView] = useState<
-    'list' | 'moments' | 'listen-together' | 'anonymous-qa' | 'weibo' | 'subconscious-archives' | 'jubensha'
+    | 'list'
+    | 'moments'
+    | 'listen-together'
+    | 'anonymous-qa'
+    | 'weibo'
+    | 'lumi-live'
+    | 'subconscious-archives'
+    | 'jubensha'
   >('list')
   useEffect(() => {
     onImmersiveViewChange?.(activeView !== 'list')
@@ -183,6 +194,16 @@ export function WeChatDiscoverInstagram({
       />
     )
   }
+  if (activeView === 'lumi-live') {
+    return (
+      <LumiLiveApp
+        className={`h-full min-h-0 ${className}`}
+        onBack={() => setActiveView('list')}
+        personaContacts={personaContacts}
+        userNick={momentsDisplayName}
+      />
+    )
+  }
   if (activeView === 'subconscious-archives') {
     return (
       <SubconsciousArchivesApp
@@ -226,6 +247,7 @@ export function WeChatDiscoverInstagram({
                       if (item.id === 'listen-together') setActiveView('listen-together')
                       if (item.id === 'anonymous-qa') setActiveView('anonymous-qa')
                       if (item.id === 'weibo') setActiveView('weibo')
+                      if (item.id === 'lumi-live') setActiveView('lumi-live')
                       if (item.id === 'subconscious-archives') setActiveView('subconscious-archives')
                       if (item.id === 'jubensha') setActiveView('jubensha')
                     }}

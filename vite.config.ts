@@ -235,10 +235,14 @@ function notifyIconDevServerPlugin(): Plugin {
 }
 
 // https://vite.dev/config/
-// 与 GitHub 仓库名一致，生产构建 base 为 /Lumi-Phone/（GitHub Pages）
-// 本地 dev/preview 用 /，便于局域网 IP 直接访问并正确安装 PWA
+// 默认生产 base 为 /Lumi-Phone/（GitHub Pages，github.io 链接继续可用）
+// Cloudflare Pages / 自定义域名：构建时设 VITE_BASE=/
+// 本地 dev 用 /，便于局域网 IP 直接访问并正确安装 PWA
 function resolveAppBase(command: 'build' | 'serve') {
-  // dev：局域网 IP 直连根路径；build/preview/部署：GitHub Pages 子路径
+  const fromEnv = (process.env.VITE_BASE ?? '').trim()
+  if (fromEnv) {
+    return fromEnv.endsWith('/') ? fromEnv : `${fromEnv}/`
+  }
   if (command === 'build') return '/Lumi-Phone/'
   if (process.env.npm_lifecycle_event === 'preview') return '/Lumi-Phone/'
   return '/'

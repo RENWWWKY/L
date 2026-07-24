@@ -92,13 +92,23 @@ export function useChatQueue<TMsg, TJob extends ChatQueueJob<TMsg>>({
 
   const scheduleDrainRef = useRef<() => void>(() => {})
 
+  /** 外部 clearTimeout 后须复位，否则 processingRef 永久 true，kick/schedule 全部空转 */
+  const resetDrainState = useCallback(() => {
+    if (timerRef.current != null) {
+      window.clearTimeout(timerRef.current)
+      timerRef.current = null
+    }
+    processingRef.current = false
+  }, [timerRef])
+
   const scheduleDrain = useCallback(() => {
     if (timerRef.current != null) return
+    /** 外部只清了 timer、未复位 processing 时，允许重新调度 */
+    if (processingRef.current) processingRef.current = false
     if (jobsRef.current.length === 0) {
       processingRef.current = false
       return
     }
-    if (processingRef.current) return
 
     const head = jobsRef.current[0]
     if (!head) return
@@ -148,10 +158,12 @@ export function useChatQueue<TMsg, TJob extends ChatQueueJob<TMsg>>({
   }, [timerRef])
 
   const kick = useCallback(() => {
-    if (timerRef.current != null || jobsRef.current.length === 0) return
+    if (timerRef.current != null) return
+    if (processingRef.current) processingRef.current = false
+    if (jobsRef.current.length === 0) return
     syncPendingQueueRef.current()
     scheduleDrainRef.current()
   }, [jobsRef, timerRef])
 
-  return { kick }
+  return { kick, resetDrainState }
 }

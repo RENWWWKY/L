@@ -8,6 +8,7 @@
     "dev:mobile": "node scripts/sync-vn-bgm-manifest.mjs && vite --mode mobile",
     "ncm:local": "npx NeteaseCloudMusicApi@4.28.0",
     "build": "node scripts/sync-vn-bgm-manifest.mjs && tsc -b && node scripts/vite-build.mjs",
+    "deploy:cf": "node scripts/deploy-cloudflare-pages.mjs",
     "lint": "eslint .",
     "preview": "vite preview"
   },

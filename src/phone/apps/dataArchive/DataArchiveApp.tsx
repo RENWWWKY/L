@@ -153,7 +153,7 @@ export function DataArchiveApp({ onBack }: Props) {
         >
           <p className="text-center text-[13px] font-semibold">数据引流与归档</p>
           <p className="mx-auto mt-1 max-w-[300px] text-center text-[11px] leading-relaxed" style={{ color: PLATINUM.ash }}>
-            导出为 <span className="font-mono text-[10px]">.lumi</span>（JSON）：含 localStorage 与当前已接入的 IndexedDB 快照；导入后整页重载。
+            导出为 <span className="font-mono text-[10px]">.lumi</span>（JSON）：含 localStorage 与当前已接入的 IndexedDB 快照；导入成功后会提示完成，无需整页重启。
           </p>
           <MigrationPanel />
         </div>

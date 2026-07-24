@@ -1228,7 +1228,7 @@ export type HeartWhisper = {
 }
 
 /**
- * 群聊心语弹窗：单名 NPC 的物理状态与内心档案（与模型 JSON 字段一一对应后写入 UI）。
+ * 群聊心语弹窗：单名 NPC 的物理状态与内心档案。
  * clothing / posture / monologue / impressionOnUser 为展示层命名。
  */
 export type CharacterPsyche = {

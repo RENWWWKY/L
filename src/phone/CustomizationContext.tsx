@@ -45,6 +45,7 @@ import {
   DESKTOP_LAYOUT_SLOT_COUNT,
 } from './types'
 import { migrateLegacyRootPublicUrl } from '../publicAssetUrl'
+import { LUMI_ARCHIVE_IMPORTED_EVENT } from './apps/dataArchive/constants'
 
 const STORAGE_KEY = 'lumi-phone-custom-v4'
 const LEGACY_STORAGE_KEY_V3 = 'lumi-phone-custom-v3'
@@ -672,7 +673,7 @@ export function CustomizationProvider({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     let cancelled = false
-    void (async () => {
+    const hydrateFromStorage = async () => {
       try {
         const raw = await pullPhoneKvWithLocalStorageLegacy(STORAGE_KEY, [
           STORAGE_KEY,
@@ -692,9 +693,15 @@ export function CustomizationProvider({ children }: { children: ReactNode }) {
         // 在 flushSync 之后再允许持久化，避免「已水合 + 仍是初始 state」时用默认值覆盖 IndexedDB
         if (!cancelled) setCustomizationHydrated(true)
       }
-    })()
+    }
+    void hydrateFromStorage()
+    const onArchiveImported = () => {
+      void hydrateFromStorage()
+    }
+    window.addEventListener(LUMI_ARCHIVE_IMPORTED_EVENT, onArchiveImported)
     return () => {
       cancelled = true
+      window.removeEventListener(LUMI_ARCHIVE_IMPORTED_EVENT, onArchiveImported)
     }
   }, [])
 

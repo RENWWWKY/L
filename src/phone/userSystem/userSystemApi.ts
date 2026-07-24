@@ -105,7 +105,9 @@ export function handleLumiBanned(serverError?: string): void {
 
 function handleAuthFailure(error: string): void {
   if (/封禁/.test(error)) return
-  if (/未登录|401|403/.test(error)) clearAuth()
+  // 401/未登录：token 失效；用户不存在/Not Found/404：账号已删但本地仍留着旧 token。
+  // 若不清理，会一直卡在「重新验证账号状态」，误报成网络超时。
+  if (/未登录|401|403|用户不存在|Not Found|404/.test(error)) clearAuth()
 }
 
 export const STATUS_CHECK_MIN_OVERLAY_MS = 500

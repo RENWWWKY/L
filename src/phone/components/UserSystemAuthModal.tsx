@@ -4,7 +4,6 @@ import { useCallback, useEffect, useState } from 'react'
 import { getDeviceFingerprint, getPublicIp } from '../userSystem/deviceFingerprint'
 import {
   clearAuth,
-  getAuthToken,
   getStoredUsername,
   loginUser,
   logoutUser,
@@ -128,8 +127,6 @@ export function UserSystemAuthModal({
   const handleApplyUnban = useCallback(() => {
     onOpenAccount('unban')
   }, [onOpenAccount])
-
-  const verifyOnly = !!authVerifyError && !!getAuthToken()
 
   const bannedMessage =
     showStatusPanel && status?.banStatus === 'banned'
@@ -358,7 +355,7 @@ export function UserSystemAuthModal({
                     切换账号 / 重新登录
                   </button>
                 </div>
-              ) : verifyOnly ? null : authMode === 'recover' ? (
+              ) : authMode === 'recover' ? (
                 <UserAccountRecoverPanel
                   inputCls="h-10 w-full rounded-[10px] border border-black/10 bg-[#FAFAFA] px-3 text-[14px] outline-none focus:border-[#4F46E5]"
                   primaryBtnCls="bg-[#1C1C1E] text-white"

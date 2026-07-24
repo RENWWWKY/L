@@ -136,9 +136,9 @@ import { isSecondaryWechatAccountInBundle, loadAccountsBundle } from './wechatAc
 import { buildCrossAccountPrivateChatDigests } from './wechatCrossAccountChatDigest'
 import {
   buildCharacterProfileImageCatalogBlock,
-  buildUserImageProfileApplyCaptionBias,
-  buildUserProfileImageRestoreBias,
+  buildUserProfileImageChangeBias,
   parseCharacterProfileImageApplyDirective,
+  reconcileMistakenMomentPublishAsProfileImageChange,
   stripAndApplyCharacterProfileImageActions,
 } from './wechatCharacterProfileImageApply'
 import {
@@ -157,7 +157,6 @@ import {
 } from './wechatCharacterMomentPinApply'
 import {
   applyCharacterMomentPublishDirectives,
-  buildUserMomentPublishRequestBias,
   filterCharacterMomentPublishDirectives,
 } from './wechatCharacterMomentPublishApply'
 import {
@@ -228,6 +227,7 @@ import { stripWechatClassicEmojiTokens } from './stickers/wechatClassicStickerPa
 import { shouldInjectImageGenCompositionLifeFeelCot } from '../../../components/moments/imageGenCompositionLifeFeelCot'
 import {
   buildUserExplicitCharacterImageRequestBias,
+  collectRecentUserSelfTexts,
   resolveCharacterImageRequestIntent,
   userExplicitlyRequestsCharacterSticker,
 } from './wechatCharacterImageRequestDetect'
@@ -595,6 +595,7 @@ import { probeChatRender, probeMemoDeps } from './chatRoom/chatRenderProbe'
 import { useChatQueue } from './chatRoom/useChatQueue'
 import {
   hasStashedOpponentRevealJobs,
+  setOpponentRevealLiveConversation,
   stashOpponentRevealJobs,
   takeStashedOpponentRevealJobs,
 } from './chatRoom/opponentRevealQueueStore'
@@ -4722,12 +4723,15 @@ export function ChatRoomInner({
   const storageGroupSyncDebounceRef = useRef<number | null>(null)
 
   const opponentRevealTimerRef = useRef<number | null>(null)
-
-  const cancelOpponentRevealTimer = useCallback(() => {
+  const resetOpponentRevealDrainRef = useRef<() => void>(() => {
     if (opponentRevealTimerRef.current != null) {
       window.clearTimeout(opponentRevealTimerRef.current)
       opponentRevealTimerRef.current = null
     }
+  })
+
+  const cancelOpponentRevealTimer = useCallback(() => {
+    resetOpponentRevealDrainRef.current()
   }, [])
 
   const [typingVisible, setTypingVisibleState] = useState(false)
@@ -4776,10 +4780,10 @@ export function ChatRoomInner({
     setUiOnlyHiddenCutForView(null)
     setFriendRequestAcceptedDividerAtMs(null)
     /**
-     * 切换会话必须先清空内存列表：hydrate 会把 itemsRef 里「DB 尚无 id」的气泡与本轮 DB 结果合并（同会话乐观更新）。
-     * 若不置空，从群聊切到私聊时上一屏群消息仍留在 ref 中，会被误并进私聊列表（串会话）。
+     * 切换会话：清空本屏列表并 hydrate 目标会话。
+     * 勿对 nextKey 设 opponentQueueStop——否则「离开再回来」会误杀仍在飞的 AI 整批气泡。
+     * 中止本轮仅用于：发新消息 / 重新回复 / 已读不回 / 清空记录。
      */
-    setConversationOpponentQueueStop(nextKey, true)
     setConversationAwaitingAiKick(nextKey, false)
     setTypingVisible(false)
     onOpponentRevealQueueActiveRef.current?.(false)
@@ -6042,7 +6046,7 @@ export function ChatRoomInner({
       : computeOpponentStaggerDelayMs(job.msg)
   }, [])
 
-  useChatQueue({
+  const { resetDrainState: resetOpponentRevealDrainState } = useChatQueue({
     pendingQueue,
     jobsRef: opponentRevealJobsRef,
     timerRef: opponentRevealTimerRef,
@@ -6054,6 +6058,7 @@ export function ChatRoomInner({
     syncPendingQueue: syncPendingQueueFromRef,
     onQueueActive: handleOpponentQueueActive,
   })
+  resetOpponentRevealDrainRef.current = resetOpponentRevealDrainState
 
   const kickOpponentRevealProcessor = useCallback(() => {
     const q = opponentRevealJobsRef.current
@@ -6135,7 +6140,8 @@ export function ChatRoomInner({
     onOpponentRevealQueueActive?.(true)
     setBackgroundNotifyPendingWork({ wechatRevealPending: true })
     syncAiReplyPipelineActiveRef.current(ck)
-    if (chatRouteVisibleRef.current) kickOpponentRevealProcessor()
+    /** 即使当前不在聊天页（dock 隐藏），也继续 drain，避免回页后卡死 */
+    kickOpponentRevealProcessor()
   }, [
     assignSequentialOpponentRevealTimestamps,
     kickOpponentRevealProcessor,
@@ -6147,13 +6153,19 @@ export function ChatRoomInner({
   restoreStashedOpponentRevealQueueRef.current = restoreStashedOpponentRevealQueue
 
   useEffect(() => {
-    if (!chatRouteVisible) {
-      cancelOpponentRevealTimer()
-      return
-    }
+    setOpponentRevealLiveConversation(conversationKey.trim() || null)
+  }, [conversationKey])
+
+  useEffect(() => {
+    return () => setOpponentRevealLiveConversation(null)
+  }, [])
+
+  useEffect(() => {
+    /** 切朋友圈/消息列表等：ChatRoom 仍 dock 挂载，继续逐条露出，勿 cancel timer（否则 processingRef 死锁） */
+    if (!chatRouteVisible) return
     restoreStashedOpponentRevealQueueRef.current()
     kickOpponentRevealProcessorRef.current()
-  }, [chatRouteVisible, cancelOpponentRevealTimer])
+  }, [chatRouteVisible])
 
   const flushDeferredBubbleRevealJobs = useCallback(() => {
     if (!deferredBubbleRevealJobsRef.current.length) return
@@ -8400,10 +8412,6 @@ export function ChatRoomInner({
                 base64: img.base64.trim(),
                 mime: img.type ?? 'image/jpeg',
               }
-              const profileImageCaptionBias = buildUserImageProfileApplyCaptionBias(lastSelfWithImage?.text)
-              if (profileImageCaptionBias) {
-                traceReplyBias = [traceReplyBias, profileImageCaptionBias].filter((x) => x.trim()).join('\n\n')
-              }
             }
             // 发请求前再拼一次 transcript，避免重新回复/删稿与异步 flush 交错时仍带入本轮旧对方稿
             transcript = itemsToTranscript(buildChatItemsForAiTranscript(), transcriptSpeakerOpts)
@@ -8594,21 +8602,20 @@ export function ChatRoomInner({
                   : {}),
               }
               const lastUserLine = [...transcript].reverse().find((t) => t.from === 'self')?.text
+              const recentUserSelfTexts = collectRecentUserSelfTexts(transcript, 8)
               const profileUpdateBias = buildUserWechatProfileUpdateBias(lastUserLine)
               if (profileUpdateBias) {
                 traceReplyBias = [traceReplyBias, profileUpdateBias].filter((x) => x.trim()).join('\n\n')
               }
-              const profileImageRestoreBias = buildUserProfileImageRestoreBias(lastUserLine)
-              if (profileImageRestoreBias) {
-                traceReplyBias = [traceReplyBias, profileImageRestoreBias].filter((x) => x.trim()).join('\n\n')
+              if (profileImageChangeEnabled === true) {
+                const profileImageBias = buildUserProfileImageChangeBias(recentUserSelfTexts)
+                if (profileImageBias) {
+                  traceReplyBias = [traceReplyBias, profileImageBias].filter((x) => x.trim()).join('\n\n')
+                }
               }
               const momentPinBias = buildUserMomentPinRequestBias(lastUserLine)
               if (momentPinBias) {
                 traceReplyBias = [traceReplyBias, momentPinBias].filter((x) => x.trim()).join('\n\n')
-              }
-              const momentPublishBias = buildUserMomentPublishRequestBias(lastUserLine)
-              if (momentPublishBias) {
-                traceReplyBias = [traceReplyBias, momentPublishBias].filter((x) => x.trim()).join('\n\n')
               }
             }
             traceGlobalPlate = roomType === 'group' ? 'group_chat' : 'private_chat'
@@ -9199,7 +9206,15 @@ export function ChatRoomInner({
           }
         }
 
-        if (isFlushQueueStopped()) continue
+        if (isFlushQueueStopped()) {
+          logConsole(
+            'ai',
+            `解析后未上屏：本轮队列已停止（重新回复/切会话/已读不回等），已丢弃可见气泡 ${
+              (aiReply.bubbles ?? []).filter((s) => String(s ?? '').trim()).length
+            } 条`,
+          )
+          continue
+        }
         if (aiRequestFailed) continue
 
         let worldBookAfterUpdated = false
@@ -9416,6 +9431,23 @@ export function ChatRoomInner({
           pm === 'persona' &&
           character?.id?.trim()
         ) {
+          if (roundUserImageForProfile?.base64?.trim()) {
+            const reconciled = reconcileMistakenMomentPublishAsProfileImageChange({
+              bubbles,
+              hasUserImage: true,
+              recentUserTexts: collectRecentUserSelfTexts(transcript, 8),
+            })
+            if (reconciled.rewritten) {
+              bubbles = reconciled.bubbles
+              logConsole(
+                'ai',
+                `已纠错：误用[发朋友圈]→[${
+                  reconciled.target === 'avatar' ? '换头像' : '换朋友圈背景'
+                }]（换资料图≠发圈）`,
+              )
+              rebuildOrderedSegmentsFromBubbles(bubbles)
+            }
+          }
           const profileImageApplied = await stripAndApplyCharacterProfileImageActions({
             characterId: character.id,
             bubbles,
@@ -9735,6 +9767,15 @@ export function ChatRoomInner({
             /* ignore */
           }
           showCenterToast(buildBusyToastText(peerNotifyTitle || '对方', busyDirective.reason, end, nowTs))
+          const discardedSpoken = (bubbles ?? [])
+            .map((s) => String(s ?? '').trim())
+            .filter((s) => s && !/^\[BUSY\]/i.test(s))
+          logConsole(
+            'ai',
+            `解析后未上屏：命中 [BUSY]，本轮文字气泡已丢弃（count=${discardedSpoken.length}）：${
+              discardedSpoken.map((s, i) => `${i + 1}. ${s.slice(0, 80)}`).join(' | ') || '<none>'
+            }`,
+          )
           continue
         }
 
@@ -9878,7 +9919,19 @@ export function ChatRoomInner({
           flushBatch()
         }
 
-        if (!bubbleRuns.length) continue
+        if (!bubbleRuns.length) {
+          const leftover = (bubbles ?? [])
+            .map((s) => String(s ?? '').trim())
+            .filter(Boolean)
+          logConsole(
+            'ai',
+            `解析后未上屏：指令剥离/去重后无可展示气泡（rawLeftover=${leftover.length}）：${
+              leftover.map((s, i) => `${i + 1}. ${s.slice(0, 80)}`).join(' | ') ||
+              '<全部为指令行，已静默执行或不展示>'
+            }`,
+          )
+          continue
+        }
 
         bubbleRunLoop: for (const br of bubbleRuns) {
           if (br.kind === 'meta') {

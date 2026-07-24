@@ -1,4 +1,4 @@
-import { ARCHIVE_KIND, ARCHIVE_VERSION } from './constants'
+import { ARCHIVE_KIND, ARCHIVE_VERSION, LUMI_ARCHIVE_IMPORTED_EVENT } from './constants'
 import {
   dumpWeChatPersonaIndexedDbSnapshot,
   restoreWeChatPersonaIndexedDbSnapshot,
@@ -142,8 +142,18 @@ export async function importDataFromFile(text: string): Promise<ImportArchiveRes
       )
       await reconcileWeChatCharacterOwnershipAfterArchiveImport()
     } catch {
-      /* 归属修复失败不阻断导入；刷新后名册页仍会尝试自愈 */
+      /* 归属修复失败不阻断导入；名册页仍会尝试自愈 */
     }
+  }
+
+  if (typeof window !== 'undefined') {
+    try {
+      const { emitWeChatStorageChanged } = await import('../wechat/newFriendsPersona/idb')
+      emitWeChatStorageChanged()
+    } catch {
+      window.dispatchEvent(new CustomEvent('wechat-storage-changed'))
+    }
+    window.dispatchEvent(new CustomEvent(LUMI_ARCHIVE_IMPORTED_EVENT))
   }
 
   return { keysRestored: n, indexedDbRestored }

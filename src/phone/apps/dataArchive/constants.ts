@@ -17,6 +17,9 @@ export const ARCHIVE_KIND = 'lumi-cloud-archive' as const
 /** v1：仅 localStorage；v2：另含已接入的 IndexedDB 全表快照 */
 export const ARCHIVE_VERSION = 2 as const
 
+/** 数据中心完成 .lumi 导入后派发，供外观等内存态从存储重新水合（无需整页刷新） */
+export const LUMI_ARCHIVE_IMPORTED_EVENT = 'lumi-archive-imported'
+
 export function utf8ByteLength(s: string): number {
   try {
     return new TextEncoder().encode(s).length

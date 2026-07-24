@@ -110,6 +110,10 @@ import { WECHAT_CHARACTER_MOMENT_PUBLISH_APPENDIX } from './wechatCharacterMomen
 import { WECHAT_CHARACTER_MOMENT_SONG_SHARE_APPENDIX } from './wechatCharacterMomentSongShareApply'
 import { WECHAT_INTERNET_MEME_LEXICON_APPENDIX } from './wechatInternetMemeLexicon'
 import { WECHAT_HEART_WHISPER_SYSTEM_PROMPT } from './wechatHeartWhisperPrompt'
+import {
+  parseGroupHeartWhisperOutput,
+  parseHeartWhisperOutput,
+} from './wechatHeartWhisperFormat'
 import { WECHAT_CHARACTER_PSYCHE_SYSTEM_PROMPT } from './wechatCharacterPsychePrompt'
 import type { CharacterPsychePageSummaries } from './characterPsyche/characterPsycheSummaries'
 import {
@@ -2361,7 +2365,40 @@ export async function requestWeChatPeerReply(params: {
   return cleaned || text.trim()
 }
 
-/** 推理模型常在 </thinking> 之后才输出 JSON；推理段里的「{」会误导 naive 的 indexOf（心语 / 群心语等 JSON 复用） */
+function parseHeartWhisperFromModel(text: string): Omit<HeartWhisper, 'timestamp'> {
+  return parseHeartWhisperOutput(text)
+}
+
+function formatHeartWhisperTimestamp(ts: number): string {
+  const d = new Date(ts)
+  const pad2 = (n: number) => String(n).padStart(2, '0')
+  return `${d.getFullYear()}.${pad2(d.getMonth() + 1)}.${pad2(d.getDate())} ${pad2(d.getHours())}:${pad2(d.getMinutes())}`
+}
+
+function resolveUserPronoun(playerIdentity: PlayerIdentity | null): '他' | '她' {
+  return playerIdentity?.gender === 'female' ? '她' : '他'
+}
+
+function normalizeUserImpressionPronoun(text: string, pronoun: '他' | '她'): string {
+  const src = String(text ?? '').trim()
+  if (!src) return ''
+  return src.replace(/ta/gi, pronoun).replace(/ＴＡ/gi, pronoun)
+}
+
+type GroupPsycheModelEntry = {
+  character_id: string
+  location: string
+  clothing: string
+  posture: string
+  monologue: string
+  impression_on_user: string
+}
+
+function parseGroupPsycheFromModel(text: string): GroupPsycheModelEntry[] {
+  return parseGroupHeartWhisperOutput(text)
+}
+
+/** 推理模型常在 </thinking> 之后才输出 JSON；推理段里的「{」会误导 naive 的 indexOf（体征等 JSON 复用） */
 function thinkingAwareJsonSearchBases(raw: string): string[] {
   const fenced = stripAssistantFence(String(raw ?? '').trim())
   if (!fenced) return ['']
@@ -2376,7 +2413,7 @@ function thinkingAwareJsonSearchBases(raw: string): string[] {
   return [...new Set(ordered)]
 }
 
-/** 从首个 { 起截取平衡的一层 JSON 对象，避免字符串内含 `}` 时 lastIndexOf 误切（简化状态机，忽略引号外其它括号） */
+/** 从首个 { 起截取平衡的一层 JSON 对象，避免字符串内含 `}` 时 lastIndexOf 误切 */
 function sliceBalancedJsonObject(s: string): string | null {
   const start = s.indexOf('{')
   if (start < 0) return null
@@ -2408,114 +2445,6 @@ function sliceBalancedJsonObject(s: string): string | null {
     }
   }
   return null
-}
-
-function parseHeartWhisperJson(text: string): Omit<HeartWhisper, 'timestamp'> {
-  const bases = thinkingAwareJsonSearchBases(text)
-  let lastErr: unknown = null
-  const txt = (v: unknown) => String(v ?? '').trim()
-
-  for (const base of bases) {
-    const balanced = sliceBalancedJsonObject(base)
-    const jsonText =
-      balanced ??
-      (() => {
-        const t = base.trim()
-        const start = t.indexOf('{')
-        const end = t.lastIndexOf('}')
-        return start >= 0 && end > start ? t.slice(start, end + 1) : t
-      })()
-    try {
-      const j = JSON.parse(jsonText) as {
-        location?: unknown
-        action?: unknown
-        outfit?: unknown
-        inner_thoughts?: unknown
-        view_on_user?: unknown
-      }
-      return {
-        location: txt(j.location),
-        action: txt(j.action),
-        outfit: txt(j.outfit),
-        innerThoughts: txt(j.inner_thoughts),
-        userImpression: txt(j.view_on_user),
-      }
-    } catch (e) {
-      lastErr = e
-    }
-  }
-
-  const hint =
-    lastErr instanceof Error && lastErr.message ? lastErr.message : '模型返回可能混入了思维链、截断或非 JSON'
-  throw new Error(`心语 JSON 解析失败：${hint}。请重试或更换模型。`)
-}
-
-function formatHeartWhisperTimestamp(ts: number): string {
-  const d = new Date(ts)
-  const pad2 = (n: number) => String(n).padStart(2, '0')
-  return `${d.getFullYear()}.${pad2(d.getMonth() + 1)}.${pad2(d.getDate())} ${pad2(d.getHours())}:${pad2(d.getMinutes())}`
-}
-
-function resolveUserPronoun(playerIdentity: PlayerIdentity | null): '他' | '她' {
-  return playerIdentity?.gender === 'female' ? '她' : '他'
-}
-
-function normalizeUserImpressionPronoun(text: string, pronoun: '他' | '她'): string {
-  const src = String(text ?? '').trim()
-  if (!src) return ''
-  return src.replace(/ta/gi, pronoun).replace(/ＴＡ/gi, pronoun)
-}
-
-type GroupPsycheModelEntry = {
-  character_id: string
-  location: string
-  clothing: string
-  posture: string
-  monologue: string
-  impression_on_user: string
-}
-
-function parseGroupPsycheFromModel(text: string): GroupPsycheModelEntry[] {
-  const bases = thinkingAwareJsonSearchBases(text)
-  let lastErr: unknown = null
-  const txt = (v: unknown) => String(v ?? '').trim()
-
-  for (const base of bases) {
-    const balanced = sliceBalancedJsonObject(base)
-    const jsonText =
-      balanced ??
-      (() => {
-        const t = base.trim()
-        const start = t.indexOf('{')
-        const end = t.lastIndexOf('}')
-        return start >= 0 && end > start ? t.slice(start, end + 1) : t
-      })()
-    try {
-      const j = JSON.parse(jsonText) as { entries?: unknown }
-      const arr = Array.isArray(j.entries) ? j.entries : []
-      const out: GroupPsycheModelEntry[] = []
-      for (const it of arr) {
-        const o = (it ?? {}) as Record<string, unknown>
-        const cid = txt(o.character_id ?? o.charId ?? o.characterId)
-        if (!cid) continue
-        out.push({
-          character_id: cid,
-          location: txt(o.location),
-          clothing: txt(o.clothing ?? o.outfit),
-          posture: txt(o.posture ?? o.action),
-          monologue: txt(o.monologue ?? o.inner_thoughts),
-          impression_on_user: txt(o.impression_on_user ?? o.view_on_user),
-        })
-      }
-      return out
-    } catch (e) {
-      lastErr = e
-    }
-  }
-
-  const hint =
-    lastErr instanceof Error && lastErr.message ? lastErr.message : '模型返回可能混入了思维链、截断或非 JSON'
-  throw new Error(`群聊心语 JSON 解析失败：${hint}。请重试或更换模型。`)
 }
 
 function escapeRegExpForAlias(s: string): string {
@@ -2601,13 +2530,14 @@ export async function requestWeChatGroupPsyche(params: {
     params.chatMemberIds != null
       ? [...new Set(params.chatMemberIds.map((x) => String(x ?? '').trim()).filter(Boolean))]
       : [...new Set(roster.map((r) => r.charId.trim()))]
-  const rosterJson = JSON.stringify(
-    roster.map((r) => ({
-      character_id: r.charId.trim(),
-      name: (r.name.trim() || r.charId.trim()).trim(),
-      npc_pronoun: r.npcPronoun === '她' ? '她' : '他',
-    })),
-  )
+  const rosterLines = roster
+    .map((r) => {
+      const id = r.charId.trim()
+      const name = (r.name.trim() || id).trim()
+      const pronoun = r.npcPronoun === '她' ? '她' : '他'
+      return `- ${id} | ${name} | ${pronoun}`
+    })
+    .join('\n')
   const memoryMomentImages = (params.longTermMemoryMomentImages ?? [])
     .map((u) => u.trim())
     .filter(Boolean)
@@ -2632,15 +2562,15 @@ export async function requestWeChatGroupPsyche(params: {
   const history = transcriptToMessages(params.transcript.slice(-36), { groupChat: true })
   const stripHint =
     (params.userAliasesToStrip ?? []).filter((s) => String(s).trim().length >= 2).length > 0
-      ? `\n【用户称呼禁令补充】以下字符串仅为系统侧标识，**禁止**写入 impression_on_user 正文，对用户一律称「你」：${[...new Set((params.userAliasesToStrip ?? []).map((s) => String(s).trim()).filter((s) => s.length >= 2))].join('、')}\n`
+      ? `\n【用户称呼禁令补充】以下字符串仅为系统侧标识，**禁止**写入「对你看法」正文，对用户一律称「你」：${[...new Set((params.userAliasesToStrip ?? []).map((s) => String(s).trim()).filter((s) => s.length >= 2))].join('、')}\n`
       : ''
   const messages: OpenAiCompatibleMessage[] = [
     {
       role: 'system',
-      content: `${base}${memoryImagesAppendix}\n\n---\n【群聊心语生成规则】\n${WECHAT_GROUP_PSYCHE_SYSTEM_PROMPT}\n\n【NPC 名单 JSON】（npc_pronoun：在 impression_on_user 里用来指代该 NPC 本人，写「你」指用户）\n${rosterJson}${stripHint}`,
+      content: `${base}${memoryImagesAppendix}\n\n---\n【群聊心语生成规则】\n${WECHAT_GROUP_PSYCHE_SYSTEM_PROMPT}\n\n【NPC 名单】（每行一项：id | 显示名 | npc_pronoun；在「对你看法」里用 npc_pronoun 指代该 NPC 本人，写「你」指用户）\n${rosterLines}${stripHint}`,
     },
     ...history,
-    { role: 'user', content: '请基于刚刚最后一轮群聊对话，输出群聊心语 JSON（仅 JSON）。' },
+    { role: 'user', content: '请基于刚刚最后一轮群聊对话，输出群聊心语 markup（仅 [HEART_WHISPER_GROUP] 块，禁止 JSON）。' },
   ]
   const text = await callWeChatPeerReplyChat(cfg, messages, {
     memoryMomentImages,
@@ -2742,13 +2672,13 @@ export async function requestWeChatHeartWhisper(params: {
   const messages: OpenAiCompatibleMessage[] = [
     {
       role: 'system',
-      content: `${base}\n\n---\n【心语生成规则】\n${WECHAT_HEART_WHISPER_SYSTEM_PROMPT}${heartSplitDirective ? `\n\n${heartSplitDirective}` : ''}\n\n【本轮代词约束】\n在 view_on_user 字段里，用户必须被称为“${userPronoun}”，指**本窗口发言人**；禁止出现 ta/TA/Ta。`,
+      content: `${base}\n\n---\n【心语生成规则】\n${WECHAT_HEART_WHISPER_SYSTEM_PROMPT}${heartSplitDirective ? `\n\n${heartSplitDirective}` : ''}\n\n【本轮代词约束】\n在「对用户看法」字段里，用户必须被称为“${userPronoun}”，指**本窗口发言人**；禁止出现 ta/TA/Ta。`,
     },
     ...history,
-    { role: 'user', content: '请基于刚刚最后一轮对话，输出心语 JSON。' },
+    { role: 'user', content: '请基于刚刚最后一轮对话，输出心语 markup（仅 [HEART_WHISPER] 块，禁止 JSON）。' },
   ]
   const text = await openAiCompatibleChat(cfg, messages, { temperature: 0.78, max_tokens: 1400 })
-  const parsed = parseHeartWhisperJson(text)
+  const parsed = parseHeartWhisperFromModel(text)
   const nowMs = typeof params.nowMs === 'number' && Number.isFinite(params.nowMs) ? params.nowMs : Date.now()
   return {
     timestamp: formatHeartWhisperTimestamp(nowMs),
