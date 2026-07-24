@@ -79,6 +79,14 @@ export const EVOLUTION_LOG: VersionRecord[] = [
             ],
           },
           {
+            moduleName: '微信发现',
+            items: [
+              d(
+                '浮光直播：发现页已预留入口；当前为「功能开发中」占位，完整连麦/弹幕流程尚未开放。',
+              ),
+            ],
+          },
+          {
             moduleName: '微信私聊',
             items: [
               d(
